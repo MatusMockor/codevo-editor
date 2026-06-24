@@ -48,7 +48,6 @@ use index_scan::{
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
-use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -110,9 +109,7 @@ use std::{
 };
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
-use tauri::{
-    AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
-};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
 use terminal_session::{
@@ -128,6 +125,7 @@ use workspace::{
     apply_text_edits_to_files, FileEntry, FileSearchResult, LocalWorkspaceFileRepository,
     WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
 };
+use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
 };
@@ -1904,7 +1902,7 @@ fn javascript_typescript_document_did_close(
 }
 
 #[tauri::command]
-fn text_document_hover(
+async fn text_document_hover(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -1913,7 +1911,10 @@ fn text_document_hover(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -1921,7 +1922,7 @@ fn text_document_hover(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_hover(
+async fn javascript_typescript_text_document_hover(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -1930,7 +1931,10 @@ fn javascript_typescript_text_document_hover(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -1938,7 +1942,7 @@ fn javascript_typescript_text_document_hover(
 }
 
 #[tauri::command]
-fn text_document_completion(
+async fn text_document_completion(
     root_path: String,
     position: TextDocumentPosition,
     context: Option<LanguageServerCompletionContext>,
@@ -1948,7 +1952,10 @@ fn text_document_completion(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
             items: Vec::new(),
@@ -1959,7 +1966,7 @@ fn text_document_completion(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_completion(
+async fn javascript_typescript_text_document_completion(
     root_path: String,
     position: TextDocumentPosition,
     context: Option<LanguageServerCompletionContext>,
@@ -1969,7 +1976,10 @@ fn javascript_typescript_text_document_completion(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
             items: Vec::new(),
@@ -1980,7 +1990,7 @@ fn javascript_typescript_text_document_completion(
 }
 
 #[tauri::command]
-fn text_document_completion_resolve(
+async fn text_document_completion_resolve(
     root_path: String,
     item: LanguageServerCompletionItem,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -1989,7 +1999,10 @@ fn text_document_completion_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_completion_item(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(item);
     };
 
@@ -1999,7 +2012,7 @@ fn text_document_completion_resolve(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_completion_resolve(
+async fn javascript_typescript_text_document_completion_resolve(
     root_path: String,
     item: LanguageServerCompletionItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2008,7 +2021,10 @@ fn javascript_typescript_text_document_completion_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_completion_item(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(item);
     };
 
@@ -2018,7 +2034,7 @@ fn javascript_typescript_text_document_completion_resolve(
 }
 
 #[tauri::command]
-fn text_document_definition(
+async fn text_document_definition(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2027,7 +2043,10 @@ fn text_document_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2035,7 +2054,7 @@ fn text_document_definition(
 }
 
 #[tauri::command]
-fn text_document_declaration(
+async fn text_document_declaration(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2044,7 +2063,10 @@ fn text_document_declaration(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.declaration(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2052,7 +2074,7 @@ fn text_document_declaration(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_definition(
+async fn javascript_typescript_text_document_definition(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2061,7 +2083,10 @@ fn javascript_typescript_text_document_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2069,7 +2094,7 @@ fn javascript_typescript_text_document_definition(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_declaration(
+async fn javascript_typescript_text_document_declaration(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2078,7 +2103,10 @@ fn javascript_typescript_text_document_declaration(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.declaration(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2086,7 +2114,7 @@ fn javascript_typescript_text_document_declaration(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_source_definition(
+async fn javascript_typescript_text_document_source_definition(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2095,7 +2123,10 @@ fn javascript_typescript_text_document_source_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.typescript_source_definition(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2103,7 +2134,7 @@ fn javascript_typescript_text_document_source_definition(
 }
 
 #[tauri::command]
-fn text_document_implementation(
+async fn text_document_implementation(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2112,7 +2143,10 @@ fn text_document_implementation(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
-    let result = match registry.send_request(&root_path, &request.method, request.params)? {
+    let result = match registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    {
         Some(result) => result,
         None => return Ok(Vec::new()),
     };
@@ -2121,7 +2155,7 @@ fn text_document_implementation(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_implementation(
+async fn javascript_typescript_text_document_implementation(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2130,7 +2164,10 @@ fn javascript_typescript_text_document_implementation(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
-    let result = match registry.send_request(&root_path, &request.method, request.params)? {
+    let result = match registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    {
         Some(result) => result,
         None => return Ok(Vec::new()),
     };
@@ -2139,7 +2176,7 @@ fn javascript_typescript_text_document_implementation(
 }
 
 #[tauri::command]
-fn text_document_type_definition(
+async fn text_document_type_definition(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2148,7 +2185,10 @@ fn text_document_type_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_definition(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2156,7 +2196,7 @@ fn text_document_type_definition(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_type_definition(
+async fn javascript_typescript_text_document_type_definition(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2165,7 +2205,10 @@ fn javascript_typescript_text_document_type_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_definition(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2173,7 +2216,7 @@ fn javascript_typescript_text_document_type_definition(
 }
 
 #[tauri::command]
-fn text_document_references(
+async fn text_document_references(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2182,7 +2225,10 @@ fn text_document_references(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.references(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2190,7 +2236,7 @@ fn text_document_references(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_references(
+async fn javascript_typescript_text_document_references(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2199,7 +2245,10 @@ fn javascript_typescript_text_document_references(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.references(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2207,7 +2256,7 @@ fn javascript_typescript_text_document_references(
 }
 
 #[tauri::command]
-fn text_document_prepare_rename(
+async fn text_document_prepare_rename(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2216,7 +2265,10 @@ fn text_document_prepare_rename(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_rename(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2224,7 +2276,7 @@ fn text_document_prepare_rename(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_prepare_rename(
+async fn javascript_typescript_text_document_prepare_rename(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2233,7 +2285,10 @@ fn javascript_typescript_text_document_prepare_rename(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_rename(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2241,7 +2296,7 @@ fn javascript_typescript_text_document_prepare_rename(
 }
 
 #[tauri::command]
-fn text_document_rename(
+async fn text_document_rename(
     root_path: String,
     position: TextDocumentPosition,
     new_name: String,
@@ -2256,7 +2311,10 @@ fn text_document_rename(
         new_name,
         path: position.path,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2267,7 +2325,7 @@ fn text_document_rename(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_rename(
+async fn javascript_typescript_text_document_rename(
     root_path: String,
     position: TextDocumentPosition,
     new_name: String,
@@ -2282,7 +2340,10 @@ fn javascript_typescript_text_document_rename(
         new_name,
         path: position.path,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2293,7 +2354,7 @@ fn javascript_typescript_text_document_rename(
 }
 
 #[tauri::command]
-fn text_document_code_actions(
+async fn text_document_code_actions(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -2305,7 +2366,10 @@ fn text_document_code_actions(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2313,7 +2377,7 @@ fn text_document_code_actions(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_code_actions(
+async fn javascript_typescript_text_document_code_actions(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -2325,7 +2389,10 @@ fn javascript_typescript_text_document_code_actions(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2349,7 +2416,7 @@ fn lsp_status_supports_code_action_resolve(status: &LanguageServerRuntimeStatus)
 }
 
 #[tauri::command]
-fn text_document_code_action_resolve(
+async fn text_document_code_action_resolve(
     root_path: String,
     action: LanguageServerCodeAction,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2362,7 +2429,10 @@ fn text_document_code_action_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(action);
     };
 
@@ -2373,7 +2443,7 @@ fn text_document_code_action_resolve(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_code_action_resolve(
+async fn javascript_typescript_text_document_code_action_resolve(
     root_path: String,
     action: LanguageServerCodeAction,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2386,7 +2456,10 @@ fn javascript_typescript_text_document_code_action_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(action);
     };
 
@@ -2397,7 +2470,7 @@ fn javascript_typescript_text_document_code_action_resolve(
 }
 
 #[tauri::command]
-fn text_document_code_lenses(
+async fn text_document_code_lenses(
     root_path: String,
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2406,7 +2479,10 @@ fn text_document_code_lenses(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_lenses(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2417,7 +2493,7 @@ fn text_document_code_lenses(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_code_lenses(
+async fn javascript_typescript_text_document_code_lenses(
     root_path: String,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2426,7 +2502,10 @@ fn javascript_typescript_text_document_code_lenses(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_lenses(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2437,7 +2516,7 @@ fn javascript_typescript_text_document_code_lenses(
 }
 
 #[tauri::command]
-fn text_document_code_lens_resolve(
+async fn text_document_code_lens_resolve(
     root_path: String,
     lens: LanguageServerCodeLens,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2446,7 +2525,10 @@ fn text_document_code_lens_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_lens(&lens);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(lens);
     };
 
@@ -2457,7 +2539,7 @@ fn text_document_code_lens_resolve(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_code_lens_resolve(
+async fn javascript_typescript_text_document_code_lens_resolve(
     root_path: String,
     lens: LanguageServerCodeLens,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2466,7 +2548,10 @@ fn javascript_typescript_text_document_code_lens_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_lens(&lens);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(lens);
     };
 
@@ -2477,7 +2562,7 @@ fn javascript_typescript_text_document_code_lens_resolve(
 }
 
 #[tauri::command]
-fn text_document_prepare_call_hierarchy(
+async fn text_document_prepare_call_hierarchy(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2486,7 +2571,10 @@ fn text_document_prepare_call_hierarchy(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_call_hierarchy(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2497,7 +2585,7 @@ fn text_document_prepare_call_hierarchy(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_prepare_call_hierarchy(
+async fn javascript_typescript_text_document_prepare_call_hierarchy(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2506,7 +2594,10 @@ fn javascript_typescript_text_document_prepare_call_hierarchy(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_call_hierarchy(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2517,7 +2608,7 @@ fn javascript_typescript_text_document_prepare_call_hierarchy(
 }
 
 #[tauri::command]
-fn text_document_incoming_calls(
+async fn text_document_incoming_calls(
     root_path: String,
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2526,7 +2617,10 @@ fn text_document_incoming_calls(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.incoming_calls(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2534,7 +2628,7 @@ fn text_document_incoming_calls(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_incoming_calls(
+async fn javascript_typescript_text_document_incoming_calls(
     root_path: String,
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2543,7 +2637,10 @@ fn javascript_typescript_text_document_incoming_calls(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.incoming_calls(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2551,7 +2648,7 @@ fn javascript_typescript_text_document_incoming_calls(
 }
 
 #[tauri::command]
-fn text_document_outgoing_calls(
+async fn text_document_outgoing_calls(
     root_path: String,
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2560,7 +2657,10 @@ fn text_document_outgoing_calls(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.outgoing_calls(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2568,7 +2668,7 @@ fn text_document_outgoing_calls(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_outgoing_calls(
+async fn javascript_typescript_text_document_outgoing_calls(
     root_path: String,
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2577,7 +2677,10 @@ fn javascript_typescript_text_document_outgoing_calls(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.outgoing_calls(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2585,7 +2688,7 @@ fn javascript_typescript_text_document_outgoing_calls(
 }
 
 #[tauri::command]
-fn text_document_prepare_type_hierarchy(
+async fn text_document_prepare_type_hierarchy(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2594,7 +2697,10 @@ fn text_document_prepare_type_hierarchy(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_type_hierarchy(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2605,7 +2711,7 @@ fn text_document_prepare_type_hierarchy(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_prepare_type_hierarchy(
+async fn javascript_typescript_text_document_prepare_type_hierarchy(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2614,7 +2720,10 @@ fn javascript_typescript_text_document_prepare_type_hierarchy(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_type_hierarchy(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2625,7 +2734,7 @@ fn javascript_typescript_text_document_prepare_type_hierarchy(
 }
 
 #[tauri::command]
-fn text_document_type_hierarchy_supertypes(
+async fn text_document_type_hierarchy_supertypes(
     root_path: String,
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2634,7 +2743,10 @@ fn text_document_type_hierarchy_supertypes(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_supertypes(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2645,7 +2757,7 @@ fn text_document_type_hierarchy_supertypes(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_type_hierarchy_supertypes(
+async fn javascript_typescript_text_document_type_hierarchy_supertypes(
     root_path: String,
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2654,7 +2766,10 @@ fn javascript_typescript_text_document_type_hierarchy_supertypes(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_supertypes(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2665,7 +2780,7 @@ fn javascript_typescript_text_document_type_hierarchy_supertypes(
 }
 
 #[tauri::command]
-fn text_document_type_hierarchy_subtypes(
+async fn text_document_type_hierarchy_subtypes(
     root_path: String,
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2674,7 +2789,10 @@ fn text_document_type_hierarchy_subtypes(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_subtypes(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2685,7 +2803,7 @@ fn text_document_type_hierarchy_subtypes(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_type_hierarchy_subtypes(
+async fn javascript_typescript_text_document_type_hierarchy_subtypes(
     root_path: String,
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2694,7 +2812,10 @@ fn javascript_typescript_text_document_type_hierarchy_subtypes(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_subtypes(&item);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2705,7 +2826,7 @@ fn javascript_typescript_text_document_type_hierarchy_subtypes(
 }
 
 #[tauri::command]
-fn language_server_execute_command(
+async fn language_server_execute_command(
     root_path: String,
     command: LanguageServerCodeActionCommand,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -2714,7 +2835,10 @@ fn language_server_execute_command(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.execute_command(&command);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2725,7 +2849,7 @@ fn language_server_execute_command(
 }
 
 #[tauri::command]
-fn javascript_typescript_language_server_execute_command(
+async fn javascript_typescript_language_server_execute_command(
     root_path: String,
     command: LanguageServerCodeActionCommand,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2734,7 +2858,10 @@ fn javascript_typescript_language_server_execute_command(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.execute_command(&command);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2745,7 +2872,7 @@ fn javascript_typescript_language_server_execute_command(
 }
 
 #[tauri::command]
-fn javascript_typescript_workspace_will_rename_files(
+async fn javascript_typescript_workspace_will_rename_files(
     root_path: String,
     old_path: String,
     new_path: String,
@@ -2756,7 +2883,10 @@ fn javascript_typescript_workspace_will_rename_files(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.will_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2794,7 +2924,7 @@ fn javascript_typescript_workspace_did_rename_files(
 }
 
 #[tauri::command]
-fn text_document_will_rename_files(
+async fn text_document_will_rename_files(
     root_path: String,
     old_path: String,
     new_path: String,
@@ -2805,7 +2935,10 @@ fn text_document_will_rename_files(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.will_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -2914,7 +3047,7 @@ fn javascript_typescript_did_change_configuration_settings(settings: &Value) -> 
 }
 
 #[tauri::command]
-fn text_document_formatting(
+async fn text_document_formatting(
     root_path: String,
     path: String,
     options: LanguageServerFormattingOptions,
@@ -2924,7 +3057,10 @@ fn text_document_formatting(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.formatting(&TextDocumentFormatting { path, options });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2932,7 +3068,7 @@ fn text_document_formatting(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_formatting(
+async fn javascript_typescript_text_document_formatting(
     root_path: String,
     path: String,
     options: LanguageServerFormattingOptions,
@@ -2942,7 +3078,10 @@ fn javascript_typescript_text_document_formatting(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.formatting(&TextDocumentFormatting { path, options });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2950,7 +3089,7 @@ fn javascript_typescript_text_document_formatting(
 }
 
 #[tauri::command]
-fn text_document_on_type_formatting(
+async fn text_document_on_type_formatting(
     root_path: String,
     path: String,
     position: LanguageServerPosition,
@@ -2967,7 +3106,10 @@ fn text_document_on_type_formatting(
         ch,
         options,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -2975,7 +3117,7 @@ fn text_document_on_type_formatting(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_on_type_formatting(
+async fn javascript_typescript_text_document_on_type_formatting(
     root_path: String,
     path: String,
     position: LanguageServerPosition,
@@ -2992,7 +3134,10 @@ fn javascript_typescript_text_document_on_type_formatting(
         ch,
         options,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3000,7 +3145,7 @@ fn javascript_typescript_text_document_on_type_formatting(
 }
 
 #[tauri::command]
-fn text_document_range_formatting(
+async fn text_document_range_formatting(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3015,7 +3160,10 @@ fn text_document_range_formatting(
         range,
         options,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3023,7 +3171,7 @@ fn text_document_range_formatting(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_range_formatting(
+async fn javascript_typescript_text_document_range_formatting(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3038,7 +3186,10 @@ fn javascript_typescript_text_document_range_formatting(
         range,
         options,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3046,7 +3197,7 @@ fn javascript_typescript_text_document_range_formatting(
 }
 
 #[tauri::command]
-fn text_document_inlay_hints(
+async fn text_document_inlay_hints(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3056,7 +3207,10 @@ fn text_document_inlay_hints(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3067,7 +3221,7 @@ fn text_document_inlay_hints(
 }
 
 #[tauri::command]
-fn text_document_inlay_hint_resolve(
+async fn text_document_inlay_hint_resolve(
     root_path: String,
     hint: LanguageServerInlayHint,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3076,7 +3230,10 @@ fn text_document_inlay_hint_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(hint);
     };
 
@@ -3087,7 +3244,7 @@ fn text_document_inlay_hint_resolve(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_inlay_hints(
+async fn javascript_typescript_text_document_inlay_hints(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3097,7 +3254,10 @@ fn javascript_typescript_text_document_inlay_hints(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3108,7 +3268,7 @@ fn javascript_typescript_text_document_inlay_hints(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_inlay_hint_resolve(
+async fn javascript_typescript_text_document_inlay_hint_resolve(
     root_path: String,
     hint: LanguageServerInlayHint,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3117,7 +3277,10 @@ fn javascript_typescript_text_document_inlay_hint_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(hint);
     };
 
@@ -3128,7 +3291,7 @@ fn javascript_typescript_text_document_inlay_hint_resolve(
 }
 
 #[tauri::command]
-fn text_document_document_symbols(
+async fn text_document_document_symbols(
     root_path: String,
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3137,7 +3300,10 @@ fn text_document_document_symbols(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_symbols(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3145,7 +3311,7 @@ fn text_document_document_symbols(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_document_symbols(
+async fn javascript_typescript_text_document_document_symbols(
     root_path: String,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3154,7 +3320,10 @@ fn javascript_typescript_text_document_document_symbols(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_symbols(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3162,7 +3331,7 @@ fn javascript_typescript_text_document_document_symbols(
 }
 
 #[tauri::command]
-fn text_document_document_highlights(
+async fn text_document_document_highlights(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3171,7 +3340,10 @@ fn text_document_document_highlights(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_highlights(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3179,7 +3351,7 @@ fn text_document_document_highlights(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_document_highlights(
+async fn javascript_typescript_text_document_document_highlights(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3188,7 +3360,10 @@ fn javascript_typescript_text_document_document_highlights(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_highlights(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3196,7 +3371,7 @@ fn javascript_typescript_text_document_document_highlights(
 }
 
 #[tauri::command]
-fn text_document_document_links(
+async fn text_document_document_links(
     root_path: String,
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3205,7 +3380,10 @@ fn text_document_document_links(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_links(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3213,7 +3391,7 @@ fn text_document_document_links(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_document_links(
+async fn javascript_typescript_text_document_document_links(
     root_path: String,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3222,7 +3400,10 @@ fn javascript_typescript_text_document_document_links(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_links(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3230,7 +3411,7 @@ fn javascript_typescript_text_document_document_links(
 }
 
 #[tauri::command]
-fn text_document_document_link_resolve(
+async fn text_document_document_link_resolve(
     root_path: String,
     link: LanguageServerDocumentLink,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3239,7 +3420,10 @@ fn text_document_document_link_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_document_link(&link);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(link);
     };
 
@@ -3250,7 +3434,7 @@ fn text_document_document_link_resolve(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_document_link_resolve(
+async fn javascript_typescript_text_document_document_link_resolve(
     root_path: String,
     link: LanguageServerDocumentLink,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3259,7 +3443,10 @@ fn javascript_typescript_text_document_document_link_resolve(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_document_link(&link);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(link);
     };
 
@@ -3270,7 +3457,7 @@ fn javascript_typescript_text_document_document_link_resolve(
 }
 
 #[tauri::command]
-fn text_document_folding_ranges(
+async fn text_document_folding_ranges(
     root_path: String,
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3279,7 +3466,10 @@ fn text_document_folding_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.folding_ranges(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3287,7 +3477,7 @@ fn text_document_folding_ranges(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_folding_ranges(
+async fn javascript_typescript_text_document_folding_ranges(
     root_path: String,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3296,7 +3486,10 @@ fn javascript_typescript_text_document_folding_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.folding_ranges(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3304,14 +3497,17 @@ fn javascript_typescript_text_document_folding_ranges(
 }
 
 #[tauri::command]
-fn workspace_symbols(
+async fn workspace_symbols(
     root_path: String,
     query: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.workspace_symbols(&query);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3319,14 +3515,17 @@ fn workspace_symbols(
 }
 
 #[tauri::command]
-fn javascript_typescript_workspace_symbols(
+async fn javascript_typescript_workspace_symbols(
     root_path: String,
     query: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.workspace_symbols(&query);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3334,7 +3533,7 @@ fn javascript_typescript_workspace_symbols(
 }
 
 #[tauri::command]
-fn text_document_selection_ranges(
+async fn text_document_selection_ranges(
     root_path: String,
     path: String,
     positions: Vec<LanguageServerPosition>,
@@ -3344,7 +3543,10 @@ fn text_document_selection_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3352,7 +3554,7 @@ fn text_document_selection_ranges(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_selection_ranges(
+async fn javascript_typescript_text_document_selection_ranges(
     root_path: String,
     path: String,
     positions: Vec<LanguageServerPosition>,
@@ -3362,7 +3564,10 @@ fn javascript_typescript_text_document_selection_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(Vec::new());
     };
 
@@ -3370,7 +3575,7 @@ fn javascript_typescript_text_document_selection_ranges(
 }
 
 #[tauri::command]
-fn text_document_linked_editing_ranges(
+async fn text_document_linked_editing_ranges(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3379,7 +3584,10 @@ fn text_document_linked_editing_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.linked_editing_ranges(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3387,7 +3595,7 @@ fn text_document_linked_editing_ranges(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_linked_editing_ranges(
+async fn javascript_typescript_text_document_linked_editing_ranges(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3396,7 +3604,10 @@ fn javascript_typescript_text_document_linked_editing_ranges(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.linked_editing_ranges(&position);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3404,7 +3615,7 @@ fn javascript_typescript_text_document_linked_editing_ranges(
 }
 
 #[tauri::command]
-fn text_document_semantic_tokens(
+async fn text_document_semantic_tokens(
     root_path: String,
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3413,7 +3624,10 @@ fn text_document_semantic_tokens(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.semantic_tokens(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3421,7 +3635,7 @@ fn text_document_semantic_tokens(
 }
 
 #[tauri::command]
-fn text_document_range_semantic_tokens(
+async fn text_document_range_semantic_tokens(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3431,7 +3645,10 @@ fn text_document_range_semantic_tokens(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3439,7 +3656,7 @@ fn text_document_range_semantic_tokens(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_semantic_tokens(
+async fn javascript_typescript_text_document_semantic_tokens(
     root_path: String,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -3448,7 +3665,10 @@ fn javascript_typescript_text_document_semantic_tokens(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.semantic_tokens(&path);
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3456,7 +3676,7 @@ fn javascript_typescript_text_document_semantic_tokens(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_range_semantic_tokens(
+async fn javascript_typescript_text_document_range_semantic_tokens(
     root_path: String,
     path: String,
     range: LanguageServerRange,
@@ -3466,7 +3686,10 @@ fn javascript_typescript_text_document_range_semantic_tokens(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3474,7 +3697,7 @@ fn javascript_typescript_text_document_range_semantic_tokens(
 }
 
 #[tauri::command]
-fn text_document_signature_help(
+async fn text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
@@ -3486,7 +3709,10 @@ fn text_document_signature_help(
         position,
         context: None,
     });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3494,7 +3720,7 @@ fn text_document_signature_help(
 }
 
 #[tauri::command]
-fn javascript_typescript_text_document_signature_help(
+async fn javascript_typescript_text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
     context: Option<LanguageServerSignatureHelpContext>,
@@ -3504,7 +3730,10 @@ fn javascript_typescript_text_document_signature_help(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.signature_help(&TextDocumentSignatureHelp { position, context });
-    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
         return Ok(None);
     };
 
@@ -3777,7 +4006,6 @@ mod tests {
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
-    use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
@@ -3789,6 +4017,7 @@ mod tests {
         LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
+    use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::{
@@ -5103,18 +5332,19 @@ mod tests {
 pub fn run() {
     let builder = tauri::Builder::default().enable_macos_default_menu(false);
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(application_menu).on_menu_event(|app, event| {
-        match event.id().as_ref() {
-            CLOSE_ACTIVE_TAB_MENU_ID => {
-                let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
-            }
-            QUIT_APPLICATION_MENU_ID => {
-                shutdown_runtime_processes(app);
-                app.exit(0);
-            }
-            _ => {}
-        }
-    });
+    let builder =
+        builder
+            .menu(application_menu)
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                CLOSE_ACTIVE_TAB_MENU_ID => {
+                    let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+                }
+                QUIT_APPLICATION_MENU_ID => {
+                    shutdown_runtime_processes(app);
+                    app.exit(0);
+                }
+                _ => {}
+            });
 
     builder
         .on_window_event(|window, event| {

@@ -753,6 +753,11 @@ impl LanguageServerRegistry {
         supervisor.update_server_configuration(server_configuration)
     }
 
+    /// Synchronous, main-thread-blocking request helper retained for tests that
+    /// drive the round-trip on a dedicated thread. Production commands use
+    /// [`send_request_async`](Self::send_request_async), which runs the blocking
+    /// round-trip off the Tauri main thread.
+    #[cfg(test)]
     pub fn send_request(
         &self,
         root_path: &str,
@@ -764,6 +769,37 @@ impl LanguageServerRegistry {
         };
 
         supervisor.send_request(method, params)
+    }
+
+    /// Off-main-thread variant of [`send_request`](Self::send_request). The supervisor for the
+    /// requested workspace is resolved synchronously here (a fast mutex + `Arc`
+    /// clone) so per-workspace isolation is decided before any await and the
+    /// returned future borrows nothing from `self`. The blocking JSON-RPC
+    /// round-trip (`recv_timeout`) then runs on Tokio's dedicated blocking pool,
+    /// keeping the Tauri WebView main thread responsive while the language
+    /// server replies and avoiding starvation of the async executor.
+    ///
+    /// Returning a `'static` future (rather than an `async fn` borrowing
+    /// `&self`) lets Tauri commands call this through a `State<'_, _>` reference
+    /// without tying the awaited work to the command's borrow.
+    pub fn send_request_async(
+        &self,
+        root_path: &str,
+        method: &str,
+        params: Value,
+    ) -> impl std::future::Future<Output = Result<Option<Value>, String>> + 'static {
+        let supervisor = self.existing_supervisor(root_path);
+        let method = method.to_string();
+
+        async move {
+            let Some(supervisor) = supervisor else {
+                return Ok(None);
+            };
+
+            tauri::async_runtime::spawn_blocking(move || supervisor.send_request(&method, params))
+                .await
+                .map_err(|error| format!("Language server request task failed: {error}"))?
+        }
     }
 
     pub fn running_roots(&self) -> Vec<String> {
@@ -1661,7 +1697,9 @@ impl RestartPolicy {
     fn backoff_delay(&self, attempt_index: usize) -> Duration {
         // A large index must clamp to the cap, never wrap to a tiny delay, so
         // compute the multiplier in u64 (no u32 truncation) and saturate.
-        let Some(shift) = u32::try_from(attempt_index).ok().filter(|shift| *shift < u64::BITS)
+        let Some(shift) = u32::try_from(attempt_index)
+            .ok()
+            .filter(|shift| *shift < u64::BITS)
         else {
             return RESTART_MAX_DELAY;
         };
@@ -3405,6 +3443,147 @@ mod tests {
     }
 
     #[test]
+    fn send_request_async_routes_to_requested_workspace_off_thread() {
+        let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command(),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command(),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        let request_registry = Arc::clone(&registry);
+        let request_future = request_registry.send_request_async(
+            "/tmp/workspace-b",
+            "textDocument/hover",
+            json!({
+                "textDocument": {
+                    "uri": "file:///tmp/workspace-b/src/App.ts",
+                },
+                "position": { "line": 1, "character": 4 },
+            }),
+        );
+        let request = tauri::async_runtime::spawn(async move {
+            request_future
+                .await
+                .expect("send workspace b request")
+                .expect("workspace b request result")
+        });
+        let request_id = wait_for_captured_request_id(&capture_b, "textDocument/hover");
+
+        assert!(!captured_messages(&capture_a)
+            .iter()
+            .any(|message| message["method"] == "textDocument/hover"));
+
+        write_held_message(
+            &held_b,
+            json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": { "contents": "workspace b hover" },
+            }),
+        );
+
+        let result = tauri::async_runtime::block_on(request).expect("request join");
+
+        assert_eq!(result["contents"], "workspace b hover");
+    }
+
+    #[test]
+    fn send_request_async_handles_concurrent_in_flight_requests() {
+        let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, _rx) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace",
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace");
+
+        let first_future = registry.send_request_async(
+            "/tmp/workspace",
+            "textDocument/hover",
+            json!({ "marker": "first" }),
+        );
+        let first = tauri::async_runtime::spawn(async move {
+            first_future
+                .await
+                .expect("first send")
+                .expect("first result")
+        });
+        let second_future = registry.send_request_async(
+            "/tmp/workspace",
+            "textDocument/definition",
+            json!({ "marker": "second" }),
+        );
+        let second = tauri::async_runtime::spawn(async move {
+            second_future
+                .await
+                .expect("second send")
+                .expect("second result")
+        });
+
+        let first_id = wait_for_captured_request_id(&capture, "textDocument/hover");
+        let second_id = wait_for_captured_request_id(&capture, "textDocument/definition");
+        assert_ne!(first_id, second_id);
+
+        // Respond out of order to prove each in-flight request resolves on its
+        // own pending channel.
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": second_id,
+                "result": { "answer": "second" },
+            }),
+        );
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": first_id,
+                "result": { "answer": "first" },
+            }),
+        );
+
+        let first_result = tauri::async_runtime::block_on(first).expect("first join");
+        let second_result = tauri::async_runtime::block_on(second).expect("second join");
+
+        assert_eq!(first_result["answer"], "first");
+        assert_eq!(second_result["answer"], "second");
+    }
+
+    #[test]
     fn registry_keeps_server_configuration_and_workspace_folders_isolated() {
         let registry = LanguageServerRegistry::new_with_label("TypeScript language server");
         let spawner_a = FakeSpawner::new(ready_script(), true);
@@ -5142,11 +5321,8 @@ mod tests {
 
         // A short backoff over a workspace that stays open must run to completion
         // and hand back the live supervisor so the restart can proceed.
-        let upgraded = cancellable_backoff(
-            &weak,
-            Duration::from_millis(20),
-            Duration::from_millis(5),
-        );
+        let upgraded =
+            cancellable_backoff(&weak, Duration::from_millis(20), Duration::from_millis(5));
 
         assert!(
             upgraded.is_some(),
@@ -5169,11 +5345,8 @@ mod tests {
         let started = Instant::now();
         // Backoff total is multiple seconds; if cancellation works the call must
         // return promptly after the supervisor is dropped, never near the full delay.
-        let upgraded = cancellable_backoff(
-            &weak,
-            Duration::from_secs(30),
-            Duration::from_millis(5),
-        );
+        let upgraded =
+            cancellable_backoff(&weak, Duration::from_secs(30), Duration::from_millis(5));
         let elapsed = started.elapsed();
 
         assert!(
