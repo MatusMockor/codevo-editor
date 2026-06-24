@@ -17,6 +17,7 @@ import type { EditorDocument } from "../domain/workspace";
 import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
+  dispose?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
   getLineCount?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
@@ -645,6 +646,7 @@ describe("EditorSurface", () => {
       },
     };
     const editorMenuCommandRunnerChange = vi.fn();
+    model.dispose = vi.fn();
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = createMonaco(model);
     const renderSurface = (document: EditorDocument | null) => (
@@ -1772,9 +1774,11 @@ interface ParserFactory
       savedContent: "const b = 2;\n",
     };
     const firstModel: FakeModel = {
+      dispose: vi.fn(),
       uri: { fsPath: firstDocument.path, path: firstDocument.path },
     };
     const secondModel: FakeModel = {
+      dispose: vi.fn(),
       uri: { fsPath: secondDocument.path, path: secondDocument.path },
     };
 
@@ -1980,6 +1984,220 @@ interface ParserFactory
     // close rather than the breadcrumb simply being absent.
     expect(reopenedLabels).toContain("Closing.tsx");
     expect(reopenedLabels).not.toContain("Closing");
+  });
+
+  it("disposes the Monaco model of a closed document", async () => {
+    const closingDocument: EditorDocument = {
+      content: "const closing = 1;\n",
+      language: "typescript",
+      name: "closing.ts",
+      path: "/workspace/src/closing.ts",
+      savedContent: "const closing = 1;\n",
+    };
+    const remainingDocument: EditorDocument = {
+      content: "const remaining = 2;\n",
+      language: "typescript",
+      name: "remaining.ts",
+      path: "/workspace/src/remaining.ts",
+      savedContent: "const remaining = 2;\n",
+    };
+    const closingModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: closingDocument.path, path: closingDocument.path },
+    };
+    const remainingModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: remainingDocument.path, path: remainingDocument.path },
+    };
+
+    let openModels: FakeModel[] = [closingModel, remainingModel];
+    const monaco = createMonaco(closingModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    editorSurfaceMocks.editor = createEditor(remainingModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (
+      document: EditorDocument,
+      openDocumentPaths: string[],
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            openDocumentPaths={openDocumentPaths}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot="/workspace"
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(remainingDocument, [
+      closingDocument.path,
+      remainingDocument.path,
+    ]);
+    expect(closingModel.dispose).not.toHaveBeenCalled();
+
+    // Close closing.ts: it leaves the live open document set.
+    await renderWith(remainingDocument, [remainingDocument.path]);
+
+    expect(closingModel.dispose).toHaveBeenCalledTimes(1);
+    expect(remainingModel.dispose).not.toHaveBeenCalled();
+  });
+
+  it("never disposes the active document's model", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const active = 1;\n",
+      language: "typescript",
+      name: "active.ts",
+      path: "/workspace/src/active.ts",
+      savedContent: "const active = 1;\n",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+
+    const monaco = createMonaco(model);
+    monaco.editor.getModels = vi.fn(() => [model]);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          openDocumentPaths={[]}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // Even though the active document's path is absent from openDocumentPaths,
+    // the active model must never be disposed out from under the editor.
+    expect(model.dispose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the model of a document still open in another tab", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const active = 1;\n",
+      language: "typescript",
+      name: "active.ts",
+      path: "/workspace/src/active.ts",
+      savedContent: "const active = 1;\n",
+    };
+    const stillOpenDocument: EditorDocument = {
+      content: "const other = 2;\n",
+      language: "typescript",
+      name: "other.ts",
+      path: "/workspace/src/other.ts",
+      savedContent: "const other = 2;\n",
+    };
+    const activeModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const stillOpenModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: stillOpenDocument.path, path: stillOpenDocument.path },
+    };
+
+    const monaco = createMonaco(activeModel);
+    monaco.editor.getModels = vi.fn(() => [activeModel, stillOpenModel]);
+    editorSurfaceMocks.editor = createEditor(activeModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          openDocumentPaths={[activeDocument.path, stillOpenDocument.path]}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // other.ts is not active but is still open in another tab/split, so its
+    // model must be kept alive.
+    expect(activeModel.dispose).not.toHaveBeenCalled();
+    expect(stillOpenModel.dispose).not.toHaveBeenCalled();
   });
 
   it("registers guarded Option+Enter quick fix/context actions", async () => {

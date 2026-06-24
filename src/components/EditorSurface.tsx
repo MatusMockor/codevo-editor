@@ -124,6 +124,7 @@ interface EditorSurfaceProps {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
+  openDocumentPaths?: string[];
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot?: string | null;
@@ -194,6 +195,7 @@ function EditorSurfaceComponent({
   javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
+  openDocumentPaths = [],
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
   workspaceRoot = null,
@@ -1087,6 +1089,44 @@ function EditorSurfaceComponent({
       pruneClosedPaths(current, openPaths),
     );
   }, [activeDocument?.path, monacoApi]);
+
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    // @monaco-editor/react gets-or-creates one model per visited path and never
+    // disposes it on a path switch, so every file ever opened keeps its text
+    // buffer + tokenization + undo stack alive for the whole app session
+    // (a slow per-file memory leak) and bloats the diagnostics marker loop,
+    // which iterates every model on each diagnostics event. Dispose the model of
+    // a document that is no longer open so closing a file actually frees it.
+    //
+    // The "keep alive" set is the live open document paths for the active
+    // workspace plus the active document's path as defence-in-depth: the active
+    // model is never disposed out from under the editor, and a document still
+    // open in another tab/split keeps its path in openDocumentPaths so its model
+    // survives. The placeholder model (shown when no document is open) is kept
+    // because Monaco is currently displaying it. Workspace isolation falls out
+    // for free: openDocumentPaths is reset/restored per workspace tab, and paths
+    // are workspace-scoped, so only the closing document's (or closing
+    // workspace's) models are disposed.
+    const keepAlivePaths = new Set([...openDocumentPaths, PLACEHOLDER_PATH]);
+
+    if (activeDocument) {
+      keepAlivePaths.add(activeDocument.path);
+    }
+
+    monacoApi.editor.getModels().forEach((model) => {
+      const path = modelPath(model);
+
+      if (!path || keepAlivePaths.has(path)) {
+        return;
+      }
+
+      model.dispose();
+    });
+  }, [activeDocument, monacoApi, openDocumentPaths]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {

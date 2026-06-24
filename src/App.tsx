@@ -267,6 +267,19 @@ function App() {
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
   );
+  // Stable list of open document paths for EditorSurface's model-dispose effect.
+  // openDocuments is replaced on every keystroke (fresh document objects), so we
+  // re-derive the path array only when the actual set of open paths changes,
+  // keeping the dispose effect from re-running on each character typed.
+  const openDocumentPathsKey = workbench.openDocuments
+    .map((document) => document.path)
+    .join("\n");
+  // Depends on the joined key (a stable string), not openDocuments, so the
+  // memoized array identity changes only when the set of open paths changes.
+  const openDocumentPaths = useMemo(
+    () => workbench.openDocuments.map((document) => document.path),
+    [openDocumentPathsKey],
+  );
   const activeEditorChangeHunks = useMemo(
     () =>
       workbench.activeDocument
@@ -883,6 +896,7 @@ function App() {
             languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
             keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
+            openDocumentPaths={openDocumentPaths}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             phpLanguageServerWorkspaceEditGateway={
               phpLanguageServerWorkspaceEditGateway
