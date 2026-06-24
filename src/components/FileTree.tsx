@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import {
   gitStatusLabel,
@@ -19,7 +19,6 @@ const TREE_PADDING_BOTTOM = 10;
 interface VisibleTreeRow {
   entry: FileEntry;
   level: number;
-  status?: GitChangeStatus;
 }
 
 interface VisibleTreeState {
@@ -60,6 +59,8 @@ export function FileTree({
 }: FileTreeProps) {
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
   const pendingRevealKeyRef = useRef<string | null>(null);
+  const pendingScrollTopRef = useRef(0);
+  const scrollAnimationFrameRef = useRef<number | null>(null);
   const treeContainerRef = useRef<HTMLElement | null>(null);
   const previousActivePathRef = useRef<string | null>(null);
   const previousRevealSignalRef = useRef<number>(0);
@@ -72,9 +73,8 @@ export function FileTree({
         rootPath,
         entriesByDirectory,
         expandedDirectories,
-        fileStatusesByPath,
       }),
-    [rootPath, entriesByDirectory, expandedDirectories, fileStatusesByPath],
+    [rootPath, entriesByDirectory, expandedDirectories],
   );
   const visibleRows = visibleTreeState.rows;
 
@@ -180,14 +180,6 @@ export function FileTree({
       return;
     }
 
-    setViewportHeight(measureTreeViewportHeight(treeContainerRef.current));
-  });
-
-  useLayoutEffect(() => {
-    if (!treeContainerRef.current) {
-      return;
-    }
-
     const container = treeContainerRef.current;
     const updateViewportHeight = () => {
       setViewportHeight(measureTreeViewportHeight(container));
@@ -212,11 +204,33 @@ export function FileTree({
     };
   }, []);
 
-  const handleScroll = (event: UIEvent<HTMLElement>) => {
-    const container = event.currentTarget;
+  useEffect(
+    () => () => {
+      if (scrollAnimationFrameRef.current === null) {
+        return;
+      }
 
-    setScrollTop(container.scrollTop);
-    setViewportHeight(measureTreeViewportHeight(container));
+      cancelAnimationFrame(scrollAnimationFrameRef.current);
+      scrollAnimationFrameRef.current = null;
+    },
+    [],
+  );
+
+  const handleScroll = (event: UIEvent<HTMLElement>) => {
+    pendingScrollTopRef.current = event.currentTarget.scrollTop;
+
+    if (viewportHeight <= 0) {
+      setViewportHeight(measureTreeViewportHeight(event.currentTarget));
+    }
+
+    if (scrollAnimationFrameRef.current !== null) {
+      return;
+    }
+
+    scrollAnimationFrameRef.current = requestAnimationFrame(() => {
+      scrollAnimationFrameRef.current = null;
+      setScrollTop(pendingScrollTopRef.current);
+    });
   };
 
   if (!rootPath) {
@@ -249,25 +263,27 @@ export function FileTree({
             transform: `translateY(${renderedWindowOffset}px)`,
           }}
         >
-          {rowsToRender.map((row) => (
-            <TreeRow
-              activePath={activePath}
-              activeRowRef={activeRowRef}
-              expandedDirectories={expandedDirectories}
-              key={row.entry.path}
-              loadingDirectories={loadingDirectories}
-              onOpenFile={onOpenFile}
-              onPreviewFile={onPreviewFile}
-              onToggleDirectory={onToggleDirectory}
-              onPrefetchFile={onPrefetchFile}
-              onCancelPrefetchFile={onCancelPrefetchFile}
-              row={row}
-              rowStyle={{
-                "--tree-level": row.level,
-                height: `${TREE_ROW_HEIGHT}px`,
-              } as CSSProperties}
-            />
-          ))}
+          {rowsToRender.map(({ entry, level }) => {
+            const isDirectory = entry.kind === "directory";
+
+            return (
+              <TreeRow
+                activeRowRef={activeRowRef}
+                entry={entry}
+                isActive={entry.path === activePath}
+                isExpanded={isDirectory && expandedDirectories.has(entry.path)}
+                isLoading={isDirectory && loadingDirectories.has(entry.path)}
+                key={entry.path}
+                level={level}
+                onOpenFile={onOpenFile}
+                onPreviewFile={onPreviewFile}
+                onToggleDirectory={onToggleDirectory}
+                onPrefetchFile={onPrefetchFile}
+                onCancelPrefetchFile={onCancelPrefetchFile}
+                status={fileStatusesByPath?.[entry.path]}
+              />
+            );
+          })}
         </div>
       </div>
     </nav>
@@ -283,44 +299,43 @@ function measureTreeViewportHeight(container: HTMLElement): number {
 }
 
 interface TreeRowProps {
-  row: VisibleTreeRow;
-  expandedDirectories: Set<string>;
-  loadingDirectories: Set<string>;
-  activePath: string | null;
+  entry: FileEntry;
+  level: number;
+  isActive: boolean;
+  isExpanded: boolean;
+  isLoading: boolean;
+  status?: GitChangeStatus;
   activeRowRef: RefObject<HTMLButtonElement | null>;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
-  rowStyle: CSSProperties;
 }
 
-function TreeRow({
-  row,
-  expandedDirectories,
-  loadingDirectories,
-  activePath,
+const TreeRow = memo(function TreeRow({
+  entry,
+  level,
+  isActive,
+  isExpanded,
+  isLoading,
+  status,
   activeRowRef,
   onOpenFile,
   onPreviewFile,
   onToggleDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
-  rowStyle,
 }: TreeRowProps) {
-  const { entry, status } = row;
   const isDirectory = entry.kind === "directory";
   const isExpandable = isDirectory;
-  const isExpanded = isDirectory && expandedDirectories.has(entry.path);
-  const isLoading = isDirectory && loadingDirectories.has(entry.path);
   const title = status ? `${entry.path} (${gitStatusTitle(status)})` : entry.path;
 
   return (
     <button
       aria-expanded={isExpandable ? isExpanded : undefined}
       className={
-        entry.path === activePath ? "tree-row tree-row-virtual active" : "tree-row tree-row-virtual"
+        isActive ? "tree-row tree-row-virtual active" : "tree-row tree-row-virtual"
       }
       onClick={(event) => {
         if (event.detail > 1) {
@@ -356,8 +371,13 @@ function TreeRow({
         onPrefetchFile?.(entry);
       }}
       onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
-      ref={entry.path === activePath ? activeRowRef : undefined}
-      style={rowStyle}
+      ref={isActive ? activeRowRef : undefined}
+      style={
+        {
+          "--tree-level": level,
+          height: `${TREE_ROW_HEIGHT}px`,
+        } as CSSProperties
+      }
       title={title}
       type="button"
     >
@@ -380,18 +400,16 @@ function TreeRow({
       ) : null}
     </button>
   );
-}
+});
 
 function getVisibleTreeRows({
   rootPath,
   entriesByDirectory,
   expandedDirectories,
-  fileStatusesByPath,
 }: {
   rootPath: string | null;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
-  fileStatusesByPath?: Record<string, GitChangeStatus>;
 }): VisibleTreeState {
   if (!rootPath) {
     return { rows: [], indexByPath: new Map() };
@@ -417,7 +435,6 @@ function getVisibleTreeRows({
     rows.push({
       entry,
       level: frame.level,
-      status: fileStatusesByPath?.[entry.path],
     });
 
     if (entry.kind === "directory" && expandedDirectories.has(entry.path)) {
