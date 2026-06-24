@@ -315,6 +315,29 @@ impl InitializeRequestFactory for PhpactorInitializeRequestFactory {
                 "initializationOptions": {
                     "language_server.diagnostic_outsource": false,
                     "language_server.diagnostic_sleep_time": 150,
+                    // Keep the Laravel Idea (PhpStorm plugin) IDE-helper stubs out
+                    // of the index. They re-declare real `App\Models\*` classes as
+                    // empty stubs in `vendor/_laravel_idea/`, so worse-reflection
+                    // resolves the FQN to the stub instead of the real model:
+                    // Cmd+Click lands on the stub and `Model::CONST` triggers a
+                    // false-positive `worse.missing_member`. Excluding the stub
+                    // paths removes the duplicate empty declaration from the index
+                    // so both navigation and reflection resolve the real model.
+                    //
+                    // Patterns are root-relative globs (phpactor prepends the
+                    // project root) and PHPactor merges this array over its own
+                    // defaults wholesale, so the upstream defaults are repeated
+                    // here. We exclude ONLY the stub paths, never the whole
+                    // `vendor/` tree, so reflection of real dependencies still
+                    // works.
+                    "indexer.exclude_patterns": [
+                        "/vendor/**/Tests/**/*",
+                        "/vendor/**/tests/**/*",
+                        "/vendor/composer/**/*",
+                        "/vendor/rector/rector/stubs-rector",
+                        "/vendor/_laravel_idea/**/*",
+                        "/_ide_helper*.php",
+                    ],
                 },
             }),
         }
@@ -975,6 +998,72 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["language_server.diagnostic_sleep_time"],
             json!(150)
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_initialize_request_excludes_laravel_idea_stubs_from_index() {
+        let root = create_temp_dir("lsp-phpactor-exclude-stubs");
+        let request = PhpactorInitializeRequestFactory.create(&root);
+
+        // The diagnostics options must survive alongside the new indexer config.
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.diagnostic_outsource"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.diagnostic_sleep_time"],
+            json!(150)
+        );
+
+        let exclude_patterns = request.params["initializationOptions"]
+            ["indexer.exclude_patterns"]
+            .as_array()
+            .expect("indexer.exclude_patterns must be an array");
+        let patterns: Vec<&str> = exclude_patterns
+            .iter()
+            .map(|value| value.as_str().expect("pattern must be a string"))
+            .collect();
+
+        // PHPactor merges this array over its defaults wholesale (top-level
+        // array_merge keyed by the dotted config key), so we must re-declare the
+        // upstream defaults or we would silently drop them.
+        assert!(
+            patterns.contains(&"/vendor/**/Tests/**/*"),
+            "must preserve phpactor default exclude: /vendor/**/Tests/**/*"
+        );
+        assert!(
+            patterns.contains(&"/vendor/**/tests/**/*"),
+            "must preserve phpactor default exclude: /vendor/**/tests/**/*"
+        );
+        assert!(
+            patterns.contains(&"/vendor/composer/**/*"),
+            "must preserve phpactor default exclude: /vendor/composer/**/*"
+        );
+        assert!(
+            patterns.contains(&"/vendor/rector/rector/stubs-rector"),
+            "must preserve phpactor default exclude: /vendor/rector/rector/stubs-rector"
+        );
+
+        // Laravel Idea (PhpStorm plugin) IDE-helper stubs re-declare real
+        // App\Models classes as empty stubs, which corrupts navigation and
+        // member reflection. Exclude only those stub paths from the index.
+        assert!(
+            patterns.contains(&"/vendor/_laravel_idea/**/*"),
+            "must exclude Laravel Idea stub directory from the index"
+        );
+        assert!(
+            patterns.contains(&"/_ide_helper*.php"),
+            "must exclude generated _ide_helper stub files from the index"
+        );
+
+        // The whole vendor/ tree must stay indexed so reflection of real
+        // dependencies keeps working.
+        assert!(
+            !patterns.contains(&"/vendor/**/*"),
+            "must NOT exclude the entire vendor/ tree"
         );
 
         fs::remove_dir_all(root).expect("cleanup");
