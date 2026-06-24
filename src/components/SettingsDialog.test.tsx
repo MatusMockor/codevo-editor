@@ -329,20 +329,70 @@ describe("SettingsDialog", () => {
       settingsSectionButton("Appearance").dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       );
-      await Promise.resolve();
     });
 
     expect(selectWithLabel("Theme")).not.toBeNull();
     expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
-    const fontFamilySelect = selectWithLabel("Font family");
-    expect(Array.from(fontFamilySelect.options).map((option) => option.value))
-      .toEqual([
-        "Fira Code",
-        "Iosevka",
-        defaultAppSettings().editorFontFamily,
-      ]);
+    await waitForFontFamilyOptions([
+      "Fira Code",
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
     expect(inputWithLabel("Font size").type).toBe("number");
     expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
+  });
+
+  it("ignores stale font family refresh results", async () => {
+    let resolveInitialFonts: (fontFamilies: string[]) => void = () => undefined;
+    const initialFonts = new Promise<string[]>((resolve) => {
+      resolveInitialFonts = resolve;
+    });
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi
+        .fn<() => Promise<string[]>>()
+        .mockReturnValueOnce(initialFonts)
+        .mockResolvedValueOnce(["Iosevka"]),
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="appearance"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          systemFontGateway={systemFontGateway}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      refreshFontsButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await waitForFontFamilyOptions([
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
+
+    await act(async () => {
+      resolveInitialFonts(["Fira Code"]);
+    });
+
+    await waitForFontFamilyOptions([
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
   });
 
   it("persists editor font appearance changes", async () => {
@@ -368,28 +418,30 @@ describe("SettingsDialog", () => {
           workspaceTrust={{ rootPath: "/workspace", trusted: true }}
         />,
       );
-      await Promise.resolve();
     });
 
     await act(async () => {
       settingsSectionButton("Appearance").dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       );
-      await Promise.resolve();
     });
+
+    await waitForFontFamilyOptions([
+      "Fira Code",
+      defaultAppSettings().editorFontFamily,
+    ]);
 
     await act(async () => {
       selectWithLabel("Font family").value = "Fira Code";
       selectWithLabel("Font family").dispatchEvent(
         new Event("change", { bubbles: true }),
       );
-      await Promise.resolve();
     });
 
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: {
         ...defaultAppSettings(),
-        editorFontFamily: "Fira Code",
+        editorFontFamily: "Fira Code, monospace",
       },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
@@ -403,7 +455,7 @@ describe("SettingsDialog", () => {
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: {
         ...defaultAppSettings(),
-        editorFontFamily: "Fira Code",
+        editorFontFamily: "Fira Code, monospace",
         editorFontSize: 16,
       },
       trusted: true,
@@ -420,7 +472,7 @@ describe("SettingsDialog", () => {
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: {
         ...defaultAppSettings(),
-        editorFontFamily: "Fira Code",
+        editorFontFamily: "Fira Code, monospace",
         editorFontLigatures: true,
         editorFontSize: 16,
       },
@@ -806,6 +858,30 @@ describe("SettingsDialog", () => {
     }
 
     return select;
+  }
+
+  function refreshFontsButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Refresh fonts"),
+    );
+
+    if (!button) {
+      throw new Error("Refresh fonts button was not rendered.");
+    }
+
+    return button;
+  }
+
+  async function waitForFontFamilyOptions(
+    expectedOptions: string[],
+  ): Promise<void> {
+    await vi.waitFor(() => {
+      expect(
+        Array.from(selectWithLabel("Font family").options).map(
+          (option) => option.value,
+        ),
+      ).toEqual(expectedOptions);
+    });
   }
 
   function checkboxWithLabel(labelText: string): HTMLInputElement {

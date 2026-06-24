@@ -123,7 +123,7 @@ Render:
 </label>
 ```
 
-Use a static monospace option list plus optional browser local-font discovery if available through `globalThis.queryLocalFonts`.
+Use a static monospace option list plus `SystemFontGateway` for optional monospace font discovery through the Tauri and browser backends.
 
 - [ ] **Step 4: Run tests to verify GREEN**
 

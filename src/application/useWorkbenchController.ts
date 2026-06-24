@@ -20623,6 +20623,7 @@ export function useWorkbenchController(
       setFileStructureOpen(false);
       setCallHierarchyView(null);
       setTypeHierarchyView(null);
+      setReferencesView(null);
       setSettingsOpen(true);
     },
     [],

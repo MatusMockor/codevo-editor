@@ -902,6 +902,7 @@ function AppearanceSettings({
   onChangeTheme,
 }: AppearanceSettingsProps) {
   const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
+  const fontFamilyLoadRequestRef = useRef(0);
   const visibleFontFamilyOptions = useMemo(
     () =>
       uniqueSortedStrings([
@@ -912,10 +913,19 @@ function AppearanceSettings({
   );
 
   const loadInstalledFonts = useCallback(async () => {
+    const requestId = fontFamilyLoadRequestRef.current + 1;
+    fontFamilyLoadRequestRef.current = requestId;
+
     try {
       const localFamilies = await systemFontGateway.listMonospaceFontFamilies();
+      if (fontFamilyLoadRequestRef.current !== requestId) {
+        return;
+      }
       setFontFamilyOptions(uniqueSortedStrings(localFamilies));
     } catch {
+      if (fontFamilyLoadRequestRef.current !== requestId) {
+        return;
+      }
       setFontFamilyOptions([]);
     }
   }, [systemFontGateway]);

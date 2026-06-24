@@ -77,6 +77,19 @@ const editorFontFamilyAliasesByLower = new Map(
     fontFamily,
   ]),
 );
+const genericEditorFontFamilies = new Set([
+  "cursive",
+  "fantasy",
+  "math",
+  "monospace",
+  "sans-serif",
+  "serif",
+  "system-ui",
+  "ui-monospace",
+  "ui-rounded",
+  "ui-sans-serif",
+  "ui-serif",
+]);
 
 export interface AppSettings {
   editorFontFamily: string;
@@ -168,7 +181,7 @@ export function normalizeEditorFontFamily(value: unknown): string {
     return defaultEditorFontFamily;
   }
 
-  const normalized = value
+  const normalizedFamilies = value
     .split(",")
     .map((fontFamily) => fontFamily.trim())
     .filter(Boolean)
@@ -176,14 +189,20 @@ export function normalizeEditorFontFamily(value: unknown): string {
       (fontFamily) =>
         editorFontFamilyAliasesByLower.get(fontFamily.toLowerCase()) ??
         fontFamily,
-    )
-    .join(", ");
+    );
 
-  if (!normalized) {
+  if (normalizedFamilies.length === 0) {
     return defaultEditorFontFamily;
   }
 
-  return normalized;
+  if (
+    normalizedFamilies.length === 1 &&
+    !genericEditorFontFamilies.has(normalizedFamilies[0].toLowerCase())
+  ) {
+    return `${normalizedFamilies[0]}, monospace`;
+  }
+
+  return normalizedFamilies.join(", ");
 }
 
 export function monacoFontLigaturesForEditorSetting(enabled: boolean): string {

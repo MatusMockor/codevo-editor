@@ -142,7 +142,7 @@ describe("GitDiffPreview", () => {
     expect(loading).toBeDefined();
   });
 
-  it("uses the provided editor font settings without changing the font family", async () => {
+  it("preserves the provided editor font family in Monaco diff options", async () => {
     gitDiffPreviewMocks.monaco = createMonaco();
 
     await act(async () => {

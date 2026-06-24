@@ -10,16 +10,19 @@ type LocalFontQueryGlobal = typeof globalThis & {
 
 type TextWidthMeasurer = (fontFamily: string, text: string) => number;
 
-const defaultTextWidthMeasurer: TextWidthMeasurer = (fontFamily, text) => {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
+let cachedMeasureContext: CanvasRenderingContext2D | null | undefined;
 
-  if (!context) {
+const defaultTextWidthMeasurer: TextWidthMeasurer = (fontFamily, text) => {
+  if (cachedMeasureContext === undefined) {
+    cachedMeasureContext = document.createElement("canvas").getContext("2d");
+  }
+
+  if (!cachedMeasureContext) {
     return 0;
   }
 
-  context.font = `16px ${cssFontFamily(fontFamily)}, monospace`;
-  return context.measureText(text).width;
+  cachedMeasureContext.font = `16px ${cssFontFamily(fontFamily)}, monospace`;
+  return cachedMeasureContext.measureText(text).width;
 };
 
 export class BrowserSystemFontGateway implements SystemFontGateway {

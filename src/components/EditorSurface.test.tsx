@@ -933,7 +933,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("uses the provided editor font settings for Monaco options without changing the font family", async () => {
+  it("preserves the provided editor font family in Monaco options", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",

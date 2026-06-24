@@ -103,7 +103,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
-      editorFontFamily: "Fira Code",
+      editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
@@ -181,7 +181,21 @@ describe("normalizeAppSettings", () => {
   it("normalizes editor font family case for known aliases", () => {
     expect(
       normalizeAppSettings({ editorFontFamily: "fira code" }).editorFontFamily,
-    ).toBe("Fira Code");
+    ).toBe("Fira Code, monospace");
+  });
+
+  it("adds a monospace fallback for a single editor font family", () => {
+    expect(
+      normalizeAppSettings({ editorFontFamily: "Iosevka" }).editorFontFamily,
+    ).toBe("Iosevka, monospace");
+    expect(
+      normalizeAppSettings({ editorFontFamily: "monospace" }).editorFontFamily,
+    ).toBe("monospace");
+    expect(
+      normalizeAppSettings({
+        editorFontFamily: "Iosevka, Fira Code",
+      }).editorFontFamily,
+    ).toBe("Iosevka, Fira Code");
   });
 
   it("deduplicates workspace tabs by normalized root key", () => {
