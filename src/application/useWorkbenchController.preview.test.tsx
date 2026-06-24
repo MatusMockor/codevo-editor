@@ -27,6 +27,7 @@ import type {
   LanguageServerDiagnosticEvent,
   LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
+import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
 import {
   fileUriFromPath,
   type LanguageServerDocumentSyncGateway,
@@ -2576,6 +2577,7 @@ describe("useWorkbenchController preview tabs", () => {
         version: null,
       });
     });
+    await flushAsyncTurns();
 
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
 
@@ -2943,6 +2945,418 @@ describe("useWorkbenchController preview tabs", () => {
       errors: 0,
       warnings: 0,
     });
+  });
+
+  it("coalesces a burst of PHP diagnostics events into a single batched flush", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const fileCount = 40;
+    const paths = Array.from(
+      { length: fileCount },
+      (_unused, index) => `/workspace/app/Models/Model${index}.php`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      paths.forEach((path, index) => {
+        publishDiagnostics?.({
+          diagnostics: [
+            {
+              character: 0,
+              line: 0,
+              message: `Issue in model ${index}`,
+              severity: "error",
+              source: "phpactor",
+            },
+          ],
+          rootPath: "/workspace",
+          sessionId: 71,
+          uri: fileUriFromPath(path),
+          version: null,
+        });
+      });
+    });
+
+    // The burst is buffered: nothing is applied until the scheduled flush.
+    expect(
+      Object.keys(getWorkbench().languageServerDiagnosticsByPath),
+    ).toHaveLength(0);
+
+    await flushAsyncTurns();
+
+    const applied = getWorkbench().languageServerDiagnosticsByPath;
+    expect(Object.keys(applied)).toHaveLength(fileCount);
+    paths.forEach((path) => {
+      expect(applied[path]).toHaveLength(1);
+    });
+    expect(getWorkbench().diagnosticsSummary.errors).toBe(fileCount);
+  });
+
+  it("coalesces a burst of JavaScript/TypeScript diagnostics into one flush", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 81,
+    };
+    const fileCount = 25;
+    const paths = Array.from(
+      { length: fileCount },
+      (_unused, index) => `/workspace/src/module${index}.ts`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      paths.forEach((path, index) => {
+        publishDiagnostics?.({
+          diagnostics: [
+            {
+              character: 0,
+              line: 0,
+              message: `Type error ${index}`,
+              severity: "error",
+              source: "tsserver",
+            },
+          ],
+          rootPath: "/workspace",
+          sessionId: 81,
+          uri: fileUriFromPath(path),
+          version: null,
+        });
+      });
+    });
+
+    expect(
+      Object.keys(getWorkbench().languageServerDiagnosticsByPath),
+    ).toHaveLength(0);
+
+    await flushAsyncTurns();
+
+    const applied = getWorkbench().languageServerDiagnosticsByPath;
+    expect(Object.keys(applied)).toHaveLength(fileCount);
+    expect(getWorkbench().diagnosticsSummary.errors).toBe(fileCount);
+  });
+
+  it("applies only the latest buffered version per document within a burst", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 91,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          { character: 0, line: 0, message: "v1", severity: "error", source: "phpactor" },
+          { character: 0, line: 1, message: "v1b", severity: "error", source: "phpactor" },
+        ],
+        rootPath: "/workspace",
+        sessionId: 91,
+        uri: fileUriFromPath(path),
+        version: 1,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          { character: 0, line: 0, message: "v2", severity: "warning", source: "phpactor" },
+        ],
+        rootPath: "/workspace",
+        sessionId: 91,
+        uri: fileUriFromPath(path),
+        version: 2,
+      });
+    });
+    await flushAsyncTurns();
+
+    const applied = getWorkbench().languageServerDiagnosticsByPath[path];
+    expect(applied).toHaveLength(1);
+    expect(applied?.[0]?.message).toBe("v2");
+    expect(getWorkbench().diagnosticsSummary).toEqual({ errors: 0, warnings: 1 });
+  });
+
+  it("drops buffered diagnostics for an inactive workspace root on flush", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const activePath = "/workspace-a/app/Models/User.php";
+    const inactivePath = "/workspace-b/app/Models/Post.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 502));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Active root issue",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 501,
+        uri: fileUriFromPath(activePath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Inactive root issue must not leak",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 502,
+        uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const applied = getWorkbench().languageServerDiagnosticsByPath;
+    expect(applied[activePath]).toHaveLength(1);
+    expect(applied[inactivePath]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+  });
+
+  it("globally caps notices across many diagnostic files with an overflow indicator", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 601,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    // 2100 files each contributing one diagnostic notice exceeds the 2000
+    // global cap, so the list must be bounded and carry a single overflow notice.
+    const fileCount = 2100;
+    act(() => {
+      for (let index = 0; index < fileCount; index += 1) {
+        publishDiagnostics?.({
+          diagnostics: [
+            {
+              character: 0,
+              line: 0,
+              message: `Issue ${index}`,
+              severity: "error",
+              source: "phpactor",
+            },
+          ],
+          rootPath: "/workspace",
+          sessionId: 601,
+          uri: fileUriFromPath(`/workspace/app/File${index}.php`),
+          version: null,
+        });
+      }
+    });
+    await flushAsyncTurns();
+
+    const notices = getWorkbench().notices;
+    const diagnosticNotices = notices.filter((notice) =>
+      notice.groupKey?.startsWith("language-server-diagnostics:"),
+    );
+    const overflowNotices = notices.filter(
+      (notice) => notice.groupKey === "workbench-notice-overflow",
+    );
+
+    // Bounded near the global cap (kept diagnostics + one overflow indicator),
+    // never the full 2100.
+    expect(notices.length).toBeLessThanOrEqual(2001);
+    expect(diagnosticNotices.length).toBeLessThanOrEqual(2000);
+    expect(diagnosticNotices.length).toBeGreaterThan(0);
+    expect(overflowNotices).toHaveLength(1);
+    expect(overflowNotices[0].kind).toBe("overflow");
+
+    // Editor markers come from a separate, uncapped source: every file's
+    // diagnostics are still tracked for markers even though notices are capped.
+    expect(
+      Object.keys(getWorkbench().languageServerDiagnosticsByPath).length,
+    ).toBe(fileCount);
+    expect(getWorkbench().diagnosticsSummary.errors).toBe(fileCount);
+  });
+
+  it("preserves the per-document notice cap with an overflow indicator", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 611,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: Array.from({ length: 250 }, (_unused, index) => ({
+          character: 0,
+          line: index,
+          message: `Diagnostic ${index}`,
+          severity: "error" as const,
+          source: "phpactor",
+        })),
+        rootPath: "/workspace",
+        sessionId: 611,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const groupKey = `language-server-diagnostics:${fileUriFromPath(path)}`;
+    const groupNotices = getWorkbench().notices.filter(
+      (notice) => notice.groupKey === groupKey,
+    );
+
+    // 100 kept diagnostics + 1 per-document overflow indicator.
+    expect(groupNotices).toHaveLength(101);
+    expect(groupNotices[100].kind).toBe("overflow");
+    // Editor markers stay uncapped: all 250 diagnostics are tracked.
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(
+      250,
+    );
   });
 
   it("clears diagnostics for a deleted PHP document and sends didClose", async () => {
@@ -47268,6 +47682,7 @@ function WorkbenchHarness({
     dependencies.terminalGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
+    { diagnosticsFlushScheduler: microtaskDiagnosticsFlushScheduler },
   );
 
   useEffect(() => {
@@ -47276,6 +47691,35 @@ function WorkbenchHarness({
 
   return null;
 }
+
+// jsdom's requestAnimationFrame only fires after a macrotask, which the
+// microtask-based `flushAsyncTurns` helper never advances. Tests therefore drive
+// the diagnostics coalescer through a microtask scheduler so a single
+// `flushAsyncTurns()` after `publishDiagnostics` still applies the batch, exactly
+// as production applies it one frame later.
+let microtaskFlushSequence: Promise<void> = Promise.resolve();
+const microtaskDiagnosticsFlushScheduler: DiagnosticsFlushScheduler = (() => {
+  let nextHandle = 1;
+  const cancelled = new Set<number>();
+  return {
+    cancel: (handle: number) => {
+      cancelled.add(handle);
+    },
+    schedule: (flush: () => void): number => {
+      const handle = nextHandle;
+      nextHandle += 1;
+      microtaskFlushSequence = microtaskFlushSequence.then(() => {
+        if (cancelled.has(handle)) {
+          cancelled.delete(handle);
+          return;
+        }
+
+        flush();
+      });
+      return handle;
+    },
+  };
+})();
 
 function createControllerDependencies({
   appSettings,

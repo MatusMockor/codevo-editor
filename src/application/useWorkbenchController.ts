@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
   capDiagnosticNotices,
+  capWorkbenchNotices,
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
@@ -56,6 +57,11 @@ import {
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
+import {
+  DiagnosticsCoalescer,
+  animationFrameDiagnosticsFlushScheduler,
+  type DiagnosticsFlushScheduler,
+} from "../domain/diagnosticsCoalescer";
 import {
   filterPhpLanguageServerDiagnostics,
   phpMemberMethodDiagnosticKey,
@@ -502,6 +508,15 @@ export interface WorkbenchWorkspaceGateways {
   textSearch: TextSearchGateway;
 }
 
+export interface WorkbenchControllerOptions {
+  /**
+   * Strategy that defers the coalesced diagnostics flush. Production omits this
+   * to use one flush per animation frame (with a `setTimeout(0)` fallback);
+   * tests inject a deterministic scheduler so flushes can be driven explicitly.
+   */
+  diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
+}
+
 interface OpenFileOptions {
   pin?: boolean;
   readOnly?: boolean;
@@ -696,6 +711,30 @@ const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 // appended so diagnostics are never dropped silently.
 const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
 
+// Global ceiling on the total diagnostic notices retained in state. The
+// per-document cap above bounds a single file's contribution, but a large
+// project with diagnostics across thousands of files would still grow the list
+// without bound — and each publishDiagnostics runs an O(total) group replace.
+// This caps the head (newest groups are prepended) and appends one truthful
+// overflow indicator. Editor markers come from a separate, uncapped source.
+const GLOBAL_NOTICE_LIMIT = 2000;
+
+// Only diagnostic notices are subject to the global cap; errors, setup prompts
+// and other non-diagnostic notices are always retained so important messages are
+// never silently dropped when a large project floods the list with diagnostics.
+function isCappableDiagnosticNotice(notice: WorkbenchNotice): boolean {
+  const groupKey = notice.groupKey;
+
+  if (!groupKey) {
+    return false;
+  }
+
+  return (
+    groupKey.startsWith("language-server-diagnostics:") ||
+    groupKey.startsWith("javascript-typescript-diagnostics:")
+  );
+}
+
 function buildDiagnosticOverflowNotice(
   source: string,
   groupKey: string,
@@ -796,6 +835,7 @@ export function useWorkbenchController(
   terminalGateway: TerminalGateway,
   settingsGateway: SettingsGateway,
   prompter: WorkbenchPrompter,
+  options: WorkbenchControllerOptions = {},
 ) {
   const {
     detection: workspaceDetection,
@@ -1045,6 +1085,19 @@ export function useWorkbenchController(
   const languageServerDiagnosticsByRootRef = useRef<
     Record<string, Record<string, LanguageServerDiagnostic[]>>
   >({});
+  // Coalescers buffer incoming publishDiagnostics events (per root/uri) and
+  // replay them through the apply* sinks once per scheduled frame, collapsing an
+  // indexing burst of N un-batched events into a single batched application.
+  // Held in refs so workspace-switch / close paths can drop a root's buffer
+  // before it flushes, keeping diagnostics isolated per workspace tab.
+  const languageServerDiagnosticsCoalescerRef =
+    useRef<DiagnosticsCoalescer | null>(null);
+  const javaScriptTypeScriptDiagnosticsCoalescerRef =
+    useRef<DiagnosticsCoalescer | null>(null);
+  const diagnosticsFlushSchedulerRef = useRef<DiagnosticsFlushScheduler>(
+    options.diagnosticsFlushScheduler ??
+      animationFrameDiagnosticsFlushScheduler(),
+  );
   const javaScriptTypeScriptDocumentVersionsRef = useRef<Record<string, number>>(
     {},
   );
@@ -1536,6 +1589,8 @@ export function useWorkbenchController(
         delete languageServerDiagnosticsByRootRef.current[rootKey];
       }
 
+      languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+
       if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
         clearLanguageServerDiagnostics();
       }
@@ -1601,6 +1656,8 @@ export function useWorkbenchController(
       if (rootKey) {
         delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
       }
+
+      javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
 
       if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
@@ -1831,7 +1888,11 @@ export function useWorkbenchController(
 
         if (isLatestActiveRoot) {
           setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+            capWorkbenchNotices(
+              replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+              GLOBAL_NOTICE_LIMIT,
+              isCappableDiagnosticNotice,
+            ),
           );
         }
 
@@ -1966,7 +2027,11 @@ export function useWorkbenchController(
 
       if (isActiveRoot) {
         setNotices((current) =>
-          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+          capWorkbenchNotices(
+            replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+            GLOBAL_NOTICE_LIMIT,
+            isCappableDiagnosticNotice,
+          ),
         );
       }
 
@@ -3022,6 +3087,10 @@ export function useWorkbenchController(
 
     if (currentRootPath) {
       await stopProjectRuntimes(currentRootPath);
+      languageServerDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
+      javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(
+        currentRootPath,
+      );
     }
 
     workspaceSessionRestoredRef.current = false;
@@ -23142,6 +23211,11 @@ export function useWorkbenchController(
   useEffect(() => {
     let active = true;
     let unsubscribe: UnsubscribeFn | null = null;
+    const coalescer = new DiagnosticsCoalescer(
+      applyLanguageServerDiagnostics,
+      diagnosticsFlushSchedulerRef.current,
+    );
+    languageServerDiagnosticsCoalescerRef.current = coalescer;
 
     languageServerDiagnosticsGateway
       .subscribeDiagnostics((event) => {
@@ -23149,7 +23223,7 @@ export function useWorkbenchController(
           return;
         }
 
-        applyLanguageServerDiagnostics(event);
+        coalescer.enqueue(event);
       })
       .then((dispose) => {
         if (!active) {
@@ -23171,9 +23245,19 @@ export function useWorkbenchController(
         reportLanguageServerError(error);
       });
 
+    // The subscription (and its coalescer) is re-established per workspace root.
+    // Disposing the coalescer here only discards events buffered in the current
+    // frame for the root being switched AWAY from; those belong to the now
+    // background tab (filtered by the sink guards anyway) and the active tab's
+    // server re-publishes its own diagnostics, so no active-view diagnostic is
+    // lost. The buffer is flushed once per frame while a root stays active.
     return () => {
       active = false;
       unsubscribe?.();
+      coalescer.dispose();
+      if (languageServerDiagnosticsCoalescerRef.current === coalescer) {
+        languageServerDiagnosticsCoalescerRef.current = null;
+      }
     };
   }, [
     applyLanguageServerDiagnostics,
@@ -23185,6 +23269,11 @@ export function useWorkbenchController(
   useEffect(() => {
     let active = true;
     let unsubscribe: UnsubscribeFn | null = null;
+    const coalescer = new DiagnosticsCoalescer(
+      applyJavaScriptTypeScriptLanguageServerDiagnostics,
+      diagnosticsFlushSchedulerRef.current,
+    );
+    javaScriptTypeScriptDiagnosticsCoalescerRef.current = coalescer;
 
     javaScriptTypeScriptLanguageServerDiagnosticsGateway
       .subscribeDiagnostics((event) => {
@@ -23192,7 +23281,7 @@ export function useWorkbenchController(
           return;
         }
 
-        applyJavaScriptTypeScriptLanguageServerDiagnostics(event);
+        coalescer.enqueue(event);
       })
       .then((dispose) => {
         if (!active) {
@@ -23214,9 +23303,15 @@ export function useWorkbenchController(
         reportError("JavaScript/TypeScript", error);
       });
 
+    // See the PHP diagnostics effect: the coalescer is re-established per root
+    // and only discards the current frame's buffer for the switched-away root.
     return () => {
       active = false;
       unsubscribe?.();
+      coalescer.dispose();
+      if (javaScriptTypeScriptDiagnosticsCoalescerRef.current === coalescer) {
+        javaScriptTypeScriptDiagnosticsCoalescerRef.current = null;
+      }
     };
   }, [
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
