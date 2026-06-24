@@ -3596,6 +3596,86 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", path);
   });
 
+  it("does not send a debounced JavaScript and TypeScript didChange after the document was closed", async () => {
+    // STABILITY: the 150ms didChange debounce timer can fire and enqueue its
+    // sync operation while an earlier sync (here a held didOpen) is still in
+    // flight. If closeDocument runs in the meantime, the document is removed
+    // from the synced set and a didClose is sent; the queued didChange must then
+    // be dropped so it never targets a closed document (UnknownDocument/desync).
+    // Single-tab close does not bump the JS/TS sync generation, so the synced
+    // set membership is the guard that has to catch this.
+    const didOpen = createDeferred<void>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 742,
+    };
+    const path = "/workspace/src/App.ts";
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    // Hold the didOpen sync so the per-document sync queue stays busy; any
+    // didChange enqueued afterwards is blocked behind it until we resolve it.
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).mockReturnValue(didOpen.promise);
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    // Edit the document, then let the 150ms debounce elapse so the didChange
+    // timer fires and enqueues its (queued, blocked) sync operation.
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    // Close the document: this removes it from the synced set and enqueues a
+    // didClose behind the still-blocked didChange.
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+
+    // Release the held didOpen so the queue drains: didChange must be skipped.
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didChange,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didClose,
+    ).toHaveBeenCalledWith("/workspace", path);
+  });
+
   it("applies a phpactor clear carrying the analysis version after the document version advanced", async () => {
     // BUG 1: phpactor publishes diagnostics asynchronously keyed by the analysis
     // version. After a didChange bumps the live document version to 2, phpactor

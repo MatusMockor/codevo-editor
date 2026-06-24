@@ -1,10 +1,45 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyEditorChangeRevert,
   editorChangeHunks,
 } from "./editorChangeMarkers";
 
 describe("editorChangeHunks", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not re-split the unchanged baseline on repeated edits", () => {
+    const baseline = ["alpha", "beta", "gamma", "delta", "epsilon"].join("\n");
+    // Prime the baseline cache so its split is counted only on the first call,
+    // then measure subsequent keystrokes against the same baseline string.
+    editorChangeHunks(baseline, baseline + "\nfirst");
+
+    const splitSpy = vi.spyOn(String.prototype, "split");
+    const newlineSplitCount = () =>
+      splitSpy.mock.calls.filter(
+        ([separator]) => (separator as unknown) === "\n",
+      ).length;
+
+    // Each subsequent keystroke must split only the current content (1 split),
+    // never the unchanged baseline again.
+    editorChangeHunks(baseline, baseline + "\nsecond");
+    expect(newlineSplitCount()).toBe(1);
+
+    editorChangeHunks(baseline, baseline + "\nthird");
+    expect(newlineSplitCount()).toBe(2);
+  });
+
+  it("produces identical hunks whether or not the baseline was cached", () => {
+    const baseline = "one\ntwo\nthree\nfour";
+    const current = "one\nchanged\nthree\nfour";
+
+    const first = editorChangeHunks(baseline, current);
+    const second = editorChangeHunks(baseline, current);
+
+    expect(second).toEqual(first);
+  });
+
   it("detects added lines", () => {
     const hunks = editorChangeHunks("one\ntwo", "one\ninserted\ntwo");
 

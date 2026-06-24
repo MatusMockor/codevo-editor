@@ -32,6 +32,37 @@ describe("CommandRegistry", () => {
     ]);
   });
 
+  it("returns a stable list reference until commands change", () => {
+    const registry = new CommandRegistry();
+
+    registry.register({
+      id: "a",
+      title: "Alpha",
+      category: "Test",
+      isEnabled: () => true,
+      run: () => undefined,
+    });
+
+    const first = registry.list();
+    const second = registry.list();
+
+    expect(second).toBe(first);
+
+    registry.register({
+      id: "b",
+      title: "Beta",
+      category: "Test",
+      isEnabled: () => true,
+      run: () => undefined,
+    });
+
+    const third = registry.list();
+
+    expect(third).not.toBe(first);
+    expect(registry.list()).toBe(third);
+    expect(third.map((command) => command.title)).toEqual(["Alpha", "Beta"]);
+  });
+
   it("rejects duplicate command ids", () => {
     const registry = new CommandRegistry();
     const command = {

@@ -3363,7 +3363,14 @@ export function useWorkbenchController(
             javaScriptTypeScriptDocumentSyncGenerationRef.current;
 
           void enqueueJavaScriptTypeScriptDocumentSync(syncKey, async () => {
+            // The debounce timer can fire after closeDocument ->
+            // syncClosedJavaScriptTypeScriptDocument has already removed this
+            // document from the synced set (and sent didClose). Single-tab close
+            // does not bump the sync generation, so check synced-set membership
+            // first; sending a didChange now would target a closed document
+            // (UnknownDocument / desync), so drop it if no longer synced.
             if (
+              !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey) ||
               javaScriptTypeScriptDocumentSyncGenerationRef.current !==
                 requestedSyncGeneration ||
               !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
@@ -6235,7 +6242,8 @@ export function useWorkbenchController(
   );
 
   const openFileStructure = useCallback(() => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       setMessage("Open a PHP, JavaScript, or TypeScript file to show structure.");
       return;
     }
@@ -6250,7 +6258,7 @@ export function useWorkbenchController(
     setTypeHierarchyView(null);
     setReferencesView(null);
 
-    if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+    if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
       if (
         !workspaceRoot ||
         !isRunningLanguageServerForWorkspace(
@@ -6277,16 +6285,16 @@ export function useWorkbenchController(
       setFileStructureOpen(true);
 
       if (
-        !javaScriptTypeScriptFileOutlinesByPath[activeDocument.path] &&
-        !loadingJavaScriptTypeScriptFileOutlinePaths.has(activeDocument.path)
+        !javaScriptTypeScriptFileOutlinesByPath[document.path] &&
+        !loadingJavaScriptTypeScriptFileOutlinePaths.has(document.path)
       ) {
-        void loadJavaScriptTypeScriptFileOutline(activeDocument.path);
+        void loadJavaScriptTypeScriptFileOutline(document.path);
       }
 
       return;
     }
 
-    if (!isLanguageServerDocument(activeDocument)) {
+    if (!isLanguageServerDocument(document)) {
       setMessage("File structure is available for PHP, JavaScript, and TypeScript files.");
       return;
     }
@@ -6299,14 +6307,13 @@ export function useWorkbenchController(
     setFileStructureOpen(true);
 
     if (
-      !phpFileOutlinesByPath[activeDocument.path] &&
-      !loadingPhpFileOutlinePaths.has(activeDocument.path)
+      !phpFileOutlinesByPath[document.path] &&
+      !loadingPhpFileOutlinePaths.has(document.path)
     ) {
-      void loadPhpFileOutline(activeDocument.path);
+      void loadPhpFileOutline(document.path);
     }
 
   }, [
-    activeDocument,
     fileStructureOpen,
     fileStructureScope,
     javaScriptTypeScriptFileOutlinesByPath,
@@ -7119,7 +7126,8 @@ export function useWorkbenchController(
   );
 
   const saveActiveDocument = useCallback(async () => {
-    if (!activeDocument || activeDocument.readOnly) {
+    const documentToFormat = activeDocumentRef.current;
+    if (!documentToFormat || documentToFormat.readOnly) {
       return;
     }
 
@@ -7130,7 +7138,7 @@ export function useWorkbenchController(
 
     try {
       const formattedContent = await formattedContentForSave(
-        activeDocument,
+        documentToFormat,
         requestedRoot,
       );
 
@@ -7139,7 +7147,7 @@ export function useWorkbenchController(
       }
 
       const documentToSave: EditorDocument = {
-        ...activeDocument,
+        ...documentToFormat,
         content: formattedContent,
       };
 
@@ -7179,7 +7187,6 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
-    activeDocument,
     formattedContentForSave,
     reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
@@ -7562,7 +7569,7 @@ export function useWorkbenchController(
   const generateTestForActiveDocument = useCallback(async () => {
     const requestedRoot = workspaceRoot;
     const requestedDescriptor = workspaceDescriptor;
-    const requestedDocument = activeDocument;
+    const requestedDocument = activeDocumentRef.current;
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
@@ -7642,7 +7649,6 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Generate Test", error);
     }
   }, [
-    activeDocument,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     openFile,
     readTestFileIfExists,
@@ -19195,7 +19201,8 @@ export function useWorkbenchController(
   );
 
   const openCallHierarchy = useCallback(async () => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       setMessage(
         "Open a PHP, JavaScript, or TypeScript file to show call hierarchy.",
       );
@@ -19204,8 +19211,8 @@ export function useWorkbenchController(
 
     if (
       !workspaceRoot ||
-      (!isLanguageServerDocument(activeDocument) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(activeDocument))
+      (!isLanguageServerDocument(document) &&
+        !isJavaScriptTypeScriptLanguageServerDocument(document))
     ) {
       setMessage(
         "Call hierarchy is available for PHP, JavaScript, and TypeScript files.",
@@ -19213,7 +19220,7 @@ export function useWorkbenchController(
       return;
     }
 
-    const isPhpDocument = isLanguageServerDocument(activeDocument);
+    const isPhpDocument = isLanguageServerDocument(document);
     let callHierarchyContext: {
       featuresGateway: LanguageServerFeaturesGateway;
       flushPendingChange(path: string): Promise<void>;
@@ -19294,7 +19301,7 @@ export function useWorkbenchController(
     }
 
     const requestedRoot = workspaceRoot;
-    const requestedPath = activeDocument.path;
+    const requestedPath = document.path;
     const requestedSessionId = callHierarchyContext.sessionId;
     const isRequestedSessionActive = () =>
       callHierarchyContext.isSessionActive(requestedRoot, requestedSessionId);
@@ -19361,7 +19368,6 @@ export function useWorkbenchController(
       reportError("Call Hierarchy", error);
     }
   }, [
-    activeDocument,
     flushPendingDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChange,
     isLanguageServerSessionActiveForRoot,
@@ -19377,7 +19383,8 @@ export function useWorkbenchController(
   ]);
 
   const openTypeHierarchy = useCallback(async () => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       setMessage(
         "Open a PHP, JavaScript, or TypeScript file to show type hierarchy.",
       );
@@ -19386,8 +19393,8 @@ export function useWorkbenchController(
 
     if (
       !workspaceRoot ||
-      (!isLanguageServerDocument(activeDocument) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(activeDocument))
+      (!isLanguageServerDocument(document) &&
+        !isJavaScriptTypeScriptLanguageServerDocument(document))
     ) {
       setMessage(
         "Type hierarchy is available for PHP, JavaScript, and TypeScript files.",
@@ -19395,7 +19402,7 @@ export function useWorkbenchController(
       return;
     }
 
-    const isPhpDocument = isLanguageServerDocument(activeDocument);
+    const isPhpDocument = isLanguageServerDocument(document);
     let typeHierarchyContext: {
       featuresGateway: LanguageServerFeaturesGateway;
       flushPendingChange(path: string): Promise<void>;
@@ -19476,7 +19483,7 @@ export function useWorkbenchController(
     }
 
     const requestedRoot = workspaceRoot;
-    const requestedPath = activeDocument.path;
+    const requestedPath = document.path;
     const requestedSessionId = typeHierarchyContext.sessionId;
     const isRequestedSessionActive = () =>
       typeHierarchyContext.isSessionActive(requestedRoot, requestedSessionId);
@@ -19543,7 +19550,6 @@ export function useWorkbenchController(
       reportError("Type Hierarchy", error);
     }
   }, [
-    activeDocument,
     flushPendingDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChange,
     isLanguageServerSessionActiveForRoot,
@@ -19582,7 +19588,8 @@ export function useWorkbenchController(
   );
 
   const openReferencesPanel = useCallback(async () => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       setMessage(
         "Open a PHP, JavaScript, or TypeScript file to find references.",
       );
@@ -19591,8 +19598,8 @@ export function useWorkbenchController(
 
     if (
       !workspaceRoot ||
-      (!isLanguageServerDocument(activeDocument) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(activeDocument))
+      (!isLanguageServerDocument(document) &&
+        !isJavaScriptTypeScriptLanguageServerDocument(document))
     ) {
       setMessage(
         "Find references is available for PHP, JavaScript, and TypeScript files.",
@@ -19600,7 +19607,7 @@ export function useWorkbenchController(
       return;
     }
 
-    const isPhpDocument = isLanguageServerDocument(activeDocument);
+    const isPhpDocument = isLanguageServerDocument(document);
     let referencesContext: {
       featuresGateway: LanguageServerFeaturesGateway;
       flushPendingChange(path: string): Promise<void>;
@@ -19681,10 +19688,10 @@ export function useWorkbenchController(
     }
 
     const symbolName =
-      identifierAtEditorPosition(activeDocument.content, editorPosition) ??
+      identifierAtEditorPosition(document.content, editorPosition) ??
       "symbol";
     const requestedRoot = workspaceRoot;
-    const requestedPath = activeDocument.path;
+    const requestedPath = document.path;
     const requestedSessionId = referencesContext.sessionId;
     const isRequestedSessionActive = () =>
       referencesContext.isSessionActive(requestedRoot, requestedSessionId);
@@ -19733,7 +19740,6 @@ export function useWorkbenchController(
       reportError("Find References", error);
     }
   }, [
-    activeDocument,
     flushPendingDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChange,
     isLanguageServerSessionActiveForRoot,
@@ -19830,7 +19836,8 @@ export function useWorkbenchController(
   ]);
 
   const renameActiveDocument = useCallback(async () => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       return;
     }
 
@@ -19839,46 +19846,46 @@ export function useWorkbenchController(
       return;
     }
 
-    const nextName = prompter.prompt("Rename file", activeDocument.name);
+    const nextName = prompter.prompt("Rename file", document.name);
 
-    if (!nextName || nextName === activeDocument.name) {
+    if (!nextName || nextName === document.name) {
       return;
     }
 
-    const parentPath = getParentPath(activeDocument.path);
-    const oldPath = activeDocument.path;
+    const parentPath = getParentPath(document.path);
+    const oldPath = document.path;
     const nextPath = joinWorkspacePath(parentPath, nextName);
 
     try {
-      if (isLanguageServerDocument(activeDocument)) {
-        await applyPhpRenameEdits(activeDocument.path, nextPath);
+      if (isLanguageServerDocument(document)) {
+        await applyPhpRenameEdits(document.path, nextPath);
       }
 
-      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-        await applyJavaScriptTypeScriptRenameEdits(activeDocument.path, nextPath);
+      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+        await applyJavaScriptTypeScriptRenameEdits(document.path, nextPath);
       }
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      await workspaceFiles.renamePath(activeDocument.path, nextPath);
-      filePrefetchCacheRef.current.invalidate(activeDocument.path);
+      await workspaceFiles.renamePath(document.path, nextPath);
+      filePrefetchCacheRef.current.invalidate(document.path);
       filePrefetchCacheRef.current.invalidate(nextPath);
-      if (isLanguageServerDocument(activeDocument)) {
-        await notifyPhpFileRenamed(activeDocument.path, nextPath);
+      if (isLanguageServerDocument(document)) {
+        await notifyPhpFileRenamed(document.path, nextPath);
       }
 
-      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-        await notifyJavaScriptTypeScriptFileRenamed(activeDocument.path, nextPath);
+      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+        await notifyJavaScriptTypeScriptFileRenamed(document.path, nextPath);
       }
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      await syncClosedDocument(activeDocument);
-      await syncClosedJavaScriptTypeScriptDocument(activeDocument);
+      await syncClosedDocument(document);
+      await syncClosedJavaScriptTypeScriptDocument(document);
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
@@ -19887,7 +19894,7 @@ export function useWorkbenchController(
       clearLanguageServerDiagnosticsForPath(requestedRoot, oldPath);
 
       setDocuments((current) => {
-        const currentDocument = current[activeDocument.path] ?? activeDocument;
+        const currentDocument = current[document.path] ?? document;
         const renamedDocument = {
           ...currentDocument,
           language: detectLanguage(nextPath),
@@ -19895,12 +19902,12 @@ export function useWorkbenchController(
           path: nextPath,
         };
         const next = { ...current };
-        delete next[activeDocument.path];
+        delete next[document.path];
         next[nextPath] = renamedDocument;
         return next;
       });
       setOpenPaths((current) =>
-        current.map((path) => (path === activeDocument.path ? nextPath : path)),
+        current.map((path) => (path === document.path ? nextPath : path)),
       );
       setActivePath(nextPath);
       await refreshDirectory(parentPath);
@@ -19908,12 +19915,11 @@ export function useWorkbenchController(
         return;
       }
 
-      setMessage(`Renamed ${activeDocument.name}`);
+      setMessage(`Renamed ${document.name}`);
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename File", error);
     }
   }, [
-    activeDocument,
     applyJavaScriptTypeScriptRenameEdits,
     applyPhpRenameEdits,
     clearLanguageServerDiagnosticsForPath,
@@ -19929,7 +19935,8 @@ export function useWorkbenchController(
   ]);
 
   const deleteActiveDocument = useCallback(async () => {
-    if (!activeDocument) {
+    const document = activeDocumentRef.current;
+    if (!document) {
       return;
     }
 
@@ -19938,12 +19945,12 @@ export function useWorkbenchController(
       return;
     }
 
-    if (!prompter.confirm(`Delete ${activeDocument.name}?`)) {
+    if (!prompter.confirm(`Delete ${document.name}?`)) {
       return;
     }
 
-    const parentPath = getParentPath(activeDocument.path);
-    const deletedPath = activeDocument.path;
+    const parentPath = getParentPath(document.path);
+    const deletedPath = document.path;
 
     try {
       await workspaceFiles.deletePath(deletedPath);
@@ -19952,8 +19959,8 @@ export function useWorkbenchController(
         return;
       }
 
-      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-        await syncClosedJavaScriptTypeScriptDocument(activeDocument);
+      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+        await syncClosedJavaScriptTypeScriptDocument(document);
       }
       await notifyJavaScriptTypeScriptWatchedFilesChanged([
         {
@@ -19972,12 +19979,11 @@ export function useWorkbenchController(
         return;
       }
 
-      setMessage(`Deleted ${activeDocument.name}`);
+      setMessage(`Deleted ${document.name}`);
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Delete File", error);
     }
   }, [
-    activeDocument,
     clearLanguageServerDiagnosticsForPath,
     closeActiveSurface,
     closeDocument,

@@ -260,6 +260,18 @@ function EditorSurfaceComponent({
     new PhpImplementationGutterTargetsCache(),
   );
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
+  // Tracks the diagnostics map seen on the previous run and the set of model
+  // objects already given language-server markers, so the marker effect can
+  // re-apply markers only for paths whose diagnostics actually changed (or for
+  // new/reopened model objects) instead of every open model. A WeakSet keys on
+  // the model object: a model disposed on close and recreated on reopen is a new
+  // object, so it is correctly re-marked even when its diagnostics are unchanged.
+  const previousLanguageServerDiagnosticsByPathRef = useRef<
+    Record<string, LanguageServerDiagnostic[]>
+  >({});
+  const markedLanguageServerModelsRef = useRef<
+    WeakSet<Monaco.editor.ITextModel>
+  >(new WeakSet());
   const phpCodeActionsRef = useRef(providePhpCodeActions);
   const bladeCompletionsRef = useRef(provideBladeCompletions);
   const bladeDefinitionRef = useRef(provideBladeDefinition);
@@ -1057,9 +1069,34 @@ function EditorSurfaceComponent({
       return;
     }
 
+    // The diagnostics map gets a fresh identity on every language-server event,
+    // but typically only one path's diagnostics actually change. Re-applying
+    // markers to every open model on each event is wasteful (large projects can
+    // have many models open). Re-apply markers only for models we have not marked
+    // yet (a freshly opened model, or one disposed-and-recreated for the same
+    // path on reopen, is a new object the WeakSet has not seen) or whose
+    // diagnostics array identity changed since the previous run. The result is
+    // identical to a full re-apply, with far less per-event work.
+    const previousDiagnosticsByPath =
+      previousLanguageServerDiagnosticsByPathRef.current;
+    const markedModels = markedLanguageServerModelsRef.current;
+
     monacoApi.editor.getModels().forEach((model) => {
       const path = modelPath(model);
-      const diagnostics = path ? languageServerDiagnosticsByPath[path] ?? [] : [];
+
+      if (!path) {
+        return;
+      }
+
+      const diagnostics = languageServerDiagnosticsByPath[path] ?? [];
+      const isNewModel = !markedModels.has(model);
+      const diagnosticsChanged =
+        previousDiagnosticsByPath[path] !== languageServerDiagnosticsByPath[path];
+
+      if (!isNewModel && !diagnosticsChanged) {
+        return;
+      }
+
       monacoApi.editor.setModelMarkers(
         model,
         "php-language-server",
@@ -1067,15 +1104,19 @@ function EditorSurfaceComponent({
           toMonacoDiagnosticMarker(monacoApi, diagnostic),
         ),
       );
+      markedModels.add(model);
     });
+
+    previousLanguageServerDiagnosticsByPathRef.current =
+      languageServerDiagnosticsByPath;
     // Re-key on the active document's *path* (a stable string), not its object
     // identity. `activeDocument` is replaced with a fresh `{ ...doc, content }`
-    // on every keystroke, which would otherwise remap+re-set markers for every
-    // open model on each character typed even though diagnostics are unchanged.
-    // The path still changes when a new file is opened/activated, so a freshly
-    // opened model that already has diagnostics still gets its markers; real
-    // diagnostic changes are covered by the `languageServerDiagnosticsByPath`
-    // dependency.
+    // on every keystroke, which would otherwise re-run for every open model on
+    // each character typed even though diagnostics are unchanged. The path still
+    // changes when a new file is opened/activated, so a freshly opened model
+    // that already has diagnostics still gets its markers (handled by the
+    // newly-seen-path branch above); real diagnostic changes are covered by the
+    // `languageServerDiagnosticsByPath` dependency and the per-path diff.
   }, [activeDocument?.path, languageServerDiagnosticsByPath, monacoApi]);
 
   useEffect(() => {

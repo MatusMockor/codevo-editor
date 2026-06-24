@@ -15,6 +15,7 @@ export interface Command {
 
 export class CommandRegistry {
   private readonly commands = new Map<string, Command>();
+  private cachedList: Command[] | null = null;
 
   register(command: Command): void {
     if (this.commands.has(command.id)) {
@@ -22,12 +23,19 @@ export class CommandRegistry {
     }
 
     this.commands.set(command.id, command);
+    this.cachedList = null;
   }
 
   list(): Command[] {
-    return Array.from(this.commands.values()).sort((left, right) =>
+    if (this.cachedList) {
+      return this.cachedList;
+    }
+
+    this.cachedList = Array.from(this.commands.values()).sort((left, right) =>
       left.title.localeCompare(right.title),
     );
+
+    return this.cachedList;
   }
 
   get(id: string): Command | undefined {

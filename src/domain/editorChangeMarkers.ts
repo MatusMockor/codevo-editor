@@ -34,7 +34,7 @@ export function editorChangeHunks(
     return [];
   }
 
-  const originalLines = normalizedLines(originalContent);
+  const originalLines = normalizedBaselineLines(originalContent);
   const currentLines = normalizedLines(currentContent);
   const prefixLength = commonPrefixLength(originalLines, currentLines);
   const suffixLength = commonSuffixLength(
@@ -86,6 +86,25 @@ export function applyEditorChangeRevert(
 
 function normalizedLines(content: string): string[] {
   return content.replace(/\r\n/g, "\n").split("\n");
+}
+
+// The change gutter recomputes hunks on every keystroke, but the baseline
+// (saved content / git baseline) is the same string while the user types. Cache
+// its normalized split so only the current content is re-split per keystroke,
+// keeping large-file typing responsive. A single-entry cache is enough because
+// the baseline rarely changes; the result is read-only (callers only slice it),
+// so it is safe to share.
+let cachedBaselineContent: string | null = null;
+let cachedBaselineLines: string[] = [];
+
+function normalizedBaselineLines(content: string): string[] {
+  if (cachedBaselineContent === content) {
+    return cachedBaselineLines;
+  }
+
+  cachedBaselineContent = content;
+  cachedBaselineLines = normalizedLines(content);
+  return cachedBaselineLines;
 }
 
 function commonPrefixLength(left: string[], right: string[]): number {

@@ -1853,6 +1853,236 @@ interface ParserFactory
     expect(secondModelMarkerCall?.[2]).toHaveLength(1);
   });
 
+  it("re-applies language-server markers only for paths whose diagnostics changed", async () => {
+    const firstDocument: EditorDocument = {
+      content: "const a = 1;\n",
+      language: "typescript",
+      name: "a.ts",
+      path: "/workspace/src/a.ts",
+      savedContent: "const a = 1;\n",
+    };
+    const secondDocument: EditorDocument = {
+      content: "const b = 2;\n",
+      language: "typescript",
+      name: "b.ts",
+      path: "/workspace/src/b.ts",
+      savedContent: "const b = 2;\n",
+    };
+    const firstModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => firstDocument.content),
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const secondModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => secondDocument.content),
+      uri: { fsPath: secondDocument.path, path: secondDocument.path },
+    };
+
+    const monaco = createMonaco(firstModel);
+    monaco.editor.getModels = vi.fn(() => [firstModel, secondModel]);
+    editorSurfaceMocks.editor = createEditor(firstModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    const unchangedSecondDiagnostics = [
+      {
+        character: 6,
+        endCharacter: 7,
+        endLine: 0,
+        line: 0,
+        message: "unused b",
+        severity: "warning" as const,
+        source: "typescript",
+      },
+    ];
+
+    const diagnosticsFor = (firstDiagnostics: unknown[]) => ({
+      [firstDocument.path]: firstDiagnostics,
+      // Same array reference across renders: b.ts diagnostics never change.
+      [secondDocument.path]: unchangedSecondDiagnostics,
+    });
+
+    const renderWith = async (
+      diagnostics: Record<string, unknown[]>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={firstDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics as never}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            navigationHistoryPaths={[secondDocument.path]}
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(diagnosticsFor([]));
+    monaco.editor.setModelMarkers.mockClear();
+
+    // New map identity, but only a.ts's diagnostics array changed identity.
+    await renderWith(
+      diagnosticsFor([
+        {
+          character: 6,
+          endCharacter: 7,
+          endLine: 0,
+          line: 0,
+          message: "unused a",
+          severity: "warning",
+          source: "typescript",
+        },
+      ]),
+    );
+
+    const markerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner]) => owner === "php-language-server",
+    );
+    expect(
+      markerCalls.some(([target]) => target === firstModel),
+    ).toBe(true);
+    expect(
+      markerCalls.some(([target]) => target === secondModel),
+    ).toBe(false);
+  });
+
+  it("re-applies markers to a model recreated for a reopened path with unchanged diagnostics", async () => {
+    const document: EditorDocument = {
+      content: "const a = 1;\n",
+      language: "typescript",
+      name: "a.ts",
+      path: "/workspace/src/a.ts",
+      savedContent: "const a = 1;\n",
+    };
+    const otherDocument: EditorDocument = {
+      content: "const b = 2;\n",
+      language: "typescript",
+      name: "b.ts",
+      path: "/workspace/src/b.ts",
+      savedContent: "const b = 2;\n",
+    };
+    // Same path, but two distinct model objects: the first is disposed on close,
+    // the second is created on reopen. Monaco hands EditorSurface a brand new
+    // model object for the same path.
+    const firstModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => document.content),
+      uri: { fsPath: document.path, path: document.path },
+    };
+    const otherModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => otherDocument.content),
+      uri: { fsPath: otherDocument.path, path: otherDocument.path },
+    };
+    const reopenedModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => document.content),
+      uri: { fsPath: document.path, path: document.path },
+    };
+
+    let openModels: FakeModel[] = [firstModel];
+    const monaco = createMonaco(firstModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    editorSurfaceMocks.editor = createEditor(firstModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    // Stable diagnostics array identity for a.ts across the whole scenario: the
+    // language server never re-publishes a.ts between close and reopen.
+    const diagnostics = {
+      [document.path]: [
+        {
+          character: 6,
+          endCharacter: 7,
+          endLine: 0,
+          line: 0,
+          message: "unused a",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (active: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={active}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            navigationHistoryPaths={[document.path, otherDocument.path]}
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    // a.ts open and marked.
+    await renderWith(document);
+    monaco.editor.setModelMarkers.mockClear();
+
+    // Close a.ts: active switches to b.ts and a.ts's model is disposed.
+    openModels = [otherModel];
+    await renderWith(otherDocument);
+
+    // Reopen a.ts: a brand new model object is created for the same path while
+    // a.ts's diagnostics array identity is unchanged.
+    openModels = [otherModel, reopenedModel];
+    await renderWith(document);
+
+    const reopenedMarkerCall = monaco.editor.setModelMarkers.mock.calls.find(
+      ([target, owner]) =>
+        target === reopenedModel && owner === "php-language-server",
+    );
+    expect(reopenedMarkerCall?.[2]).toHaveLength(1);
+  });
+
   it("prunes per-path caches when a document is closed", async () => {
     const closingDocument: EditorDocument = {
       content: "export class Closing {\n  render() {}\n}\n",
