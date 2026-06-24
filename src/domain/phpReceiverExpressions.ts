@@ -45,7 +45,7 @@ export function phpStatementPrefixRangeBeforeOffset(
   const safeOffset = Math.max(0, Math.min(source.length, offset));
   const windowStart = Math.max(0, safeOffset - maxCharacters);
   const text = source.slice(windowStart, safeOffset);
-  const masked = maskPhpReceiverContext(text);
+  const masked = maskPhpStringsAndComments(text);
   let parenthesesDepth = 0;
   let bracketsDepth = 0;
 
@@ -99,7 +99,7 @@ export function phpStatementPrefixRangeBeforeOffset(
   };
 }
 
-function maskPhpReceiverContext(source: string): string {
+export function maskPhpStringsAndComments(source: string): string {
   return source.replace(
     /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\//g,
     (match) => " ".repeat(match.length),

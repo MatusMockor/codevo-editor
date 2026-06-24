@@ -406,6 +406,108 @@ $album = Album::query()
     });
   });
 
+  it("extracts member method contexts when the line ends with a trailing closure brace", () => {
+    const source = `<?php
+
+$post->localPosts()->each(function (Post $localPost): void {
+    $localPost->delete();
+});
+`;
+
+    expect(
+      phpUnresolvedMemberMethodDiagnosticContext(
+        source,
+        diagnostic({
+          character: 7,
+          line: 2,
+          message:
+            'Method "localPosts" does not exist on class "App\\Models\\Post"',
+        }),
+      ),
+    ).toEqual({
+      methodName: "localPosts",
+      receiverExpression: "$post",
+    });
+  });
+
+  it("extracts member method contexts when the line ends with a trailing arrow function", () => {
+    const source = `<?php
+
+$post->localPosts()->map(fn (Post $localPost): int => $localPost->id);
+`;
+
+    expect(
+      phpUnresolvedMemberMethodDiagnosticContext(
+        source,
+        diagnostic({
+          character: 7,
+          line: 2,
+          message:
+            'Method "localPosts" does not exist on class "App\\Models\\Post"',
+        }),
+      ),
+    ).toEqual({
+      methodName: "localPosts",
+      receiverExpression: "$post",
+    });
+  });
+
+  it("suppresses confirmed member method diagnostics on lines ending with a trailing closure", () => {
+    const source = `<?php
+
+$post->localPosts()->each(function (Post $localPost): void {
+    $localPost->delete();
+});
+$post->missingMagic()->each(function (Post $localPost): void {
+    $localPost->delete();
+});
+`;
+    const confirmed = diagnostic({
+      character: 7,
+      line: 2,
+      message:
+        'Method "localPosts" does not exist on class "App\\Models\\Post"',
+    });
+    const unknown = diagnostic({
+      character: 7,
+      line: 5,
+      message:
+        'Method "missingMagic" does not exist on class "App\\Models\\Post"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberMethods: new Set([
+          phpMemberMethodDiagnosticKey("$post", "localPosts"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+  });
+
+  it("extracts member property contexts when the line ends with a trailing closure brace", () => {
+    const source = `<?php
+
+$post->localPosts->each(function (Post $localPost): void {
+    $localPost->delete();
+});
+`;
+
+    expect(
+      phpUnresolvedMemberPropertyDiagnosticContext(
+        source,
+        diagnostic({
+          character: 7,
+          line: 2,
+          message:
+            'Property "$localPosts" does not exist on class "App\\Models\\Post"',
+        }),
+      ),
+    ).toEqual({
+      propertyName: "localPosts",
+      receiverExpression: "$post",
+    });
+  });
+
   it("extracts static method diagnostic contexts from unresolved PHPactor messages", () => {
     const source = `<?php
 

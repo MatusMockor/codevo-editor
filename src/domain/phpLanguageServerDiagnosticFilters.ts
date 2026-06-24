@@ -9,6 +9,7 @@ import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   PHP_MEMBER_ACCESS_PATTERN,
   PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
+  maskPhpStringsAndComments,
   phpNormalizeReceiverExpression,
   phpStatementPrefixRangeBeforeOffset,
 } from "./phpReceiverExpressions";
@@ -804,10 +805,10 @@ function statementContextForDiagnostic(
     return null;
   }
 
-  const lineEndOffset = lineEndOffsetAt(source, diagnostic.line);
+  const memberCallEndOffset = memberCallScanEndOffset(source, diagnosticOffset);
   const contextEndOffset = trimTrailingStatementBoundaryBeforeOffset(
     source,
-    lineEndOffset ?? diagnosticOffset,
+    memberCallEndOffset,
   );
   const prefix = phpStatementPrefixRangeBeforeOffset(
     source,
@@ -819,6 +820,64 @@ function statementContextForDiagnostic(
     startOffset: prefix.startOffset,
     text: prefix.text,
   };
+}
+
+function memberCallScanEndOffset(source: string, diagnosticOffset: number): number {
+  const memberNameEnd = identifierEndOffsetAt(source, diagnosticOffset);
+  const callArgumentsEnd = balancedCallArgumentsEndOffset(source, memberNameEnd);
+
+  return callArgumentsEnd ?? memberNameEnd;
+}
+
+function identifierEndOffsetAt(source: string, offset: number): number {
+  let cursor = Math.max(0, Math.min(source.length, offset));
+
+  while (cursor < source.length && /[A-Za-z0-9_]/.test(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  return cursor;
+}
+
+function balancedCallArgumentsEndOffset(
+  source: string,
+  memberNameEnd: number,
+): number | null {
+  let cursor = memberNameEnd;
+
+  while (cursor < source.length && /[ \t]/.test(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  const callOpenOffset = cursor;
+
+  if (source[callOpenOffset] !== "(") {
+    return null;
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  let depth = 0;
+
+  for (let index = callOpenOffset; index < masked.length; index += 1) {
+    const character = masked[index];
+
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== ")") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index + 1;
+    }
+  }
+
+  return callOpenOffset + 1;
 }
 
 function trimTrailingStatementBoundaryBeforeOffset(
@@ -866,18 +925,6 @@ function offsetAtZeroBasedPosition(
   }
 
   return null;
-}
-
-function lineEndOffsetAt(source: string, zeroBasedLine: number): number | null {
-  const lineStart = offsetAtZeroBasedPosition(source, zeroBasedLine, 0);
-
-  if (lineStart === null) {
-    return null;
-  }
-
-  const nextLineOffset = source.indexOf("\n", lineStart);
-
-  return nextLineOffset < 0 ? source.length : nextLineOffset;
 }
 
 function lineAt(source: string, zeroBasedLine: number): string | null {
