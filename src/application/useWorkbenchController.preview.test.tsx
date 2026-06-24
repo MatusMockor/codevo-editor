@@ -158,6 +158,67 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().openDocuments[0]?.content).toContain("User");
   });
 
+  it("keeps a pinned tab open when a later preview opens with a stale closure", async () => {
+    const { getWorkbench } = renderController();
+    const pinned = fileEntry("/workspace/src/Pinned.php", "Pinned.php");
+    const firstPreview = fileEntry("/workspace/src/First.php", "First.php");
+    const secondPreview = fileEntry("/workspace/src/Second.php", "Second.php");
+    const thirdPreview = fileEntry("/workspace/src/Third.php", "Third.php");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(pinned);
+    });
+    await act(async () => {
+      await getWorkbench().previewFile(firstPreview);
+      getWorkbench().setActivePath(firstPreview.path);
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().openDocuments.map((d) => d.path)).toEqual([
+      pinned.path,
+      firstPreview.path,
+    ]);
+
+    // Capture a preview open closure now, while it observes:
+    //   openPaths === [pinned], previewPath === firstPreview, active firstPreview.
+    // Reusing it after the live state advances reproduces a rapid nav where the
+    // replacement is computed from a stale closure instead of current state.
+    const stalePreviewFile = getWorkbench().previewFile;
+
+    // Live state advances: First gets pinned (double-click), Second previewed.
+    await act(async () => {
+      getWorkbench().pinDocument(firstPreview.path);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().previewFile(secondPreview);
+      getWorkbench().setActivePath(secondPreview.path);
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().openDocuments.map((d) => d.path)).toEqual([
+      pinned.path,
+      firstPreview.path,
+      secondPreview.path,
+    ]);
+
+    // The stale closure still treats the (now pinned) First document as the
+    // unedited preview to replace, wrongly closing its pinned tab. With the fix
+    // the replacement is recomputed from live state, so Third replaces only the
+    // live Second preview and the pinned First tab survives.
+    await act(async () => {
+      await stalePreviewFile(thirdPreview);
+    });
+
+    expect(getWorkbench().openDocuments.map((d) => d.path)).toEqual([
+      pinned.path,
+      firstPreview.path,
+      thirdPreview.path,
+    ]);
+    expect(getWorkbench().previewPath).toBe(thirdPreview.path);
+    expect(getWorkbench().activePath).toBe(thirdPreview.path);
+  });
+
   it("activates the remaining preview tab after closing the active pinned tab", async () => {
     const { getWorkbench } = renderController();
     const pinnedFile = fileEntry("/workspace/src/Pinned.php", "Pinned.php");

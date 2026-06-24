@@ -5020,13 +5020,6 @@ export function useWorkbenchController(
       };
 
       try {
-        const replacement = cleanReplacementDocument(
-          activeDocument,
-          documents,
-          openPaths,
-          previewPath,
-        );
-        const replacedPath = replacement?.path ?? null;
         const prefetchedContent = filePrefetchCacheRef.current.get(
           requestedRoot,
           entry.path,
@@ -5048,6 +5041,18 @@ export function useWorkbenchController(
           clearOpeningFileForRequest();
           return false;
         }
+
+        // Compute the replacement from live refs (current state) AFTER the read
+        // resolves so rapid back-to-back opens never act on a stale closure
+        // capture. This keeps PhpStorm preview parity: the current unedited
+        // preview is replaced rather than spawning or wrongly closing tabs.
+        const replacement = cleanReplacementDocument(
+          activeDocumentRef.current,
+          documentsRef.current,
+          openPathsRef.current,
+          previewPathRef.current,
+        );
+        const replacedPath = replacement?.path ?? null;
 
         const document: EditorDocument = {
           path: entry.path,
@@ -5123,10 +5128,8 @@ export function useWorkbenchController(
     },
     [
       activePath,
-      activeDocument,
       documents,
       openPaths,
-      previewPath,
       recordCurrentNavigationLocation,
       reportError,
       reportErrorForActiveWorkspaceRoot,
@@ -5372,11 +5375,14 @@ export function useWorkbenchController(
         }
 
         const documentPath = gitDiffDocumentPath(change);
+        // Compute the replacement from live refs (current state) AFTER the diff
+        // resolves so rapid back-to-back diff/file opens never act on a stale
+        // closure capture, matching openFile's PhpStorm preview parity.
         const replacement = cleanReplacementDocument(
-          activeDocument,
-          documents,
-          openPaths,
-          previewPath,
+          activeDocumentRef.current,
+          documentsRef.current,
+          openPathsRef.current,
+          previewPathRef.current,
         );
         const replacedPath =
           replacement && replacement.path !== documentPath ? replacement.path : null;
@@ -5453,11 +5459,7 @@ export function useWorkbenchController(
       }
     },
     [
-      activeDocument,
-      documents,
       gitGateway,
-      openPaths,
-      previewPath,
       recordCurrentNavigationLocation,
       reportError,
       syncClosedDocument,
