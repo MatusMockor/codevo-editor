@@ -9,8 +9,17 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
 };
+
+/// Debounce window used to coalesce raw OS file-system events before they are
+/// forwarded downstream. A burst of events (mass save, format-on-save,
+/// `git checkout`) collapses into a single batch flush per window, deduplicated
+/// per path. Kept small so user-visible delete/rename/create tree refreshes are
+/// not perceptibly delayed (the frontend layers its own ~120ms debounce on top).
+pub const WORKSPACE_WATCH_COALESCE_WINDOW: Duration = Duration::from_millis(75);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +88,184 @@ pub trait WorkspaceWatchSession: Send {
     fn stop(&mut self) {}
 }
 
+/// Abstraction over "arm a one-shot flush after the debounce window". The
+/// production scheduler spawns a detached timer thread; tests inject a manual
+/// scheduler so coalescing is exercised deterministically without sleeping.
+pub trait WorkspaceWatchFlushScheduler: Send + Sync {
+    /// Schedule `flush` to run once after the configured window. Repeated calls
+    /// while a flush is already pending must not stack additional flushes — the
+    /// in-flight timer drains everything buffered so far.
+    fn schedule(&self, flush: Arc<dyn Fn() + Send + Sync>);
+}
+
+/// Spawns a detached thread per armed window that sleeps the debounce duration
+/// and then runs the flush. The coalescing sink itself guarantees only one
+/// window is armed at a time, so this never spawns an unbounded number of
+/// threads for a steady event stream.
+pub struct TimerWorkspaceWatchFlushScheduler {
+    window: Duration,
+}
+
+impl TimerWorkspaceWatchFlushScheduler {
+    pub fn new(window: Duration) -> Self {
+        Self { window }
+    }
+}
+
+impl WorkspaceWatchFlushScheduler for TimerWorkspaceWatchFlushScheduler {
+    fn schedule(&self, flush: Arc<dyn Fn() + Send + Sync>) {
+        let window = self.window;
+        thread::spawn(move || {
+            thread::sleep(window);
+            flush();
+        });
+    }
+}
+
+/// Stable coalescing key for an event. Events touching the same target collapse
+/// to a single entry whose latest observed state wins, so a `create` followed by
+/// `modify` in the same window emits once and a `create` followed by `delete`
+/// emits a single delete. Renames key on their new path (their authoritative
+/// post-event location) so they never merge with unrelated paths.
+fn coalesce_key(event: &WorkspaceWatchEvent) -> String {
+    if matches!(event.kind, WorkspaceWatchEventKind::RescanRequired) {
+        return format!("rescan::{}", event.root_path);
+    }
+
+    event.path.clone()
+}
+
+/// Pure coalescing step: collapse a buffer of events to the latest event per
+/// coalescing key while preserving first-seen ordering. No event is ever
+/// dropped outright — every distinct target survives with its most recent kind,
+/// so delete/rename/create/modify all reach the downstream sink (coalesced).
+fn coalesce_events(events: Vec<WorkspaceWatchEvent>) -> Vec<WorkspaceWatchEvent> {
+    let mut order: Vec<String> = Vec::new();
+    let mut latest: std::collections::HashMap<String, WorkspaceWatchEvent> =
+        std::collections::HashMap::new();
+
+    for event in events {
+        let key = coalesce_key(&event);
+
+        if !latest.contains_key(&key) {
+            order.push(key.clone());
+        }
+
+        latest.insert(key, event);
+    }
+
+    order
+        .into_iter()
+        .filter_map(|key| latest.remove(&key))
+        .collect()
+}
+
+/// Decorator over a `WorkspaceWatchEventSink` that buffers raw events and flushes
+/// them as a single coalesced batch after a debounce window. This sits between
+/// the OS watcher callback and the real sink, so both amplified downstream paths
+/// (frontend `workspace://file-changed` emits and JS/TS `didChangeWatchedFiles`
+/// notifications) collapse a burst into one batch without either having to know
+/// about coalescing.
+///
+/// Per-workspace isolation: one instance is created per watch session, so its
+/// buffer and timer belong to a single root and can never merge events across
+/// roots. The owning session drops the `Arc`, releasing the buffer on stop.
+pub struct CoalescingWorkspaceWatchEventSink {
+    inner: Arc<dyn WorkspaceWatchEventSink>,
+    scheduler: Arc<dyn WorkspaceWatchFlushScheduler>,
+    state: Arc<Mutex<CoalesceState>>,
+}
+
+#[derive(Default)]
+struct CoalesceState {
+    buffer: Vec<WorkspaceWatchEvent>,
+    flush_armed: bool,
+}
+
+impl CoalescingWorkspaceWatchEventSink {
+    pub fn new(
+        inner: Arc<dyn WorkspaceWatchEventSink>,
+        scheduler: Arc<dyn WorkspaceWatchFlushScheduler>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            scheduler,
+            state: Arc::new(Mutex::new(CoalesceState::default())),
+        })
+    }
+
+    /// Lock the coalesce state, recovering from poisoning. The protected state
+    /// is plain data, so a poisoned guard is safe to reuse — and dropping events
+    /// on a poisoned lock would violate the "events are batched, never lost"
+    /// contract, so we recover instead of bailing out.
+    fn lock_state(
+        state: &Arc<Mutex<CoalesceState>>,
+    ) -> std::sync::MutexGuard<'_, CoalesceState> {
+        state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Drain the buffer, disarm the window, and publish the coalesced batch.
+    /// Shared by the timer flush and any direct flush so the dedup contract has
+    /// exactly one implementation.
+    fn drain_and_publish(
+        state: &Arc<Mutex<CoalesceState>>,
+        inner: &Arc<dyn WorkspaceWatchEventSink>,
+    ) {
+        let mut guard = Self::lock_state(state);
+
+        guard.flush_armed = false;
+        let buffered = std::mem::take(&mut guard.buffer);
+        drop(guard);
+
+        if buffered.is_empty() {
+            return;
+        }
+
+        let events = coalesce_events(buffered);
+
+        if events.is_empty() {
+            return;
+        }
+
+        inner.publish(WorkspaceWatchEventBatch { events });
+    }
+}
+
+impl WorkspaceWatchEventSink for CoalescingWorkspaceWatchEventSink {
+    fn error(&self, error: WorkspaceWatchError) {
+        self.inner.error(error);
+    }
+
+    fn publish(&self, batch: WorkspaceWatchEventBatch) {
+        if batch.events.is_empty() {
+            return;
+        }
+
+        let mut state = Self::lock_state(&self.state);
+
+        state.buffer.extend(batch.events);
+
+        if state.flush_armed {
+            return;
+        }
+
+        state.flush_armed = true;
+        drop(state);
+
+        let weak = Arc::downgrade(&self.state);
+        let inner = Arc::clone(&self.inner);
+        let flush: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+
+            CoalescingWorkspaceWatchEventSink::drain_and_publish(&state, &inner);
+        });
+
+        self.scheduler.schedule(flush);
+    }
+}
+
 pub trait WorkspaceFileWatcher {
     fn watch(
         &self,
@@ -143,6 +330,10 @@ pub struct NativeNotifyWorkspaceFileWatcher;
 
 pub struct NotifyWorkspaceWatchSession {
     _watcher: RecommendedWatcher,
+    // Owns the per-session coalescing sink (buffer + flush window). Dropping the
+    // session releases it, so a stopped/dropped watcher leaves no buffered state
+    // or armed flush behind for its root.
+    _coalescer: Arc<CoalescingWorkspaceWatchEventSink>,
 }
 
 impl WorkspaceWatchSession for NotifyWorkspaceWatchSession {}
@@ -156,7 +347,14 @@ impl WorkspaceFileWatcher for NativeNotifyWorkspaceFileWatcher {
         let root = request.root_path.canonicalize()?;
         let matcher = Arc::new(GitignoreWorkspaceIgnoreMatcher::load(&root)?);
         let event_root = root.clone();
-        let event_sink = Arc::clone(&sink);
+        // Coalesce raw OS events per session before they reach the real sink so a
+        // burst collapses into one batch flush (deduplicated per path). Per-root
+        // isolation is intrinsic: this buffer belongs to exactly this session.
+        let scheduler: Arc<dyn WorkspaceWatchFlushScheduler> = Arc::new(
+            TimerWorkspaceWatchFlushScheduler::new(WORKSPACE_WATCH_COALESCE_WINDOW),
+        );
+        let coalescer = CoalescingWorkspaceWatchEventSink::new(sink, scheduler);
+        let event_sink: Arc<dyn WorkspaceWatchEventSink> = Arc::clone(&coalescer) as _;
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<NotifyEvent>| match result {
                 Ok(event) => {
@@ -178,7 +376,10 @@ impl WorkspaceFileWatcher for NativeNotifyWorkspaceFileWatcher {
             .watch(&root, RecursiveMode::Recursive)
             .map_err(to_io_error)?;
 
-        Ok(Box::new(NotifyWorkspaceWatchSession { _watcher: watcher }))
+        Ok(Box::new(NotifyWorkspaceWatchSession {
+            _watcher: watcher,
+            _coalescer: coalescer,
+        }))
     }
 }
 
@@ -528,10 +729,11 @@ fn to_io_error(error: notify::Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_notify_event, parse_watchman_subscription, PreferredWorkspaceFileWatcher,
-        WatchmanAvailability, WorkspaceFileWatcher, WorkspaceWatchBackend, WorkspaceWatchEvent,
-        WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
-        WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
+        normalize_notify_event, parse_watchman_subscription, CoalescingWorkspaceWatchEventSink,
+        PreferredWorkspaceFileWatcher, WatchmanAvailability, WorkspaceFileWatcher,
+        WorkspaceWatchBackend, WorkspaceWatchEvent, WorkspaceWatchEventBatch,
+        WorkspaceWatchEventKind, WorkspaceWatchEventSink, WorkspaceWatchFileKind,
+        WorkspaceWatchFlushScheduler, WorkspaceWatchRequest, WorkspaceWatchSession,
     };
     use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreOptions};
     use notify::{
@@ -545,6 +747,267 @@ mod tests {
         sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    /// Records every published batch so coalescing assertions can count flushes.
+    #[derive(Clone, Default)]
+    struct BatchRecordingSink {
+        batches: Arc<Mutex<Vec<WorkspaceWatchEventBatch>>>,
+    }
+
+    impl BatchRecordingSink {
+        fn batches(&self) -> Vec<WorkspaceWatchEventBatch> {
+            self.batches.lock().expect("batches").clone()
+        }
+    }
+
+    impl WorkspaceWatchEventSink for BatchRecordingSink {
+        fn error(&self, _error: super::WorkspaceWatchError) {}
+
+        fn publish(&self, batch: WorkspaceWatchEventBatch) {
+            self.batches.lock().expect("batches").push(batch);
+        }
+    }
+
+    /// Manual flush scheduler: captures the pending flush so a test can run it
+    /// deterministically (no timer sleep). A single pending flush is kept,
+    /// mirroring the "only one window armed at a time" production contract.
+    #[derive(Clone, Default)]
+    struct ManualFlushScheduler {
+        pending: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+        scheduled_count: Arc<Mutex<usize>>,
+    }
+
+    impl ManualFlushScheduler {
+        fn run_pending(&self) {
+            let flush = self.pending.lock().expect("pending").take();
+
+            if let Some(flush) = flush {
+                flush();
+            }
+        }
+
+        fn scheduled_count(&self) -> usize {
+            *self.scheduled_count.lock().expect("scheduled count")
+        }
+    }
+
+    impl WorkspaceWatchFlushScheduler for ManualFlushScheduler {
+        fn schedule(&self, flush: Arc<dyn Fn() + Send + Sync>) {
+            *self.scheduled_count.lock().expect("scheduled count") += 1;
+            *self.pending.lock().expect("pending") = Some(flush);
+        }
+    }
+
+    fn coalesce_event(kind: WorkspaceWatchEventKind, path: &str) -> WorkspaceWatchEvent {
+        WorkspaceWatchEvent {
+            backend: WorkspaceWatchBackend::Native,
+            file_kind: Some(WorkspaceWatchFileKind::File),
+            kind,
+            path: path.to_string(),
+            previous_path: None,
+            previous_relative_path: None,
+            relative_path: path.to_string(),
+            root_path: "/workspace".to_string(),
+        }
+    }
+
+    #[test]
+    fn coalescing_sink_collapses_a_burst_into_one_flush() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        for index in 0..50 {
+            sink.publish(WorkspaceWatchEventBatch {
+                events: vec![coalesce_event(
+                    WorkspaceWatchEventKind::Modified,
+                    &format!("/workspace/file-{index}.ts"),
+                )],
+            });
+        }
+
+        assert!(inner.batches().is_empty(), "must not publish before flush");
+        assert_eq!(scheduler.scheduled_count(), 1, "only one window armed");
+
+        scheduler.run_pending();
+
+        let batches = inner.batches();
+        assert_eq!(batches.len(), 1, "burst collapses to a single batch flush");
+        assert_eq!(batches[0].events.len(), 50, "every distinct path survives");
+    }
+
+    #[test]
+    fn coalescing_sink_dedups_repeated_path_keeping_last_kind() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![
+                coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/a.ts"),
+                coalesce_event(WorkspaceWatchEventKind::Modified, "/workspace/a.ts"),
+                coalesce_event(WorkspaceWatchEventKind::Modified, "/workspace/a.ts"),
+            ],
+        });
+
+        scheduler.run_pending();
+
+        let batches = inner.batches();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].events.len(), 1, "same path coalesces to one");
+        assert_eq!(batches[0].events[0].kind, WorkspaceWatchEventKind::Modified);
+    }
+
+    #[test]
+    fn coalescing_sink_keeps_last_kind_when_create_then_delete() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![
+                coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/tmp.ts"),
+                coalesce_event(WorkspaceWatchEventKind::Deleted, "/workspace/tmp.ts"),
+            ],
+        });
+
+        scheduler.run_pending();
+
+        let batches = inner.batches();
+        assert_eq!(batches[0].events.len(), 1);
+        assert_eq!(
+            batches[0].events[0].kind,
+            WorkspaceWatchEventKind::Deleted,
+            "last kind in the window wins"
+        );
+    }
+
+    #[test]
+    fn coalescing_sink_preserves_every_kind_for_distinct_paths() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        let mut renamed =
+            coalesce_event(WorkspaceWatchEventKind::Renamed, "/workspace/new.ts");
+        renamed.previous_path = Some("/workspace/old.ts".to_string());
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![
+                coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/c.ts"),
+                coalesce_event(WorkspaceWatchEventKind::Modified, "/workspace/m.ts"),
+                coalesce_event(WorkspaceWatchEventKind::Deleted, "/workspace/d.ts"),
+                renamed,
+            ],
+        });
+
+        scheduler.run_pending();
+
+        let events = &inner.batches()[0].events;
+        let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
+        assert!(kinds.contains(&WorkspaceWatchEventKind::Created));
+        assert!(kinds.contains(&WorkspaceWatchEventKind::Modified));
+        assert!(kinds.contains(&WorkspaceWatchEventKind::Deleted));
+        assert!(kinds.contains(&WorkspaceWatchEventKind::Renamed));
+        assert_eq!(events.len(), 4, "no event lost");
+    }
+
+    #[test]
+    fn coalescing_sink_rearms_after_flush_for_a_later_burst() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/a.ts")],
+        });
+        scheduler.run_pending();
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/b.ts")],
+        });
+        scheduler.run_pending();
+
+        let batches = inner.batches();
+        assert_eq!(batches.len(), 2, "a second burst flushes independently");
+        assert_eq!(scheduler.scheduled_count(), 2);
+        assert_eq!(batches[0].events[0].relative_path, "/workspace/a.ts");
+        assert_eq!(batches[1].events[0].relative_path, "/workspace/b.ts");
+    }
+
+    #[test]
+    fn coalescing_sinks_for_different_roots_do_not_merge_events() {
+        let inner_a = BatchRecordingSink::default();
+        let inner_b = BatchRecordingSink::default();
+        let scheduler_a = ManualFlushScheduler::default();
+        let scheduler_b = ManualFlushScheduler::default();
+        let sink_a = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner_a.clone()),
+            Arc::new(scheduler_a.clone()),
+        );
+        let sink_b = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner_b.clone()),
+            Arc::new(scheduler_b.clone()),
+        );
+
+        sink_a.publish(WorkspaceWatchEventBatch {
+            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/root-a/a.ts")],
+        });
+        sink_b.publish(WorkspaceWatchEventBatch {
+            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/root-b/b.ts")],
+        });
+
+        // Flushing root A must not drain or touch root B's buffer.
+        scheduler_a.run_pending();
+
+        assert_eq!(inner_a.batches().len(), 1);
+        assert_eq!(inner_a.batches()[0].events[0].relative_path, "/root-a/a.ts");
+        assert!(inner_b.batches().is_empty(), "root B not flushed by root A");
+
+        scheduler_b.run_pending();
+        assert_eq!(inner_b.batches().len(), 1);
+        assert_eq!(inner_b.batches()[0].events[0].relative_path, "/root-b/b.ts");
+    }
+
+    #[test]
+    fn coalescing_sink_drops_buffer_when_sink_is_dropped_before_flush() {
+        let inner = BatchRecordingSink::default();
+        let scheduler = ManualFlushScheduler::default();
+        let sink = CoalescingWorkspaceWatchEventSink::new(
+            Arc::new(inner.clone()),
+            Arc::new(scheduler.clone()),
+        );
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/a.ts")],
+        });
+
+        // Session stop / drop releases the sink before the window elapses.
+        drop(sink);
+
+        // A late timer firing must be a no-op, not a panic or a use-after-free.
+        scheduler.run_pending();
+
+        assert!(
+            inner.batches().is_empty(),
+            "no flush after the coalescing sink is dropped"
+        );
+    }
 
     #[test]
     fn notify_create_modify_and_remove_events_are_normalized() {
