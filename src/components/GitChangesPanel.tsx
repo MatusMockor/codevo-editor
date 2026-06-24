@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -40,7 +40,7 @@ interface GitChangesPanelProps {
   onUnstageChanges(changes: GitChangedFile[]): void;
 }
 
-export function GitChangesPanel({
+function GitChangesPanelComponent({
   activeChange,
   commitMessage,
   gitOperationLoading,
@@ -62,6 +62,16 @@ export function GitChangesPanel({
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<
     Set<GitChangeGroup["id"]>
   >(new Set());
+
+  const changes = status.changes;
+  const groups = useMemo(() => groupGitChanges(changes), [changes]);
+  const selectedChanges = useMemo(
+    () =>
+      changes.filter((change) =>
+        includedChangePaths.has(gitChangeKey(change)),
+      ),
+    [changes, includedChangePaths],
+  );
 
   if (!rootPath) {
     return (
@@ -106,10 +116,6 @@ export function GitChangesPanel({
     );
   }
 
-  const selectedChanges = status.changes.filter((change) =>
-    includedChangePaths.has(gitChangeKey(change)),
-  );
-  const groups = groupGitChanges(status.changes);
   const canCommit =
     selectedChanges.length > 0 &&
     commitMessage.trim().length > 0 &&
@@ -187,6 +193,8 @@ export function GitChangesPanel({
     </section>
   );
 }
+
+export const GitChangesPanel = memo(GitChangesPanelComponent);
 
 interface GitCommitHeaderProps {
   branch: string | null;
