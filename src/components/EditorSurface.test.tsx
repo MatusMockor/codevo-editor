@@ -2200,6 +2200,171 @@ interface ParserFactory
     expect(stillOpenModel.dispose).not.toHaveBeenCalled();
   });
 
+  it("keeps the model of a document reachable via back/forward navigation history", async () => {
+    // Go-to-definition turns the source file into a clean-preview replacement,
+    // so its path leaves openDocumentPaths even though Back/Forward can still
+    // navigate to it. Disposing it would force a full re-tokenization on Back
+    // (lag). The navigation history paths must keep such a model alive.
+    const activeDocument: EditorDocument = {
+      content: "const target = 1;\n",
+      language: "typescript",
+      name: "target.ts",
+      path: "/workspace/src/target.ts",
+      savedContent: "const target = 1;\n",
+    };
+    const historyDocument: EditorDocument = {
+      content: "const source = 2;\n",
+      language: "typescript",
+      name: "source.ts",
+      path: "/workspace/src/source.ts",
+      savedContent: "const source = 2;\n",
+    };
+    const activeModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const historyModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: historyDocument.path, path: historyDocument.path },
+    };
+
+    const monaco = createMonaco(activeModel);
+    monaco.editor.getModels = vi.fn(() => [activeModel, historyModel]);
+    editorSurfaceMocks.editor = createEditor(activeModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          openDocumentPaths={[activeDocument.path]}
+          navigationHistoryPaths={[historyDocument.path]}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // source.ts is no longer an open document but is reachable via back/forward
+    // history, so its model must survive (cheap model-swap on Back, no
+    // dispose+recreate+re-tokenization lag).
+    expect(activeModel.dispose).not.toHaveBeenCalled();
+    expect(historyModel.dispose).not.toHaveBeenCalled();
+  });
+
+  it("disposes a model that is neither open nor in navigation history", async () => {
+    // The c1f7489f leak fix must be preserved: a truly closed file (absent from
+    // open documents AND navigation history) is still disposed.
+    const activeDocument: EditorDocument = {
+      content: "const target = 1;\n",
+      language: "typescript",
+      name: "target.ts",
+      path: "/workspace/src/target.ts",
+      savedContent: "const target = 1;\n",
+    };
+    const closedDocument: EditorDocument = {
+      content: "const closed = 2;\n",
+      language: "typescript",
+      name: "closed.ts",
+      path: "/workspace/src/closed.ts",
+      savedContent: "const closed = 2;\n",
+    };
+    const historyDocument: EditorDocument = {
+      content: "const source = 3;\n",
+      language: "typescript",
+      name: "source.ts",
+      path: "/workspace/src/source.ts",
+      savedContent: "const source = 3;\n",
+    };
+    const activeModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const closedModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: closedDocument.path, path: closedDocument.path },
+    };
+    const historyModel: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: historyDocument.path, path: historyDocument.path },
+    };
+
+    const monaco = createMonaco(activeModel);
+    monaco.editor.getModels = vi.fn(() => [
+      activeModel,
+      closedModel,
+      historyModel,
+    ]);
+    editorSurfaceMocks.editor = createEditor(activeModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          openDocumentPaths={[activeDocument.path]}
+          navigationHistoryPaths={[historyDocument.path]}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(closedModel.dispose).toHaveBeenCalledTimes(1);
+    expect(activeModel.dispose).not.toHaveBeenCalled();
+    expect(historyModel.dispose).not.toHaveBeenCalled();
+  });
+
   it("registers guarded Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",

@@ -124,7 +124,8 @@ interface EditorSurfaceProps {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
-  openDocumentPaths?: string[];
+  navigationHistoryPaths?: readonly string[];
+  openDocumentPaths?: readonly string[];
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot?: string | null;
@@ -195,7 +196,8 @@ function EditorSurfaceComponent({
   javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
-  openDocumentPaths = [],
+  navigationHistoryPaths = EMPTY_PATHS,
+  openDocumentPaths = EMPTY_PATHS,
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
   workspaceRoot = null,
@@ -1107,11 +1109,25 @@ function EditorSurfaceComponent({
     // model is never disposed out from under the editor, and a document still
     // open in another tab/split keeps its path in openDocumentPaths so its model
     // survives. The placeholder model (shown when no document is open) is kept
-    // because Monaco is currently displaying it. Workspace isolation falls out
-    // for free: openDocumentPaths is reset/restored per workspace tab, and paths
-    // are workspace-scoped, so only the closing document's (or closing
-    // workspace's) models are disposed.
-    const keepAlivePaths = new Set([...openDocumentPaths, PLACEHOLDER_PATH]);
+    // because Monaco is currently displaying it.
+    //
+    // Navigation history paths (back + forward stacks) are also kept alive:
+    // go-to-definition turns the source file into a clean-preview replacement,
+    // so its path leaves openDocumentPaths even though Back/Forward still
+    // navigates to it. Without this, the source model would be disposed and Back
+    // would force a synchronous dispose+recreate+re-tokenization (lag). Keeping
+    // the history models alive makes Back/Forward a cheap model-swap.
+    //
+    // Workspace isolation falls out for free: openDocumentPaths and
+    // navigationHistoryPaths are reset/restored per workspace tab, and paths are
+    // workspace-scoped, so only the closing document's (or closing workspace's)
+    // models are disposed. A file that is neither open nor in navigation history
+    // is still disposed, preserving the leak fix.
+    const keepAlivePaths = new Set([
+      ...openDocumentPaths,
+      ...navigationHistoryPaths,
+      PLACEHOLDER_PATH,
+    ]);
 
     if (activeDocument) {
       keepAlivePaths.add(activeDocument.path);
@@ -1126,7 +1142,7 @@ function EditorSurfaceComponent({
 
       model.dispose();
     });
-  }, [activeDocument, monacoApi, openDocumentPaths]);
+  }, [activeDocument, monacoApi, navigationHistoryPaths, openDocumentPaths]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1459,6 +1475,13 @@ function currentEditorTextRange(
     start: Math.min(selection.startColumn, selection.endColumn) - 1,
   };
 }
+
+// Shared stable empty path list for the optional path-set props. A fresh `[]`
+// default would change identity on every render, re-running the model-dispose
+// effect (which depends on these arrays) on internal re-renders and risking a
+// double-dispose. The single frozen identity keeps the effect quiet until the
+// caller actually changes the path set.
+const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 
 // Stable placeholder model identity used while no document is open, so Monaco
 // keeps a single mounted instance instead of remounting when the first file

@@ -280,6 +280,32 @@ function App() {
     () => workbench.openDocuments.map((document) => document.path),
     [openDocumentPathsKey],
   );
+  // Distinct file paths reachable via back/forward navigation history. Their
+  // Monaco models must be kept alive so Back/Forward is a cheap model-swap
+  // instead of a dispose+recreate+re-tokenization (lag). Go-to-definition
+  // demotes the source file to a clean-preview replacement, dropping it from
+  // openDocumentPaths even though Back still navigates to it. Workspace-scoped:
+  // navigationHistory is reset/restored per workspace tab. Keyed on the joined
+  // string so the dispose effect re-runs only when the reachable path set
+  // actually changes, not on every cursor move that pushes a same-file location.
+  const navigationHistoryPathsKey = [
+    ...workbench.navigationHistory.backStack,
+    ...workbench.navigationHistory.forwardStack,
+  ]
+    .map((location) => location.path)
+    .join("\n");
+  const navigationHistoryPaths = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            ...workbench.navigationHistory.backStack,
+            ...workbench.navigationHistory.forwardStack,
+          ].map((location) => location.path),
+        ),
+      ),
+    [navigationHistoryPathsKey],
+  );
   const activeEditorChangeHunks = useMemo(
     () =>
       workbench.activeDocument
@@ -896,6 +922,7 @@ function App() {
             languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
             keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
+            navigationHistoryPaths={navigationHistoryPaths}
             openDocumentPaths={openDocumentPaths}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             phpLanguageServerWorkspaceEditGateway={

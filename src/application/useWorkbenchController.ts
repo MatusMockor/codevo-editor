@@ -23510,6 +23510,7 @@ export function useWorkbenchController(
     notices,
     navigateBackward,
     navigateForwardInHistory,
+    navigationHistory,
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
     previewGitChange,
