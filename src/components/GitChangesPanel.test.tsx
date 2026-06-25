@@ -351,6 +351,84 @@ describe("GitChangesPanel", () => {
     groupSpy.mockRestore();
   });
 
+  it("does not re-render unrelated change rows when another row's inclusion toggles", async () => {
+    // Distinct statuses let us attribute gitStatusTitle calls to a specific
+    // row: the unchanged row's memoized component should not recompute its
+    // path split / status title when only another row's inclusion flips.
+    const first = gitChange("modified", "src/First.php", false);
+    const second = gitChange("added", "src/Second.php", false);
+    const status = gitStatus([first, second]);
+    const titleSpy = vi.spyOn(gitDomain, "gitStatusTitle");
+
+    // The real workbench passes referentially stable useCallback handlers, so
+    // only includedChangePaths identity flips when a row toggles. Mirror that
+    // here so the test exercises the memoization rather than recreated props.
+    const handlers = {
+      onCommit: vi.fn(),
+      onCommitAndPush: vi.fn(),
+      onCommitMessageChange: vi.fn(),
+      onOpenChange: vi.fn(),
+      onPreviewChange: vi.fn(),
+      onRefresh: vi.fn(),
+      onRevertChanges: vi.fn(),
+      onStageChanges: vi.fn(),
+      onToggleChangeIncluded: vi.fn(),
+      onUnstageChanges: vi.fn(),
+    };
+
+    let toggleFirst: () => void = () => undefined;
+
+    function Parent() {
+      const [included, setIncluded] = useState<Set<string>>(new Set());
+      toggleFirst = () =>
+        setIncluded((current) => {
+          const next = new Set(current);
+          const key = gitChangeKey(first);
+          next.has(key) ? next.delete(key) : next.add(key);
+          return next;
+        });
+
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          commitMessage="feat: update"
+          gitOperationLoading={false}
+          includedChangePaths={included}
+          isLoading={false}
+          rootPath="/workspace"
+          status={status}
+          {...handlers}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    const secondRowTitleCallsBefore = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === "added",
+    ).length;
+
+    expect(secondRowTitleCallsBefore).toBeGreaterThan(0);
+
+    await act(async () => {
+      toggleFirst();
+      await Promise.resolve();
+    });
+
+    const secondRowTitleCallsAfter = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === "added",
+    ).length;
+
+    // The second row's inclusion is unchanged, so its memoized GitChangeRow
+    // bails out and never recomputes its status title / path split.
+    expect(secondRowTitleCallsAfter).toBe(secondRowTitleCallsBefore);
+
+    titleSpy.mockRestore();
+  });
+
   async function renderPanel(
     props: Partial<React.ComponentProps<typeof GitChangesPanel>> = {},
   ) {

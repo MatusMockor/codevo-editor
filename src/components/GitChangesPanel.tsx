@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -73,6 +73,23 @@ function GitChangesPanelComponent({
     [changes, includedChangePaths],
   );
 
+  const onToggleGroupCollapsed = useCallback(
+    (groupId: GitChangeGroup["id"]) => {
+      setCollapsedGroupIds((current) => {
+        const next = new Set(current);
+
+        if (next.has(groupId)) {
+          next.delete(groupId);
+          return next;
+        }
+
+        next.add(groupId);
+        return next;
+      });
+    },
+    [],
+  );
+
   if (!rootPath) {
     return (
       <div className="empty-tree">
@@ -144,19 +161,7 @@ function GitChangesPanelComponent({
             onToggleChangeIncluded={onToggleChangeIncluded}
             includedChangePaths={includedChangePaths}
             isCollapsed={collapsedGroupIds.has(group.id)}
-            onToggleCollapsed={() =>
-              setCollapsedGroupIds((current) => {
-                const next = new Set(current);
-
-                if (next.has(group.id)) {
-                  next.delete(group.id);
-                } else {
-                  next.add(group.id);
-                }
-
-                return next;
-              })
-            }
+            onToggleCollapsed={onToggleGroupCollapsed}
           />
         ))}
       </nav>
@@ -273,10 +278,10 @@ interface GitChangeGroupViewProps {
   onOpenChange(change: GitChangedFile): void;
   onPreviewChange(change: GitChangedFile): void;
   onToggleChangeIncluded(change: GitChangedFile): void;
-  onToggleCollapsed(): void;
+  onToggleCollapsed(groupId: GitChangeGroup["id"]): void;
 }
 
-function GitChangeGroupView({
+function GitChangeGroupViewComponent({
   activeChange,
   disabled,
   group,
@@ -287,10 +292,27 @@ function GitChangeGroupView({
   onToggleChangeIncluded,
   onToggleCollapsed,
 }: GitChangeGroupViewProps) {
-  const selectedChanges = group.changes.filter((change) =>
-    includedChangePaths.has(gitChangeKey(change)),
+  const activeChangeKey = activeChange ? gitChangeKey(activeChange) : null;
+
+  const selectedChanges = useMemo(
+    () =>
+      group.changes.filter((change) =>
+        includedChangePaths.has(gitChangeKey(change)),
+      ),
+    [group.changes, includedChangePaths],
   );
   const allIncluded = selectedChanges.length === group.changes.length;
+
+  const onToggleGroup = () => {
+    if (allIncluded) {
+      selectedChanges.forEach(onToggleChangeIncluded);
+      return;
+    }
+
+    group.changes
+      .filter((change) => !includedChangePaths.has(gitChangeKey(change)))
+      .forEach(onToggleChangeIncluded);
+  };
 
   return (
     <section className="git-change-group">
@@ -301,7 +323,7 @@ function GitChangeGroupView({
           disabled={disabled}
           onClick={() => {
             if (!disabled) {
-              onToggleCollapsed();
+              onToggleCollapsed(group.id);
             }
           }}
           type="button"
@@ -316,78 +338,109 @@ function GitChangeGroupView({
           checked={allIncluded}
           disabled={disabled}
           label={`${allIncluded ? "Exclude" : "Include"} ${group.title}`}
-          onChange={() =>
-            allIncluded
-              ? selectedChanges.forEach(onToggleChangeIncluded)
-              : group.changes
-                  .filter((change) => !includedChangePaths.has(gitChangeKey(change)))
-                  .forEach(onToggleChangeIncluded)
-          }
+          onChange={onToggleGroup}
         />
         <span className="git-change-group-title">
           {group.title} {group.changes.length}
         </span>
       </div>
-      {isCollapsed ? null : group.changes.map((change) => {
-        const changeKey = gitChangeKey(change);
-        const isIncluded = includedChangePaths.has(changeKey);
+      {isCollapsed
+        ? null
+        : group.changes.map((change) => {
+            const changeKey = gitChangeKey(change);
 
-        return (
-          <div
-            className={
-              activeChange && gitChangeKey(activeChange) === changeKey
-                ? "git-change-row-wrapper active"
-                : "git-change-row-wrapper"
-            }
-            key={`${change.status}:${change.path}:${change.oldPath || ""}:${change.isStaged}`}
-          >
-            <ThemedCheckbox
-              checked={isIncluded}
-              className="git-change-checkbox"
-              disabled={disabled}
-              label={`${isIncluded ? "Exclude" : "Include"} ${change.relativePath}`}
-              onChange={() => onToggleChangeIncluded(change)}
-            />
-            <button
-              className="tree-row git-change-row"
-              disabled={disabled}
-              onClick={(event) => {
-                if (disabled) {
-                  return;
-                }
-
-                if (event.detail > 1) {
-                  return;
-                }
-
-                onPreviewChange(change);
-              }}
-              onDoubleClick={() => {
-                if (!disabled) {
-                  onOpenChange(change);
-                }
-              }}
-              title={gitStatusTitle(change.status)}
-              type="button"
-            >
-              <TreeEntryIcon kind="file" />
-              <span className="git-change-name">{fileName(change.relativePath)}</span>
-              <small className="git-change-directory">
-                {directoryName(change.relativePath)}
-              </small>
-              <span
-                aria-label={gitStatusTitle(change.status)}
-                className={getTreeGitStatusClassName(change.status)}
-              >
-                {gitStatusLabel(change.status)}
-              </span>
-            </button>
-          </div>
-        );
-      })}
+            return (
+              <GitChangeRow
+                change={change}
+                disabled={disabled}
+                isActive={activeChangeKey === changeKey}
+                isIncluded={includedChangePaths.has(changeKey)}
+                key={`${change.status}:${change.path}:${change.oldPath || ""}:${change.isStaged}`}
+                onOpenChange={onOpenChange}
+                onPreviewChange={onPreviewChange}
+                onToggleChangeIncluded={onToggleChangeIncluded}
+              />
+            );
+          })}
     </section>
   );
 }
+
+const GitChangeGroupView = memo(GitChangeGroupViewComponent);
+
+interface GitChangeRowProps {
+  change: GitChangedFile;
+  disabled: boolean;
+  isActive: boolean;
+  isIncluded: boolean;
+  onOpenChange(change: GitChangedFile): void;
+  onPreviewChange(change: GitChangedFile): void;
+  onToggleChangeIncluded(change: GitChangedFile): void;
+}
+
+function GitChangeRowComponent({
+  change,
+  disabled,
+  isActive,
+  isIncluded,
+  onOpenChange,
+  onPreviewChange,
+  onToggleChangeIncluded,
+}: GitChangeRowProps) {
+  const statusTitle = gitStatusTitle(change.status);
+
+  return (
+    <div
+      className={
+        isActive ? "git-change-row-wrapper active" : "git-change-row-wrapper"
+      }
+    >
+      <ThemedCheckbox
+        checked={isIncluded}
+        className="git-change-checkbox"
+        disabled={disabled}
+        label={`${isIncluded ? "Exclude" : "Include"} ${change.relativePath}`}
+        onChange={() => onToggleChangeIncluded(change)}
+      />
+      <button
+        className="tree-row git-change-row"
+        disabled={disabled}
+        onClick={(event) => {
+          if (disabled) {
+            return;
+          }
+
+          if (event.detail > 1) {
+            return;
+          }
+
+          onPreviewChange(change);
+        }}
+        onDoubleClick={() => {
+          if (!disabled) {
+            onOpenChange(change);
+          }
+        }}
+        title={statusTitle}
+        type="button"
+      >
+        <TreeEntryIcon kind="file" />
+        <span className="git-change-name">{fileName(change.relativePath)}</span>
+        <small className="git-change-directory">
+          {directoryName(change.relativePath)}
+        </small>
+        <span
+          aria-label={statusTitle}
+          className={getTreeGitStatusClassName(change.status)}
+        >
+          {gitStatusLabel(change.status)}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+const GitChangeRow = memo(GitChangeRowComponent);
 
 interface ThemedCheckboxProps {
   checked: boolean;
