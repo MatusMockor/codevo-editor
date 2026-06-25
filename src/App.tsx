@@ -32,6 +32,7 @@ import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
+import { SearchEverywhere } from "./components/SearchEverywhere";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
@@ -1099,6 +1100,16 @@ function App() {
         onOpen={workbench.openWorkspaceSymbolResult}
         query={workbench.workspaceSymbolsQuery}
         results={workbench.workspaceSymbolsResults}
+      />
+
+      <SearchEverywhere
+        isLoading={workbench.searchEverywhereLoading}
+        isOpen={workbench.searchEverywhereOpen}
+        model={workbench.searchEverywhereModel}
+        onActivate={workbench.activateSearchEverywhereItem}
+        onChangeQuery={workbench.setSearchEverywhereQuery}
+        onClose={() => workbench.setSearchEverywhereOpen(false)}
+        query={workbench.searchEverywhereQuery}
       />
 
       <TextSearch

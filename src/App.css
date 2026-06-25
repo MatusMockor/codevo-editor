@@ -3519,6 +3519,35 @@ button.problem-row:focus-visible {
   padding: 14px 12px;
 }
 
+/* Search Everywhere: categorized sections inside the shared quick-open shell. */
+.search-everywhere-section + .search-everywhere-section {
+  margin-top: 4px;
+}
+
+.search-everywhere-section-label {
+  padding: 8px 10px 4px;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.search-everywhere-result {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.search-everywhere-result kbd {
+  justify-self: end;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .setup-header {
   display: flex;
   align-items: center;

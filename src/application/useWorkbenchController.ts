@@ -495,6 +495,11 @@ import type {
   ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
+import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
+import {
+  buildSearchEverywhereModel,
+  type SearchEverywhereItem,
+} from "../domain/searchEverywhere";
 import {
   defaultAppSettings,
   defaultEditorFontSize,
@@ -1080,6 +1085,19 @@ export function useWorkbenchController(
   const [workspaceSymbolsResults, setWorkspaceSymbolsResults] = useState<
     ProjectSymbolSearchResult[]
   >([]);
+  // PhpStorm "Search Everywhere" (double-Shift). One dialog aggregating the
+  // file / symbol / action searches above. The raw per-source results are kept
+  // separately (each filled by its own per-root, debounced, drop-stale search)
+  // and combined into the categorized model only at render time.
+  const [searchEverywhereOpen, setSearchEverywhereOpen] = useState(false);
+  const [searchEverywhereQuery, setSearchEverywhereQuery] = useState("");
+  const [searchEverywhereLoading, setSearchEverywhereLoading] = useState(false);
+  const [searchEverywhereFiles, setSearchEverywhereFiles] = useState<
+    FileSearchResult[]
+  >([]);
+  const [searchEverywhereSymbols, setSearchEverywhereSymbols] = useState<
+    ProjectSymbolSearchResult[]
+  >([]);
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
   const [textSearchLoading, setTextSearchLoading] = useState(false);
@@ -1260,6 +1278,12 @@ export function useWorkbenchController(
   const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  // PhpStorm double-Shift detector for Search Everywhere. Kept in a stable ref
+  // so the keydown listener keeps the same instance across re-renders (the tap
+  // timing must persist between events). 300ms is PhpStorm's default window.
+  const doubleShiftDetectorRef = useRef(
+    createDoubleShiftDetector({ windowMs: 300 }),
+  );
   // The backend session id of the project terminal currently mounted in the
   // bottom panel, tagged with the workspace root it belongs to. The terminal
   // panel reports this; "run test from gutter" writes into it. Tagging by root
@@ -3384,6 +3408,11 @@ export function useWorkbenchController(
     setWorkspaceSymbolsQuery("");
     setWorkspaceSymbolsLoading(false);
     setWorkspaceSymbolsResults([]);
+    setSearchEverywhereOpen(false);
+    setSearchEverywhereQuery("");
+    setSearchEverywhereLoading(false);
+    setSearchEverywhereFiles([]);
+    setSearchEverywhereSymbols([]);
     setQuickOpenOpen(false);
     setQuickOpenQuery("");
     setQuickOpenLoading(false);
@@ -4587,6 +4616,11 @@ export function useWorkbenchController(
       setWorkspaceSymbolsQuery("");
       setWorkspaceSymbolsLoading(false);
       setWorkspaceSymbolsResults([]);
+      setSearchEverywhereOpen(false);
+      setSearchEverywhereQuery("");
+      setSearchEverywhereLoading(false);
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
       setQuickOpenOpen(false);
       setQuickOpenQuery("");
       setQuickOpenLoading(false);
@@ -22105,6 +22139,11 @@ export function useWorkbenchController(
   ]);
 
   const closeFloatingSurface = useCallback((): boolean => {
+    if (searchEverywhereOpen) {
+      setSearchEverywhereOpen(false);
+      return true;
+    }
+
     if (referencesView) {
       setReferencesView(null);
       return true;
@@ -22186,6 +22225,7 @@ export function useWorkbenchController(
     languageServerSetupOpen,
     paletteOpen,
     quickOpenOpen,
+    searchEverywhereOpen,
     recentFilesSwitcherOpen,
     referencesView,
     selectedGitChange,
@@ -22225,6 +22265,70 @@ export function useWorkbenchController(
     setTextSearchOpen(false);
     setWorkspaceSymbolsOpen(true);
   }, []);
+
+  // Search Everywhere is additive: opening it closes the four separate dialogs
+  // it aggregates so only one search surface is ever visible, exactly like the
+  // other openers above. It works without a workspace too (commands/actions are
+  // always searchable); file/symbol sources simply stay empty until a root is
+  // open.
+  const openSearchEverywhere = useCallback(() => {
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setRecentFilesSwitcherOpen(false);
+    setTextSearchOpen(false);
+    setSearchEverywhereQuery("");
+    setSearchEverywhereFiles([]);
+    setSearchEverywhereSymbols([]);
+    setSearchEverywhereOpen(true);
+  }, []);
+
+  const activateSearchEverywhereItem = useCallback(
+    async (item: SearchEverywhereItem) => {
+      if (item.kind === "action") {
+        setSearchEverywhereOpen(false);
+
+        try {
+          await item.command.run();
+        } catch (error) {
+          reportError("Command", error);
+        }
+
+        return;
+      }
+
+      // Capture the requested root up front so a workspace switch during the
+      // open cannot reveal a symbol position in another tab's editor.
+      const requestedRoot = currentWorkspaceRootRef.current;
+      const path = item.kind === "file" ? item.file.path : item.symbol.path;
+      const name =
+        item.kind === "file" ? item.file.name : getFileName(item.symbol.path);
+
+      const opened = await openFile({ kind: "file", name, path });
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      if (!opened) {
+        return;
+      }
+
+      setSearchEverywhereOpen(false);
+
+      if (item.kind === "symbol") {
+        setEditorRevealTarget({
+          path: item.symbol.path,
+          position: editorPositionFromProjectSymbol(item.symbol),
+        });
+        setMessage(
+          `Opened ${item.symbol.name} ${item.symbol.relativePath}:${item.symbol.lineNumber}:${item.symbol.column}`,
+        );
+      }
+    },
+    [openFile, reportError],
+  );
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -22355,6 +22459,15 @@ export function useWorkbenchController(
       isEnabled: (context) =>
         context.hasWorkspace && canSearchClassOpenSymbols,
       run: openWorkspaceSymbols,
+    });
+
+    registry.register({
+      id: "workbench.searchEverywhere",
+      title: "Search Everywhere",
+      category: "Workbench",
+      shortcut: shortcut("workbench.searchEverywhere"),
+      isEnabled: () => true,
+      run: openSearchEverywhere,
     });
 
     registry.register({
@@ -23059,6 +23172,7 @@ export function useWorkbenchController(
     openTypeHierarchy,
     openSettingsPanel,
     openWorkspaceSymbols,
+    openSearchEverywhere,
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
@@ -23109,6 +23223,31 @@ export function useWorkbenchController(
       activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
     ),
   };
+
+  // Combine the three raw sources into the categorized Search Everywhere model.
+  // Files/symbols are already query-filtered by their gateways; actions are
+  // filtered here against the live query + command context so disabled commands
+  // never show. Pure aggregation lives in the domain layer (searchEverywhere).
+  const searchEverywhereCommands = commandRegistry.list();
+  const searchEverywhereModel = useMemo(
+    () =>
+      buildSearchEverywhereModel({
+        query: searchEverywhereQuery,
+        files: searchEverywhereFiles,
+        symbols: searchEverywhereSymbols,
+        commands: searchEverywhereCommands,
+        context: commandContext,
+      }),
+    [
+      searchEverywhereQuery,
+      searchEverywhereFiles,
+      searchEverywhereSymbols,
+      searchEverywhereCommands,
+      commandContext.hasWorkspace,
+      commandContext.hasActiveDocument,
+      commandContext.activeDocumentDirty,
+    ],
+  );
 
   useEffect(() => {
     if (!workspaceRoot) {
@@ -23643,11 +23782,22 @@ export function useWorkbenchController(
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        doubleShiftDetectorRef.current.reset();
+
         if (closeFloatingSurface()) {
           event.preventDefault();
           event.stopPropagation();
         }
 
+        return;
+      }
+
+      // PhpStorm double-Shift -> Search Everywhere. The detector consumes every
+      // keydown so an intervening key cancels a pending first tap; it returns
+      // true only on the qualifying second bare Shift tap inside the window.
+      if (doubleShiftDetectorRef.current.handleKeyDown(event, Date.now())) {
+        event.preventDefault();
+        openSearchEverywhere();
         return;
       }
 
@@ -23851,6 +24001,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("workbench.searchEverywhere")) {
+        event.preventDefault();
+        openSearchEverywhere();
+        return;
+      }
+
       if (matches("commands.show")) {
         event.preventDefault();
         setClassOpenOpen(false);
@@ -23934,6 +24090,7 @@ export function useWorkbenchController(
     openReferencesPanel,
     openSettingsPanel,
     openWorkspaceSymbols,
+    openSearchEverywhere,
     quitApplication,
     resetEditorFontSize,
     saveActiveDocument,
@@ -24315,6 +24472,103 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceSymbolsOpen,
     workspaceSymbolsQuery,
+  ]);
+
+  // Search Everywhere unified file + symbol search. Reuses the exact same
+  // gateways as Quick Open (files) and Go to Symbol (symbols) - this effect only
+  // fans the one query out to both and stores the raw per-source results. The
+  // command/action source needs no async search (the registry is already in
+  // memory) so it is filtered synchronously in the render-time model.
+  //
+  // Isolation: the requested root is captured up front and the `active` flag
+  // (reset by cleanup on any dependency change, including a workspace tab
+  // switch) drops stale results so a slow search from a previous root can never
+  // overwrite the current tab's results. `searchClassOpenSymbols` additionally
+  // re-checks `currentWorkspaceRootRef` after its awaits.
+  useEffect(() => {
+    if (!searchEverywhereOpen || !workspaceRoot) {
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
+      setSearchEverywhereLoading(false);
+      return;
+    }
+
+    const trimmedQuery = searchEverywhereQuery.trim();
+
+    if (!trimmedQuery) {
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
+      setSearchEverywhereLoading(false);
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    let active = true;
+    setSearchEverywhereLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      const fileSearchPromise = fileSearch
+        .searchFiles(requestedRoot, searchEverywhereQuery, 40)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setSearchEverywhereFiles(results);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setSearchEverywhereFiles([]);
+          reportError("Search Everywhere", error);
+        });
+
+      if (!canSearchClassOpenSymbols) {
+        setSearchEverywhereSymbols([]);
+      }
+
+      const symbolSearchPromise = canSearchClassOpenSymbols
+        ? searchClassOpenSymbols(searchEverywhereQuery, 40)
+            .then((results) => {
+              if (!active) {
+                return;
+              }
+
+              setSearchEverywhereSymbols(results);
+            })
+            .catch((error) => {
+              if (!active) {
+                return;
+              }
+
+              setSearchEverywhereSymbols([]);
+              reportError("Search Everywhere", error);
+            })
+        : Promise.resolve();
+
+      void Promise.all([fileSearchPromise, symbolSearchPromise]).finally(() => {
+        if (!active) {
+          return;
+        }
+
+        setSearchEverywhereLoading(false);
+      });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    canSearchClassOpenSymbols,
+    fileSearch,
+    reportError,
+    searchClassOpenSymbols,
+    searchEverywhereOpen,
+    searchEverywhereQuery,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -25086,6 +25340,14 @@ export function useWorkbenchController(
     workspaceSymbolsOpen,
     workspaceSymbolsQuery,
     workspaceSymbolsResults,
+    searchEverywhereOpen,
+    searchEverywhereQuery,
+    searchEverywhereLoading,
+    searchEverywhereModel,
+    openSearchEverywhere,
+    activateSearchEverywhereItem,
+    setSearchEverywhereOpen,
+    setSearchEverywhereQuery,
     closeImplementationChooser: () => setImplementationChooser(null),
     closeCallHierarchy: () => setCallHierarchyView(null),
     closeTypeHierarchy: () => setTypeHierarchyView(null),

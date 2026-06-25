@@ -277,6 +277,16 @@ export const keymapCommands = [
   },
   {
     category: "Workbench",
+    // PhpStorm triggers Search Everywhere with double-Shift, which is not
+    // expressible as a normal chord; this is the discoverable fallback shortcut
+    // (also rebindable from the keymap settings). Double-Shift is handled
+    // separately in the global keydown listener.
+    defaultShortcut: "Cmd+Shift+A",
+    id: "workbench.searchEverywhere",
+    label: "Search Everywhere",
+  },
+  {
+    category: "Workbench",
     defaultShortcut: "Cmd+,",
     id: "workbench.openSettings",
     label: "Open Settings",

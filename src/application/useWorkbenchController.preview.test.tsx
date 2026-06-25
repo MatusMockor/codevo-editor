@@ -1934,6 +1934,214 @@ describe("useWorkbenchController preview tabs", () => {
     expect(readTextFile).not.toHaveBeenCalledWith(stalePath);
   });
 
+  it("aggregates files, symbols and actions into one Search Everywhere model", async () => {
+    const userSymbol: ProjectSymbolSearchResult = {
+      column: 7,
+      containerName: null,
+      fullyQualifiedName: "App\\Models\\User",
+      kind: "class",
+      lineNumber: 12,
+      name: "User",
+      path: "/workspace/app/Models/User.php",
+      relativePath: "app/Models/User.php",
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [userSymbol],
+      // The file/symbol gateways are already query-filtered upstream; return the
+      // fixtures regardless so this test focuses on aggregation, while the
+      // action section is filtered here by the live query (matches "search").
+      searchFiles: vi.fn(async () => [
+        {
+          name: "User.php",
+          path: "/workspace/app/Models/User.php",
+          relativePath: "app/Models/User.php",
+        },
+      ]),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+      getWorkbench().setSearchEverywhereQuery("search");
+    });
+    await flushSearchEverywhereDebounce();
+
+    const sections = getWorkbench().searchEverywhereModel.sections;
+    expect(sections.map((section) => section.kind)).toEqual([
+      "file",
+      "symbol",
+      "action",
+    ]);
+    expect(sections[0].items[0]).toMatchObject({ kind: "file" });
+    expect(sections[1].items[0]).toMatchObject({ kind: "symbol" });
+    expect(
+      sections[2].items.every((item) => item.kind === "action"),
+    ).toBe(true);
+  });
+
+  it("dispatches Search Everywhere file, symbol and action results correctly", async () => {
+    const symbol: ProjectSymbolSearchResult = {
+      column: 7,
+      containerName: null,
+      fullyQualifiedName: "App\\Models\\User",
+      kind: "class",
+      lineNumber: 12,
+      name: "User",
+      path: "/workspace/app/Models/User.php",
+      relativePath: "app/Models/User.php",
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [symbol],
+      searchFiles: vi.fn(async () => [
+        {
+          name: "User.php",
+          path: "/workspace/app/Models/User.php",
+          relativePath: "app/Models/User.php",
+        },
+      ]),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    // Symbol -> open file + reveal at the symbol position.
+    await act(async () => {
+      await getWorkbench().activateSearchEverywhereItem({
+        id: "symbol:0:/workspace/app/Models/User.php:12:7",
+        kind: "symbol",
+        label: "User",
+        detail: "class · app/Models/User.php:12",
+        symbol,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(false);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: "/workspace/app/Models/User.php",
+      position: { column: 7, lineNumber: 12 },
+    });
+
+    // Action -> runs the command (re-open then activate the action).
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+    });
+    const showCommands = getWorkbench().commands.find(
+      (candidate) => candidate.id === "commands.show",
+    );
+    expect(showCommands).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().activateSearchEverywhereItem({
+        id: "action:0:commands.show",
+        kind: "action",
+        label: showCommands?.title ?? "",
+        detail: "Workbench",
+        shortcut: null,
+        command: showCommands!,
+      });
+    });
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(false);
+    expect(getWorkbench().paletteOpen).toBe(true);
+  });
+
+  it("drops stale Search Everywhere results after switching project tabs", async () => {
+    const slowSearch = createDeferred<FileSearchResult[]>();
+    let firstQuery = true;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      searchFiles: vi.fn(async () => {
+        if (firstQuery) {
+          firstQuery = false;
+          return slowSearch.promise;
+        }
+
+        return [];
+      }),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+      getWorkbench().setSearchEverywhereQuery("user");
+    });
+    // Let the debounce fire so the slow search is in flight against workspace-a.
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    // The stale search now resolves; its results must be dropped.
+    await act(async () => {
+      slowSearch.resolve([
+        {
+          name: "Stale.php",
+          path: "/workspace-a/app/Stale.php",
+          relativePath: "app/Stale.php",
+        },
+      ]);
+      await slowSearch.promise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    const fileItems = getWorkbench()
+      .searchEverywhereModel.sections.flatMap((section) => section.items)
+      .filter((item) => item.kind === "file");
+    expect(fileItems).toHaveLength(0);
+  });
+
+  it("opening Search Everywhere closes the dialogs it aggregates", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+      getWorkbench().setClassOpenOpen(true);
+      getWorkbench().setPaletteOpen(true);
+      getWorkbench().setWorkspaceSymbolsOpen(true);
+    });
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+    });
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(true);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().classOpenOpen).toBe(false);
+    expect(getWorkbench().paletteOpen).toBe(false);
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(false);
+  });
+
   it("ignores stale open file errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
@@ -51291,6 +51499,17 @@ async function flushAsyncTurns(count = 12): Promise<void> {
 }
 
 async function flushWorkspaceDirectoryRefresh(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  });
+  await flushAsyncTurns();
+}
+
+// Search Everywhere debounces its file/symbol fan-out by 120ms; wait past it
+// then let the resolved searches settle into state.
+async function flushSearchEverywhereDebounce(): Promise<void> {
   await act(async () => {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 150);

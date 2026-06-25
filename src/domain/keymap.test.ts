@@ -53,6 +53,18 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["editor.goToSuperMethod"]).toBe("Cmd+U");
   });
 
+  it("registers Search Everywhere with a Cmd+Shift+A fallback shortcut", () => {
+    expect(defaultShortcutForCommand("workbench.searchEverywhere", "mac")).toBe(
+      "Cmd+Shift+A",
+    );
+    expect(
+      defaultShortcutForCommand("workbench.searchEverywhere", "linux"),
+    ).toBe("Ctrl+Shift+A");
+    expect(defaultKeymapSettings("mac")["workbench.searchEverywhere"]).toBe(
+      "Cmd+Shift+A",
+    );
+  });
+
   it("defaults the recent files switcher to Cmd+E on mac and Ctrl+E elsewhere", () => {
     expect(defaultShortcutForCommand("editor.recentFiles", "mac")).toBe("Cmd+E");
     expect(defaultShortcutForCommand("editor.recentFiles", "linux")).toBe(
