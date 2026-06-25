@@ -168,6 +168,16 @@ const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
  * legitimate (slower-but-valid) result.
  */
 const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
+/**
+ * Shorter upper bound (ms) for a hover request. Hover is passive information,
+ * so the worse outcome is leaving the Monaco "Loading…" placeholder on screen
+ * for the full {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS} budget when a cold
+ * language server is slow. A warm server answers a hover in well under this
+ * budget, so the only behavioural change is that a stuck cold hover tears down
+ * its "Loading…" widget in ~700ms instead of 2.5s. Actionable
+ * navigation/references/completion requests keep the longer budget.
+ */
+const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
 const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
 const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
@@ -733,6 +743,7 @@ async function provideHover(
 
     const hover = await raceInteractiveFeatureRequest(
       context.featuresGateway.hover(request.rootPath, request.position),
+      HOVER_FEATURE_REQUEST_TIMEOUT_MS,
     );
 
     if (hover === FEATURE_REQUEST_TIMED_OUT) {
@@ -2418,19 +2429,22 @@ async function flushPendingDocumentChangeForStoredPayload(
 }
 
 /**
- * Races `request` against an {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}
- * timeout, resolving to {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins
- * so the caller can tear down the Monaco "Loading…" widget instead of waiting
- * on a cold language server forever. The timer is always cleared.
+ * Races `request` against a timeout (defaulting to
+ * {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}), resolving to
+ * {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins so the caller can tear
+ * down the Monaco "Loading…" widget instead of waiting on a cold language
+ * server forever. Hover passes the shorter
+ * {@link HOVER_FEATURE_REQUEST_TIMEOUT_MS} budget. The timer is always cleared.
  */
 function raceInteractiveFeatureRequest<T>(
   request: Promise<T>,
+  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
 ): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
     timeoutHandle = setTimeout(
       () => resolve(FEATURE_REQUEST_TIMED_OUT),
-      INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
+      timeoutMs,
     );
   });
 

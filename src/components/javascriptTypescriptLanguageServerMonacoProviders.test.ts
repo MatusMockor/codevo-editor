@@ -794,6 +794,78 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     }
   });
 
+  it("resolves TypeScript hover to null within the shorter hover timeout budget", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const hover =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+        .calls[0][1];
+      const token = { isCancellationRequested: false };
+      const hoverPromise = hoverProvider.provideHover(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the full navigation timeout budget for TypeScript definition (still pending at the hover timeout)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const definition =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => definition.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const definitionProvider = (
+        monaco.languages.registerDefinitionProvider as any
+      ).mock.calls[0][1];
+      const token = { isCancellationRequested: false };
+      const definitionPromise = definitionProvider.provideDefinition(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      let settled = false;
+      void definitionPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns TypeScript hover when the server responds before the timeout and the token stays active", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway();

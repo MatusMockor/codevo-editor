@@ -410,6 +410,67 @@ describe("registerLanguageServerMonacoProviders", () => {
     }
   });
 
+  it("resolves PHP hover to null within the shorter hover timeout budget", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const hover = createDeferred<LanguageServerHover | null>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const hoverPromise = registered.hoverProvider.provideHover(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the full navigation timeout budget for PHP definition (still pending at the hover timeout)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const locations = createDeferred<LanguageServerLocation[]>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => locations.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const definitionPromise = registered.definitionProvider.provideDefinition(
+        model(),
+        position(),
+        token,
+      );
+
+      let settled = false;
+      void definitionPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns PHP hover when phpactor responds before the timeout and the token stays active", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
