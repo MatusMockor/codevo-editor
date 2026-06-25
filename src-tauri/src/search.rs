@@ -286,7 +286,20 @@ mod tests {
     };
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Returns true when the `rg` (ripgrep) binary is invocable in the current
+    /// PATH. Integration tests that spawn ripgrep use this to skip gracefully
+    /// (instead of failing) on hosts without ripgrep installed (e.g. minimal CI
+    /// images). Pure unit tests do not depend on it and always run.
+    fn rg_available() -> bool {
+        Command::new("rg")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
 
     struct TempProject {
         path: PathBuf,
@@ -355,6 +368,10 @@ mod tests {
 
     #[test]
     fn default_search_is_case_insensitive_literal() {
+        if !rg_available() {
+            eprintln!("skipping default_search_is_case_insensitive_literal: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "Hello World\n");
 
@@ -366,6 +383,10 @@ mod tests {
 
     #[test]
     fn case_sensitive_excludes_other_casings() {
+        if !rg_available() {
+            eprintln!("skipping case_sensitive_excludes_other_casings: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "Hello\nhello\nHELLO\n");
 
@@ -384,6 +405,10 @@ mod tests {
 
     #[test]
     fn whole_word_matches_only_standalone_token() {
+        if !rg_available() {
+            eprintln!("skipping whole_word_matches_only_standalone_token: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "user\nusername\nthe user here\n");
 
@@ -402,6 +427,10 @@ mod tests {
 
     #[test]
     fn literal_query_does_not_treat_special_chars_as_regex() {
+        if !rg_available() {
+            eprintln!("skipping literal_query_does_not_treat_special_chars_as_regex: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "a.b\naxb\n");
 
@@ -414,6 +443,10 @@ mod tests {
 
     #[test]
     fn regex_query_matches_pattern() {
+        if !rg_available() {
+            eprintln!("skipping regex_query_matches_pattern: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "foo123\nfooXYZ\n");
 
@@ -432,6 +465,10 @@ mod tests {
 
     #[test]
     fn invalid_regex_returns_empty_not_error() {
+        if !rg_available() {
+            eprintln!("skipping invalid_regex_returns_empty_not_error: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.txt", "anything\n");
 
@@ -453,6 +490,10 @@ mod tests {
 
     #[test]
     fn file_mask_include_restricts_to_matching_files() {
+        if !rg_available() {
+            eprintln!("skipping file_mask_include_restricts_to_matching_files: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("a.php", "needle\n");
         project.write("b.txt", "needle\n");
@@ -472,6 +513,10 @@ mod tests {
 
     #[test]
     fn file_mask_exclude_drops_matching_files() {
+        if !rg_available() {
+            eprintln!("skipping file_mask_exclude_drops_matching_files: ripgrep (rg) not in PATH");
+            return;
+        }
         let project = TempProject::new();
         project.write("keep.php", "needle\n");
         project.write("skip.test.php", "needle\n");
