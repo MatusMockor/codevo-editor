@@ -826,16 +826,41 @@ function phpDocTypeForProperty(
   source: string,
   propertyName: string,
 ): string | null {
-  const pattern = new RegExp(
-    `\\/\\*\\*[\\s\\S]*?@(?:(?:phpstan|psalm)-)?var\\s+([^\\r\\n*]+)[\\s\\S]*?\\*\\/\\s*(?:public|protected|private)?\\s+(?:readonly\\s+)?(?:static\\s+)?(?:[^\\n;=]+?\\s+)?\\$${escapeRegExp(
+  // Two-stage (linear) resolution mirroring `phpDocRawTypeForVariableBefore`:
+  // extract each `/** ... */` docblock once, then check its `@var` against the
+  // declaration that immediately follows it. The previous single regex used two
+  // unbounded lazy `[\s\S]*?` spans that could run past the closing `*/`, which
+  // caused catastrophic backtracking (multi-second per-keystroke freezes on large
+  // documented classes) and also cross-matched a far-away docblock onto the wrong
+  // property. Anchoring on the docblock that directly precedes the declaration
+  // keeps the result identical for well-formed code while removing the blow-up.
+  const docBlockPattern = /\/\*\*[\s\S]*?\*\//g;
+  const varPattern = /@(?:(?:phpstan|psalm)-)?var\s+([^\r\n*]+)/;
+  // Each modifier owns its own trailing `\s+` and the optional type token is a
+  // single whitespace-free run (`[^\s;=()]+`), so no whitespace run can be split
+  // multiple ways. A lazy `[^\n;=]+?\s+` here (matching whitespace two ways) would
+  // reintroduce catastrophic backtracking on a long indented/blank line following
+  // the docblock, re-freezing the per-keystroke completion hot path.
+  const declarationPattern = new RegExp(
+    `^\\s*(?:(?:public|protected|private)\\s+)?(?:readonly\\s+)?(?:static\\s+)?(?:[^\\s;=()]+\\s+)?\\$${escapeRegExp(
       propertyName,
     )}\\b`,
-    "g",
   );
   let typeName: string | null = null;
+  let blockMatch: RegExpExecArray | null;
 
-  for (const match of source.matchAll(pattern)) {
-    typeName = phpDeclaredTypeCandidate(phpDocNormalizeType(match[1] ?? ""));
+  while ((blockMatch = docBlockPattern.exec(source)) !== null) {
+    const varMatch = varPattern.exec(blockMatch[0]);
+
+    if (!varMatch?.[1]) {
+      continue;
+    }
+
+    if (!declarationPattern.test(source.slice(docBlockPattern.lastIndex))) {
+      continue;
+    }
+
+    typeName = phpDeclaredTypeCandidate(phpDocNormalizeType(varMatch[1]));
   }
 
   return typeName;

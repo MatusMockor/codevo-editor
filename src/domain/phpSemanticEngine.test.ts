@@ -192,6 +192,126 @@ class PostController
     expect(phpThisPropertyType(source, "postRepository")).toBeNull();
   });
 
+  it("resolves a PHPDoc @var property type when the property has no PHP type", () => {
+    const source = `<?php
+class PostController
+{
+    /** @var PostRepository */
+    public $postRepository;
+}
+`;
+
+    expect(phpThisPropertyType(source, "postRepository")).toBe(
+      "PostRepository",
+    );
+  });
+
+  it("resolves PHPDoc @psalm-var and multi-line @var property types", () => {
+    const source = `<?php
+class PostController
+{
+    /** @psalm-var LegacyRepository */
+    private $legacyRepository;
+
+    /**
+     * The active cache store.
+     *
+     * @var CacheStore
+     */
+    protected $cache;
+}
+`;
+
+    expect(phpThisPropertyType(source, "legacyRepository")).toBe(
+      "LegacyRepository",
+    );
+    expect(phpThisPropertyType(source, "cache")).toBe("CacheStore");
+  });
+
+  it("associates each PHPDoc @var with the property it immediately precedes", () => {
+    const source = `<?php
+class PostController
+{
+    /** @var FirstRepository */
+    public $first;
+
+    /** @var SecondRepository */
+    public $second;
+}
+`;
+
+    expect(phpThisPropertyType(source, "first")).toBe("FirstRepository");
+    expect(phpThisPropertyType(source, "second")).toBe("SecondRepository");
+  });
+
+  it("does not resolve a PHPDoc @var that does not precede the property", () => {
+    const source = `<?php
+class PostController
+{
+    /** @var FirstRepository */
+    public function helper(): void {}
+
+    public $orphan;
+}
+`;
+
+    expect(phpThisPropertyType(source, "orphan")).toBeNull();
+  });
+
+  it("handles malformed PHPDoc blocks gracefully without resolving a type", () => {
+    const source = `<?php
+class PostController
+{
+    /** @var BrokenType
+    public $broken;
+}
+`;
+
+    expect(phpThisPropertyType(source, "broken")).toBeNull();
+  });
+
+  it("resolves PHPDoc property types in linear time on large documented classes", () => {
+    const propertyCount = 400;
+    const properties = Array.from(
+      { length: propertyCount },
+      (_, index) =>
+        `    /**\n     * The p${index} value.\n     *\n     * @var int\n     */\n    public int $p${index};\n`,
+    ).join("\n");
+    const source = `<?php\nclass BigModel\n{\n${properties}\n}\n`;
+
+    const start = performance.now();
+    // Hot path: per-keystroke completion for an as-yet-undeclared property forces
+    // a full-source scan that the previous catastrophic-backtracking regex turned
+    // into multi-second freezes.
+    const resolved = phpThisPropertyType(source, "freshlyTypedProperty");
+    const elapsed = performance.now() - start;
+
+    expect(resolved).toBeNull();
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it("does not backtrack on a long indented line following a @var docblock", () => {
+    // A docblock followed by a long run of whitespace (a blank-but-indented line,
+    // or wrapped/indented code) before the next property is the exact shape that
+    // makes an ambiguous `[^\\n;=]+?\\s+` declaration matcher explode. This guards
+    // the declaration-anchor regex against a relocated ReDoS.
+    const source = `<?php
+class BigModel
+{
+    /** @var Foo */
+${" ".repeat(2000)}
+    public $documented;
+}
+`;
+
+    const start = performance.now();
+    const resolved = phpThisPropertyType(source, "missingProperty");
+    const elapsed = performance.now() - start;
+
+    expect(resolved).toBeNull();
+    expect(elapsed).toBeLessThan(100);
+  });
+
   it("resolves receiver expressions from scope symbols", () => {
     expect(
       phpReceiverExpressionTypeInSource(source, { column: 20, lineNumber: 22 }, "$this"),
