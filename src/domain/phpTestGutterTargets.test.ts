@@ -303,4 +303,59 @@ it('also runs as pest', function () {
   it("returns null when there are no targets at all", () => {
     expect(runAllTestsTarget([])).toBeNull();
   });
+
+  it("detects @test docblock methods alongside many unrelated docblocks", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+class SampleTest extends TestCase
+{
+    /**
+     * A helper, not a test.
+     */
+    public function helper(): void
+    {
+    }
+
+    /**
+     * @test
+     */
+    public function it_runs(): void
+    {
+    }
+}
+`);
+
+    expect(targets.map((target) => target.filter)).toEqual([
+      "SampleTest",
+      "it_runs",
+    ]);
+  });
+
+  it("scans @test docblocks in linear time on many unclosed docblocks", () => {
+    // Mid-typing test file: many `/** @test ...` openings that are never closed
+    // and never followed by a `function (`. The previous two-lazy-span pattern
+    // (crossing the `*/` delimiter) degraded quadratically into multi-second
+    // freezes; this guards the gutter sweep against that blow-up.
+    const blockCount = 4000;
+    const blocks = Array.from(
+      { length: blockCount },
+      () => "    /** @test still typing this docblock",
+    ).join("\n");
+    const source = `<?php
+
+class SampleTest extends TestCase
+{
+${blocks}
+    public function
+}
+`;
+
+    const start = performance.now();
+    const targets = phpTestGutterTargets(source);
+    const elapsed = performance.now() - start;
+
+    // The malformed file yields only the class target (no closed test method).
+    expect(targets.map((target) => target.filter)).toEqual(["SampleTest"]);
+    expect(elapsed).toBeLessThan(100);
+  });
 });

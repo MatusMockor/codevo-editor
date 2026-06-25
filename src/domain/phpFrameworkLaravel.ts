@@ -3787,15 +3787,18 @@ function phpLaravelModelHasLocalScope(
     const body = maskPhpStringsAndComments(
       source.slice(range.bodyStart, range.bodyEnd),
     );
-    const pattern = new RegExp(
-      `(?:^|\\n)\\s*((?:#\\[[\\s\\S]*?\\]\\s*)*)((?:(?:abstract|final|private|protected|public|static)\\s+)*)function\\s+&?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
-      "g",
-    );
+    // Match only the function header. Stacked `#[...]` attributes are resolved
+    // separately by walking backward from the declaration. The previous pattern
+    // embedded `(?:#\[[\s\S]*?\]\s*)*` (a quantified lazy span) directly before
+    // the `function` anchor, so a property carrying many stacked attributes -
+    // where the anchor never arrives - drove exponential backtracking and
+    // multi-second freezes during Eloquent builder type resolution.
+    const pattern =
+      /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
     for (const match of body.matchAll(pattern)) {
-      const attributes = match[1] ?? "";
-      const modifiers = (match[2] ?? "").toLowerCase();
-      const methodName = match[3] ?? "";
+      const modifiers = (match[1] ?? "").toLowerCase();
+      const methodName = match[2] ?? "";
 
       if (/\b(?:private|static)\b/.test(modifiers)) {
         continue;
@@ -3805,16 +3808,82 @@ function phpLaravelModelHasLocalScope(
         return true;
       }
 
-      if (
-        methodName.toLowerCase() === scopeName.toLowerCase() &&
-        phpLaravelAttributeBlockHasName(attributes, "Scope")
-      ) {
+      if (methodName.toLowerCase() !== scopeName.toLowerCase()) {
+        continue;
+      }
+
+      // Offset of the declaration's first keyword (`match[0]` begins with the
+      // leading `\n`/whitespace the pattern consumed). Walk back from there to
+      // collect the stacked attributes that precede this specific method.
+      const leadingWhitespace = match[0].length - match[0].trimStart().length;
+      const declarationOffset = (match.index ?? 0) + leadingWhitespace;
+      const attributes = phpLaravelStackedAttributeBlockBefore(
+        body,
+        declarationOffset,
+      );
+
+      if (phpLaravelAttributeBlockHasName(attributes, "Scope")) {
         return true;
       }
     }
 
     return false;
   });
+}
+
+// Returns the run of stacked `#[...]` attribute blocks that immediately precede
+// `declarationOffset` in `masked` (a string/comment-masked class body where `#`
+// is preserved). Walks backward, matching each `]` to its `#[` via a linear
+// balanced-bracket scan - the safe replacement for the quantified lazy
+// `(?:#\[[\s\S]*?\]\s*)*` span that previously caused exponential backtracking.
+function phpLaravelStackedAttributeBlockBefore(
+  masked: string,
+  declarationOffset: number,
+): string {
+  let blockStart = declarationOffset;
+
+  for (;;) {
+    let cursor = blockStart - 1;
+
+    while (cursor >= 0 && /\s/.test(masked[cursor] ?? "")) {
+      cursor -= 1;
+    }
+
+    if (cursor < 0 || masked[cursor] !== "]") {
+      break;
+    }
+
+    let depth = 0;
+    let openOffset: number | null = null;
+
+    for (let index = cursor; index >= 0; index -= 1) {
+      const character = masked[index] || "";
+
+      if (character === "]") {
+        depth += 1;
+        continue;
+      }
+
+      if (character !== "[") {
+        continue;
+      }
+
+      depth -= 1;
+
+      if (depth === 0) {
+        openOffset = masked[index - 1] === "#" ? index - 1 : null;
+        break;
+      }
+    }
+
+    if (openOffset === null) {
+      break;
+    }
+
+    blockStart = openOffset;
+  }
+
+  return masked.slice(blockStart, declarationOffset);
 }
 
 function phpLaravelAttributeBlockHasName(

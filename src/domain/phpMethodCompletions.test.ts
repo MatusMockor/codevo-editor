@@ -3461,4 +3461,100 @@ class Comment
       "IdeHelperComment",
     ]);
   });
+
+  it("detects #[Scope] attribute names through stacked attributes", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+
+class Comment
+{
+    #[\\Some\\Other\\Attribute('a]b')]
+    #[Deprecated]
+    #[Scope]
+    protected function popular(Builder $query): void {}
+}
+`,
+      "Comment",
+    );
+
+    // The stacked attributes (including a literal `]` inside a masked string)
+    // must still resolve so `#[Scope]` keeps promoting the protected method.
+    expect(methods.some((method) => method.name === "popular")).toBe(true);
+    expect(
+      phpLaravelLocalScopeCompletionsFromMethods(methods).some(
+        (method) => method.name === "popular",
+      ),
+    ).toBe(true);
+  });
+
+  it("resolves attribute names in linear time on stacked, unclosed attributes", () => {
+    // Mid-typing hot path: many stacked attributes - each carrying a literal `]`
+    // inside a string - followed by an unclosed attribute right before a method.
+    // The previous quantified-lazy-anchored regex turned this into exponential
+    // (multi-second) per-keystroke freezes in completion/hover/navigation.
+    const attributeCount = 40;
+    const attributes = Array.from(
+      { length: attributeCount },
+      (_, index) => `    #[Attr${index}('/foo]bar/')]`,
+    ).join("\n");
+    const source = `<?php
+class BigModel
+{
+${attributes}
+    #[Unclosed(
+    public function freshlyTyped(): void {}
+}
+`;
+
+    const start = performance.now();
+    const methods = phpMethodCompletionsFromSource(source, "BigModel");
+    const elapsed = performance.now() - start;
+
+    expect(Array.isArray(methods)).toBe(true);
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it("detects Laravel local scopes in linear time despite stacked property attributes", () => {
+    // Eloquent builder type resolution runs the scope-detection regex over the
+    // whole (uncapped) class body. Stacked attributes on a *property* (where the
+    // `function` anchor never arrives) previously caused exponential backtracking.
+    const attributeCount = 40;
+    const attributes = Array.from(
+      { length: attributeCount },
+      (_, index) => `    #[Validate(rule lorem ipsum dolor sit ${index})]`,
+    ).join("\n");
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+${attributes}
+    public int $value = 1;
+
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+
+    const start = performance.now();
+    const resolved = phpLaravelMethodCallReturnTypeFromSource(
+      source,
+      "published",
+      "App\\Models\\Album",
+      "Album::published()",
+    );
+    const elapsed = performance.now() - start;
+
+    // Functionality preserved: the real local scope still resolves to a builder.
+    expect(resolved).toBe(
+      "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+    );
+    expect(elapsed).toBeLessThan(100);
+  });
 });
