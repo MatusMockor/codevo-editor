@@ -443,6 +443,7 @@ import {
 } from "../domain/phpTestCommand";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
+import { renderGeneratedPhpDoc } from "../domain/phpDocGen";
 import {
   detectMissingThisMember,
   renderCreateMethodStub,
@@ -15962,6 +15963,16 @@ export function useWorkbenchController(
         actions.push(constructorWithPromotionAction);
       }
 
+      const generatePhpDocAction = phpGeneratePhpDocCodeAction(
+        source,
+        structure,
+        range,
+      );
+
+      if (generatePhpDocAction) {
+        actions.push(generatePhpDocAction);
+      }
+
       const optimizeImportsAction = phpOptimizeImportsCodeAction(source);
 
       if (optimizeImportsAction) {
@@ -26199,6 +26210,82 @@ function phpGenerateConstructorWithPromotionCodeAction(
     renderConstructor(instanceProperties, { promotion: true }),
     "Generate constructor with promotion",
   );
+}
+
+/**
+ * Offers "Generate PHPDoc" (PhpStorm Generate -> PHPDoc) when the cursor sits on
+ * a method that has no docblock. The docblock is synthesized from the native
+ * signature (`@param` per parameter, `@return` from the return type) and spliced
+ * as a zero-length insertion at the start of the method's declaration line, so it
+ * lands directly above the method with the method's own indentation. Conservative:
+ * a cursor not on any method, or a method that already carries a docblock, yields
+ * no action (we never overwrite an existing docblock).
+ */
+function phpGeneratePhpDocCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const method = phpMethodAtOffset(structure, range.start);
+
+  if (!method || method.phpDoc) {
+    return null;
+  }
+
+  const lineStart = phpLineStartOffset(source, method.declarationOffset);
+  const indent = phpLeadingIndent(source, lineStart);
+  const docBlock = renderGeneratedPhpDoc(method, indent);
+  const insertionPosition = offsetToPosition(source, lineStart);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: `${docBlock}\n`,
+      },
+    ],
+    title: "Generate PHPDoc",
+  };
+}
+
+/**
+ * Selects the method whose span (declaration line start through to just before
+ * the next method's declaration, or the end of source) contains the cursor
+ * offset. This lets "Generate PHPDoc" fire whether the cursor is on the method
+ * signature or anywhere inside its body. Returns `null` when the cursor sits
+ * before the first method (e.g. on the class declaration).
+ */
+function phpMethodAtOffset(
+  structure: PhpClassStructure,
+  offset: number,
+): PhpMethodMember | null {
+  const ordered = [...structure.methods].sort(
+    (a, b) => a.declarationOffset - b.declarationOffset,
+  );
+
+  let match: PhpMethodMember | null = null;
+
+  for (const method of ordered) {
+    if (method.declarationOffset > offset) {
+      break;
+    }
+
+    match = method;
+  }
+
+  return match;
+}
+
+function phpLineStartOffset(source: string, offset: number): number {
+  const previousNewline = source.lastIndexOf("\n", offset - 1);
+
+  return previousNewline + 1;
+}
+
+function phpLeadingIndent(source: string, lineStart: number): string {
+  const indentMatch = /^[ \t]*/.exec(source.slice(lineStart));
+
+  return indentMatch?.[0] ?? "";
 }
 
 /**

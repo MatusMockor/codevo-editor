@@ -46245,6 +46245,149 @@ class Account
     ).toBe(false);
   });
 
+  it("offers Generate PHPDoc when the cursor sits on an undocumented method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name, int $count): bool
+    {
+        return true;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("greet(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const phpDocAction = actions.find(
+      (action) => action.title === "Generate PHPDoc",
+    );
+    expect(phpDocAction).toBeDefined();
+
+    const edit = phpDocAction?.edits[0];
+    const text = edit?.text ?? "";
+    expect(text).toContain("    /**");
+    expect(text).toContain("     * @param string $name");
+    expect(text).toContain("     * @param int $count");
+    expect(text).toContain("     * @return bool");
+
+    // Inserted at the start of the declaration line (zero-length edit) so the
+    // docblock sits directly above the method.
+    const declarationLineNumber =
+      classSource.slice(0, classSource.indexOf("public function greet")).split(
+        "\n",
+      ).length;
+    expect(edit?.range.startColumn).toBe(1);
+    expect(edit?.range.endColumn).toBe(1);
+    expect(edit?.range.startLineNumber).toBe(declarationLineNumber);
+    expect(edit?.range.endLineNumber).toBe(declarationLineNumber);
+  });
+
+  it("does not offer Generate PHPDoc on a method that already has a docblock", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    /**
+     * @param string $name
+     * @return bool
+     */
+    public function greet(string $name): bool
+    {
+        return true;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("greet(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Generate PHPDoc"),
+    ).toBe(false);
+  });
+
+  it("does not offer Generate PHPDoc when the cursor is not on any method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): bool
+    {
+        return true;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Generate PHPDoc"),
+    ).toBe(false);
+  });
+
   it("offers an optimize imports action when an import is unused", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

@@ -28,6 +28,7 @@ function method(
   overrides: Partial<PhpMethodMember> & { name: string },
 ): PhpMethodMember {
   return {
+    declarationOffset: 0,
     isAbstract: true,
     isFinal: false,
     isStatic: false,

@@ -66,6 +66,22 @@ describe("parsePhpClassStructure", () => {
     expect(methodNamed(methods, "c").visibility).toBe("private");
   });
 
+  it("records the declaration offset at the method's function keyword", () => {
+    const source = `<?php
+class Foo {
+    public function bar(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    expect(source.startsWith("function", bar.declarationOffset)).toBe(true);
+    expect(source.slice(bar.declarationOffset, bar.declarationOffset + 12)).toBe(
+      "function bar",
+    );
+  });
+
   it("defaults visibility to public when no modifier is present", () => {
     const source = `<?php
       class Foo {

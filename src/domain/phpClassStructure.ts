@@ -42,6 +42,13 @@ export interface PhpMethodPhpDoc {
 }
 
 export interface PhpMethodMember {
+  /**
+   * Character offset of the method's `function` keyword in the original source.
+   * Code-gen that inserts text relative to a method (e.g. "Generate PHPDoc"
+   * above the declaration line) maps from this offset; it does not include any
+   * preceding modifiers, attributes or PHPDoc.
+   */
+  declarationOffset: number;
   isAbstract: boolean;
   isFinal: boolean;
   isStatic: boolean;
@@ -270,6 +277,7 @@ function buildMethodMember(
   const phpDoc = parseMethodPhpDoc(source, declaration, functionOffset);
 
   return {
+    declarationOffset: functionOffset,
     isAbstract: isInterface || modifiers.has("abstract"),
     isFinal: modifiers.has("final"),
     isStatic: modifiers.has("static"),
