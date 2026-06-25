@@ -45,6 +45,7 @@ import {
   surroundWithSnippet,
   type SurroundWithTemplateId,
 } from "../domain/surroundWith";
+import { completePhpStatement } from "../domain/phpCompleteStatement";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
@@ -929,6 +930,18 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.completeStatement",
+        label: "Complete Current Statement",
+        keybindings: keybinding("editor.completeStatement"),
+        run: () => {
+          if (activeDocumentRef.current?.language !== "php") {
+            return;
+          }
+
+          applyCompleteStatement(monacoApi, editorApi);
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
@@ -1773,6 +1786,109 @@ function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
 
   const size = options.indentSize || options.tabSize || 4;
   return " ".repeat(size);
+}
+
+// Completes the statement on the caret's line (PhpStorm Cmd+Shift+Enter): the
+// pure analyser decides the smallest safe edit, then it is applied to the live
+// model. A `replaceLine` result rewrites the line and parks the caret at the
+// reported column; an `insertBlock` result opens a brace block whose body holds
+// the caret (via the snippet controller's `$0` tab-stop where available).
+function applyCompleteStatement(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+): void {
+  const model = editor.getModel();
+  const position = editor.getPosition();
+
+  if (!model || !position) {
+    return;
+  }
+
+  const lineNumber = position.lineNumber;
+  const lineText = model.getLineContent(lineNumber);
+  const completion = completePhpStatement(lineText, position.column);
+
+  if (!completion) {
+    return;
+  }
+
+  const lineRange = new monaco.Range(
+    lineNumber,
+    1,
+    lineNumber,
+    model.getLineMaxColumn(lineNumber),
+  );
+
+  if (completion.kind === "replaceLine") {
+    editor.executeEdits("mockor.completeStatement", [
+      {
+        forceMoveMarkers: true,
+        range: lineRange,
+        text: completion.newText,
+      },
+    ]);
+    editor.setPosition({ column: completion.caretColumn, lineNumber });
+    editor.focus();
+    return;
+  }
+
+  insertStatementBlock(monaco, editor, model, completion, lineRange);
+}
+
+// Replaces the control header line with `<header> {`, a blank indented body
+// line, and a closing brace, leaving the caret inside the body. The snippet
+// controller is preferred so the body tab-stop is real; the fallback computes
+// the caret position itself so the command still works without the controller.
+function insertStatementBlock(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  model: Monaco.editor.ITextModel,
+  completion: { indent: string; keepHeader: string },
+  lineRange: Monaco.Range,
+): void {
+  const eol = model.getEOL();
+  const unit = indentUnitFromModel(model);
+  const bodyIndent = completion.indent + unit;
+  const snippetController = editor.getContribution<SnippetInsertingContribution>(
+    "snippetController2",
+  );
+
+  if (snippetController) {
+    editor.setSelection(
+      new monaco.Selection(
+        lineRange.startLineNumber,
+        lineRange.startColumn,
+        lineRange.endLineNumber,
+        lineRange.endColumn,
+      ),
+    );
+    snippetController.insert(
+      `${escapeStatementSnippet(completion.keepHeader)}${eol}${escapeStatementSnippet(bodyIndent)}$0${eol}${escapeStatementSnippet(completion.indent)}}`,
+    );
+    editor.focus();
+    return;
+  }
+
+  const text = `${completion.keepHeader}${eol}${bodyIndent}${eol}${completion.indent}}`;
+
+  editor.executeEdits("mockor.completeStatement", [
+    {
+      forceMoveMarkers: true,
+      range: lineRange,
+      text,
+    },
+  ]);
+  editor.setPosition({
+    column: bodyIndent.length + 1,
+    lineNumber: lineRange.startLineNumber + 1,
+  });
+  editor.focus();
+}
+
+// Escapes the snippet meta-characters so literal header / indentation text is
+// reproduced verbatim around the body's `$0` tab-stop.
+function escapeStatementSnippet(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/\$/g, "\\$").replace(/}/g, "\\}");
 }
 
 // Replaces the captured range with the wrapped block, inserting it through the

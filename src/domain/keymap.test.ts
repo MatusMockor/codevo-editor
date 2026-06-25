@@ -67,6 +67,18 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["php.goToTest"]).toBe("");
   });
 
+  it("defaults complete current statement to Cmd+Shift+Enter on mac and Ctrl+Shift+Enter elsewhere", () => {
+    expect(defaultShortcutForCommand("editor.completeStatement", "mac")).toBe(
+      "Cmd+Shift+Enter",
+    );
+    expect(defaultShortcutForCommand("editor.completeStatement", "linux")).toBe(
+      "Ctrl+Shift+Enter",
+    );
+    expect(defaultKeymapSettings("mac")["editor.completeStatement"]).toBe(
+      "Cmd+Shift+Enter",
+    );
+  });
+
   it("never assigns the same default shortcut to two commands", () => {
     const defaults = defaultKeymapSettings("mac");
     const assigned = Object.values(defaults).filter(Boolean);

@@ -127,6 +127,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+Shift+Enter",
+    id: "editor.completeStatement",
+    label: "Complete Current Statement",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",

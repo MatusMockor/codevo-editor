@@ -3533,6 +3533,99 @@ class InvoiceServiceTest extends TestCase
     );
   });
 
+  it("appends a semicolon and moves the caret on Complete Current Statement", async () => {
+    const lines = ["        $total = $price * $qty"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({
+      column: lines[0].length + 1,
+      lineNumber: 1,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.completeStatement", [
+      expect.objectContaining({
+        range: expect.objectContaining({ startLineNumber: 1 }),
+        text: "        $total = $price * $qty;",
+      }),
+    ]);
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: "        $total = $price * $qty;".length + 1,
+      lineNumber: 1,
+    });
+  });
+
+  it("closes an unbalanced call before terminating on Complete Current Statement", async () => {
+    const lines = ["$this->repo->save(1, 2"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({
+      column: lines[0].length + 1,
+      lineNumber: 1,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.completeStatement", [
+      expect.objectContaining({ text: "$this->repo->save(1, 2);" }),
+    ]);
+  });
+
+  it("opens a brace block via the snippet controller for a control header", async () => {
+    const lines = ["if ($ready)"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+    const snippetController = { insert: vi.fn() };
+    editor.getContribution.mockReturnValue(snippetController);
+
+    editor.getPosition.mockReturnValue({
+      column: lines[0].length + 1,
+      lineNumber: 1,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(snippetController.insert).toHaveBeenCalledWith(
+      "if (\\$ready) {\n    $0\n}",
+    );
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+  });
+
+  it("does nothing on Complete Current Statement for a non-PHP document", async () => {
+    const lines = ["const total = price * qty"];
+    const { editor } = await mountCompleteStatementSurface(root, lines, "typescript");
+
+    editor.getPosition.mockReturnValue({
+      column: lines[0].length + 1,
+      lineNumber: 1,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+    expect(editor.setPosition).not.toHaveBeenCalled();
+  });
+
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     stubNavigatorPlatform("Linux x86_64");
 
@@ -5253,6 +5346,86 @@ const stableMemoGuardProps = memoGuardProps({
   path: "/workspace/src/example.ts",
   savedContent: "",
 });
+
+async function mountCompleteStatementSurface(
+  root: Root,
+  lines: string[],
+  language: "php" | "typescript" = "php",
+): Promise<{ editor: FakeEditor; model: FakeModel }> {
+  const path =
+    language === "php" ? "/workspace/Service.php" : "/workspace/service.ts";
+  const activeDocument: EditorDocument = {
+    content: `${lines.join("\n")}\n`,
+    language,
+    name: language === "php" ? "Service.php" : "service.ts",
+    path,
+    savedContent: "",
+  };
+  const model: FakeModel = {
+    getEOL: vi.fn(() => "\n"),
+    getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+    getLineCount: vi.fn(() => lines.length),
+    getLineMaxColumn: vi.fn(
+      (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+    ),
+    getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+    getValue: vi.fn(() => `${lines.join("\n")}\n`),
+    getValueInRange: vi.fn(() => ""),
+    uri: { fsPath: path, path },
+  };
+  const monaco = createMonaco(model);
+  const editor = createEditor(model);
+  editorSurfaceMocks.editor = editor;
+  editorSurfaceMocks.monaco = monaco;
+
+  await act(async () => {
+    root.render(
+      <EditorSurface
+        activeDocument={activeDocument}
+        changeHunks={[]}
+        editorRevealTarget={null}
+        flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+        languageServerDiagnosticsByPath={{}}
+        languageServerFeaturesGateway={languageServerFeaturesGateway()}
+        languageServerRuntimeStatus={null}
+        keymap={defaultKeymapSettings()}
+        monacoTheme="calm-dark"
+        onChange={vi.fn()}
+        onCloseActiveTab={vi.fn()}
+        onCursorPositionChange={vi.fn()}
+        onGoBack={vi.fn()}
+        onGoForward={vi.fn()}
+        onGoToDefinition={vi.fn()}
+        onGoToImplementationAt={vi.fn()}
+        onEditorFocused={vi.fn()}
+        onLanguageServerError={vi.fn()}
+        onOpenClass={vi.fn()}
+        onOpenFile={vi.fn()}
+        onOpenFileStructure={vi.fn()}
+        onRevealTargetHandled={vi.fn()}
+        onRevertChangeHunk={vi.fn()}
+        phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+        providePhpMethodCompletions={vi.fn(async () => [])}
+        providePhpMethodSignature={vi.fn(async () => null)}
+      />,
+    );
+    await Promise.resolve();
+  });
+
+  return { editor, model };
+}
+
+function completeStatementAction(editor: FakeEditor): { run: () => void } {
+  const action = editor.addAction.mock.calls
+    .map(([entry]) => entry)
+    .find((entry) => entry.id === "mockor.completeStatement");
+
+  if (!action) {
+    throw new Error("Expected the complete-statement action to be registered.");
+  }
+
+  return action;
+}
 
 function createEditor(model: FakeModel): FakeEditor {
   let selection: {
