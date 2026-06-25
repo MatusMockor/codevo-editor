@@ -561,6 +561,7 @@ button {
   display: block;
   width: 78px;
   height: 100%;
+  align-self: stretch;
   flex: 0 0 78px;
 }
 
@@ -704,6 +705,7 @@ button {
   display: block;
   width: 78px;
   height: 100%;
+  align-self: stretch;
 }
 
 .activity-bar {

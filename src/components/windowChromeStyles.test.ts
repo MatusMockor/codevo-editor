@@ -13,6 +13,20 @@ describe("window chrome styles", () => {
     expect(cssRule(css, ".window-menu-item")).toContain("cursor: pointer;");
     expect(cssRule(css, ".window-control")).toContain("cursor: pointer;");
   });
+
+  it("centers the macOS native traffic-light spacer within the title bar", () => {
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../App.css"),
+      "utf8",
+    );
+
+    expect(cssRule(css, ".window-native-control-space")).toContain(
+      "align-self: stretch;",
+    );
+    expect(cssRule(css, ".window-chrome-action-spacer")).toContain(
+      "align-self: stretch;",
+    );
+  });
 });
 
 function cssRule(css: string, selector: string): string {

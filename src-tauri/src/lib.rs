@@ -135,7 +135,27 @@ const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
 #[cfg(target_os = "macos")]
 const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
 #[cfg(target_os = "macos")]
+const FONT_ZOOM_IN_EVENT: &str = "mockor-editor-font-zoom-in";
+#[cfg(target_os = "macos")]
+const FONT_ZOOM_IN_MENU_ID: &str = "font-zoom-in";
+#[cfg(target_os = "macos")]
+const FONT_ZOOM_OUT_EVENT: &str = "mockor-editor-font-zoom-out";
+#[cfg(target_os = "macos")]
+const FONT_ZOOM_OUT_MENU_ID: &str = "font-zoom-out";
+#[cfg(target_os = "macos")]
+const FONT_ZOOM_RESET_EVENT: &str = "mockor-editor-font-zoom-reset";
+#[cfg(target_os = "macos")]
+const FONT_ZOOM_RESET_MENU_ID: &str = "font-zoom-reset";
+#[cfg(target_os = "macos")]
+const OPEN_APPEARANCE_SETTINGS_EVENT: &str = "mockor-open-appearance-settings";
+#[cfg(target_os = "macos")]
+const OPEN_APPEARANCE_SETTINGS_MENU_ID: &str = "open-appearance-settings";
+#[cfg(target_os = "macos")]
 const QUIT_APPLICATION_MENU_ID: &str = "quit-application";
+#[cfg(target_os = "macos")]
+const TOGGLE_FONT_LIGATURES_EVENT: &str = "mockor-toggle-font-ligatures";
+#[cfg(target_os = "macos")]
+const TOGGLE_FONT_LIGATURES_MENU_ID: &str = "toggle-font-ligatures";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1162,8 +1182,34 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .paste()
         .select_all()
         .build()?;
+    let increase_font =
+        MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size")
+            .accelerator("CmdOrCtrl+=")
+            .build(app)?;
+    let decrease_font =
+        MenuItemBuilder::with_id(FONT_ZOOM_OUT_MENU_ID, "Decrease Editor Font Size")
+            .accelerator("CmdOrCtrl+-")
+            .build(app)?;
+    let reset_font = MenuItemBuilder::with_id(FONT_ZOOM_RESET_MENU_ID, "Reset Editor Font Size")
+        .accelerator("CmdOrCtrl+0")
+        .build(app)?;
+    let toggle_ligatures =
+        MenuItemBuilder::with_id(TOGGLE_FONT_LIGATURES_MENU_ID, "Toggle Editor Font Ligatures")
+            .build(app)?;
+    let appearance_settings =
+        MenuItemBuilder::with_id(OPEN_APPEARANCE_SETTINGS_MENU_ID, "Open Appearance Settings")
+            .build(app)?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&increase_font)
+        .item(&decrease_font)
+        .item(&reset_font)
+        .separator()
+        .item(&toggle_ligatures)
+        .separator()
+        .item(&appearance_settings)
+        .build()?;
 
-    Menu::with_items(app, &[&file, &edit])
+    Menu::with_items(app, &[&file, &edit, &view])
 }
 
 fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {
@@ -5339,9 +5385,24 @@ pub fn run() {
                 CLOSE_ACTIVE_TAB_MENU_ID => {
                     let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
                 }
+                FONT_ZOOM_IN_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
+                }
+                FONT_ZOOM_OUT_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_OUT_EVENT, ());
+                }
+                FONT_ZOOM_RESET_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_RESET_EVENT, ());
+                }
+                OPEN_APPEARANCE_SETTINGS_MENU_ID => {
+                    let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
+                }
                 QUIT_APPLICATION_MENU_ID => {
                     shutdown_runtime_processes(app);
                     app.exit(0);
+                }
+                TOGGLE_FONT_LIGATURES_MENU_ID => {
+                    let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
                 }
                 _ => {}
             });

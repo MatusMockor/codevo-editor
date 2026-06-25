@@ -20,8 +20,24 @@ describe("desktop window chrome config", () => {
       hiddenTitle: true,
       label: "main",
       titleBarStyle: "Overlay",
-      trafficLightPosition: { x: 14, y: 14 },
+      trafficLightPosition: { x: 14, y: 20 },
     });
+  });
+
+  it("exposes editor typography commands through the native macOS View menu", () => {
+    const source = readText("src-tauri/src/lib.rs");
+
+    expect(source).toContain("const FONT_ZOOM_IN_MENU_ID");
+    expect(source).toContain("const FONT_ZOOM_OUT_MENU_ID");
+    expect(source).toContain("const FONT_ZOOM_RESET_MENU_ID");
+    expect(source).toContain("const TOGGLE_FONT_LIGATURES_MENU_ID");
+    expect(source).toContain("const OPEN_APPEARANCE_SETTINGS_MENU_ID");
+    expect(source).toContain("SubmenuBuilder::new(app, \"View\")");
+    expect(source).toContain("FONT_ZOOM_IN_EVENT");
+    expect(source).toContain("FONT_ZOOM_OUT_EVENT");
+    expect(source).toContain("FONT_ZOOM_RESET_EVENT");
+    expect(source).toContain("TOGGLE_FONT_LIGATURES_EVENT");
+    expect(source).toContain("OPEN_APPEARANCE_SETTINGS_EVENT");
   });
 
   it("grants the custom chrome only the required window controls", () => {
@@ -40,7 +56,9 @@ describe("desktop window chrome config", () => {
 });
 
 function readJson(path: string): any {
-  return JSON.parse(
-    readFileSync(resolve(import.meta.dirname, "..", path), "utf8"),
-  );
+  return JSON.parse(readText(path));
+}
+
+function readText(path: string): string {
+  return readFileSync(resolve(import.meta.dirname, "..", path), "utf8");
 }
