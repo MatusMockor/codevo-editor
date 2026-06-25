@@ -26,6 +26,13 @@ import type { PhpPropertyMember } from "./phpClassStructure";
  *    so the output stays correctly nested at any caller indent.
  *  - Promoted parameters are always rendered multi-line (one per line, trailing
  *    comma) for readability and stable diffs.
+ *  - Parameters are ordered required-before-optional (a stable partition that
+ *    keeps the relative declaration order within each group). A property with a
+ *    `defaultValue` is optional; one without is required. This is mandatory:
+ *    emitting an optional parameter before a required one is a PHP 8.1+
+ *    deprecation ("Optional parameter ... declared before required parameter
+ *    ... is implicitly treated as a required parameter") and silently turns the
+ *    defaulted parameter into a required one.
  */
 
 export interface RenderConstructorOptions {
@@ -42,7 +49,9 @@ export function renderConstructor(
 ): string {
   const indent = options.indent ?? DEFAULT_INDENT;
   const promotion = options.promotion ?? false;
-  const instanceProperties = properties.filter((property) => !property.isStatic);
+  const instanceProperties = orderRequiredBeforeOptional(
+    properties.filter((property) => !property.isStatic),
+  );
 
   if (instanceProperties.length === 0) {
     return renderEmptyConstructor(indent, promotion);
@@ -53,6 +62,26 @@ export function renderConstructor(
   }
 
   return renderClassicConstructor(instanceProperties, indent);
+}
+
+/**
+ * Stably partitions properties so required parameters (no `defaultValue`) come
+ * before optional ones (with a `defaultValue`), preserving each property's
+ * relative declaration order within its group. This keeps the generated
+ * signature free of the PHP 8.1+ "optional parameter declared before required
+ * parameter" deprecation without disturbing the order the author chose.
+ */
+function orderRequiredBeforeOptional(
+  properties: PhpPropertyMember[],
+): PhpPropertyMember[] {
+  const required = properties.filter((property) => !isOptionalProperty(property));
+  const optional = properties.filter(isOptionalProperty);
+
+  return [...required, ...optional];
+}
+
+function isOptionalProperty(property: PhpPropertyMember): boolean {
+  return property.defaultValue !== null && property.defaultValue !== undefined;
 }
 
 export function propertyToParameter(

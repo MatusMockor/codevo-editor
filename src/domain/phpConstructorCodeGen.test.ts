@@ -241,6 +241,141 @@ describe("renderConstructor (filtering and edge cases)", () => {
   });
 });
 
+describe("renderConstructor (required-before-optional ordering)", () => {
+  it("reorders a defaulted property after a later required one (classic)", () => {
+    const result = renderConstructor([
+      property({ name: "name", type: "string", defaultValue: "'default'" }),
+      property({ name: "timeout", type: "int" }),
+    ]);
+
+    expect(result).toBe(
+      [
+        "public function __construct(int $timeout, string $name = 'default')",
+        "{",
+        "    $this->timeout = $timeout;",
+        "    $this->name = $name;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("reorders a defaulted property after a later required one (promotion)", () => {
+    const result = renderConstructor(
+      [
+        property({
+          name: "name",
+          type: "string",
+          visibility: "public",
+          defaultValue: "'default'",
+        }),
+        property({ name: "timeout", type: "int", visibility: "public" }),
+      ],
+      { promotion: true },
+    );
+
+    expect(result).toBe(
+      [
+        "public function __construct(",
+        "    public int $timeout,",
+        "    public string $name = 'default',",
+        ") {}",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves declaration order when every property is required", () => {
+    const result = renderConstructor([
+      property({ name: "first", type: "int" }),
+      property({ name: "second", type: "string" }),
+      property({ name: "third", type: "bool" }),
+    ]);
+
+    expect(result).toBe(
+      [
+        "public function __construct(int $first, string $second, bool $third)",
+        "{",
+        "    $this->first = $first;",
+        "    $this->second = $second;",
+        "    $this->third = $third;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves declaration order when every property is optional", () => {
+    const result = renderConstructor([
+      property({ name: "first", type: "int", defaultValue: "1" }),
+      property({ name: "second", type: "string", defaultValue: "'x'" }),
+      property({ name: "third", type: "bool", defaultValue: "false" }),
+    ]);
+
+    expect(result).toBe(
+      [
+        "public function __construct(int $first = 1, string $second = 'x', bool $third = false)",
+        "{",
+        "    $this->first = $first;",
+        "    $this->second = $second;",
+        "    $this->third = $third;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("stably groups required before optional for a mixed list (classic)", () => {
+    const result = renderConstructor([
+      property({ name: "reqA", type: "int" }),
+      property({ name: "optA", type: "string", defaultValue: "'a'" }),
+      property({ name: "reqB", type: "bool" }),
+      property({ name: "optB", type: "float", defaultValue: "1.0" }),
+    ]);
+
+    expect(result).toBe(
+      [
+        "public function __construct(int $reqA, bool $reqB, string $optA = 'a', float $optB = 1.0)",
+        "{",
+        "    $this->reqA = $reqA;",
+        "    $this->reqB = $reqB;",
+        "    $this->optA = $optA;",
+        "    $this->optB = $optB;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("stably groups required before optional for a mixed list (promotion)", () => {
+    const result = renderConstructor(
+      [
+        property({ name: "reqA", type: "int", visibility: "public" }),
+        property({
+          name: "optA",
+          type: "string",
+          visibility: "public",
+          defaultValue: "'a'",
+        }),
+        property({ name: "reqB", type: "bool", visibility: "private" }),
+        property({
+          name: "optB",
+          type: "float",
+          visibility: "protected",
+          defaultValue: "1.0",
+        }),
+      ],
+      { promotion: true },
+    );
+
+    expect(result).toBe(
+      [
+        "public function __construct(",
+        "    public int $reqA,",
+        "    private bool $reqB,",
+        "    public string $optA = 'a',",
+        "    protected float $optB = 1.0,",
+        ") {}",
+      ].join("\n"),
+    );
+  });
+});
+
 describe("propertyToParameter", () => {
   it("renders a classic parameter (no visibility, no readonly)", () => {
     expect(
