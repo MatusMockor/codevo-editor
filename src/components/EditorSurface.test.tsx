@@ -3626,6 +3626,46 @@ class InvoiceServiceTest extends TestCase
     expect(editor.setPosition).not.toHaveBeenCalled();
   });
 
+  it("does nothing on Complete Current Statement inside a multiline array", async () => {
+    const lines = ["$config = [", "    'name' => $value", "];"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({
+      column: lines[1].length + 1,
+      lineNumber: 2,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+    expect(editor.setPosition).not.toHaveBeenCalled();
+  });
+
+  it("does not close a closure brace opened on the caret line", async () => {
+    const lines = ["$callback = function () {"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({
+      column: lines[0].length + 1,
+      lineNumber: 1,
+    });
+
+    const action = completeStatementAction(editor);
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+    expect(editor.setPosition).not.toHaveBeenCalled();
+  });
+
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     stubNavigatorPlatform("Linux x86_64");
 

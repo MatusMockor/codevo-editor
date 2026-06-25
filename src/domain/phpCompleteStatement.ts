@@ -56,6 +56,7 @@ const CONTROL_HEADER_KEYWORDS = [
 export function completePhpStatement(
   lineText: string,
   _caretColumn: number,
+  precedingSource = "",
 ): PhpStatementCompletion | null {
   const trimmedEnd = lineText.replace(/\s+$/, "");
 
@@ -73,11 +74,71 @@ export function completePhpStatement(
     return null;
   }
 
+  // When the caret sits inside a multiline construct (an array literal, call
+  // argument list, closure body or `match` body opened on an earlier line), the
+  // current line is only a fragment of a larger statement. Appending a `;` or
+  // closing a brace here corrupts the enclosing construct, so we do nothing and
+  // let the developer keep typing. Same for lines that obviously continue onto
+  // the next one (a trailing `,` / `=>`, an array or match arm, or a line that
+  // itself opens a block whose body is still to come).
+  if (isInsideMultilineConstruct(precedingSource)) {
+    return null;
+  }
+
+  if (isContinuationLine(code, codeMasked)) {
+    return null;
+  }
+
   if (leadingControlKeyword(codeMasked)) {
     return controlHeaderCompletion(code, codeMasked, lineText);
   }
 
   return expressionCompletion(trimmedEnd, code, codeMasked, commentStart);
+}
+
+// True when the source preceding the caret line has more opening than closing
+// brackets (after masking strings/comments), i.e. the caret is nested inside an
+// unclosed `(`, `[` or `{` from an earlier line. Completing a statement here is
+// never safe because the relevant context lives outside the current line.
+function isInsideMultilineConstruct(precedingSource: string): boolean {
+  if (precedingSource.length === 0) {
+    return false;
+  }
+
+  const masked = maskMultilineSource(precedingSource);
+  let depth = 0;
+
+  for (const character of masked) {
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth > 0;
+}
+
+// True when the caret line is a fragment that continues onto the next line and
+// therefore owns no statement terminator of its own: an array key/value or
+// `match` arm, a `case`/`default` label, or any code that ends on a trailing
+// `,`, `=>` or `{` (the latter opens a body completed on later lines).
+function isContinuationLine(code: string, codeMasked: string): boolean {
+  const trimmed = code.trim();
+  const trimmedMasked = codeMasked.trim();
+
+  if (/(?:,|=>|\{)\s*$/.test(trimmedMasked)) {
+    return true;
+  }
+
+  if (/^(?:case\b|default\b)/.test(trimmedMasked)) {
+    return true;
+  }
+
+  return /^(?:'[^']*'|"[^"]*"|\d[\w.]*|\$[A-Za-z_]\w*)\s*=>/.test(trimmed);
 }
 
 // A line whose leading keyword is a control header is handled exclusively here:
@@ -131,6 +192,30 @@ function expressionCompletion(
     kind: "replaceLine",
     newText: `${newCode}${trailing}`,
   };
+}
+
+// Masks every line of a multi-line source independently so structural brackets
+// inside strings, `/* */` and (critically) `//` / `#` line comments do not leak
+// into the bracket-depth scan. The single-line masker copies a line-comment body
+// verbatim, which is safe per line but would otherwise swallow whole lines if the
+// joined source were masked in one pass.
+function maskMultilineSource(source: string): string {
+  return source
+    .split("\n")
+    .map((line) => stripLineComment(maskLineStringsAndComments(line)))
+    .join("\n");
+}
+
+// Drops a trailing `//` / `#` comment body (already isolated by the line masker)
+// so its characters never reach the bracket counter.
+function stripLineComment(maskedLine: string): string {
+  const start = lineCommentStart(maskedLine);
+
+  if (start === null) {
+    return maskedLine;
+  }
+
+  return maskedLine.slice(0, start);
 }
 
 function leadingControlKeyword(codeMasked: string): string | null {

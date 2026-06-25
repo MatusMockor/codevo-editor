@@ -178,4 +178,129 @@ describe("completePhpStatement", () => {
   it("returns null when the statement is just a closing brace", () => {
     expect(completePhpStatement("}", 2)).toBeNull();
   });
+
+  describe("multiline continuation safety", () => {
+    it("does nothing when the caret line is an array key/value continuation", () => {
+      const preceding = "$config = [\n";
+      const result = completePhpStatement("    'name' => $value", 21, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("does nothing when the caret sits inside an unclosed array from a prior line", () => {
+      const preceding = "$config = [\n    'a' => 1,\n";
+      const result = completePhpStatement("    'b' => 2", 13, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("does nothing when the caret sits inside an unclosed call from a prior line", () => {
+      const preceding = "$result = collect([\n";
+      const result = completePhpStatement("    1, 2, 3", 12, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("does not close a closure brace opened on the caret line", () => {
+      const result = completePhpStatement("$x = function () {", 19, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("does not close a match body opened on the caret line", () => {
+      const result = completePhpStatement("$result = match($x) {", 22, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("does not terminate a match arm continuation inside an unclosed match", () => {
+      const preceding = "$result = match($x) {\n";
+      const result = completePhpStatement("    1 => 'a',", 14, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("does not terminate a string-keyed match arm continuation", () => {
+      const preceding = "$result = match($x) {\n";
+      const result = completePhpStatement("    'one' => 'a'", 17, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("does nothing for a line that merely ends with a comma continuation", () => {
+      const result = completePhpStatement("$callback(1, 2,", 16, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("does nothing for a line that ends with a fat-arrow continuation", () => {
+      const result = completePhpStatement("    'name' =>", 14, "$arr = [");
+
+      expect(result).toBeNull();
+    });
+
+    it("still terminates a balanced single-line statement when preceding code is balanced", () => {
+      const preceding = "$config = [\n    'a' => 1,\n];\n";
+      const result = completePhpStatement("$x = 5", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$x = 5;",
+      });
+    });
+
+    it("still closes a balanced single-line call when preceding code is balanced", () => {
+      const result = completePhpStatement("foo(1, 2", 9, "$ready = true;\n");
+
+      expect(result).toEqual({
+        caretColumn: 11,
+        kind: "replaceLine",
+        newText: "foo(1, 2);",
+      });
+    });
+
+    it("still opens a control block when preceding code is balanced", () => {
+      const result = completePhpStatement("if ($x)", 8, "$ready = true;\n");
+
+      expect(result).toEqual({
+        indent: "",
+        kind: "insertBlock",
+        keepHeader: "if ($x) {",
+      });
+    });
+
+    it("ignores stray brackets inside a preceding line `//` comment", () => {
+      const preceding = "$x = foo(); // see array[0\n";
+      const result = completePhpStatement("$y = 1", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$y = 1;",
+      });
+    });
+
+    it("ignores stray brackets inside a preceding line `#` comment", () => {
+      const preceding = "$x = 1; # TODO handle ( case\n";
+      const result = completePhpStatement("$y = 2", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$y = 2;",
+      });
+    });
+
+    it("ignores brackets inside a preceding single-line string literal", () => {
+      const preceding = '$label = "items[ (count)";\n';
+      const result = completePhpStatement("$y = 3", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$y = 3;",
+      });
+    });
+  });
 });

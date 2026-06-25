@@ -1788,6 +1788,27 @@ function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
   return " ".repeat(size);
 }
 
+// Joins every line above the caret line into a single source string. The
+// completion analyser uses it to detect when the caret is nested inside a
+// multiline construct (an array, call or block opened earlier) so it can stay a
+// no-op instead of corrupting the enclosing statement.
+function precedingLinesSource(
+  model: Monaco.editor.ITextModel,
+  lineNumber: number,
+): string {
+  if (lineNumber <= 1) {
+    return "";
+  }
+
+  const lines: string[] = [];
+
+  for (let line = 1; line < lineNumber; line += 1) {
+    lines.push(model.getLineContent(line));
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 // Completes the statement on the caret's line (PhpStorm Cmd+Shift+Enter): the
 // pure analyser decides the smallest safe edit, then it is applied to the live
 // model. A `replaceLine` result rewrites the line and parks the caret at the
@@ -1806,7 +1827,12 @@ function applyCompleteStatement(
 
   const lineNumber = position.lineNumber;
   const lineText = model.getLineContent(lineNumber);
-  const completion = completePhpStatement(lineText, position.column);
+  const precedingSource = precedingLinesSource(model, lineNumber);
+  const completion = completePhpStatement(
+    lineText,
+    position.column,
+    precedingSource,
+  );
 
   if (!completion) {
     return;
