@@ -662,6 +662,118 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("drops TypeScript hover when the Monaco cancellation token is cancelled after the response", async () => {
+    const monaco = createMonaco();
+    const hover =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[0][1];
+    const token = { isCancellationRequested: false };
+    const hoverPromise = hoverProvider.provideHover(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    hover.resolve({ contents: "type User = { id: string }" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+  });
+
+  it("resolves TypeScript hover to null when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const hover =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+        .calls[0][1];
+      const token = { isCancellationRequested: false };
+      const hoverPromise = hoverProvider.provideHover(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns TypeScript hover when the server responds before the timeout and the token stays active", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockResolvedValueOnce({
+      contents: "type User = { id: string }",
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[0][1];
+    const token = { isCancellationRequested: false };
+
+    await expect(
+      hoverProvider.provideHover(textModel(), { column: 4, lineNumber: 2 }, token),
+    ).resolves.toEqual({
+      contents: [{ value: "type User = { id: string }" }],
+    });
+  });
+
+  it("resolves TypeScript definition to null when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const definition =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => definition.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const definitionProvider = (
+        monaco.languages.registerDefinitionProvider as any
+      ).mock.calls[0][1];
+      const token = { isCancellationRequested: false };
+      const definitionPromise = definitionProvider.provideDefinition(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops in-flight TypeScript code actions after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";

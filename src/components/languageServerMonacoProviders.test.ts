@@ -359,6 +359,128 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops PHP hover when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const hover = createDeferred<LanguageServerHover | null>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const hoverPromise = registered.hoverProvider.provideHover(
+      model(),
+      position(),
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    hover.resolve({ contents: "**Stale user**" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+  });
+
+  it("resolves PHP hover to null when phpactor does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const hover = createDeferred<LanguageServerHover | null>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const hoverPromise = registered.hoverProvider.provideHover(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns PHP hover when phpactor responds before the timeout and the token stays active", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      hover: { contents: "**Warm user**" },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+
+    await expect(
+      registered.hoverProvider.provideHover(model(), position(), token),
+    ).resolves.toEqual({
+      contents: [{ value: "**Warm user**" }],
+    });
+  });
+
+  it("drops PHP definition when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const locations = createDeferred<LanguageServerLocation[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.definition).mockImplementationOnce(
+      async () => locations.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const definitionPromise = registered.definitionProvider.provideDefinition(
+      model(),
+      position(),
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    locations.resolve([
+      {
+        range: range(1, 6, 1, 10),
+        uri: "file:///project/src/Models/User.php",
+      },
+    ]);
+
+    await expect(definitionPromise).resolves.toBeNull();
+  });
+
+  it("resolves PHP definition to null when phpactor does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const locations = createDeferred<LanguageServerLocation[]>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => locations.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const definitionPromise = registered.definitionProvider.provideDefinition(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps completion responses to Monaco suggestions", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();

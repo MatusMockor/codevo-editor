@@ -155,6 +155,16 @@ interface ExecuteCommandPayload {
 
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
+/**
+ * Upper bound (ms) for an interactive hover / navigation request before the
+ * provider gives up and resolves to "no result". A cold phpactor (mid-index or
+ * just-warmed) can take seconds to answer; without a bound the Monaco hover
+ * widget would show its "Loading…" placeholder indefinitely. A warm phpactor
+ * answers in well under this budget, so the timeout only trips on genuinely
+ * stuck cold requests and never cancels a legitimate (slower-but-valid) result.
+ */
+const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
+const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
 const PHP_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -462,7 +472,8 @@ export function registerLanguageServerMonacoProviders(
     },
   });
   const hover = monaco.languages.registerHoverProvider("php", {
-    provideHover: (model, position) => provideHover(monaco, context, model, position),
+    provideHover: (model, position, token) =>
+      provideHover(monaco, context, model, position, token),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
     triggerCharacters: ["$", ">", ":", "'", "\"", "."],
@@ -507,32 +518,32 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const references = monaco.languages.registerReferenceProvider
     ? monaco.languages.registerReferenceProvider("php", {
-        provideReferences: (model, position) =>
-          provideReferences(monaco, context, model, position),
+        provideReferences: (model, position, _referenceContext, token) =>
+          provideReferences(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const definition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("php", {
-        provideDefinition: (model, position) =>
-          provideDefinition(monaco, context, model, position),
+        provideDefinition: (model, position, token) =>
+          provideDefinition(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const declaration = monaco.languages.registerDeclarationProvider
     ? monaco.languages.registerDeclarationProvider("php", {
-        provideDeclaration: (model, position) =>
-          provideDeclaration(monaco, context, model, position),
+        provideDeclaration: (model, position, token) =>
+          provideDeclaration(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const implementation = monaco.languages.registerImplementationProvider
     ? monaco.languages.registerImplementationProvider("php", {
-        provideImplementation: (model, position) =>
-          provideImplementation(monaco, context, model, position),
+        provideImplementation: (model, position, token) =>
+          provideImplementation(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const typeDefinition = monaco.languages.registerTypeDefinitionProvider
     ? monaco.languages.registerTypeDefinitionProvider("php", {
-        provideTypeDefinition: (model, position) =>
-          provideTypeDefinition(monaco, context, model, position),
+        provideTypeDefinition: (model, position, token) =>
+          provideTypeDefinition(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const documentHighlight = monaco.languages.registerDocumentHighlightProvider
@@ -1028,6 +1039,7 @@ async function provideReferences(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1037,6 +1049,7 @@ async function provideReferences(
     "references",
     (rootPath, requestPosition) =>
       context.featuresGateway.references(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1045,6 +1058,7 @@ async function provideDeclaration(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1054,6 +1068,7 @@ async function provideDeclaration(
     "declaration",
     (rootPath, requestPosition) =>
       context.featuresGateway.declaration(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1062,6 +1077,7 @@ async function provideDefinition(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   if (await provideLaravelStringLiteralDefinition(context, model, position)) {
     return null;
@@ -1075,6 +1091,7 @@ async function provideDefinition(
     "definition",
     (rootPath, requestPosition) =>
       context.featuresGateway.definition(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1142,6 +1159,7 @@ async function provideImplementation(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1151,6 +1169,7 @@ async function provideImplementation(
     "implementation",
     (rootPath, requestPosition) =>
       context.featuresGateway.implementation(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1159,6 +1178,7 @@ async function provideTypeDefinition(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1168,6 +1188,7 @@ async function provideTypeDefinition(
     "typeDefinition",
     (rootPath, requestPosition) =>
       context.featuresGateway.typeDefinition(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1851,6 +1872,7 @@ async function provideNavigationLocations(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ) => Promise<LanguageServerLocation[]>,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   const request = featureRequestContext(context, model, position, feature);
 
@@ -1863,7 +1885,17 @@ async function provideNavigationLocations(
       return null;
     }
 
-    const locations = await requestLocations(request.rootPath, request.position);
+    const locations = await raceInteractiveFeatureRequest(
+      requestLocations(request.rootPath, request.position),
+    );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -3181,6 +3213,7 @@ async function provideHover(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Hover | null> {
   const request = featureRequestContext(context, model, position, "hover");
 
@@ -3193,10 +3226,17 @@ async function provideHover(
       return null;
     }
 
-    const hover = await context.featuresGateway.hover(
-      request.rootPath,
-      request.position,
+    const hover = await raceInteractiveFeatureRequest(
+      context.featuresGateway.hover(request.rootPath, request.position),
     );
+
+    if (hover === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -4378,6 +4418,29 @@ function runningRuntimeStatusForRoot(
   }
 
   return null;
+}
+
+/**
+ * Races `request` against an {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}
+ * timeout. Resolves to {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins,
+ * letting the caller tear down the Monaco "Loading…" widget (returning a "no
+ * result") instead of waiting on a cold language server forever. The timer is
+ * always cleared so a settled request never leaks a pending timeout.
+ */
+function raceInteractiveFeatureRequest<T>(
+  request: Promise<T>,
+): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve(FEATURE_REQUEST_TIMED_OUT),
+      INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
+    );
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    clearTimeout(timeoutHandle);
+  });
 }
 
 function isFeatureRequestActive(
