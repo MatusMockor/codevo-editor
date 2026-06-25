@@ -107,6 +107,21 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults quick definition to Cmd/Ctrl+Shift+I without colliding with redo", () => {
+    expect(defaultShortcutForCommand("editor.quickDefinition", "mac")).toBe(
+      "Cmd+Shift+I",
+    );
+    expect(defaultShortcutForCommand("editor.quickDefinition", "linux")).toBe(
+      "Ctrl+Shift+I",
+    );
+    expect(defaultShortcutForCommand("editor.quickDefinition", "windows")).toBe(
+      "Ctrl+Shift+I",
+    );
+    expect(defaultKeymapSettings("mac")["editor.quickDefinition"]).toBe(
+      "Cmd+Shift+I",
+    );
+  });
+
   it("defaults the format document shortcut to Shift+Alt+F on every platform", () => {
     expect(defaultShortcutForCommand("editor.formatDocument", "mac")).toBe(
       "Shift+Alt+F",

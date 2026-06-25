@@ -812,6 +812,13 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.quickDefinition",
+        label: "Quick Definition",
+        keybindings: keybinding("editor.quickDefinition"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.peekDefinition"),
+      }),
+      editorApi.addAction({
         id: "mockor.goToImplementation",
         label: "Go to Implementation",
         keybindings: keybinding("editor.goToImplementation"),

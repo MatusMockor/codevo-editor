@@ -4282,6 +4282,15 @@ interface PaymentGateway
       "mockor.addSelectionToNextMatch",
     );
     const deleteLine = actionById("mockor.deleteLine");
+    const quickDefinition = actionById("mockor.quickDefinition");
+
+    expect(quickDefinition).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI,
+        ],
+      }),
+    );
 
     expect(moveLineUp).toEqual(
       expect.objectContaining({
@@ -4324,6 +4333,7 @@ interface PaymentGateway
     duplicateLine?.run();
     addSelectionToNextMatch?.run();
     deleteLine?.run();
+    quickDefinition?.run();
 
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
@@ -4348,6 +4358,11 @@ interface PaymentGateway
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.deleteLines",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.peekDefinition",
       {},
     );
   });
@@ -5940,6 +5955,7 @@ function createMonaco(model: FakeModel) {
       KeyB: 1,
       KeyD: 12,
       KeyF: 10,
+      KeyI: 15,
       KeyK: 13,
       KeyO: 2,
       KeyP: 3,

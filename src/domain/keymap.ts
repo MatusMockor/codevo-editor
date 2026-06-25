@@ -49,6 +49,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+Shift+I",
+    id: "editor.quickDefinition",
+    label: "Quick Definition",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+R",
     id: "editor.fileStructure",
     label: "File Structure",
