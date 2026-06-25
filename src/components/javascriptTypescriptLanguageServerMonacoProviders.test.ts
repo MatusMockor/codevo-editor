@@ -555,6 +555,82 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
+  it("drops TypeScript completion when the Monaco cancellation token is cancelled after the response", async () => {
+    const monaco = createMonaco();
+    const completion =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const token = { isCancellationRequested: false };
+    const completionPromise = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      undefined,
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "function",
+          documentation: null,
+          insertText: "loadUser",
+          kind: 3,
+          label: "loadUser",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
+  it("resolves TypeScript completion to empty when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const completion =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.completion).mockImplementationOnce(
+        async () => completion.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const completionProvider = (
+        monaco.languages.registerCompletionItemProvider as any
+      ).mock.calls[0][1];
+      const completionPromise = completionProvider.provideCompletionItems(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not use a TypeScript runtime status from another project tab", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway();

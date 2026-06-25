@@ -23,7 +23,10 @@ import type {
   LanguageServerRuntimeCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
+import type {
+  PhpMethodCompletion,
+  PhpMethodSignature,
+} from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
@@ -545,6 +548,156 @@ describe("registerLanguageServerMonacoProviders", () => {
         path: "/project/src/User.php",
       },
     );
+  });
+
+  it("forwards the PHP completion incomplete flag so Monaco re-queries while typing", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: true,
+        items: [
+          {
+            detail: "class",
+            documentation: "A user",
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+
+    expect(result.incomplete).toBe(true);
+  });
+
+  it("returns locally-computed PHP suggestions when the language server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const source = phpCompletionFixtureSource();
+      const completion = createDeferred<LanguageServerCompletionList>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.completion).mockImplementationOnce(
+        async () => completion.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const completionPromise =
+        registered.completionProvider.provideCompletionItems(
+          model({ content: source }),
+          position(),
+        );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(completionPromise).resolves.toEqual({
+        suggestions: [
+          {
+            detail: "local variable",
+            insertText: "$user",
+            kind: 6,
+            label: "$user",
+            range: {
+              endColumn: 5,
+              endLineNumber: 11,
+              startColumn: 1,
+              startLineNumber: 11,
+            },
+            sortText: "0_0000",
+          },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops PHP completion when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+        undefined,
+        token,
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    token.isCancellationRequested = true;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "class",
+          documentation: "A stale user",
+          insertText: "User",
+          kind: 7,
+          label: "User",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
+  it("requests PHP method suggestions and language server completion concurrently", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const method = createDeferred<PhpMethodCompletion[]>();
+    const gateway = featuresGateway();
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpMethodCompletions: vi.fn(async () => method.promise),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      );
+
+    // The language-server completion must be issued while the method collector
+    // is still pending; a serial implementation would not call it until the
+    // method promise resolves.
+    for (
+      let tick = 0;
+      tick < 10 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+
+    expect(gateway.completion).toHaveBeenCalledTimes(1);
+
+    method.resolve([]);
+    await completionPromise;
   });
 
   it("drops in-flight PHP completions when no project tab is active", async () => {

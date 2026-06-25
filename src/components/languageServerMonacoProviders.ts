@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCompletionList,
   type LanguageServerCodeLens,
   type LanguageServerDocumentSymbol,
   type LanguageServerDocumentLink,
@@ -477,8 +478,15 @@ export function registerLanguageServerMonacoProviders(
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
     triggerCharacters: ["$", ">", ":", "'", "\"", "."],
-    provideCompletionItems: (model, position) =>
-      provideCompletionItems(monaco, context, model, position),
+    provideCompletionItems: (model, position, completionContext, token) =>
+      provideCompletionItems(
+        monaco,
+        context,
+        model,
+        position,
+        completionContext,
+        token,
+      ),
   });
   const signature = monaco.languages.registerSignatureHelpProvider("php", {
     signatureHelpRetriggerCharacters: [","],
@@ -3260,6 +3268,8 @@ async function provideCompletionItems(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  _completionContext?: Monaco.languages.CompletionContext,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionList> {
   const documentContext = activePhpDocumentContext(context, model);
 
@@ -3281,6 +3291,14 @@ async function provideCompletionItems(
     return { suggestions: postfixSuggestions };
   }
 
+  // Kick off the language-server completion before awaiting the (potentially
+  // framework-backed) method collectors so the two run concurrently instead of
+  // adding their latencies serially on every keystroke.
+  const lspCompletion = requestPhpLanguageServerCompletion(
+    context,
+    model,
+    position,
+  );
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
@@ -3291,6 +3309,7 @@ async function provideCompletionItems(
   );
 
   if (!isPhpDocumentContextActive(context, documentContext)) {
+    void lspCompletion.catch(() => undefined);
     return { suggestions: [] };
   }
 
@@ -3324,71 +3343,124 @@ async function provideCompletionItems(
           sortText: `0_${String(index).padStart(4, "0")}`,
         }));
   const suggestions = [...methodSuggestions, ...variableSuggestions];
+
+  const resolution = await lspCompletion;
+
+  // The locally-computed method/postfix/variable suggestions are returned as a
+  // graceful fallback when the language server is missing, mid-index or slow,
+  // so completion is never empty while phpactor warms up.
+  if (resolution.kind === "noRequest") {
+    return { suggestions };
+  }
+
+  if (resolution.kind === "timedOut") {
+    return { suggestions };
+  }
+
+  if (token?.isCancellationRequested) {
+    return { suggestions: [] };
+  }
+
+  if (resolution.kind === "inactive") {
+    return { suggestions: [] };
+  }
+
+  if (resolution.kind === "error") {
+    context.reportError(resolution.error);
+    return { suggestions };
+  }
+
+  const completion = resolution.completion;
+  const lspSuggestions = completion.items.flatMap((item, index) => {
+    const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+
+    if (
+      isMemberOrStaticAccessCompletion &&
+      !phpLspCompletionAllowedInMemberContext(
+        monaco,
+        item,
+        kind,
+        Boolean(staticAccessCompletionContext),
+      )
+    ) {
+      return [];
+    }
+
+    const insert = lspCompletionInsert(monaco, item, kind);
+
+    return [{
+      detail: item.detail || undefined,
+      documentation: item.documentation || undefined,
+      insertText: insert.insertText,
+      ...(insert.command ? { command: insert.command } : {}),
+      ...(insert.insertTextRules
+        ? { insertTextRules: insert.insertTextRules }
+        : {}),
+      kind,
+      label: item.label,
+      range,
+      sortText: `1_${String(index).padStart(4, "0")}`,
+    }];
+  });
+
+  return {
+    ...(completion.isIncomplete ? { incomplete: true } : {}),
+    suggestions: dedupeCompletionItems(monaco, [
+      ...suggestions,
+      ...lspSuggestions,
+    ]),
+  };
+}
+
+type PhpLanguageServerCompletionResolution =
+  | { kind: "noRequest" }
+  | { kind: "timedOut" }
+  | { kind: "inactive" }
+  | { kind: "error"; error: unknown }
+  | { kind: "completion"; completion: LanguageServerCompletionList };
+
+/**
+ * Runs the PHP language-server completion request behind the shared interactive
+ * timeout and the per-workspace root/session guard, mirroring the hardening
+ * already applied to hover/navigation. Returning a discriminated result lets the
+ * caller decide between a graceful local fallback (timeout/no-request/error) and
+ * dropping a stale response (inactive root/session).
+ */
+async function requestPhpLanguageServerCompletion(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<PhpLanguageServerCompletionResolution> {
   const request = featureRequestContext(context, model, position, "completion");
 
   if (!request) {
-    return { suggestions };
+    return { kind: "noRequest" };
   }
 
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
-      return { suggestions: [] };
+      return { kind: "inactive" };
     }
 
-    const completion = await context.featuresGateway.completion(
-      request.rootPath,
-      request.position,
+    const completion = await raceInteractiveFeatureRequest(
+      context.featuresGateway.completion(request.rootPath, request.position),
     );
 
-    if (!isFeatureRequestActive(context, request)) {
-      return { suggestions: [] };
+    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+      return { kind: "timedOut" };
     }
 
-    const lspSuggestions = completion.items.flatMap((item, index) => {
-      const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+    if (!isFeatureRequestActive(context, request)) {
+      return { kind: "inactive" };
+    }
 
-      if (
-        isMemberOrStaticAccessCompletion &&
-        !phpLspCompletionAllowedInMemberContext(
-          monaco,
-          item,
-          kind,
-          Boolean(staticAccessCompletionContext),
-        )
-      ) {
-        return [];
-      }
-
-      const insert = lspCompletionInsert(monaco, item, kind);
-
-      return [{
-        detail: item.detail || undefined,
-        documentation: item.documentation || undefined,
-        insertText: insert.insertText,
-        ...(insert.command ? { command: insert.command } : {}),
-        ...(insert.insertTextRules
-          ? { insertTextRules: insert.insertTextRules }
-          : {}),
-        kind,
-        label: item.label,
-        range,
-        sortText: `1_${String(index).padStart(4, "0")}`,
-      }];
-    });
-
-    return {
-      suggestions: dedupeCompletionItems(monaco, [
-        ...suggestions,
-        ...lspSuggestions,
-      ]),
-    };
+    return { kind: "completion", completion };
   } catch (error) {
     if (isFeatureRequestActive(context, request)) {
-      context.reportError(error);
-      return { suggestions };
+      return { kind: "error", error };
     }
 
-    return { suggestions: [] };
+    return { kind: "inactive" };
   }
 }
 

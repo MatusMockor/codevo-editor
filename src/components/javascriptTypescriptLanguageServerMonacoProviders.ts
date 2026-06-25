@@ -438,13 +438,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       disposables.push(
         registry.registerCompletionItemProvider(language, {
           triggerCharacters: [".", "'", "\"", "`", "/", "@", "<", "#"],
-          provideCompletionItems: (model, position, completionContext) =>
+          provideCompletionItems: (model, position, completionContext, token) =>
             provideCompletionItems(
               monaco,
               context,
               model,
               position,
               completionContext,
+              token,
             ),
           resolveCompletionItem: (item) =>
             resolveCompletionItem(monaco, context, item),
@@ -758,6 +759,7 @@ async function provideCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
   completionContext?: Monaco.languages.CompletionContext,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionList> {
   const request = featureRequestContext(context, model, position, "completion");
 
@@ -772,16 +774,26 @@ async function provideCompletionItems(
 
     const languageServerContext =
       toLanguageServerCompletionContext(completionContext);
-    const completion = languageServerContext
-      ? await context.featuresGateway.completion(
-          request.rootPath,
-          request.position,
-          languageServerContext,
-        )
-      : await context.featuresGateway.completion(
-          request.rootPath,
-          request.position,
-        );
+    const completion = await raceInteractiveFeatureRequest(
+      languageServerContext
+        ? context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+            languageServerContext,
+          )
+        : context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+          ),
+    );
+
+    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+      return { suggestions: [] };
+    }
+
+    if (token?.isCancellationRequested) {
+      return { suggestions: [] };
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return { suggestions: [] };
