@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpClassConstantPositionOrNull,
   phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpDocPropertyPositionOrNull,
@@ -367,6 +368,187 @@ class AlbumController
       kind: "classIdentifier",
       name: "class",
     });
+  });
+
+  it("classifies a class constant access under the cursor as classConstant", () => {
+    const source = `<?php
+class RevisionController
+{
+    public function update(): void
+    {
+        $type = Revision::REVISION_TYPE_POST_INTERNAL_UPDATE;
+        \\App\\Models\\Revision::REVISION_TYPE_POST;
+        self::INTERNAL_FLAG;
+        static::INTERNAL_FLAG;
+        parent::BASE_FLAG;
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "Revision::REVISION_TYPE_POST_INTERNAL_UPDATE"),
+      ),
+    ).toEqual({
+      className: "Revision",
+      constantName: "REVISION_TYPE_POST_INTERNAL_UPDATE",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "\\App\\Models\\Revision::REVISION_TYPE_POST"),
+      ),
+    ).toEqual({
+      className: "App\\Models\\Revision",
+      constantName: "REVISION_TYPE_POST",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "self::INTERNAL_FLAG")),
+    ).toEqual({
+      className: "self",
+      constantName: "INTERNAL_FLAG",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "static::INTERNAL_FLAG"),
+      ),
+    ).toEqual({
+      className: "static",
+      constantName: "INTERNAL_FLAG",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "parent::BASE_FLAG")),
+    ).toEqual({
+      className: "parent",
+      constantName: "BASE_FLAG",
+      kind: "classConstant",
+    });
+  });
+
+  it("keeps classifying a static method call (trailing parens) as staticMethodCall", () => {
+    const source = `<?php
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::find(1);
+        Album::FIND;
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "Album::find")),
+    ).toEqual({
+      className: "Album",
+      kind: "staticMethodCall",
+      methodName: "find",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "Album::FIND")),
+    ).toEqual({
+      className: "Album",
+      constantName: "FIND",
+      kind: "classConstant",
+    });
+  });
+
+  it("locates a declared class constant position", () => {
+    const source = `<?php
+class Revision
+{
+    public const REVISION_TYPE_POST_INTERNAL_UPDATE = 'post_internal_update';
+    final protected const BASE_FLAG = 1;
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(
+      source,
+      "REVISION_TYPE_POST_INTERNAL_UPDATE",
+    );
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("REVISION_TYPE_POST_INTERNAL_UPDATE");
+
+    const baseFlagPosition = phpClassConstantPositionOrNull(source, "BASE_FLAG");
+
+    expect(baseFlagPosition).not.toBeNull();
+    expect(
+      source.split("\n")[(baseFlagPosition?.lineNumber ?? 1) - 1],
+    ).toContain("BASE_FLAG");
+  });
+
+  it("locates an enum case as a class constant position", () => {
+    const source = `<?php
+enum RevisionType: string
+{
+    case PostInternalUpdate = 'post_internal_update';
+    case PostPublished = 'post_published';
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(source, "PostPublished");
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("PostPublished");
+  });
+
+  it("returns null when no matching class constant exists", () => {
+    const source = `<?php
+class Revision
+{
+    public const OTHER = 1;
+}
+`;
+
+    expect(phpClassConstantPositionOrNull(source, "MISSING")).toBeNull();
+  });
+
+  it("does not match a switch arm label as a class constant", () => {
+    const source = `<?php
+enum RevisionType: string
+{
+    case PostPublished = 'post_published';
+
+    public function describe(): string
+    {
+        switch ($this) {
+            case PostPublished:
+                return 'published';
+        }
+
+        return 'unknown';
+    }
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(source, "PostPublished");
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("case PostPublished = 'post_published'");
+  });
+
+  it("does not match a constant used as a value rather than declared", () => {
+    const source = `<?php
+class Revision
+{
+    public const ALIAS = self::TARGET;
+}
+`;
+
+    expect(phpClassConstantPositionOrNull(source, "TARGET")).toBeNull();
   });
 
   it("detects Laravel relation strings under the cursor", () => {

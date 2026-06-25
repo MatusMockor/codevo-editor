@@ -135,6 +135,11 @@ export type PhpIdentifierContext =
       className: string;
       kind: "staticMethodCall";
       methodName: string;
+    }
+  | {
+      className: string;
+      constantName: string;
+      kind: "classConstant";
     };
 
 export interface PhpMethodDefinitionHint {
@@ -400,10 +405,10 @@ export function phpIdentifierContextAt(
     return memberProperty;
   }
 
-  const staticMethodCall = staticMethodCallContextAt(source, identifier);
+  const staticMember = staticMemberAccessContextAt(source, identifier);
 
-  if (staticMethodCall) {
-    return staticMethodCall;
+  if (staticMember) {
+    return staticMember;
   }
 
   return {
@@ -615,6 +620,37 @@ export function phpMethodPositionOrNull(
   return editorPositionAtOffset(
     source,
     match.index + match[0].lastIndexOf(methodName),
+  );
+}
+
+export function phpClassConstantPositionOrNull(
+  source: string,
+  constantName: string,
+): EditorPosition | null {
+  const normalizedConstantName = constantName.trim();
+
+  if (!normalizedConstantName) {
+    return null;
+  }
+
+  const escapedConstantName = escapeRegExp(normalizedConstantName);
+  // Match a declared class constant (`const NAME`, optionally with
+  // visibility/final modifiers and an optional type before the name) or an enum
+  // `case NAME`. Anchored to the start of a line and requiring the name to be
+  // followed by `=` or `;` so a `const`/`case` keyword cannot pick up an
+  // unrelated trailing identifier and a `switch` arm (`case EXPR:`) is excluded.
+  const constantPattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:(?:final|public|protected|private)\s+)*(?:const\b[^\r\n;=]*?|case)\s+${escapedConstantName}\b(?=\s*[=;])`,
+  );
+  const match = constantPattern.exec(source);
+
+  if (!match) {
+    return null;
+  }
+
+  return editorPositionAtOffset(
+    source,
+    match.index + match[0].lastIndexOf(normalizedConstantName),
   );
 }
 
@@ -865,10 +901,13 @@ function memberPropertyAccessContextAt(
   return null;
 }
 
-function staticMethodCallContextAt(
+function staticMemberAccessContextAt(
   source: string,
   identifier: IdentifierAtOffset,
 ): PhpIdentifierContext | null {
+  // `Class::class` is a magic constant resolving to the FQN string, never a
+  // method or class constant: leave it for the classIdentifier fallback so the
+  // `class` token does not shadow the receiver type navigation.
   if (identifier.name.toLowerCase() === "class") {
     return null;
   }
@@ -879,23 +918,39 @@ function staticMethodCallContextAt(
     contextStart,
     contextEnd < 0 ? source.length : contextEnd,
   );
-  const staticMethodPattern = new RegExp(
-    `((?:\\\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\\s*::\\s*${escapeRegExp(identifier.name)}\\b`,
+  // Capture the trailing token (group 2) so a `(` marks a static method call
+  // while its absence marks a class constant / enum case access. Without this
+  // split, `Class::CONST` was misclassified as a `staticMethodCall` with the
+  // constant name as the method name and never navigated.
+  const staticMemberPattern = new RegExp(
+    `((?:\\\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\\s*::\\s*${escapeRegExp(identifier.name)}\\b(\\s*\\()?`,
     "g",
   );
 
-  for (const match of context.matchAll(staticMethodPattern)) {
+  for (const match of context.matchAll(staticMemberPattern)) {
     const matchStart = contextStart + (match.index ?? 0);
-    const methodStart = matchStart + match[0].lastIndexOf(identifier.name);
-    const methodEnd = methodStart + identifier.name.length;
+    const memberStart = matchStart + match[0].lastIndexOf(identifier.name);
+    const memberEnd = memberStart + identifier.name.length;
 
-    if (identifier.start >= methodStart && identifier.end <= methodEnd) {
+    if (identifier.start < memberStart || identifier.end > memberEnd) {
+      continue;
+    }
+
+    const className = (match[1] ?? "").replace(/^\\+/, "");
+
+    if (match[2]) {
       return {
-        className: (match[1] ?? "").replace(/^\\+/, ""),
+        className,
         kind: "staticMethodCall",
         methodName: identifier.name,
       };
     }
+
+    return {
+      className,
+      constantName: identifier.name,
+      kind: "classConstant",
+    };
   }
 
   return null;

@@ -400,6 +400,7 @@ import {
   phpFrameworkProvidersForProject,
 } from "../domain/phpFrameworkProviders";
 import {
+  phpClassConstantPositionOrNull,
   phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpCurrentTypeKind,
@@ -17214,6 +17215,126 @@ export function useWorkbenchController(
     ],
   );
 
+  // Walks the resolved class and its trait / mixin / supertype hierarchy for a
+  // declared `const NAME` (or enum `case NAME`) and opens its declaration line.
+  // Mirrors openDirectPhpPropertyTarget so an inherited constant resolves to the
+  // ancestor that actually declares it. Captures the requested workspace root up
+  // front and re-checks it after every await so a tab switch drops stale results.
+  const openDirectPhpClassConstantTarget = useCallback(
+    async (className: string, constantName: string): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return false;
+      }
+
+      const visitedClassNames = new Set<string>();
+      const openConstantInClassHierarchy = async (
+        candidateClassName: string,
+      ): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedCandidate.toLowerCase();
+
+        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
+          return false;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            const position = phpClassConstantPositionOrNull(content, constantName);
+
+            if (position) {
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
+              return openNavigationTarget(path, position, constantName);
+            }
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassReference(
+                content,
+                traitName,
+              );
+
+              if (
+                resolvedTraitName &&
+                (await openConstantInClassHierarchy(resolvedTraitName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassReference(
+                content,
+                mixinName,
+              );
+
+              if (
+                resolvedMixinName &&
+                (await openConstantInClassHierarchy(resolvedMixinName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const superTypeName of phpSuperTypeReferences(content)) {
+              const resolvedSuperTypeName = resolvePhpClassReference(
+                content,
+                superTypeName,
+              );
+
+              if (
+                resolvedSuperTypeName &&
+                (await openConstantInClassHierarchy(resolvedSuperTypeName))
+              ) {
+                return true;
+              }
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return openConstantInClassHierarchy(className);
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpSourceInheritsOrImplementsType = useCallback(
     async (
       source: string,
@@ -17959,6 +18080,57 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
+      workspaceRoot,
+    ],
+  );
+
+  // Navigates a class constant / enum case access (`Class::CONST`,
+  // `self::CONST`, `parent::CONST`) to its declaration. Resolves the receiver
+  // with resolvePhpClassReference so self/static map to the enclosing class and
+  // parent to the extended one, walks the hierarchy for the declaring const, and
+  // falls back to the class declaration. Returns false (without a misleading
+  // `()` message) so the phpactor fallback still runs when nothing is found.
+  const goToPhpClassConstantDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "classConstant" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        !requestedRoot ||
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const className = resolvePhpClassReference(
+        activeDocument.content,
+        context.className,
+      );
+
+      if (!className) {
+        return false;
+      }
+
+      const constantTargetOpened = await openDirectPhpClassConstantTarget(
+        className,
+        context.constantName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (constantTargetOpened) {
+        return true;
+      }
+
+      return openPhpClassTarget(className, context.className);
+    },
+    [
+      activeDocument,
+      openDirectPhpClassConstantTarget,
+      openPhpClassTarget,
+      resolvePhpClassReference,
       workspaceRoot,
     ],
   );
@@ -18796,6 +18968,10 @@ export function useWorkbenchController(
       return goToPhpStaticMethodCallDefinition(context);
     }
 
+    if (context.kind === "classConstant") {
+      return goToPhpClassConstantDefinition(context);
+    }
+
     if (context.kind === "laravelRelationString") {
       return goToPhpLaravelRelationStringDefinition(context);
     }
@@ -18905,6 +19081,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
@@ -19413,6 +19590,10 @@ export function useWorkbenchController(
           return goToPhpStaticMethodCallDefinition(context);
         }
 
+        if (context.kind === "classConstant") {
+          return goToPhpClassConstantDefinition(context);
+        }
+
         if (context.kind === "laravelRelationString") {
           return goToPhpLaravelRelationStringDefinition(context);
         }
@@ -19589,6 +19770,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpLaravelAuthGuardDefinition,
+    goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
