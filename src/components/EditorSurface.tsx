@@ -844,6 +844,44 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.moveLineUp",
+        label: "Move Line Up",
+        keybindings: keybinding("editor.moveLineUp"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.moveLinesUpAction"),
+      }),
+      editorApi.addAction({
+        id: "mockor.moveLineDown",
+        label: "Move Line Down",
+        keybindings: keybinding("editor.moveLineDown"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.moveLinesDownAction"),
+      }),
+      editorApi.addAction({
+        id: "mockor.duplicateLine",
+        label: "Duplicate Line or Selection",
+        keybindings: keybinding("editor.duplicateLine"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.copyLinesDownAction"),
+      }),
+      editorApi.addAction({
+        id: "mockor.addSelectionToNextMatch",
+        label: "Add Selection to Next Match",
+        keybindings: keybinding("editor.addSelectionToNextMatch"),
+        run: () =>
+          triggerEditorAction(
+            editorApi,
+            "editor.action.addSelectionToNextFindMatch",
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.deleteLine",
+        label: "Delete Line",
+        keybindings: keybinding("editor.deleteLine"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.deleteLines"),
+      }),
+      editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
@@ -1477,6 +1515,21 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
     case "undo":
       return "undo";
   }
+}
+
+// Runs a built-in Monaco editor action by id, so an ergonomics command (move /
+// duplicate / delete line, multi-cursor) registered through the keymap drives
+// the exact same Monaco behaviour as its native keybinding. Guarded on a live
+// model so the action is a no-op when the surface shows the placeholder.
+function triggerEditorAction(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  actionId: string,
+): void {
+  if (!editor.getModel()) {
+    return;
+  }
+
+  editor.trigger("keyboard", actionId, {});
 }
 
 function expandEditorSelection(

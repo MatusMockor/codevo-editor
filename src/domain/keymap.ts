@@ -91,6 +91,36 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+Shift+ArrowUp",
+    id: "editor.moveLineUp",
+    label: "Move Line Up",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+ArrowDown",
+    id: "editor.moveLineDown",
+    label: "Move Line Down",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+D",
+    id: "editor.duplicateLine",
+    label: "Duplicate Line or Selection",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+D",
+    id: "editor.addSelectionToNextMatch",
+    label: "Add Selection to Next Match",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+K",
+    id: "editor.deleteLine",
+    label: "Delete Line",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",

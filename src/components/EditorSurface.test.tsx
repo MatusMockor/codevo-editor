@@ -3040,6 +3040,140 @@ interface ParserFactory
     expect(editor.trigger).not.toHaveBeenCalled();
   });
 
+  it("wires editor ergonomics actions to their Monaco commands and keybindings", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "ergonomics.ts",
+      path: "/workspace/src/ergonomics.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
+
+    const moveLineUp = actionById("mockor.moveLineUp");
+    const moveLineDown = actionById("mockor.moveLineDown");
+    const duplicateLine = actionById("mockor.duplicateLine");
+    const addSelectionToNextMatch = actionById(
+      "mockor.addSelectionToNextMatch",
+    );
+    const deleteLine = actionById("mockor.deleteLine");
+
+    expect(moveLineUp).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.UpArrow,
+        ],
+      }),
+    );
+    expect(moveLineDown).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd |
+            monaco.KeyMod.Shift |
+            monaco.KeyCode.DownArrow,
+        ],
+      }),
+    );
+    expect(duplicateLine).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD,
+        ],
+      }),
+    );
+    expect(addSelectionToNextMatch).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD],
+      }),
+    );
+    expect(deleteLine).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
+        ],
+      }),
+    );
+
+    moveLineUp?.run();
+    moveLineDown?.run();
+    duplicateLine?.run();
+    addSelectionToNextMatch?.run();
+    deleteLine?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.moveLinesUpAction",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.moveLinesDownAction",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.copyLinesDownAction",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.addSelectionToNextFindMatch",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.deleteLines",
+      {},
+    );
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -4533,9 +4667,12 @@ function createMonaco(model: FakeModel) {
     KeyCode: {
       BracketLeft: 5,
       BracketRight: 6,
+      DownArrow: 11,
       Enter: 8,
       KeyB: 1,
+      KeyD: 12,
       KeyF: 10,
+      KeyK: 13,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,

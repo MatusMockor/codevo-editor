@@ -16,6 +16,11 @@ describe("keymap", () => {
       "editor.closeTab": "Cmd+W",
       "editor.fileStructure": "Cmd+R",
       "editor.extendSelection": "Alt+ArrowUp",
+      "editor.moveLineUp": "Cmd+Shift+ArrowUp",
+      "editor.moveLineDown": "Cmd+Shift+ArrowDown",
+      "editor.duplicateLine": "Cmd+Shift+D",
+      "editor.addSelectionToNextMatch": "Cmd+D",
+      "editor.deleteLine": "Cmd+Shift+K",
       "editor.fontZoomIn": "Cmd+=",
       "editor.fontZoomOut": "Cmd+-",
       "editor.fontZoomReset": "Cmd+0",
@@ -83,6 +88,48 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["editor.formatDocument"]).toBe(
       "Shift+Alt+F",
     );
+  });
+
+  it("defaults the editor ergonomics shortcuts to their PhpStorm/VS Code keys", () => {
+    expect(defaultShortcutForCommand("editor.moveLineUp", "mac")).toBe(
+      "Cmd+Shift+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.moveLineUp", "linux")).toBe(
+      "Ctrl+Shift+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.moveLineDown", "mac")).toBe(
+      "Cmd+Shift+ArrowDown",
+    );
+    expect(defaultShortcutForCommand("editor.duplicateLine", "mac")).toBe(
+      "Cmd+Shift+D",
+    );
+    expect(defaultShortcutForCommand("editor.duplicateLine", "linux")).toBe(
+      "Ctrl+Shift+D",
+    );
+    expect(defaultShortcutForCommand("editor.addSelectionToNextMatch", "mac")).toBe(
+      "Cmd+D",
+    );
+    expect(
+      defaultShortcutForCommand("editor.addSelectionToNextMatch", "linux"),
+    ).toBe("Ctrl+D");
+    expect(defaultShortcutForCommand("editor.deleteLine", "mac")).toBe(
+      "Cmd+Shift+K",
+    );
+    expect(defaultShortcutForCommand("editor.deleteLine", "linux")).toBe(
+      "Ctrl+Shift+K",
+    );
+  });
+
+  it("assigns every default shortcut to at most one command per platform", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const assigned = Object.values(defaults).filter(
+        (shortcut) => shortcut.length > 0,
+      );
+      const unique = new Set(assigned);
+
+      expect(unique.size).toBe(assigned.length);
+    }
   });
 
   it("matches the format document shortcut against Shift+Alt+F", () => {
