@@ -58,7 +58,12 @@ export function phpMoveStatement(
     return null;
   }
 
-  const masked = maskSourceLines(lines);
+  const { heredocLines, masked } = maskSourceLines(lines);
+
+  if (isUnsafeBoundaryLine(masked, caretLine)) {
+    return null;
+  }
+
   const current = statementRangeAt(lines, masked, caretLine);
 
   if (!current) {
@@ -71,7 +76,56 @@ export function phpMoveStatement(
     return null;
   }
 
+  if (crossesUnsafeBoundary(masked, heredocLines, current, neighbour)) {
+    return null;
+  }
+
   return buildSwapEdit(lines, current, neighbour, direction);
+}
+
+// The caret line is itself non-swappable when it is a chain-continuation arm
+// (`} else {`, `} catch (...) {`, ...) or a `switch` arm label: treating it as a
+// standalone statement and swapping it would break the construct it belongs to.
+function isUnsafeBoundaryLine(masked: string[], line: number): boolean {
+  const maskedLine = masked[line - 1] || "";
+
+  return isChainContinuationLine(maskedLine) || isCaseLabelLine(maskedLine);
+}
+
+// Rejects a swap whose seam would split a brace chain, a `switch` arm, or a
+// heredoc/nowdoc literal. A range whose first line is a chain continuation, a
+// case label, or a heredoc line is not a self-contained statement - it is a
+// fragment of a larger construct - so swapping it is refused and the editor falls
+// back to the always-safe Move Line. Whole-construct moves are unaffected: their
+// first line is the construct's own opener (`try {`, `if ($ready) {`, ...), with
+// any boundary lines travelling harmlessly inside the moved range.
+function crossesUnsafeBoundary(
+  masked: string[],
+  heredocLines: Set<number>,
+  current: StatementRange,
+  neighbour: StatementRange,
+): boolean {
+  return (
+    rangeStartsOnBoundary(masked, heredocLines, current) ||
+    rangeStartsOnBoundary(masked, heredocLines, neighbour)
+  );
+}
+
+// True when a swap range begins on a chain continuation, a case label, or a
+// heredoc line. The first line determines whether the range is a real statement
+// or a fragment torn out of an enclosing construct.
+function rangeStartsOnBoundary(
+  masked: string[],
+  heredocLines: Set<number>,
+  range: StatementRange,
+): boolean {
+  if (heredocLines.has(range.start)) {
+    return true;
+  }
+
+  const firstLine = masked[range.start - 1] || "";
+
+  return isChainContinuationLine(firstLine) || isCaseLabelLine(firstLine);
 }
 
 // Resolves the full statement range covering `caretLine`. The range starts on
@@ -177,6 +231,41 @@ function endsWithInlineContinuation(previousMasked: string): boolean {
   return /(?:,|=>|->|\?\?|\.|\+|-|\*|\/|&&|\|\||=|\b(?:and|or)\b)\s*$/.test(
     previousMasked,
   );
+}
+
+// True for a masked line that closes one arm of a brace chain and continues it:
+// `} else {`, `} elseif (...) {`, `} else`, `} catch (...) {`, `} finally {` and
+// the `} while (...)` tail of a do/while. These begin with `}` (closing the
+// previous arm) followed by a chain keyword and/or a reopening `{`, so they are
+// never a standalone statement and no swap may split them from the chain.
+//
+// A bare block close - a lone `}` or `};` / `},` (closure, array, match arm) -
+// is NOT a chain continuation: it has a net-negative bracket delta and is already
+// resolved to its opener by `blockOpenerLineFor`, so the whole block still moves.
+function isChainContinuationLine(maskedLine: string): boolean {
+  const trimmed = stripLineComment(maskedLine).trim();
+
+  if (!trimmed.startsWith("}")) {
+    return false;
+  }
+
+  const afterClose = trimmed.slice(1).trim();
+
+  if (/^(?:else\b|elseif\b|catch\b|finally\b|while\b)/.test(afterClose)) {
+    return true;
+  }
+
+  // Closes the previous arm and reopens another block on the same line.
+  return afterClose.includes("{");
+}
+
+// True for a `switch` arm label (`case ...:` / `default:`). Case bodies carry no
+// braces, so a label is the only boundary between fall-through arms; a swap that
+// crosses one would scramble the control flow.
+function isCaseLabelLine(maskedLine: string): boolean {
+  const trimmed = stripLineComment(maskedLine).trim();
+
+  return /^case\b/.test(trimmed) || /^default\s*:/.test(trimmed);
 }
 
 // Net change in `(` / `[` depth only (ignores `{`). Used to detect inline
@@ -378,25 +467,88 @@ function stripLineComment(maskedLine: string): string {
 }
 
 interface MaskState {
+  // Closing identifier of the heredoc/nowdoc currently open, or null when none.
+  heredocTag: string | null;
   insideBlockComment: boolean;
 }
 
-// Masks every line while carrying `/* */` block-comment state across line
-// boundaries, so a comment opened on one line keeps masking the brackets on the
-// lines below it. Single-line maskers cannot do this, which would otherwise let
-// braces inside a multi-line comment corrupt the bracket-depth scan.
-function maskSourceLines(lines: string[]): string[] {
-  const state: MaskState = { insideBlockComment: false };
+export interface MaskedSource {
+  // 1-based line numbers that belong to a heredoc/nowdoc literal: the opener
+  // line, every body line, and the closing-identifier line. Splitting a swap
+  // through any of these turns code into a string (or vice versa), so they are
+  // hard boundaries.
+  heredocLines: Set<number>;
+  masked: string[];
+}
 
-  return lines.map((line) => maskLine(line, state));
+// Masks every line while carrying `/* */` block-comment and heredoc/nowdoc state
+// across line boundaries, so a construct opened on one line keeps masking the
+// brackets on the lines below it. Single-line maskers cannot do this, which would
+// otherwise let braces inside a multi-line comment or heredoc literal corrupt the
+// bracket-depth scan. Also collects the heredoc line span for boundary guards.
+function maskSourceLines(lines: string[]): MaskedSource {
+  const state: MaskState = { heredocTag: null, insideBlockComment: false };
+  const heredocLines = new Set<number>();
+
+  const masked = lines.map((line, index) => {
+    const openBefore = state.heredocTag;
+    const result = maskLine(line, state);
+    const openAfter = state.heredocTag;
+    const isHeredocLine = openBefore !== null || openAfter !== null;
+
+    if (isHeredocLine) {
+      heredocLines.add(index + 1);
+    }
+
+    return result;
+  });
+
+  return { heredocLines, masked };
+}
+
+// Matches the closing identifier line of a heredoc/nowdoc. PHP allows the closer
+// to be indented and to be followed immediately by `;`, `,`, `)` or `]` (or
+// nothing). Anything after that is irrelevant to brace balancing here.
+function isHeredocCloser(line: string, tag: string): boolean {
+  const closer = new RegExp(`^\\s*${tag}\\b`);
+
+  return closer.test(line);
+}
+
+// Detects a heredoc/nowdoc opener on a line and returns its closing identifier.
+// `<<<EOT`, `<<<"EOT"` (heredoc) and `<<<'EOT'` (nowdoc) all share the same
+// closing identifier `EOT`. Returns null when the line opens no heredoc.
+function heredocOpenerTag(maskedLine: string): string | null {
+  const match = /<<<\s*['"]?([A-Za-z_]\w*)['"]?/.exec(maskedLine);
+
+  if (!match) {
+    return null;
+  }
+
+  return match[1] || null;
+}
+
+// Blanks an entire line to spaces, preserving length so column-based logic is
+// unaffected. Used for heredoc/nowdoc body lines, whose contents are literal.
+function blankLine(line: string): string {
+  return " ".repeat(line.length);
 }
 
 // Replaces the contents of single-line string literals and `/* */` comment
 // bodies with spaces so structural characters inside them never affect brace
 // balancing. The `//` / `#` openers are preserved so `stripLineComment` can find
 // them; their bodies are copied verbatim (safe per line). `state` is mutated to
-// report whether the line ends still inside an open block comment.
+// report whether the line ends still inside an open block comment or heredoc.
 function maskLine(line: string, state: MaskState): string {
+  if (state.heredocTag !== null) {
+    const closed = isHeredocCloser(line, state.heredocTag);
+    state.heredocTag = closed ? null : state.heredocTag;
+
+    // Both the body and the closing-identifier line are literal text for our
+    // purposes: blank them so any braces they hold never reach the scanner.
+    return blankLine(line);
+  }
+
   let masked = "";
   let quote: string | null = null;
 
@@ -433,12 +585,12 @@ function maskLine(line: string, state: MaskState): string {
 
     if (character === "/" && next === "/") {
       masked += line.slice(index);
-      return masked;
+      return finishMaskedLine(masked, state);
     }
 
     if (character === "#") {
       masked += line.slice(index);
-      return masked;
+      return finishMaskedLine(masked, state);
     }
 
     if (character === "/" && next === "*") {
@@ -456,6 +608,18 @@ function maskLine(line: string, state: MaskState): string {
 
     masked += character;
   }
+
+  return finishMaskedLine(masked, state);
+}
+
+// Finalises a masked line: if it opened a heredoc/nowdoc, records the closing
+// identifier in `state` so the masker blanks every body line that follows. The
+// opener's own `<<<TAG` text stays as-is on this line (it carries no braces).
+// The trailing line-comment body is dropped first so a `// <<<EOT` mention never
+// masks the lines below it as a phantom heredoc.
+function finishMaskedLine(masked: string, state: MaskState): string {
+  const tag = heredocOpenerTag(stripLineComment(masked));
+  state.heredocTag = tag === null ? state.heredocTag : tag;
 
   return masked;
 }

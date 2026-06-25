@@ -350,4 +350,313 @@ describe("phpMoveStatement", () => {
       });
     });
   });
+
+  // Chain-continuation lines such as `} else {`, `} catch (...) {`, `} elseif
+  // (...) {`, `} finally {` and the `do { } while (...)` tail have a net bracket
+  // delta of zero (the leading `}` cancels the trailing `{`), so the older
+  // analyser mistook them for complete single-line statements and happily swapped
+  // body statements across the chain boundary - teleporting code into the wrong
+  // arm and leaving the previous arm empty. These must stay no-ops (null) so the
+  // editor falls back to Move Line, which is always safe.
+  describe("chain-continuation boundaries (if/else, try/catch)", () => {
+    it("returns null when moving a body statement down across `} else {`", () => {
+      const source = [
+        "if ($a) {",
+        "    foo();",
+        "} else {",
+        "    bar();",
+        "}",
+      ].join("\n");
+
+      // Swapping foo() with `} else {` would empty the if arm and drop foo()
+      // into the else arm. Refuse.
+      expect(phpMoveStatement(source, 2, "down")).toBeNull();
+    });
+
+    it("returns null when moving a body statement up across `} else {`", () => {
+      const source = [
+        "if ($a) {",
+        "    foo();",
+        "} else {",
+        "    bar();",
+        "}",
+      ].join("\n");
+
+      // bar() sits directly under the chain boundary; moving it up would swap it
+      // with `} else {`.
+      expect(phpMoveStatement(source, 4, "up")).toBeNull();
+    });
+
+    it("returns null when the caret sits on a `} else {` line", () => {
+      const source = [
+        "if ($a) {",
+        "    foo();",
+        "} else {",
+        "    bar();",
+        "}",
+      ].join("\n");
+
+      expect(phpMoveStatement(source, 3, "up")).toBeNull();
+      expect(phpMoveStatement(source, 3, "down")).toBeNull();
+    });
+
+    it("returns null when the caret sits on a `} catch (...) {` line", () => {
+      const source = [
+        "try {",
+        "    risky();",
+        "} catch (Exception $e) {",
+        "    report($e);",
+        "}",
+      ].join("\n");
+
+      expect(phpMoveStatement(source, 3, "up")).toBeNull();
+      expect(phpMoveStatement(source, 3, "down")).toBeNull();
+    });
+
+    it("returns null when the caret sits on a `} elseif (...) {` line", () => {
+      const source = [
+        "if ($a) {",
+        "    foo();",
+        "} elseif ($b) {",
+        "    bar();",
+        "}",
+      ].join("\n");
+
+      expect(phpMoveStatement(source, 3, "up")).toBeNull();
+    });
+
+    it("returns null when moving a body statement across `} finally {`", () => {
+      const source = [
+        "try {",
+        "    risky();",
+        "} finally {",
+        "    cleanup();",
+        "}",
+      ].join("\n");
+
+      expect(phpMoveStatement(source, 2, "down")).toBeNull();
+      expect(phpMoveStatement(source, 4, "up")).toBeNull();
+    });
+
+    it("still swaps balanced body statements that do not cross a chain boundary", () => {
+      const source = [
+        "if ($a) {",
+        "    $x = 1;",
+        "    $y = 2;",
+        "} else {",
+        "    bar();",
+        "}",
+      ].join("\n");
+
+      // $x and $y are both genuine body statements inside the same arm; swapping
+      // them never touches the chain boundary and must keep working.
+      const result = phpMoveStatement(source, 2, "down");
+
+      expect(result).toEqual({
+        endLine: 3,
+        newText: ["    $y = 2;", "    $x = 1;"].join("\n"),
+        startLine: 2,
+        caretLine: 3,
+      });
+    });
+
+    it("still moves a whole try/catch/finally chain as one unit", () => {
+      const source = [
+        "$before = 1;",
+        "try {",
+        "    risky();",
+        "} catch (Exception $e) {",
+        "    report($e);",
+        "} finally {",
+        "    cleanup();",
+        "}",
+      ].join("\n");
+
+      const result = phpMoveStatement(source, 2, "up");
+
+      expect(result).toEqual({
+        endLine: 8,
+        newText: [
+          "try {",
+          "    risky();",
+          "} catch (Exception $e) {",
+          "    report($e);",
+          "} finally {",
+          "    cleanup();",
+          "}",
+          "$before = 1;",
+        ].join("\n"),
+        startLine: 1,
+        caretLine: 1,
+      });
+    });
+  });
+
+  // Heredoc / nowdoc bodies are raw text: any `{` or `}` they contain is literal
+  // and must never feed the bracket-depth scan. Without heredoc-aware masking the
+  // analyser counts those braces and either mis-measures a block or swaps a
+  // statement into the middle of the literal, turning real code into a string.
+  describe("heredoc / nowdoc masking", () => {
+    it("returns null when a statement would move into a heredoc body", () => {
+      const source = [
+        "$x = <<<EOT",
+        "body {",
+        "EOT;",
+        "if ($a) { foo(); }",
+      ].join("\n");
+
+      // Moving the if-block up must not drop it adjacent to / inside the heredoc.
+      expect(phpMoveStatement(source, 4, "up")).toBeNull();
+    });
+
+    it("does not count braces inside a heredoc body when measuring a block", () => {
+      const source = [
+        "$before = 1;",
+        "if ($ready) {",
+        "    $sql = <<<SQL",
+        "SELECT { } FROM t",
+        "SQL;",
+        "    emit();",
+        "}",
+      ].join("\n");
+
+      // The stray braces live inside the heredoc literal; the if-block still
+      // balances on its own closing brace and travels as one unit.
+      const result = phpMoveStatement(source, 2, "up");
+
+      expect(result).toEqual({
+        endLine: 7,
+        newText: [
+          "if ($ready) {",
+          "    $sql = <<<SQL",
+          "SELECT { } FROM t",
+          "SQL;",
+          "    emit();",
+          "}",
+          "$before = 1;",
+        ].join("\n"),
+        startLine: 1,
+        caretLine: 1,
+      });
+    });
+
+    it("does not treat a `<<<` mention inside a line comment as a heredoc opener", () => {
+      const source = [
+        "$a = 1; // example <<<EOT",
+        "$b = 2;",
+        "$c = 3;",
+      ].join("\n");
+
+      // The `<<<EOT` lives in a comment, so the next line is ordinary code and
+      // the swap must still happen.
+      const result = phpMoveStatement(source, 2, "up");
+
+      expect(result).toEqual({
+        endLine: 2,
+        newText: ["$b = 2;", "$a = 1; // example <<<EOT"].join("\n"),
+        startLine: 1,
+        caretLine: 1,
+      });
+    });
+
+    it("masks a nowdoc body the same way as a heredoc body", () => {
+      const source = [
+        "$before = 1;",
+        "if ($ready) {",
+        "    $text = <<<'TXT'",
+        "stray } brace {",
+        "TXT;",
+        "    emit();",
+        "}",
+      ].join("\n");
+
+      const result = phpMoveStatement(source, 2, "up");
+
+      expect(result).toEqual({
+        endLine: 7,
+        newText: [
+          "if ($ready) {",
+          "    $text = <<<'TXT'",
+          "stray } brace {",
+          "TXT;",
+          "    emit();",
+          "}",
+          "$before = 1;",
+        ].join("\n"),
+        startLine: 1,
+        caretLine: 1,
+      });
+    });
+  });
+
+  // `switch`/`case` bodies have no braces of their own, so the analyser saw each
+  // `case`/`default` label and the statements beneath it as a flat list and would
+  // swap a body statement past a label - scrambling fall-through. Labels are hard
+  // boundaries: refuse any swap that crosses one.
+  describe("switch / case boundaries", () => {
+    it("returns null when moving a case body statement down across a case label", () => {
+      const source = [
+        "switch ($x) {",
+        "    case 1:",
+        "        a();",
+        "        break;",
+        "    case 2:",
+        "        b();",
+        "        break;",
+        "}",
+      ].join("\n");
+
+      // Moving break; (line 4) down would swap it with `case 2:`.
+      expect(phpMoveStatement(source, 4, "down")).toBeNull();
+    });
+
+    it("returns null when moving a statement up across a case label", () => {
+      const source = [
+        "switch ($x) {",
+        "    case 1:",
+        "        a();",
+        "    case 2:",
+        "        b();",
+        "}",
+      ].join("\n");
+
+      // b() sits directly under `case 2:`; moving it up would swap it with the
+      // label.
+      expect(phpMoveStatement(source, 5, "up")).toBeNull();
+    });
+
+    it("returns null when the caret sits on a case label", () => {
+      const source = [
+        "switch ($x) {",
+        "    case 1:",
+        "        a();",
+        "    case 2:",
+        "        b();",
+        "}",
+      ].join("\n");
+
+      expect(phpMoveStatement(source, 4, "up")).toBeNull();
+      expect(phpMoveStatement(source, 4, "down")).toBeNull();
+    });
+
+    it("still swaps two statements within the same case arm", () => {
+      const source = [
+        "switch ($x) {",
+        "    case 1:",
+        "        $p = 1;",
+        "        $q = 2;",
+        "        break;",
+        "}",
+      ].join("\n");
+
+      const result = phpMoveStatement(source, 3, "down");
+
+      expect(result).toEqual({
+        endLine: 4,
+        newText: ["        $q = 2;", "        $p = 1;"].join("\n"),
+        startLine: 3,
+        caretLine: 4,
+      });
+    });
+  });
 });
