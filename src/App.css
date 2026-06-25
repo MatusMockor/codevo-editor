@@ -3265,6 +3265,16 @@ button.problem-row:focus-visible {
   color: var(--color-text-strong);
 }
 
+.recent-files-heading {
+  display: flex;
+  height: 46px;
+  min-width: 0;
+  align-items: center;
+  outline: 0;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+
 .palette-results {
   max-height: 470px;
   overflow: auto;

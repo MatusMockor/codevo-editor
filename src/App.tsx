@@ -30,6 +30,7 @@ import { NoticeToastHost } from "./components/NoticeToastHost";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
+import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
@@ -1033,6 +1034,13 @@ function App() {
         onOpen={workbench.openSearchResult}
         query={workbench.quickOpenQuery}
         results={workbench.quickOpenResults}
+      />
+
+      <RecentFilesSwitcher
+        entries={workbench.recentFilesSwitcherEntries}
+        isOpen={workbench.recentFilesSwitcherOpen}
+        onClose={() => workbench.setRecentFilesSwitcherOpen(false)}
+        onOpen={workbench.openRecentFile}
       />
 
       <ClassOpen

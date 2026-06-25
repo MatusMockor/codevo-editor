@@ -475,6 +475,11 @@ import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import {
+  pushRecentFile,
+  recentFilesForSwitcher,
+  type RecentFileEntry,
+} from "../domain/recentFiles";
+import {
   detectLanguage,
   getFileName,
   getParentPath,
@@ -695,6 +700,7 @@ interface CachedWorkspaceWorkbenchState {
   navigationHistory: NavigationHistory;
   openPaths: string[];
   previewPath: string | null;
+  recentFiles: RecentFileEntry[];
   sidebarView: SidebarView;
 }
 
@@ -982,6 +988,11 @@ export function useWorkbenchController(
   const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
     [],
   );
+  // Per-workspace MRU buffer (newest first). Cached/restored alongside the rest
+  // of the per-tab workbench state so one project's recent files can never leak
+  // into another project's switcher.
+  const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
+  const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] = useState(false);
   const [classOpenOpen, setClassOpenOpen] = useState(false);
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
@@ -1474,6 +1485,7 @@ export function useWorkbenchController(
         navigationHistory,
         openPaths,
         previewPath,
+        recentFiles,
         sidebarView,
       };
     },
@@ -1488,6 +1500,7 @@ export function useWorkbenchController(
       navigationHistory,
       openPaths,
       previewPath,
+      recentFiles,
       sidebarView,
     ],
   );
@@ -1503,6 +1516,7 @@ export function useWorkbenchController(
       setOpenPaths(cached.openPaths);
       setActivePath(cached.activePath);
       setPreviewPath(cached.previewPath);
+      setRecentFiles(cached.recentFiles);
       setNavigationHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
       setBottomPanelView(cached.bottomPanelView);
@@ -1510,6 +1524,24 @@ export function useWorkbenchController(
     },
     [],
   );
+
+  // Records a file at the head of the per-workspace MRU buffer. Called whenever a
+  // document is opened or activated so the Cmd+E switcher always reflects the
+  // user's most recent navigation order.
+  const recordRecentFile = useCallback((entry: RecentFileEntry) => {
+    setRecentFiles((current) => pushRecentFile(current, entry));
+  }, []);
+
+  const openRecentFilesSwitcher = useCallback(() => {
+    if (!currentWorkspaceRootRef.current) {
+      return;
+    }
+
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setRecentFilesSwitcherOpen(true);
+  }, []);
 
   const currentNavigationLocation =
     useCallback((): NavigationLocation | null => {
@@ -3126,6 +3158,7 @@ export function useWorkbenchController(
     setOpenPaths([]);
     setActivePath(null);
     setPreviewPath(null);
+    setRecentFiles([]);
     setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
@@ -3163,6 +3196,7 @@ export function useWorkbenchController(
     setQuickOpenQuery("");
     setQuickOpenLoading(false);
     setQuickOpenResults([]);
+    setRecentFilesSwitcherOpen(false);
     setTextSearchOpen(false);
     setTextSearchQuery("");
     setTextSearchLoading(false);
@@ -4288,6 +4322,7 @@ export function useWorkbenchController(
         setOpenPaths([]);
         setActivePath(null);
         setPreviewPath(null);
+        setRecentFiles([]);
         setNavigationHistory(createNavigationHistory());
         setSidebarView("files");
         setBottomPanelView("problems");
@@ -4300,6 +4335,9 @@ export function useWorkbenchController(
       setTodoPanelOpen(false);
       setWorkspaceTodos([]);
       setWorkspaceTodosLoading(false);
+      // The recent files switcher is a transient overlay too; close it on a
+      // switch so it never shows another tab's MRU list mid-transition.
+      setRecentFilesSwitcherOpen(false);
 
       setEditorRevealTarget(null);
       setLoadingDirectories(new Set());
@@ -4846,12 +4884,17 @@ export function useWorkbenchController(
       setSelectedGitChange(null);
       setGitDiffPreview(null);
       setActivePath(path);
+      recordRecentFile({
+        name: documentsRef.current[path]?.name ?? getFileName(path),
+        path,
+      });
     },
     [
       activePath,
       gitStatus.changes,
       loadGitDiffDocument,
       recordCurrentNavigationLocation,
+      recordRecentFile,
     ],
   );
 
@@ -5083,6 +5126,7 @@ export function useWorkbenchController(
         setSelectedGitChange(null);
         setGitDiffPreview(null);
         setActivePath(entry.path);
+        recordRecentFile({ name: entry.name, path: entry.path });
         return true;
       }
 
@@ -5178,6 +5222,7 @@ export function useWorkbenchController(
         setSelectedGitChange(null);
         setGitDiffPreview(null);
         setActivePath(entry.path);
+        recordRecentFile({ name: entry.name, path: entry.path });
         setMessage(null);
         filePrefetchCacheRef.current.invalidate(entry.path);
         clearOpeningFileForRequest();
@@ -5207,6 +5252,7 @@ export function useWorkbenchController(
       documents,
       openPaths,
       recordCurrentNavigationLocation,
+      recordRecentFile,
       reportError,
       reportErrorForActiveWorkspaceRoot,
       syncClosedDocument,
@@ -7672,6 +7718,23 @@ export function useWorkbenchController(
       }
 
       setQuickOpenOpen(false);
+    },
+    [openFile],
+  );
+
+  const openRecentFile = useCallback(
+    async (entry: RecentFileEntry) => {
+      const opened = await openFile({
+        kind: "file",
+        name: entry.name,
+        path: entry.path,
+      });
+
+      if (!opened) {
+        return;
+      }
+
+      setRecentFilesSwitcherOpen(false);
     },
     [openFile],
   );
@@ -20880,6 +20943,11 @@ export function useWorkbenchController(
       return true;
     }
 
+    if (recentFilesSwitcherOpen) {
+      setRecentFilesSwitcherOpen(false);
+      return true;
+    }
+
     if (paletteOpen) {
       setPaletteOpen(false);
       return true;
@@ -20901,6 +20969,7 @@ export function useWorkbenchController(
     languageServerSetupOpen,
     paletteOpen,
     quickOpenOpen,
+    recentFilesSwitcherOpen,
     referencesView,
     selectedGitChange,
     settingsOpen,
@@ -20935,6 +21004,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
+    setRecentFilesSwitcherOpen(false);
     setTextSearchOpen(false);
     setWorkspaceSymbolsOpen(true);
   }, []);
@@ -20998,8 +21068,18 @@ export function useWorkbenchController(
       run: () => {
         setClassOpenOpen(false);
         setWorkspaceSymbolsOpen(false);
+        setRecentFilesSwitcherOpen(false);
         setQuickOpenOpen(true);
       },
+    });
+
+    registry.register({
+      id: "editor.recentFiles",
+      title: "Recent Files",
+      category: "File",
+      shortcut: shortcut("editor.recentFiles"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: openRecentFilesSwitcher,
     });
 
     registry.register({
@@ -21011,6 +21091,7 @@ export function useWorkbenchController(
       run: () => {
         setQuickOpenOpen(false);
         setWorkspaceSymbolsOpen(false);
+        setRecentFilesSwitcherOpen(false);
         setClassOpenOpen(true);
       },
     });
@@ -21657,6 +21738,7 @@ export function useWorkbenchController(
     openAppearanceSettingsPanel,
     openFileStructure,
     openReferencesPanel,
+    openRecentFilesSwitcher,
     openTypeHierarchy,
     openSettingsPanel,
     openWorkspaceSymbols,
@@ -22395,6 +22477,7 @@ export function useWorkbenchController(
         event.preventDefault();
         setClassOpenOpen(false);
         setWorkspaceSymbolsOpen(false);
+        setRecentFilesSwitcherOpen(false);
         setPaletteOpen(true);
         return;
       }
@@ -22404,6 +22487,7 @@ export function useWorkbenchController(
         if (workspaceRoot) {
           setQuickOpenOpen(false);
           setWorkspaceSymbolsOpen(false);
+          setRecentFilesSwitcherOpen(false);
           setClassOpenOpen(true);
         }
         return;
@@ -22422,8 +22506,15 @@ export function useWorkbenchController(
         if (workspaceRoot) {
           setClassOpenOpen(false);
           setWorkspaceSymbolsOpen(false);
+          setRecentFilesSwitcherOpen(false);
           setQuickOpenOpen(true);
         }
+        return;
+      }
+
+      if (matches("editor.recentFiles")) {
+        event.preventDefault();
+        openRecentFilesSwitcher();
         return;
       }
 
@@ -22458,6 +22549,7 @@ export function useWorkbenchController(
     navigateForwardInHistory,
     openAppearanceSettingsPanel,
     openFileStructure,
+    openRecentFilesSwitcher,
     openReferencesPanel,
     openSettingsPanel,
     openWorkspaceSymbols,
@@ -23704,6 +23796,12 @@ export function useWorkbenchController(
     quickOpenOpen,
     quickOpenQuery,
     quickOpenResults,
+    recentFiles,
+    recentFilesSwitcherEntries: recentFilesForSwitcher(recentFiles, activePath),
+    recentFilesSwitcherOpen,
+    openRecentFile,
+    openRecentFilesSwitcher,
+    setRecentFilesSwitcherOpen,
     clearNotices: () => setNotices([]),
     notices,
     navigateBackward,

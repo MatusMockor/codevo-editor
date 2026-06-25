@@ -47607,6 +47607,194 @@ class PostRepository
     });
   });
 
+  it("records opened files in the recent files buffer, newest first", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/a.ts", "a.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/b.ts", "b.ts"));
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
+      "/workspace/b.ts",
+      "/workspace/a.ts",
+    ]);
+  });
+
+  it("moves a re-opened file to the head of the recent files buffer", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/a.ts", "a.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/b.ts", "b.ts"));
+    });
+    await act(async () => {
+      getWorkbench().setActivePath("/workspace/a.ts");
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
+      "/workspace/a.ts",
+      "/workspace/b.ts",
+    ]);
+  });
+
+  it("drops the active file from the switcher entries so the previous file leads", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/a.ts", "a.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/b.ts", "b.ts"));
+    });
+
+    expect(getWorkbench().activePath).toBe("/workspace/b.ts");
+    expect(
+      getWorkbench().recentFilesSwitcherEntries.map((entry) => entry.path),
+    ).toEqual(["/workspace/a.ts"]);
+  });
+
+  it("opens the recent files switcher and opens the chosen file, closing the switcher", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/a.ts", "a.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/b.ts", "b.ts"));
+    });
+
+    act(() => {
+      getWorkbench().openRecentFilesSwitcher();
+    });
+
+    expect(getWorkbench().recentFilesSwitcherOpen).toBe(true);
+
+    const previous = getWorkbench().recentFilesSwitcherEntries[0];
+
+    await act(async () => {
+      await getWorkbench().openRecentFile(previous);
+    });
+
+    expect(getWorkbench().activePath).toBe("/workspace/a.ts");
+    expect(getWorkbench().recentFilesSwitcherOpen).toBe(false);
+  });
+
+  it("closes the recent files switcher when another overlay opens", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().openRecentFilesSwitcher();
+    });
+
+    expect(getWorkbench().recentFilesSwitcherOpen).toBe(true);
+
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+      getWorkbench().setRecentFilesSwitcherOpen(false);
+    });
+
+    expect(getWorkbench().recentFilesSwitcherOpen).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(true);
+  });
+
+  it("does not open the switcher when no workspace is active", async () => {
+    const { getWorkbench } = renderController();
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().openRecentFilesSwitcher();
+    });
+
+    expect(getWorkbench().recentFilesSwitcherOpen).toBe(false);
+  });
+
+  it("isolates the recent files buffer per workspace tab without leaking", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace-a/a.ts", "a.ts"),
+      );
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
+      "/workspace-a/a.ts",
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().recentFiles).toEqual([]);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace-b/b.ts", "b.ts"),
+      );
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
+      "/workspace-b/b.ts",
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
+      "/workspace-a/a.ts",
+    ]);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

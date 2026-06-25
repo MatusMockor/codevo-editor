@@ -120,6 +120,12 @@ export const keymapCommands = [
     label: "Quick Open File",
   },
   {
+    category: "File",
+    defaultShortcut: "Cmd+E",
+    id: "editor.recentFiles",
+    label: "Recent Files",
+  },
+  {
     category: "PHP",
     defaultShortcut: "Cmd+O",
     id: "class.quickOpen",

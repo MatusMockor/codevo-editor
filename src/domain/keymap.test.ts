@@ -35,6 +35,14 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults the recent files switcher to Cmd+E on mac and Ctrl+E elsewhere", () => {
+    expect(defaultShortcutForCommand("editor.recentFiles", "mac")).toBe("Cmd+E");
+    expect(defaultShortcutForCommand("editor.recentFiles", "linux")).toBe(
+      "Ctrl+E",
+    );
+    expect(defaultKeymapSettings("mac")["editor.recentFiles"]).toBe("Cmd+E");
+  });
+
   it("defaults the TODO panel toggle to the platform primary modifier", () => {
     expect(defaultShortcutForCommand("panel.toggleTodo", "mac")).toBe(
       "Cmd+Shift+T",
