@@ -1523,63 +1523,113 @@ async fn get_php_file_outline(
 }
 
 #[tauri::command]
-fn get_git_status(root_path: String) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .status(&root)
-        .map_err(|error| error.to_string())
+async fn get_git_status(root_path: String) -> Result<GitStatus, String> {
+    // `git status` shells out to a subprocess and, on large Laravel repos, can
+    // take hundreds of milliseconds; it fires on every save and tab switch.
+    // Resolve the requested root and run it off the main thread so the WebView
+    // never stalls. The captured `root_path` keeps the request bound to its own
+    // repository (no cross-root leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .status(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .diff(&root, &change)
-        .map_err(|error| error.to_string())
+async fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
+    // Diffing shells out to `git` and reads file contents; it fires alongside
+    // status on save/switch, so keep it off the main thread, scoped to the
+    // requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .diff(&root, &change)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn stage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .stage(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn stage_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Staging shells out to `git add` then re-reads status; keep the round-trip
+    // off the main thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stage(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn unstage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .unstage(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn unstage_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Unstaging shells out to `git` and re-reads status; keep it off the main
+    // thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .unstage(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn revert_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .revert(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn revert_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Reverting shells out to `git checkout`/`restore` and re-reads status; keep
+    // it off the main thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .revert(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn commit_git_changes(
+async fn commit_git_changes(
     root_path: String,
     message: String,
     changes: Vec<GitChangedFile>,
 ) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .commit(&root, &message, &changes)
-        .map_err(|error| error.to_string())
+    // Committing runs several `git` subprocesses (write-tree, commit-tree, ...);
+    // keep the whole sequence off the main thread, bound to the requested
+    // repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .commit(&root, &message, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .push(&root)
-        .map_err(|error| error.to_string())
+async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
+    // `git push` performs network I/O and can block for seconds; it MUST run off
+    // the main thread so the WebView stays responsive. Bound to the requested
+    // repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .push(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3858,28 +3908,40 @@ async fn javascript_typescript_text_document_signature_help(
 }
 
 #[tauri::command]
-fn write_text_file(path: String, content: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .write_text_file(&PathBuf::from(path), &content)
-        .map_err(|error| error.to_string())
+async fn write_text_file(path: String, content: String) -> Result<(), String> {
+    // Every save writes to disk; keep the write off the main thread so the
+    // WebView never stalls while persisting a document.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .write_text_file(&PathBuf::from(path), &content)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn apply_workspace_edit(
+async fn apply_workspace_edit(
     root_path: String,
     edit: LanguageServerWorkspaceEdit,
     skipped_paths: Vec<String>,
 ) -> Result<usize, String> {
-    let repository = LocalWorkspaceFileRepository;
-    ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
-    let file_operation_count = apply_workspace_file_operations(&repository, &edit.file_operations)?;
-    let edits = workspace_text_edits_from_language_server(edit)?;
+    // A cross-file rename/refactor writes an unbounded number of files in a
+    // loop; run the whole apply off the main thread, scoped to the requested
+    // workspace root (path guard rejects anything outside it).
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
+        let file_operation_count =
+            apply_workspace_file_operations(&repository, &edit.file_operations)?;
+        let edits = workspace_text_edits_from_language_server(edit)?;
 
-    let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
-        .map_err(|error| error.to_string())?;
+        let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
+            .map_err(|error| error.to_string())?;
 
-    Ok(file_operation_count + text_edit_count)
+        Ok(file_operation_count + text_edit_count)
+    })
+    .await
 }
 
 fn apply_workspace_file_operations(
@@ -4116,12 +4178,13 @@ mod tests {
         filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace,
+        filter_lsp_workspace_symbols_to_workspace, get_git_status,
         javascript_typescript_did_change_configuration_settings,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, read_directory, read_text_file, search_files,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        stage_git_files, write_text_file, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -5146,7 +5209,7 @@ mod tests {
                 new_text: "export const created = true;\n".to_string(),
             }],
         );
-        let changed_paths = apply_workspace_edit(
+        let changed_paths = tauri::async_runtime::block_on(apply_workspace_edit(
             path_string(&root),
             LanguageServerWorkspaceEdit {
                 changes,
@@ -5171,7 +5234,7 @@ mod tests {
                 ],
             },
             Vec::new(),
-        )
+        ))
         .expect("apply workspace edit");
 
         assert_eq!(changed_paths, 4);
@@ -5182,6 +5245,198 @@ mod tests {
         assert!(!old_path.exists());
         assert!(renamed_path.exists());
         assert!(!deleted_path.exists());
+    }
+
+    // The git, write-file, and apply-edit commands moved off the Tauri main
+    // thread (async fn + spawn_blocking) so save/tab-switch/push never stall the
+    // WebView. These tests drive the real async commands through the Tauri async
+    // runtime and assert behaviour is unchanged off-thread, that concurrent
+    // requests succeed, and that commands stay isolated per workspace root.
+
+    fn init_test_git_repo(root: &Path) {
+        run_test_git(root, &["init"]);
+        run_test_git(root, &["config", "user.email", "test@example.com"]);
+        run_test_git(root, &["config", "user.name", "Test User"]);
+    }
+
+    fn run_test_git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn write_text_file_persists_contents_off_thread() {
+        let root = temp_workspace("write-off-thread");
+        let file = root.join("notes.txt");
+
+        tauri::async_runtime::block_on(write_text_file(
+            path_string(&file),
+            "off-thread save".to_string(),
+        ))
+        .expect("write result");
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("written file"),
+            "off-thread save"
+        );
+    }
+
+    #[test]
+    fn write_text_file_handles_concurrent_saves_off_thread() {
+        let root = temp_workspace("write-concurrent");
+        let first = root.join("first.txt");
+        let second = root.join("second.txt");
+
+        let first_task = tauri::async_runtime::spawn(write_text_file(
+            path_string(&first),
+            "first".to_string(),
+        ));
+        let second_task = tauri::async_runtime::spawn(write_text_file(
+            path_string(&second),
+            "second".to_string(),
+        ));
+
+        tauri::async_runtime::block_on(first_task)
+            .expect("first join")
+            .expect("first write");
+        tauri::async_runtime::block_on(second_task)
+            .expect("second join")
+            .expect("second write");
+
+        assert_eq!(fs::read_to_string(&first).expect("first"), "first");
+        assert_eq!(fs::read_to_string(&second).expect("second"), "second");
+    }
+
+    #[test]
+    fn get_git_status_reports_staged_changes_off_thread() {
+        let root = temp_workspace("git-status-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("tracked.txt"), "one\n").expect("write tracked");
+        run_test_git(&root, &["add", "tracked.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("tracked.txt"), "two\n").expect("modify tracked");
+
+        let status = tauri::async_runtime::block_on(get_git_status(path_string(&root)))
+            .expect("git status result");
+
+        assert!(
+            status
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "tracked.txt"),
+            "expected the modified file in git status, got {:?}",
+            status.changes
+        );
+    }
+
+    #[test]
+    fn stage_git_files_off_thread_stages_only_requested_repository() {
+        let root = temp_workspace("git-stage-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("tracked.txt"), "one\n").expect("write tracked");
+        run_test_git(&root, &["add", "tracked.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("tracked.txt"), "two\n").expect("modify tracked");
+
+        let change = crate::git::GitChangedFile {
+            is_staged: false,
+            is_unversioned: false,
+            old_path: None,
+            old_relative_path: None,
+            path: path_string(&root.join("tracked.txt")),
+            relative_path: "tracked.txt".to_string(),
+            status: crate::git::GitChangeStatus::Modified,
+        };
+
+        let status =
+            tauri::async_runtime::block_on(stage_git_files(path_string(&root), vec![change]))
+                .expect("stage result");
+
+        assert!(
+            status
+                .changes
+                .iter()
+                .any(|entry| entry.relative_path == "tracked.txt" && entry.is_staged),
+            "expected the file to be staged, got {:?}",
+            status.changes
+        );
+    }
+
+    #[test]
+    fn git_status_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-iso-a");
+        let root_b = temp_workspace("git-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("only-in-a.txt"), "a\n").expect("file in a");
+        fs::write(root_b.join("only-in-b.txt"), "b\n").expect("file in b");
+
+        let status_a = tauri::async_runtime::block_on(get_git_status(path_string(&root_a)))
+            .expect("status a");
+        let status_b = tauri::async_runtime::block_on(get_git_status(path_string(&root_b)))
+            .expect("status b");
+
+        assert!(
+            status_a
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "only-in-a.txt"),
+            "root A should see its own file"
+        );
+        assert!(
+            status_a
+                .changes
+                .iter()
+                .all(|change| change.relative_path != "only-in-b.txt"),
+            "root A must not see root B's file (no cross-root leakage)"
+        );
+        assert!(
+            status_b
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "only-in-b.txt"),
+            "root B should see its own file"
+        );
+        assert!(
+            status_b
+                .changes
+                .iter()
+                .all(|change| change.relative_path != "only-in-a.txt"),
+            "root B must not see root A's file (no cross-root leakage)"
+        );
+    }
+
+    #[test]
+    fn get_git_status_handles_concurrent_repositories_off_thread() {
+        let root_a = temp_workspace("git-concurrent-a");
+        let root_b = temp_workspace("git-concurrent-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("a.txt"), "a\n").expect("file a");
+        fs::write(root_b.join("b.txt"), "b\n").expect("file b");
+
+        let task_a = tauri::async_runtime::spawn(get_git_status(path_string(&root_a)));
+        let task_b = tauri::async_runtime::spawn(get_git_status(path_string(&root_b)));
+
+        let status_a = tauri::async_runtime::block_on(task_a)
+            .expect("join a")
+            .expect("status a");
+        let status_b = tauri::async_runtime::block_on(task_b)
+            .expect("join b")
+            .expect("status b");
+
+        assert!(status_a
+            .changes
+            .iter()
+            .any(|change| change.relative_path == "a.txt"));
+        assert!(status_b
+            .changes
+            .iter()
+            .any(|change| change.relative_path == "b.txt"));
     }
 
     #[cfg(unix)]
