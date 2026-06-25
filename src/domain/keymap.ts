@@ -361,9 +361,44 @@ interface KeymapNavigator {
   };
 }
 
+// The platform never changes within a session, yet `detectKeymapPlatform` is on
+// the keydown hot path (every auto-repeat keydown runs ~35 shortcut matches,
+// each of which would otherwise re-run these regexes against navigator fields).
+// We memoize per navigator object identity: the hot path always resolves to the
+// same global `navigator` singleton, so the regex work runs once per session.
+// A distinct navigator object (e.g. a test fixture) recomputes, keeping the
+// pure-input behaviour intact, and tests can force recomputation via reset.
+const KEYMAP_PLATFORM_DEFAULT_KEY = Symbol("keymap-platform-default");
+let cachedPlatformKey: KeymapNavigator | symbol | undefined;
+let cachedPlatform: KeymapPlatform | undefined;
+
 export function detectKeymapPlatform(
   navigatorLike: KeymapNavigator | undefined =
     typeof navigator === "undefined" ? undefined : navigator,
+): KeymapPlatform {
+  const cacheKey = navigatorLike ?? KEYMAP_PLATFORM_DEFAULT_KEY;
+
+  if (cachedPlatform !== undefined && cachedPlatformKey === cacheKey) {
+    return cachedPlatform;
+  }
+
+  const platform = computeKeymapPlatform(navigatorLike);
+  cachedPlatformKey = cacheKey;
+  cachedPlatform = platform;
+  return platform;
+}
+
+/**
+ * Clears the {@link detectKeymapPlatform} memo. Test-only: production never
+ * changes platform mid-session, but tests swap navigator fixtures.
+ */
+export function __resetKeymapPlatformCacheForTests(): void {
+  cachedPlatformKey = undefined;
+  cachedPlatform = undefined;
+}
+
+function computeKeymapPlatform(
+  navigatorLike: KeymapNavigator | undefined,
 ): KeymapPlatform {
   const platformText = [
     navigatorLike?.userAgentData?.platform,
@@ -473,6 +508,68 @@ export function matchesShortcut(
     event.shiftKey === parsed.shift &&
     normalizeKeyboardEventKey(event.key) === parsed.key
   );
+}
+
+interface KeymapModifierEvent {
+  altKey: boolean;
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+  shiftKey: boolean;
+}
+
+/**
+ * Builds the set of normalized keys for keymap shortcuts that require NO
+ * modifier at all (e.g. the F8 "Next Problem" and F11 "Toggle Bookmark"
+ * defaults). These are the only fully bare events that can match a command, so
+ * the keydown hot path can skip the ~35-iteration matching loop for any other
+ * bare keystroke (held ArrowUp/ArrowDown, plain letters, etc.).
+ *
+ * A shortcut whose only modifier is Shift (e.g. `Shift+F8`) is NOT a bare-key
+ * key here, because the corresponding event carries `shiftKey` and is therefore
+ * treated as "has a modifier" by {@link eventCanMatchKeymapShortcut}, which
+ * keeps the loop running for Shift-bearing events.
+ */
+export function collectBareKeyShortcutKeys(
+  keymap: KeymapSettings,
+): ReadonlySet<string> {
+  const bareKeys = new Set<string>();
+
+  for (const shortcut of Object.values(keymap)) {
+    const parsed = parseShortcut(shortcut);
+
+    if (!parsed) {
+      continue;
+    }
+
+    if (parsed.meta || parsed.ctrl || parsed.alt || parsed.shift) {
+      continue;
+    }
+
+    bareKeys.add(parsed.key);
+  }
+
+  return bareKeys;
+}
+
+/**
+ * Cheap precondition for the keydown hot path: returns false when no keymap
+ * shortcut could possibly match, so the caller can skip the full matching loop.
+ *
+ * An event can only match a shortcut when it either carries at least one
+ * modifier (meta/ctrl/alt/shift), or its key is a registered bare-key command
+ * key. Shift counts as a modifier here so the loop is never skipped on
+ * Shift-bearing events (e.g. `Shift+F8`), keeping behaviour conservative.
+ */
+export function eventCanMatchKeymapShortcut(
+  event: KeymapModifierEvent,
+  bareKeyShortcutKeys: ReadonlySet<string>,
+): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    return true;
+  }
+
+  return bareKeyShortcutKeys.has(normalizeKeyboardEventKey(event.key));
 }
 
 export function parseShortcut(shortcut: string): ParsedShortcut | null {

@@ -123,6 +123,8 @@ import {
   shouldPrefetchFileContent,
 } from "../domain/filePrefetchCache";
 import {
+  collectBareKeyShortcutKeys,
+  eventCanMatchKeymapShortcut,
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
@@ -1139,6 +1141,14 @@ export function useWorkbenchController(
   ] = useState(0);
   const hasRestoredRef = useRef(false);
   const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
+  // Memoized bare-key shortcut set for the keydown hot path. Rebuilding it on
+  // every keydown would re-parse every shortcut (~35 parseShortcut calls) on
+  // each auto-repeat event; we instead recompute only when the keymap object
+  // identity changes.
+  const bareKeyShortcutsRef = useRef<{
+    keymap: AppSettings["keymap"] | null;
+    keys: ReadonlySet<string>;
+  }>({ keymap: null, keys: new Set() });
   const workspaceSettingsRef = useRef<WorkspaceSettings>(
     defaultWorkspaceSettings(),
   );
@@ -23814,6 +23824,22 @@ export function useWorkbenchController(
       }
 
       const keymap = appSettingsRef.current.keymap;
+
+      // Keydown hot path: a held bare key (ArrowUp/ArrowDown, plain letters)
+      // fires ~30 auto-repeat events/sec and can never match a keymap shortcut,
+      // so skip the ~35-iteration matching loop below for such events. The
+      // double-Shift detector and the explicit Escape/F12/Cmd+Q handlers above
+      // already ran, so this only short-circuits the per-command matching.
+      const bareKeyCache = bareKeyShortcutsRef.current;
+      if (bareKeyCache.keymap !== keymap) {
+        bareKeyCache.keymap = keymap;
+        bareKeyCache.keys = collectBareKeyShortcutKeys(keymap);
+      }
+
+      if (!eventCanMatchKeymapShortcut(event, bareKeyCache.keys)) {
+        return;
+      }
+
       const matches = (commandId: KeymapCommandId) =>
         matchesShortcut(event, shortcutForCommand(keymap, commandId));
 

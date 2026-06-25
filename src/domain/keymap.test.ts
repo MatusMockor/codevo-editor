@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  __resetKeymapPlatformCacheForTests,
+  collectBareKeyShortcutKeys,
   defaultKeymapSettings,
   defaultShortcutForCommand,
   detectKeymapPlatform,
+  eventCanMatchKeymapShortcut,
   matchesShortcut,
   normalizeKeymapSettings,
   normalizeShortcutInput,
@@ -456,6 +459,123 @@ describe("keymap", () => {
         userAgent: "Mozilla/5.0",
       }),
     ).toBe("linux");
+  });
+
+  describe("detectKeymapPlatform caching (keydown hot path)", () => {
+    afterEach(() => {
+      __resetKeymapPlatformCacheForTests();
+    });
+
+    it("reads the global navigator only once and reuses the cached platform", () => {
+      __resetKeymapPlatformCacheForTests();
+      let reads = 0;
+      const navigatorLike = {
+        get platform() {
+          reads += 1;
+          return "MacIntel";
+        },
+        userAgent: "Mozilla/5.0",
+      };
+
+      expect(detectKeymapPlatform(navigatorLike)).toBe("mac");
+      expect(detectKeymapPlatform(navigatorLike)).toBe("mac");
+      expect(detectKeymapPlatform(navigatorLike)).toBe("mac");
+      expect(reads).toBe(1);
+    });
+
+    it("recomputes after the cache is reset (so tests can swap platforms)", () => {
+      __resetKeymapPlatformCacheForTests();
+      let reads = 0;
+      const navigatorLike = {
+        get platform() {
+          reads += 1;
+          return "MacIntel";
+        },
+        userAgent: "Mozilla/5.0",
+      };
+
+      detectKeymapPlatform(navigatorLike);
+      __resetKeymapPlatformCacheForTests();
+      detectKeymapPlatform(navigatorLike);
+
+      expect(reads).toBe(2);
+    });
+  });
+
+  describe("keydown hot-path early exit", () => {
+    it("collects the bare-key (modifier-less) command keys from a keymap", () => {
+      const keys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
+
+      // F8 (Go to Next Problem) and F11 (Toggle Bookmark) are bare-key defaults.
+      expect(keys.has("f8")).toBe(true);
+      expect(keys.has("f11")).toBe(true);
+      // Shift+F8 / Shift+F11 require Shift, so they are not bare-key keys.
+      // Modifier shortcuts contribute nothing to the bare-key set.
+      expect(keys.has("s")).toBe(false);
+      expect(keys.has("arrowup")).toBe(false);
+    });
+
+    it("skips matching for held bare arrow keys (no modifier, not a bare-key command)", () => {
+      const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
+
+      expect(
+        eventCanMatchKeymapShortcut(keyEvent({ key: "ArrowUp" }), bareKeys),
+      ).toBe(false);
+      expect(
+        eventCanMatchKeymapShortcut(keyEvent({ key: "ArrowDown" }), bareKeys),
+      ).toBe(false);
+      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "a" }), bareKeys)).toBe(
+        false,
+      );
+    });
+
+    it("still matches bare-key commands like F8 and F11", () => {
+      const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
+
+      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "F8" }), bareKeys)).toBe(
+        true,
+      );
+      expect(
+        eventCanMatchKeymapShortcut(keyEvent({ key: "F11" }), bareKeys),
+      ).toBe(true);
+    });
+
+    it("always allows matching when any non-shift modifier is held", () => {
+      const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
+
+      expect(
+        eventCanMatchKeymapShortcut(
+          keyEvent({ key: "s", metaKey: true }),
+          bareKeys,
+        ),
+      ).toBe(true);
+      expect(
+        eventCanMatchKeymapShortcut(
+          keyEvent({ key: "ArrowUp", altKey: true }),
+          bareKeys,
+        ),
+      ).toBe(true);
+      expect(
+        eventCanMatchKeymapShortcut(
+          keyEvent({ key: "s", ctrlKey: true }),
+          bareKeys,
+        ),
+      ).toBe(true);
+    });
+
+    it("does not early-exit a bare Shift tap (double-shift safety)", () => {
+      const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
+
+      // Shift is treated as a modifier presence, so the loop is never skipped on
+      // a Shift keydown. (The double-shift detector runs before this check, but
+      // we keep the Shift path conservative regardless.)
+      expect(
+        eventCanMatchKeymapShortcut(
+          keyEvent({ key: "Shift", shiftKey: true }),
+          bareKeys,
+        ),
+      ).toBe(true);
+    });
   });
 });
 
