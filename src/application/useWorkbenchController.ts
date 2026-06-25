@@ -502,6 +502,15 @@ import {
   type RecentFileEntry,
 } from "../domain/recentFiles";
 import {
+  nextBookmark,
+  previousBookmark,
+  removeBookmarksForPath,
+  renameBookmarksForPath,
+  sortBookmarks,
+  toggleBookmark,
+  type Bookmark,
+} from "../domain/bookmarks";
+import {
   detectLanguage,
   getFileName,
   getParentPath,
@@ -714,6 +723,7 @@ type PhpLaravelTranslationNavigationTarget = PhpLaravelTranslationTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
+  bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
   documents: Record<string, EditorDocument>;
@@ -1016,6 +1026,11 @@ export function useWorkbenchController(
   // into another project's switcher.
   const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
   const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] = useState(false);
+  // Per-workspace bookmarks (PhpStorm parity). Cached/restored alongside the
+  // rest of the per-tab workbench state so one project's bookmarks can never
+  // leak into another project's editor gutter or panel.
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false);
   const [classOpenOpen, setClassOpenOpen] = useState(false);
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
@@ -1539,6 +1554,7 @@ export function useWorkbenchController(
     (rootPath: string) => {
       workspaceStateCacheRef.current[rootPath] = {
         activePath,
+        bookmarks,
         bottomPanelView,
         bottomPanelVisible,
         documents,
@@ -1554,6 +1570,7 @@ export function useWorkbenchController(
     },
     [
       activePath,
+      bookmarks,
       bottomPanelView,
       bottomPanelVisible,
       documents,
@@ -1580,6 +1597,7 @@ export function useWorkbenchController(
       setActivePath(cached.activePath);
       setPreviewPath(cached.previewPath);
       setRecentFiles(cached.recentFiles);
+      setBookmarks(cached.bookmarks);
       setNavigationHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
       setBottomPanelView(cached.bottomPanelView);
@@ -3233,6 +3251,8 @@ export function useWorkbenchController(
     setActivePath(null);
     setPreviewPath(null);
     setRecentFiles([]);
+    setBookmarks([]);
+    setBookmarksPanelOpen(false);
     setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
@@ -4397,6 +4417,7 @@ export function useWorkbenchController(
         setActivePath(null);
         setPreviewPath(null);
         setRecentFiles([]);
+        setBookmarks([]);
         setNavigationHistory(createNavigationHistory());
         setSidebarView("files");
         setBottomPanelView("problems");
@@ -4412,6 +4433,10 @@ export function useWorkbenchController(
       // The recent files switcher is a transient overlay too; close it on a
       // switch so it never shows another tab's MRU list mid-transition.
       setRecentFilesSwitcherOpen(false);
+      // The bookmarks panel is a transient overlay; close it on a switch so it
+      // never shows another tab's bookmarks mid-transition. The bookmark list
+      // itself is cached/restored per tab above.
+      setBookmarksPanelOpen(false);
 
       setEditorRevealTarget(null);
       setLoadingDirectories(new Set());
@@ -8543,6 +8568,99 @@ export function useWorkbenchController(
       return true;
     });
   }, [refreshWorkspaceTodos]);
+
+  // Toggles a bookmark on a specific line of the active document. The line
+  // preview text is captured from the document content at toggle time so the
+  // panel can render it without re-reading the file. Conservative line tracking:
+  // the bookmark holds the line number captured here (it can drift if the file
+  // is edited above it, which is acceptable for runtime-only marks).
+  const toggleBookmarkAtLine = useCallback((lineNumber: number) => {
+    const document = activeDocumentRef.current;
+
+    if (!document) {
+      return;
+    }
+
+    const preview = linePreviewFromContent(document.content, lineNumber);
+
+    setBookmarks((current) =>
+      toggleBookmark(current, { lineNumber, path: document.path, preview }),
+    );
+  }, []);
+
+  // Toggles a bookmark on the active document's current cursor line (keymap /
+  // command entry point — the gutter click uses toggleBookmarkAtLine directly).
+  const toggleBookmarkAtCursor = useCallback(() => {
+    const lineNumber = activeEditorPositionRef.current?.lineNumber ?? 1;
+    toggleBookmarkAtLine(lineNumber);
+  }, [toggleBookmarkAtLine]);
+
+  // The cursor anchor for next/previous bookmark navigation. Uses the active
+  // document plus the live editor position so navigation steps relative to where
+  // the user is, not an arbitrary start.
+  const currentBookmarkLocation = useCallback(() => {
+    const path = activeDocumentRef.current?.path;
+
+    if (!path) {
+      return null;
+    }
+
+    return {
+      lineNumber: activeEditorPositionRef.current?.lineNumber ?? 1,
+      path,
+    };
+  }, []);
+
+  const openBookmark = useCallback(
+    (bookmark: Bookmark): Promise<boolean> => {
+      return openNavigationTarget(
+        bookmark.path,
+        { column: 1, lineNumber: bookmark.lineNumber },
+        "bookmark",
+      );
+    },
+    [openNavigationTarget],
+  );
+
+  const goToNextBookmark = useCallback(async (): Promise<boolean> => {
+    const target = nextBookmark(bookmarks, currentBookmarkLocation());
+
+    if (!target) {
+      return false;
+    }
+
+    return openBookmark(target);
+  }, [bookmarks, currentBookmarkLocation, openBookmark]);
+
+  const goToPreviousBookmark = useCallback(async (): Promise<boolean> => {
+    const target = previousBookmark(bookmarks, currentBookmarkLocation());
+
+    if (!target) {
+      return false;
+    }
+
+    return openBookmark(target);
+  }, [bookmarks, currentBookmarkLocation, openBookmark]);
+
+  const openBookmarksPanel = useCallback(() => {
+    if (!currentWorkspaceRootRef.current) {
+      return;
+    }
+
+    setBookmarksPanelOpen(true);
+  }, []);
+
+  const closeBookmarksPanel = useCallback(() => {
+    setBookmarksPanelOpen(false);
+  }, []);
+
+  const toggleBookmarksPanel = useCallback(() => {
+    if (!currentWorkspaceRootRef.current) {
+      return;
+    }
+
+    setBookmarksPanelOpen((open) => !open);
+  }, []);
 
   const resolvePhpClassReference = useCallback(
     (source: string, className: string): string | null => {
@@ -20395,6 +20513,9 @@ export function useWorkbenchController(
       );
       setActivePath(nextPath);
       remapRecentFile(oldPath, { name: nextName, path: nextPath });
+      setBookmarks((current) =>
+        renameBookmarksForPath(current, oldPath, nextPath),
+      );
       await refreshDirectory(parentPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
@@ -20460,6 +20581,7 @@ export function useWorkbenchController(
 
       closeDocument(deletedPath);
       forgetRecentFile(deletedPath);
+      setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
       clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
       await refreshDirectory(parentPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -22042,6 +22164,46 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "bookmark.toggle",
+      title: "Toggle Bookmark",
+      category: "Bookmarks",
+      shortcut: shortcut("bookmark.toggle"),
+      isEnabled: (context) => context.hasActiveDocument,
+      run: toggleBookmarkAtCursor,
+    });
+
+    registry.register({
+      id: "bookmark.next",
+      title: "Next Bookmark",
+      category: "Bookmarks",
+      shortcut: shortcut("bookmark.next"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void goToNextBookmark();
+      },
+    });
+
+    registry.register({
+      id: "bookmark.previous",
+      title: "Previous Bookmark",
+      category: "Bookmarks",
+      shortcut: shortcut("bookmark.previous"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void goToPreviousBookmark();
+      },
+    });
+
+    registry.register({
+      id: "bookmark.showPanel",
+      title: "Show Bookmarks",
+      category: "Bookmarks",
+      shortcut: shortcut("bookmark.showPanel"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: toggleBookmarksPanel,
+    });
+
+    registry.register({
       id: "terminal.show",
       title: "Show Terminal",
       category: "Terminal",
@@ -22224,6 +22386,10 @@ export function useWorkbenchController(
     toggleEditorFontLigatures,
     toggleTodoPanel,
     refreshWorkspaceTodos,
+    toggleBookmarkAtCursor,
+    goToNextBookmark,
+    goToPreviousBookmark,
+    toggleBookmarksPanel,
     toggleSmartMode,
     toggleWorkspaceTrust,
     zoomEditorFontIn,
@@ -22852,6 +23018,36 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("bookmark.toggle")) {
+        event.preventDefault();
+        toggleBookmarkAtCursor();
+        return;
+      }
+
+      if (matches("bookmark.showPanel")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          toggleBookmarksPanel();
+        }
+        return;
+      }
+
+      if (matches("bookmark.next")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void goToNextBookmark();
+        }
+        return;
+      }
+
+      if (matches("bookmark.previous")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void goToPreviousBookmark();
+        }
+        return;
+      }
+
       if (matches("editor.goToDefinition")) {
         event.preventDefault();
         void goToDefinition();
@@ -23037,6 +23233,10 @@ export function useWorkbenchController(
     toggleBottomPanel,
     toggleEditorFontLigatures,
     toggleTodoPanel,
+    toggleBookmarkAtCursor,
+    toggleBookmarksPanel,
+    goToNextBookmark,
+    goToPreviousBookmark,
     workspaceRoot,
     zoomEditorFontIn,
     zoomEditorFontOut,
@@ -24282,6 +24482,17 @@ export function useWorkbenchController(
     openRecentFile,
     openRecentFilesSwitcher,
     setRecentFilesSwitcherOpen,
+    bookmarks,
+    sortedBookmarks: sortBookmarks(bookmarks),
+    bookmarksPanelOpen,
+    toggleBookmarkAtCursor,
+    toggleBookmarkAtLine,
+    goToNextBookmark,
+    goToPreviousBookmark,
+    openBookmark,
+    openBookmarksPanel,
+    closeBookmarksPanel,
+    toggleBookmarksPanel,
     clearNotices: () => setNotices([]),
     notices,
     navigateBackward,
@@ -25796,6 +26007,16 @@ function cachedWorkspaceHasDirtyDocuments(
   cached: CachedWorkspaceWorkbenchState,
 ): boolean {
   return Object.values(cached.documents).some(isDirty);
+}
+
+// Extracts the trimmed text of a 1-based line from document content, used as a
+// bookmark's preview. Out-of-range lines (e.g. a bookmark on a line that no
+// longer exists after edits) yield an empty preview rather than throwing.
+function linePreviewFromContent(content: string, lineNumber: number): string {
+  const lines = content.split("\n");
+  const line = lines[lineNumber - 1];
+
+  return line ? line.trim() : "";
 }
 
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {

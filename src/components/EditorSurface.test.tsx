@@ -1358,6 +1358,105 @@ class InvoiceServiceTest extends TestCase
     );
   });
 
+  it("renders a bookmark gutter marker for bookmarked lines and toggles on a lines-decoration click", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "constants.ts",
+      path: "/workspace/src/constants.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onToggleBookmarkAtLine = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          bookmarkedLineNumbers={[2]}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onToggleBookmarkAtLine={onToggleBookmarkAtLine}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const bookmarkDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.linesDecorationsClassName ===
+            "bookmark-gutter-glyph",
+        ),
+    );
+    expect(bookmarkDecorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            linesDecorationsClassName: "bookmark-gutter-glyph",
+          }),
+          range: expect.objectContaining({
+            startLineNumber: 2,
+          }),
+        }),
+      ]),
+    );
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: {
+            column: 1,
+            lineNumber: 3,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
+        },
+      });
+    });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(3);
+  });
+
   it("reopens PHP suggestions when IDE readiness changes in member access context", async () => {
     const content = "<?php\n$comment->\n";
     const activeDocument: EditorDocument = {
@@ -5942,7 +6041,7 @@ function createMonaco(model: FakeModel) {
       getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
       GlyphMarginLane: { Center: 2, Left: 1, Right: 3 },
-      MouseTargetType: { GUTTER_GLYPH_MARGIN: 4 },
+      MouseTargetType: { GUTTER_GLYPH_MARGIN: 4, GUTTER_LINE_DECORATIONS: 3 },
       OverviewRulerLane: { Left: 1, Right: 4 },
       setModelMarkers: vi.fn(),
       TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },

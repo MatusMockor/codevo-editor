@@ -246,6 +246,30 @@ export const keymapCommands = [
     label: "Toggle TODO Panel",
   },
   {
+    category: "Bookmarks",
+    defaultShortcut: "F11",
+    id: "bookmark.toggle",
+    label: "Toggle Bookmark",
+  },
+  {
+    category: "Bookmarks",
+    defaultShortcut: "Shift+F11",
+    id: "bookmark.showPanel",
+    label: "Show Bookmarks",
+  },
+  {
+    category: "Bookmarks",
+    defaultShortcut: "",
+    id: "bookmark.next",
+    label: "Next Bookmark",
+  },
+  {
+    category: "Bookmarks",
+    defaultShortcut: "",
+    id: "bookmark.previous",
+    label: "Previous Bookmark",
+  },
+  {
     category: "Terminal",
     defaultShortcut: "Ctrl+`",
     id: "terminal.show",

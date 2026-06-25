@@ -85,6 +85,30 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults toggle bookmark to F11 on every platform (PhpStorm parity)", () => {
+    expect(defaultShortcutForCommand("bookmark.toggle", "mac")).toBe("F11");
+    expect(defaultShortcutForCommand("bookmark.toggle", "linux")).toBe("F11");
+    expect(defaultShortcutForCommand("bookmark.toggle", "windows")).toBe("F11");
+    expect(defaultKeymapSettings("mac")["bookmark.toggle"]).toBe("F11");
+  });
+
+  it("defaults show bookmarks panel to Shift+F11 on every platform", () => {
+    expect(defaultShortcutForCommand("bookmark.showPanel", "mac")).toBe(
+      "Shift+F11",
+    );
+    expect(defaultShortcutForCommand("bookmark.showPanel", "linux")).toBe(
+      "Shift+F11",
+    );
+    expect(defaultKeymapSettings("mac")["bookmark.showPanel"]).toBe("Shift+F11");
+  });
+
+  it("leaves bookmark navigation unbound by default (palette only)", () => {
+    expect(defaultShortcutForCommand("bookmark.next", "mac")).toBe("");
+    expect(defaultShortcutForCommand("bookmark.previous", "mac")).toBe("");
+    expect(defaultKeymapSettings("mac")["bookmark.next"]).toBe("");
+    expect(defaultKeymapSettings("mac")["bookmark.previous"]).toBe("");
+  });
+
   it("never assigns the same default shortcut to two commands", () => {
     const defaults = defaultKeymapSettings("mac");
     const assigned = Object.values(defaults).filter(Boolean);

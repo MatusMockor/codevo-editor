@@ -14,6 +14,7 @@ import type {
 } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
+import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
@@ -330,6 +331,17 @@ function App() {
         : [],
     [workbench.activeDocument, workbench.activeDocumentGitBaseline],
   );
+  const activeBookmarkedLineNumbers = useMemo(() => {
+    const activePath = workbench.activeDocument?.path;
+
+    if (!activePath) {
+      return [];
+    }
+
+    return workbench.bookmarks
+      .filter((bookmark) => bookmark.path === activePath)
+      .map((bookmark) => bookmark.lineNumber);
+  }, [workbench.activeDocument?.path, workbench.bookmarks]);
   const workspaceLabel = useMemo(() => {
     const jsTs = workbench.workspaceDescriptor?.javaScriptTypeScript;
     const php = workbench.workspaceDescriptor?.php;
@@ -900,6 +912,7 @@ function App() {
             applyPhpLanguageServerWorkspaceEdit={
               workbench.applyPhpLanguageServerWorkspaceEdit
             }
+            bookmarkedLineNumbers={activeBookmarkedLineNumbers}
             changeHunks={activeEditorChangeHunks}
             editorRevealTarget={workbench.editorRevealTarget}
             flushPendingLanguageServerDocument={
@@ -950,6 +963,7 @@ function App() {
             onGoToDefinition={goToDefinition}
             onGoToImplementationAt={goToImplementationAt}
             onRunTestAt={workbench.runTestAt}
+            onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}
@@ -1130,6 +1144,17 @@ function App() {
         }}
         onRefresh={() => void workbench.refreshWorkspaceTodos()}
         todos={workbench.workspaceTodos}
+      />
+
+      <BookmarksPanel
+        bookmarks={workbench.bookmarks}
+        isOpen={workbench.bookmarksPanelOpen}
+        onClose={workbench.closeBookmarksPanel}
+        onOpenBookmark={(bookmark) => {
+          workbench.closeBookmarksPanel();
+          void workbench.openBookmark(bookmark);
+        }}
+        workspaceRoot={workbench.workspaceRoot}
       />
 
       <LanguageServerSetup

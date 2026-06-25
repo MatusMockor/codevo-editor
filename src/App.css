@@ -1806,6 +1806,31 @@ button {
   border-left-color: #8af3ad;
 }
 
+/* Bookmark marker rendered in the lines-decorations margin (independent of the
+   three glyph-margin lanes), so it never collides with the git/impl/test glyphs
+   and works on every language. */
+.monaco-editor .bookmark-gutter-glyph {
+  position: relative;
+  cursor: pointer;
+}
+
+.monaco-editor .bookmark-gutter-glyph::before {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: #f0a73a;
+  box-shadow: 0 0 0 1px rgba(240, 167, 58, 0.35);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.monaco-editor .bookmark-gutter-glyph:hover::before {
+  background: #ffc266;
+}
+
 .editor-change-popover {
   --change-popover-accent: var(--change-modified);
   --change-popover-accent-strong: var(--change-modified-strong);

@@ -49212,6 +49212,158 @@ class PostRepository
 
     return { dependencies, getWorkbench };
   }
+
+  describe("bookmarks", () => {
+    it("toggles a bookmark at the active cursor line capturing the line preview", async () => {
+      const readTextFile = vi.fn(
+        async () => "line one\nline two\nline three\n",
+      );
+      const { getWorkbench } = renderController({ readTextFile });
+      const file = fileEntry("/workspace/src/User.php", "User.php");
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(file);
+      });
+      await flushAsyncTurns();
+
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 2 });
+      });
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+
+      expect(getWorkbench().bookmarks).toEqual([
+        { lineNumber: 2, path: file.path, preview: "line two" },
+      ]);
+
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+
+      expect(getWorkbench().bookmarks).toEqual([]);
+    });
+
+    it("keeps bookmarks isolated per workspace tab with no leak across A -> B -> A", async () => {
+      const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] =
+        {
+          detectWorkspace: vi.fn(async (rootPath) => ({
+            javaScriptTypeScript: null,
+            php: null,
+            rootPath,
+          })),
+        };
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async () => "alpha\nbeta\ngamma\n"),
+        workspaceDetectionGateway,
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      });
+
+      const fileA = fileEntry("/workspace-a/src/A.php", "A.php");
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileA);
+      });
+      await flushAsyncTurns();
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 1 });
+      });
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+
+      expect(getWorkbench().bookmarks).toEqual([
+        { lineNumber: 1, path: fileA.path, preview: "alpha" },
+      ]);
+
+      // Switch to workspace B: its bookmark list must start empty (no leak).
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns(24);
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().bookmarks).toEqual([]);
+
+      const fileB = fileEntry("/workspace-b/src/B.php", "B.php");
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileB);
+      });
+      await flushAsyncTurns();
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 2 });
+      });
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+
+      expect(getWorkbench().bookmarks).toEqual([
+        { lineNumber: 2, path: fileB.path, preview: "beta" },
+      ]);
+
+      // Switch back to workspace A: its original bookmark must be restored and
+      // workspace B's bookmark must not bleed in.
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-a");
+      });
+      await flushAsyncTurns(24);
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      expect(getWorkbench().bookmarks).toEqual([
+        { lineNumber: 1, path: fileA.path, preview: "alpha" },
+      ]);
+    });
+
+    it("navigates to the next bookmark across files and reveals it", async () => {
+      const { getWorkbench } = renderController({
+        readTextFile: vi.fn(async () => "one\ntwo\nthree\nfour\n"),
+      });
+      const file = fileEntry("/workspace/src/User.php", "User.php");
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(file);
+      });
+      await flushAsyncTurns();
+
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 2 });
+      });
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 4 });
+      });
+      act(() => {
+        getWorkbench().toggleBookmarkAtCursor();
+      });
+
+      // Cursor sits on line 4 (the last bookmark); next wraps to line 2.
+      await act(async () => {
+        await getWorkbench().goToNextBookmark();
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(2);
+
+      // Previous from line 2 wraps back to line 4.
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 2 });
+      });
+      await act(async () => {
+        await getWorkbench().goToPreviousBookmark();
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(4);
+    });
+  });
 });
 
 function WorkbenchHarness({

@@ -113,6 +113,7 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
   ): Promise<void>;
+  bookmarkedLineNumbers?: readonly number[];
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingJavaScriptTypeScriptLanguageServerDocument?(
@@ -145,6 +146,7 @@ interface EditorSurfaceProps {
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
   onRunTestAt?(target: PhpTestGutterTarget): void;
+  onToggleBookmarkAtLine?(lineNumber: number): void;
   isActiveDocumentPhpTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
@@ -189,6 +191,7 @@ function EditorSurfaceComponent({
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
+  bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
@@ -220,6 +223,7 @@ function EditorSurfaceComponent({
   onGoToDefinition,
   onGoToImplementationAt,
   onRunTestAt,
+  onToggleBookmarkAtLine,
   onEditorFocused,
   onOpenClass,
   onOpenFile,
@@ -291,6 +295,11 @@ function EditorSurfaceComponent({
   // so revisiting an unchanged test file reuses the previous parse and a hit can
   // never serve another file's targets across open project tabs.
   const testGutterTargetsCacheRef = useRef(new PhpTestGutterTargetsCache());
+  // Bookmark gutter markers. Rendered in the lines-decorations margin (an
+  // independent lane from the three glyph-margin lanes: Left=git, Center=impl,
+  // Right=test-run) so they never collide with those glyphs or their click
+  // handlers, and work on every language (not just PHP).
+  const bookmarkDecorationIdsRef = useRef<string[]>([]);
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   // Tracks the diagnostics map seen on the previous run and the set of model
   // objects already given language-server markers, so the marker effect can
@@ -1012,15 +1021,33 @@ function EditorSurfaceComponent({
     }
 
     const disposable = editorApi.onMouseDown((event) => {
-      if (
-        event.target.type !== monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
-      ) {
+      const targetType = event.target.type;
+      const isGlyphMargin =
+        targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
+      const isLineDecorations =
+        targetType === monacoApi.editor.MouseTargetType.GUTTER_LINE_DECORATIONS;
+
+      if (!isGlyphMargin && !isLineDecorations) {
         return;
       }
 
       const lineNumber = event.target.position?.lineNumber;
 
       if (!lineNumber) {
+        return;
+      }
+
+      // A click in the lines-decorations margin toggles a bookmark on that line.
+      // This margin is independent of the three glyph-margin lanes, so it never
+      // contends with the git/impl/test glyph clicks above.
+      if (isLineDecorations) {
+        if (!onToggleBookmarkAtLine) {
+          return;
+        }
+
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        onToggleBookmarkAtLine(lineNumber);
         return;
       }
 
@@ -1062,7 +1089,13 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [editorApi, monacoApi, onGoToImplementationAt, onRunTestAt]);
+  }, [
+    editorApi,
+    monacoApi,
+    onGoToImplementationAt,
+    onRunTestAt,
+    onToggleBookmarkAtLine,
+  ]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1087,6 +1120,37 @@ function EditorSurfaceComponent({
       );
     };
   }, [activeDocument, changeHunks, editorApi, monacoApi]);
+
+  // Renders a bookmark marker in the lines-decorations margin plus an overview
+  // ruler tick for each bookmarked line of the active document. The stale-guard
+  // (model path must equal the active document path) keeps the per-tab isolation
+  // invariant intact: a switch repaints from the new tab's bookmarked lines and
+  // the previous tab's markers are dropped via deltaDecorations.
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    bookmarkDecorationIdsRef.current = editorApi.deltaDecorations(
+      bookmarkDecorationIdsRef.current,
+      bookmarkedLineNumbers.map((lineNumber) =>
+        toBookmarkDecoration(monacoApi, lineNumber),
+      ),
+    );
+
+    return () => {
+      bookmarkDecorationIdsRef.current = editorApi.deltaDecorations(
+        bookmarkDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument, bookmarkedLineNumbers, editorApi, monacoApi]);
 
   useEffect(() => {
     if (!changePreview) {
@@ -2156,6 +2220,7 @@ function currentEditorTextRange(
 // double-dispose. The single frozen identity keeps the effect quiet until the
 // caller actually changes the path set.
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
+const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
 
 // Stable placeholder model identity used while no document is open, so Monaco
 // keeps a single mounted instance instead of remounting when the first file
@@ -2413,6 +2478,26 @@ function toEditorChangeDecoration(
       hunk.endLineNumber,
       1,
     ),
+  };
+}
+
+function toBookmarkDecoration(
+  monaco: typeof Monaco,
+  lineNumber: number,
+): Monaco.editor.IModelDeltaDecoration {
+  return {
+    options: {
+      isWholeLine: true,
+      linesDecorationsClassName: "bookmark-gutter-glyph",
+      overviewRuler: {
+        color: "#f0a73a",
+        position: monaco.editor.OverviewRulerLane.Right,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+      zIndex: 10,
+    },
+    range: new monaco.Range(lineNumber, 1, lineNumber, 1),
   };
 }
 
