@@ -845,6 +845,225 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
   });
 
+  it("force-warms the phpactor index with a documentSymbol request after the first PHP didOpen", async () => {
+    // Cold first-nav lag root cause: the open-time PHP probe only runs
+    // detectPhpTools + planPhpLanguageServer (starts phpactor) but issues NO
+    // real LSP request, so phpactor's index stays cold until the user's first
+    // Cmd+B / hover / completion eats the full cold-index latency. Firing one
+    // low-priority documentSymbol request after the first didOpen forces
+    // phpactor to index, so the first real navigation is already warm.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace", path);
+    });
+  });
+
+  it("force-warms the phpactor index only once per workspace session", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const firstPath = "/workspace/app/Models/User.php";
+    const secondPath = "/workspace/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) =>
+          `<?php\n// ${requestedPath}\nclass Generated {}\n`,
+      ),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(firstPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace", firstPath);
+    });
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls,
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(secondPath, "Account.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path: secondPath }),
+      );
+    });
+
+    // The second PHP didOpen must not trigger another warm-up request: the
+    // index is already warm for this workspace session.
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls,
+    ).toHaveLength(1);
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls.every(([rootPath]) => rootPath === "/workspace"),
+    ).toBe(true);
+  });
+
+  it("warms the phpactor index per workspace tab without leaking the warm-up across tabs", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: undefined,
+      sessionId: 71,
+    };
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => ({
+        javaScriptTypeScript: null,
+        php: phpProjectDescriptor(),
+        rootPath,
+      })),
+    };
+    const pathA = "/workspace-a/app/Models/User.php";
+    const pathB = "/workspace-b/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) =>
+          `<?php\n// ${requestedPath}\nclass Generated {}\n`,
+      ),
+      runtimeStatus: runningStatus,
+      workspaceDetectionGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(pathA, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", pathA);
+    });
+
+    // Switch to workspace B and open one of its PHP files: a fresh per-tab
+    // warm-up must fire for B, and the warm-up requests must never target the
+    // wrong root (no cross-tab leak).
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(pathB, "Account.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-b", pathB);
+    });
+
+    const warmUpCalls = vi.mocked(
+      dependencies.languageServerFeaturesGateway.documentSymbols,
+    ).mock.calls;
+    // Warm-up A targeted /workspace-a/...; warm-up B targeted /workspace-b/...
+    // Never the reverse.
+    expect(
+      warmUpCalls.some(
+        ([rootPath, requestedPath]) =>
+          rootPath === "/workspace-a" && requestedPath === pathA,
+      ),
+    ).toBe(true);
+    expect(
+      warmUpCalls.some(
+        ([rootPath, requestedPath]) =>
+          rootPath === "/workspace-b" && requestedPath === pathB,
+      ),
+    ).toBe(true);
+    expect(
+      warmUpCalls.every(
+        ([rootPath, requestedPath]) =>
+          (rootPath === "/workspace-a" && requestedPath.startsWith("/workspace-a/")) ||
+          (rootPath === "/workspace-b" && requestedPath.startsWith("/workspace-b/")),
+      ),
+    ).toBe(true);
+  });
+
   it("does not warm up the PHP probe at open for a PHP project in basic mode", async () => {
     // The basic-mode defer (P2b) must be preserved: warmup only applies when
     // IDE mode is on. In basic mode the probe stays deferred even though

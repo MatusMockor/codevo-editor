@@ -1134,6 +1134,11 @@ export function useWorkbenchController(
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const documentSyncGenerationRef = useRef(0);
   const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
+  // Cold first-nav fix: tracks which workspace roots have already had their
+  // phpactor index force-warmed (one low-priority documentSymbol request fired
+  // after the first PHP didOpen). Keyed by the workspace root so each open
+  // project tab warms exactly once and the warm-up never leaks across tabs.
+  const phpLanguageServerIndexWarmedRootsRef = useRef<Set<string>>(new Set());
   const languageServerRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -2792,6 +2797,10 @@ export function useWorkbenchController(
     documentVersionsByUriRef.current = {};
     lastAppliedDiagnosticVersionByUriRef.current = {};
     documentSyncQueuesRef.current = {};
+    // A document-sync reset means the phpactor session/generation changed, so
+    // its index is cold again: allow the next PHP didOpen to re-fire the
+    // force-index warm-up.
+    phpLanguageServerIndexWarmedRootsRef.current.clear();
   }, [clearDocumentChangeTimer]);
 
   const resetJavaScriptTypeScriptLanguageServerDocuments = useCallback(() => {
@@ -2983,6 +2992,48 @@ export function useWorkbenchController(
     [stopProjectRuntimes],
   );
 
+  // Cold first-nav fix: the open-time PHP probe only starts phpactor; it never
+  // issues a real LSP request, so phpactor's index stays cold until the user's
+  // first Cmd+B / hover / completion eats the full cold-index latency. After
+  // the first PHP document is synced (didOpen) we fire one low-priority,
+  // fire-and-forget documentSymbol request to force phpactor to index, so the
+  // first real navigation is already warm (PhpStorm-style pre-warm).
+  //
+  // Isolation: the requested root and session are captured up front; the
+  // post-await re-check drops the warm-up if the workspace switched or the
+  // phpactor session changed before it ran, and the result is discarded. The
+  // per-root warmed-set guard keeps it to exactly once per workspace
+  // session/root (no flood, no cross-tab leak).
+  const warmUpPhpLanguageServerIndex = useCallback(
+    (rootPath: string, path: string, requestedSessionId: number) => {
+      if (phpLanguageServerIndexWarmedRootsRef.current.has(rootPath)) {
+        return;
+      }
+
+      if (!isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)) {
+        return;
+      }
+
+      phpLanguageServerIndexWarmedRootsRef.current.add(rootPath);
+
+      void (async () => {
+        try {
+          await languageServerFeaturesGateway.documentSymbols(rootPath, path);
+        } catch {
+          // The warm-up is best-effort: its only purpose is to force phpactor
+          // to index. Failures (a transient phpactor error or a session/root
+          // teardown mid-flight) are swallowed and never surfaced to the user.
+          // Roll back the warmed flag so the next PHP didOpen on this root can
+          // retry; the once-per-root guard still prevents a flood. The set is
+          // cleared anyway when the session/generation changes
+          // (resetLanguageServerDocuments), so a stale root just no-ops there.
+          phpLanguageServerIndexWarmedRootsRef.current.delete(rootPath);
+        }
+      })();
+    },
+    [isLanguageServerSessionCurrentForRoot, languageServerFeaturesGateway],
+  );
+
   const syncOpenDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
@@ -3060,6 +3111,11 @@ export function useWorkbenchController(
             syncedDocument,
           );
           clearPendingOpenSyncAttempt();
+          // The first PHP document is now open on the active phpactor session:
+          // force-warm its index off the back of this didOpen so the user's
+          // first real navigation is warm. Fire-and-forget (does not block the
+          // sync queue), once per root, self-isolating.
+          warmUpPhpLanguageServerIndex(rootPath, document.path, requestedSessionId);
         });
       } catch (error) {
         clearPendingOpenSyncState();
@@ -3074,6 +3130,7 @@ export function useWorkbenchController(
       languageServerRuntimeStatusRoot,
       nextDocumentVersion,
       reportLanguageServerError,
+      warmUpPhpLanguageServerIndex,
     ],
   );
 
