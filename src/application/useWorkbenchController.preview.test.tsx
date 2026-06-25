@@ -6,6 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
+import type {
+  LocalHistoryGateway,
+  LocalHistoryVersion,
+} from "../domain/localHistory";
 import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
@@ -74,6 +78,7 @@ type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 interface ControllerDependencies {
   documentSyncGateway: LanguageServerDocumentSyncGateway;
   gitGateway: GitGateway;
+  localHistoryGateway: LocalHistoryGateway;
   indexProgressGateway: IndexProgressGateway;
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
@@ -463,6 +468,274 @@ describe("useWorkbenchController preview tabs", () => {
     // The history for A must not populate the panel now that B is active.
     expect(getWorkbench().fileHistoryCommits).toEqual([]);
     expect(fileHistory).toHaveBeenCalledWith("/workspace", "src/A.php");
+  });
+
+  it("captures a Local History snapshot of the active document on save", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // edited\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    expect(localHistoryGateway.recordSnapshot).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      "<?php // edited\n",
+    );
+
+    const versions = await localHistoryGateway.listVersions(
+      "/workspace",
+      "src/User.php",
+    );
+    expect(versions).toHaveLength(1);
+  });
+
+  it("dedupes a Local History snapshot when saved content is unchanged", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // edited\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    // Two saves, but the second is identical content: still a single retained
+    // version (dedupe).
+    const versions = await localHistoryGateway.listVersions(
+      "/workspace",
+      "src/User.php",
+    );
+    expect(versions).toHaveLength(1);
+  });
+
+  it("opens the Local History panel, lists versions, and diffs a version against current content", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    // Save two distinct versions.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v1\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v2\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openLocalHistory();
+    });
+
+    expect(getWorkbench().localHistoryPanelOpen).toBe(true);
+    expect(getWorkbench().localHistoryRelativePath).toBe("src/User.php");
+    expect(getWorkbench().localHistoryVersions).toHaveLength(2);
+
+    const oldest =
+      getWorkbench().localHistoryVersions[
+        getWorkbench().localHistoryVersions.length - 1
+      ];
+
+    await act(async () => {
+      await getWorkbench().selectLocalHistoryVersion(oldest.id);
+    });
+
+    expect(getWorkbench().localHistorySelectedId).toBe(oldest.id);
+    expect(getWorkbench().localHistoryDiff?.originalContent).toBe(
+      "<?php // v1\n",
+    );
+    expect(getWorkbench().localHistoryDiff?.modifiedContent).toBe(
+      "<?php // v2\n",
+    );
+
+    await act(async () => {
+      getWorkbench().closeLocalHistory();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().localHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().localHistoryVersions).toEqual([]);
+    expect(getWorkbench().localHistoryDiff).toBeNull();
+  });
+
+  it("reverts the active document to a selected Local History version", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v1\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v2\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openLocalHistory();
+    });
+
+    const oldest =
+      getWorkbench().localHistoryVersions[
+        getWorkbench().localHistoryVersions.length - 1
+      ];
+
+    await act(async () => {
+      await getWorkbench().revertLocalHistoryVersion(oldest.id);
+    });
+    await flushAsyncTurns();
+
+    // The reverted content (v1) is written back to disk and reflected in the
+    // open document.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenLastCalledWith("/workspace/src/User.php", "<?php // v1\n");
+    const active = getWorkbench().openDocuments.find(
+      (document) => document.path === "/workspace/src/User.php",
+    );
+    expect(active?.content).toBe("<?php // v1\n");
+    expect(active?.savedContent).toBe("<?php // v1\n");
+  });
+
+  it("drops a stale Local History result after the panel is closed", async () => {
+    const versionsDeferred = createDeferred<
+      Awaited<ReturnType<LocalHistoryGateway["listVersions"]>>
+    >();
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    vi.mocked(localHistoryGateway.listVersions).mockReturnValueOnce(
+      versionsDeferred.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    let openPromise: Promise<void> | null = null;
+    act(() => {
+      openPromise = getWorkbench().openLocalHistory();
+    });
+
+    await act(async () => {
+      getWorkbench().closeLocalHistory();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      versionsDeferred.resolve([
+        { id: "000000000001", sizeBytes: 4, timestampMs: 1700000000000 },
+      ]);
+      await openPromise;
+    });
+
+    // The version list arrived after close, so it must not populate the panel.
+    expect(getWorkbench().localHistoryVersions).toEqual([]);
+    expect(getWorkbench().localHistoryPanelOpen).toBe(false);
   });
 
   it("opens a Git diff as an active preview tab named for the changed file", async () => {
@@ -51156,6 +51429,7 @@ class PostRepository
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
+    localHistoryGateway,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
     indexProgressGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -51187,6 +51461,7 @@ class PostRepository
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    localHistoryGateway?: LocalHistoryGateway;
     indexProgressGateway?: IndexProgressGateway;
     javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -51228,6 +51503,7 @@ class PostRepository
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      localHistoryGateway,
       indexProgressGateway,
       javaScriptTypeScriptInitialRuntimeStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -51447,6 +51723,7 @@ function WorkbenchHarness({
     dependencies.phpFileOutlineGateway,
     dependencies.phpTreeGateway,
     dependencies.gitGateway,
+    dependencies.localHistoryGateway,
     dependencies.languageServerGateway,
     dependencies.languageServerRuntimeGateway,
     dependencies.languageServerDocumentSyncGateway,
@@ -51499,9 +51776,64 @@ const microtaskDiagnosticsFlushScheduler: DiagnosticsFlushScheduler = (() => {
   };
 })();
 
+// In-memory Local History gateway for controller tests: exercises the real
+// dedupe (identical-to-latest is a no-op), newest-first listing, and content
+// read behaviour against real collaborators, with no Tauri/disk involvement.
+function createInMemoryLocalHistoryGateway(): LocalHistoryGateway {
+  const buckets = new Map<string, LocalHistoryVersion[]>();
+  const contents = new Map<string, string>();
+  const lastContent = new Map<string, string>();
+  let sequence = 0;
+
+  const key = (rootPath: string, relativePath: string) =>
+    `${rootPath} ${relativePath}`;
+
+  return {
+    recordSnapshot: vi.fn(
+      async (rootPath: string, relativePath: string, content: string) => {
+        const bucketKey = key(rootPath, relativePath);
+
+        if (lastContent.get(bucketKey) === content) {
+          return null;
+        }
+
+        sequence += 1;
+        const version: LocalHistoryVersion = {
+          id: `${sequence}`.padStart(12, "0"),
+          sizeBytes: content.length,
+          timestampMs: 1_700_000_000_000 + sequence,
+        };
+        const existing = buckets.get(bucketKey) ?? [];
+        existing.push(version);
+        buckets.set(bucketKey, existing);
+        contents.set(`${bucketKey} ${version.id}`, content);
+        lastContent.set(bucketKey, content);
+        return version;
+      },
+    ),
+    listVersions: vi.fn(async (rootPath: string, relativePath: string) => {
+      const bucket = buckets.get(key(rootPath, relativePath)) ?? [];
+      return [...bucket].reverse();
+    }),
+    readVersion: vi.fn(
+      async (rootPath: string, relativePath: string, versionId: string) => {
+        const bucketKey = key(rootPath, relativePath);
+        const content = contents.get(`${bucketKey} ${versionId}`);
+
+        if (content === undefined) {
+          throw new Error(`Unknown local history version: ${versionId}`);
+        }
+
+        return content;
+      },
+    ),
+  };
+}
+
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  localHistoryGateway,
   indexProgressGateway,
   javaScriptTypeScriptInitialRuntimeStatus,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -51533,6 +51865,7 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  localHistoryGateway?: LocalHistoryGateway;
   indexProgressGateway?: IndexProgressGateway;
   javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -51654,6 +51987,7 @@ function createControllerDependencies({
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     },
+    localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
     indexProgressGateway:
       indexProgressGateway ?? {
         clearWorkspaceIndex: vi.fn(async (rootPath) => ({

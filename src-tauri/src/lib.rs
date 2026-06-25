@@ -9,6 +9,7 @@ pub mod index_update;
 pub mod job_scheduler;
 pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
+pub mod local_history;
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
@@ -49,6 +50,7 @@ use index_scan::{
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -579,6 +581,15 @@ fn workspace_index_database_path(app: &AppHandle, root_path: &Path) -> Result<Pa
         .map_err(|error| error.to_string())?;
 
     Ok(workspace_index_path(&config_dir, root_path))
+}
+
+fn local_history_store(app: &AppHandle) -> Result<LocalHistoryStore, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+
+    Ok(LocalHistoryStore::new(config_dir))
 }
 
 fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
@@ -1625,6 +1636,82 @@ async fn get_git_file_history(
         CommandGitRepositoryGateway
             .file_history(&root, &relative_path)
             .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+// Rejects a local-history relative path that is absolute or escapes the
+// workspace via `..`, so a snapshot/version request can never address content
+// outside the requested workspace root (per-workspace isolation).
+fn ensure_local_history_relative_path(relative_path: &str) -> Result<(), String> {
+    // Normalize Windows separators so `..` traversal expressed with backslashes
+    // (which Path::components on Unix would treat as a single filename) is still
+    // detected. The store hashes the same normalized form, so this keeps the
+    // guard and the storage key in agreement.
+    let normalized = relative_path.replace('\\', "/");
+    let path = Path::new(&normalized);
+
+    if path.is_absolute() {
+        return Err("Local history path must be workspace-relative.".to_string());
+    }
+
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("Local history path must stay inside the workspace.".to_string());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn record_local_history_snapshot(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+    content: String,
+) -> Result<Option<LocalHistoryVersion>, String> {
+    // Writing a snapshot touches disk (index + content file); keep it off the
+    // main thread. The captured `root_path` + `relative_path` bind the snapshot
+    // to its own workspace bucket and file (no cross-root or cross-file leak).
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.record_snapshot(&root_path, &relative_path, &content)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_local_history_versions(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<LocalHistoryVersion>, String> {
+    // Reading the version index is cheap but still touches disk; keep it off the
+    // main thread and scope it to the requested workspace + file.
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.list_versions(&root_path, &relative_path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_local_history_version_content(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+    version_id: String,
+) -> Result<String, String> {
+    // Reads one snapshot's stored content off the main thread, scoped to the
+    // requested workspace + file + version.
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.read_version(&root_path, &relative_path, &version_id)
     })
     .await
 }
@@ -4264,6 +4351,7 @@ mod tests {
         apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
+        ensure_local_history_relative_path,
         ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_inlay_hint_payload_in_workspace,
         ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
@@ -5662,6 +5750,17 @@ mod tests {
     }
 
     #[test]
+    fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
+        assert!(ensure_local_history_relative_path("src/User.php").is_ok());
+        assert!(ensure_local_history_relative_path("../secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("nested/../../secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("/etc/passwd").is_err());
+        // Backslash-expressed traversal must also be rejected (Windows paths).
+        assert!(ensure_local_history_relative_path("..\\secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("nested\\..\\..\\secret.txt").is_err());
+    }
+
+    #[test]
     fn get_git_file_commit_diff_reports_commit_blobs_off_thread() {
         let root = temp_workspace("git-file-commit-diff-off-thread");
         init_test_git_repo(&root);
@@ -6209,6 +6308,9 @@ pub fn run() {
             get_git_file_commit_diff,
             get_git_file_history,
             get_git_status,
+            record_local_history_snapshot,
+            get_local_history_versions,
+            get_local_history_version_content,
             get_javascript_typescript_language_server_status,
             get_php_language_server_status,
             get_php_tree,

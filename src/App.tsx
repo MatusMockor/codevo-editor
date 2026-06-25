@@ -22,6 +22,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
+import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitChangesPanel } from "./components/GitChangesPanel";
@@ -101,6 +102,7 @@ import { TauriWorkspaceFileChangeGateway } from "./infrastructure/tauriWorkspace
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
 import { TauriGitGateway } from "./infrastructure/tauriGitGateway";
+import { TauriLocalHistoryGateway } from "./infrastructure/tauriLocalHistoryGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -130,6 +132,7 @@ const phpFileOutlineGateway = new TauriPhpFileOutlineGateway();
 const phpSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
 const gitGateway = new TauriGitGateway();
+const localHistoryGateway = new TauriLocalHistoryGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const javaScriptTypeScriptLanguageServerRuntimeGateway =
@@ -220,6 +223,7 @@ function App() {
     phpFileOutlineGateway,
     phpTreeGateway,
     gitGateway,
+    localHistoryGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
@@ -1206,6 +1210,27 @@ function App() {
         onSelectCommit={(sha) => void workbench.selectFileHistoryCommit(sha)}
         relativePath={workbench.fileHistoryRelativePath}
         selectedSha={workbench.fileHistorySelectedSha}
+      />
+
+      <LocalHistoryPanel
+        diff={workbench.localHistoryDiff}
+        diffLoading={workbench.localHistoryDiffLoading}
+        editorFontFamily={workbench.appSettings.editorFontFamily}
+        editorFontLigatures={workbench.appSettings.editorFontLigatures}
+        editorFontSize={workbench.appSettings.editorFontSize}
+        isOpen={workbench.localHistoryPanelOpen}
+        monacoTheme={monacoTheme}
+        onClose={workbench.closeLocalHistory}
+        onRevertVersion={(versionId) =>
+          void workbench.revertLocalHistoryVersion(versionId)
+        }
+        onSelectVersion={(versionId) =>
+          void workbench.selectLocalHistoryVersion(versionId)
+        }
+        relativePath={workbench.localHistoryRelativePath}
+        selectedVersionId={workbench.localHistorySelectedId}
+        versions={workbench.localHistoryVersions}
+        versionsLoading={workbench.localHistoryLoading}
       />
 
       <LanguageServerSetup

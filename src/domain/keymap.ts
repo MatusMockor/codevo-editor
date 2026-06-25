@@ -222,6 +222,12 @@ export const keymapCommands = [
     label: "Show File History",
   },
   {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.showLocalHistory",
+    label: "Local History: Show History",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

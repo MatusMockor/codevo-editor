@@ -31,6 +31,11 @@ import {
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
+import type {
+  LocalHistoryDiff,
+  LocalHistoryGateway,
+  LocalHistoryVersion,
+} from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import { extractTodoComments } from "../domain/todoComments";
 import type { WorkspaceTodo } from "../domain/workspaceTodo";
@@ -900,6 +905,7 @@ export function useWorkbenchController(
   phpFileOutlineGateway: PhpFileOutlineGateway,
   phpTreeGateway: PhpTreeGateway,
   gitGateway: GitGateway,
+  localHistoryGateway: LocalHistoryGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
@@ -1085,6 +1091,24 @@ export function useWorkbenchController(
     null,
   );
   const [fileHistoryDiffLoading, setFileHistoryDiffLoading] = useState(false);
+  // Local History (PhpStorm-style) panel state. Mirrors the git file-history
+  // panel but is git-independent: versions come from per-workspace snapshots
+  // captured on save. The "current" content is diffed against a selected
+  // version, and a version can be reverted back into the live document.
+  const [localHistoryPanelOpen, setLocalHistoryPanelOpen] = useState(false);
+  const [localHistoryRelativePath, setLocalHistoryRelativePath] = useState<
+    string | null
+  >(null);
+  const [localHistoryVersions, setLocalHistoryVersions] = useState<
+    LocalHistoryVersion[]
+  >([]);
+  const [localHistoryLoading, setLocalHistoryLoading] = useState(false);
+  const [localHistorySelectedId, setLocalHistorySelectedId] = useState<
+    string | null
+  >(null);
+  const [localHistoryDiff, setLocalHistoryDiff] =
+    useState<LocalHistoryDiff | null>(null);
+  const [localHistoryDiffLoading, setLocalHistoryDiffLoading] = useState(false);
   // Git blame annotation toggle, tracked per absolute document path so the
   // annotation state never leaks across open tabs (each path is workspace-
   // scoped). Reset on workspace switch alongside the other per-tab state.
@@ -1182,6 +1206,18 @@ export function useWorkbenchController(
   // selectFileHistoryCommit so a commit click always targets the panel's live
   // file (not a stale state closure), keeping the diff request per-file isolated.
   const fileHistoryRelativePathRef = useRef<string | null>(null);
+  const localHistoryRequestTokenRef = useRef(0);
+  const localHistoryDiffRequestTokenRef = useRef(0);
+  // Mirrors the file currently shown in the local-history panel, for the same
+  // reason as fileHistoryRelativePathRef: a version click always targets the
+  // panel's live file, keeping the diff/revert request per-file isolated.
+  const localHistoryRelativePathRef = useRef<string | null>(null);
+  // The absolute path of the local-history panel's file, used to read the live
+  // document content for the diff and to write the reverted content back.
+  const localHistoryAbsolutePathRef = useRef<string | null>(null);
+  // The Monaco language of the local-history panel's file, captured at open so
+  // the version diff highlights correctly.
+  const localHistoryLanguageRef = useRef<string>("plaintext");
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexRootRef = useRef<string | null>(null);
@@ -7437,6 +7473,36 @@ export function useWorkbenchController(
     ],
   );
 
+  // Records a Local History snapshot for a saved document, scoped to the
+  // workspace root captured by the caller. Best-effort: a snapshot failure must
+  // never surface as a save error, so it is swallowed (logged) rather than
+  // thrown. The absolute path is converted to a workspace-relative path so the
+  // snapshot lands in the requested workspace's bucket only.
+  const captureLocalHistorySnapshot = useCallback(
+    async (
+      requestedRoot: string,
+      absolutePath: string,
+      content: string,
+    ): Promise<void> => {
+      const relativePath = workspaceRelativePath(requestedRoot, absolutePath);
+
+      if (!relativePath) {
+        return;
+      }
+
+      try {
+        await localHistoryGateway.recordSnapshot(
+          requestedRoot,
+          relativePath,
+          content,
+        );
+      } catch (error) {
+        console.error("Local History snapshot failed", error);
+      }
+    },
+    [localHistoryGateway],
+  );
+
   const saveActiveDocument = useCallback(async () => {
     const documentToFormat = activeDocumentRef.current;
     if (!documentToFormat || documentToFormat.readOnly) {
@@ -7468,6 +7534,15 @@ export function useWorkbenchController(
         documentToSave.content,
       );
       filePrefetchCacheRef.current.invalidate(documentToSave.path);
+      // Capture a Local History snapshot of the just-saved content, scoped to
+      // the workspace root that was active when the save began. The gateway
+      // dedupes identical content and the storage is per-workspace, so this is
+      // a no-op when nothing changed and never leaks across tabs.
+      void captureLocalHistorySnapshot(
+        requestedRoot,
+        documentToSave.path,
+        documentToSave.content,
+      );
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -7499,6 +7574,7 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
+    captureLocalHistorySnapshot,
     formattedContentForSave,
     reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
@@ -8828,6 +8904,271 @@ export function useWorkbenchController(
     setFileHistoryDiffLoading(false);
     setFileHistoryRelativePath(null);
   }, []);
+
+  const closeLocalHistory = useCallback(() => {
+    localHistoryRequestTokenRef.current += 1;
+    localHistoryDiffRequestTokenRef.current += 1;
+    localHistoryRelativePathRef.current = null;
+    localHistoryAbsolutePathRef.current = null;
+    setLocalHistoryPanelOpen(false);
+    setLocalHistoryVersions([]);
+    setLocalHistoryLoading(false);
+    setLocalHistorySelectedId(null);
+    setLocalHistoryDiff(null);
+    setLocalHistoryDiffLoading(false);
+    setLocalHistoryRelativePath(null);
+  }, []);
+
+  // Current live content of the local-history panel's file: the open editor
+  // buffer when the document is loaded, otherwise null. Used as the "modified"
+  // (right) side of the version diff and as the pre-revert snapshot source.
+  const currentLocalHistoryContent = useCallback((): string | null => {
+    const absolutePath = localHistoryAbsolutePathRef.current;
+
+    if (!absolutePath) {
+      return null;
+    }
+
+    return documentsRef.current[absolutePath]?.content ?? null;
+  }, []);
+
+  // Loads the diff for a single local-history version (selected version vs the
+  // file's current content). The requested root, relative path, and request
+  // token are captured up front; after the await we re-check the active root and
+  // the token so a stale result from a switched-away tab or superseded click is
+  // dropped (per-tab isolation).
+  const selectLocalHistoryVersion = useCallback(
+    async (versionId: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = localHistoryRelativePathRef.current;
+
+      if (!requestedRoot || !relativePath) {
+        return;
+      }
+
+      const requestToken = localHistoryDiffRequestTokenRef.current + 1;
+      localHistoryDiffRequestTokenRef.current = requestToken;
+      setLocalHistorySelectedId(versionId);
+      setLocalHistoryDiffLoading(true);
+
+      const isCurrentRequest = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        localHistoryRelativePathRef.current === relativePath &&
+        localHistoryDiffRequestTokenRef.current === requestToken;
+
+      try {
+        const originalContent = await localHistoryGateway.readVersion(
+          requestedRoot,
+          relativePath,
+          versionId,
+        );
+
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setLocalHistoryDiff({
+          language: localHistoryLanguageRef.current,
+          modifiedContent: currentLocalHistoryContent() ?? "",
+          originalContent,
+        });
+      } catch (error) {
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setLocalHistoryDiff(null);
+        reportError("Local History", error);
+      } finally {
+        if (isCurrentRequest()) {
+          setLocalHistoryDiffLoading(false);
+        }
+      }
+    },
+    [
+      currentLocalHistoryContent,
+      localHistoryGateway,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  // Opens the Local History panel for the active document. The requested root
+  // and the active document's relative/absolute paths + language are captured up
+  // front; after the await we re-check the active root, document, and request
+  // token so a stale version list from a switched-away tab is dropped.
+  const openLocalHistory = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+    const document = activeDocumentRef.current;
+
+    if (!requestedRoot || !document) {
+      return;
+    }
+
+    const requestedDocumentPath = document.path;
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocumentPath,
+    );
+
+    if (!relativePath) {
+      return;
+    }
+
+    const requestToken = localHistoryRequestTokenRef.current + 1;
+    localHistoryRequestTokenRef.current = requestToken;
+    localHistoryDiffRequestTokenRef.current += 1;
+    localHistoryRelativePathRef.current = relativePath;
+    localHistoryAbsolutePathRef.current = requestedDocumentPath;
+    localHistoryLanguageRef.current = document.language;
+    setLocalHistoryRelativePath(relativePath);
+    setLocalHistorySelectedId(null);
+    setLocalHistoryDiff(null);
+    setLocalHistoryDiffLoading(false);
+    setLocalHistoryVersions([]);
+    setLocalHistoryPanelOpen(true);
+    setLocalHistoryLoading(true);
+
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current?.path === requestedDocumentPath &&
+      localHistoryRequestTokenRef.current === requestToken;
+
+    try {
+      const versions = await localHistoryGateway.listVersions(
+        requestedRoot,
+        relativePath,
+      );
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setLocalHistoryVersions(versions);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setLocalHistoryVersions([]);
+      reportError("Local History", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setLocalHistoryLoading(false);
+      }
+    }
+  }, [localHistoryGateway, reportError, workspaceRoot]);
+
+  // Reverts the panel's file to a stored version. Before overwriting, the
+  // current content is snapshotted into Local History so the revert itself is
+  // undoable. The version content is read first, then written to disk and synced
+  // into the open document. All work is scoped to the root captured up front and
+  // re-checked after each await so a tab switch drops the revert.
+  const revertLocalHistoryVersion = useCallback(
+    async (versionId: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = localHistoryRelativePathRef.current;
+      const absolutePath = localHistoryAbsolutePathRef.current;
+
+      if (!requestedRoot || !relativePath || !absolutePath) {
+        return;
+      }
+
+      try {
+        const versionContent = await localHistoryGateway.readVersion(
+          requestedRoot,
+          relativePath,
+          versionId,
+        );
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        // Snapshot the pre-revert content (best-effort) so the revert can be
+        // undone from history too.
+        const preRevertContent = currentLocalHistoryContent();
+        if (preRevertContent !== null && preRevertContent !== versionContent) {
+          await captureLocalHistorySnapshot(
+            requestedRoot,
+            absolutePath,
+            preRevertContent,
+          );
+        }
+
+        await workspaceFiles.writeTextFile(absolutePath, versionContent);
+        filePrefetchCacheRef.current.invalidate(absolutePath);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        // Record the reverted content as the newest version too, so the file's
+        // current on-disk state always has a matching snapshot.
+        await captureLocalHistorySnapshot(
+          requestedRoot,
+          absolutePath,
+          versionContent,
+        );
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setDocuments((current) => {
+          const existing = current[absolutePath];
+
+          if (!existing) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [absolutePath]: {
+              ...existing,
+              content: versionContent,
+              savedContent: versionContent,
+            },
+          };
+        });
+
+        const reverted = documentsRef.current[absolutePath];
+        if (reverted) {
+          await syncSavedDocument(reverted);
+          await syncSavedJavaScriptTypeScriptDocument(reverted);
+        }
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setMessage("Reverted to selected local history version");
+        // Refresh the panel so the new version list + diff reflect the revert.
+        void openLocalHistory();
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Local History", error);
+      }
+    },
+    [
+      captureLocalHistorySnapshot,
+      currentLocalHistoryContent,
+      localHistoryGateway,
+      openLocalHistory,
+      reportErrorForActiveWorkspaceRoot,
+      syncSavedDocument,
+      syncSavedJavaScriptTypeScriptDocument,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
 
   // Loads the diff for a single commit in the file history panel. The requested
   // root, relative path, and request token are captured up front; after the
@@ -22968,6 +23309,18 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.showLocalHistory",
+      title: "Local History: Show History",
+      category: "Editor",
+      shortcut: shortcut("editor.showLocalHistory"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: () => {
+        void openLocalHistory();
+      },
+    });
+
+    registry.register({
       id: "editor.showCallHierarchy",
       title: "Show Call Hierarchy",
       category: "Editor",
@@ -23383,6 +23736,7 @@ export function useWorkbenchController(
     refreshWorkspaceTodos,
     toggleGitBlame,
     openFileHistory,
+    openLocalHistory,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
@@ -24089,6 +24443,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.showLocalHistory")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openLocalHistory();
+        }
+        return;
+      }
+
       if (matches("bookmark.showPanel")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -24316,6 +24678,7 @@ export function useWorkbenchController(
     toggleBookmarksPanel,
     toggleGitBlame,
     openFileHistory,
+    openLocalHistory,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
@@ -25702,6 +26065,17 @@ export function useWorkbenchController(
     openFileHistory,
     selectFileHistoryCommit,
     closeFileHistory,
+    localHistoryPanelOpen,
+    localHistoryRelativePath,
+    localHistoryVersions,
+    localHistoryLoading,
+    localHistorySelectedId,
+    localHistoryDiff,
+    localHistoryDiffLoading,
+    openLocalHistory,
+    selectLocalHistoryVersion,
+    revertLocalHistoryVersion,
+    closeLocalHistory,
     clearNotices: () => setNotices([]),
     notices,
     navigateBackward,

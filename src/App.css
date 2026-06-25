@@ -3321,6 +3321,38 @@ button.problem-row:focus-visible {
   text-align: center;
 }
 
+.local-history-diff-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.local-history-revert {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.local-history-revert:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
 .todo-panel {
   width: min(680px, calc(100vw - 36px));
   max-height: min(540px, calc(100vh - 96px));
