@@ -246,6 +246,9 @@ describe("EditorSurface", () => {
 
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
+        // Cmd/Ctrl is the multi-cursor modifier so Alt+drag does box/column
+        // selection (VS Code parity) instead of adding cursors.
+        multiCursorModifier: "ctrlCmd",
         parameterHints: {
           cycle: true,
           enabled: true,
@@ -4960,6 +4963,196 @@ interface PaymentGateway
     );
   });
 
+  it("wires multi-cursor and selection-resize actions to their Monaco commands and keybindings", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "multicursor.ts",
+      path: "/workspace/src/multicursor.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
+
+    const insertCursorAbove = actionById("mockor.insertCursorAbove");
+    const insertCursorBelow = actionById("mockor.insertCursorBelow");
+    const selectAllOccurrences = actionById("mockor.selectAllOccurrences");
+    const shrinkSelection = actionById("mockor.shrinkSelection");
+
+    expect(insertCursorAbove).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+        ],
+      }),
+    );
+    expect(insertCursorBelow).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+        ],
+      }),
+    );
+    expect(selectAllOccurrences).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL,
+        ],
+      }),
+    );
+    expect(shrinkSelection).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
+      }),
+    );
+
+    insertCursorAbove?.run();
+    insertCursorBelow?.run();
+    selectAllOccurrences?.run();
+    shrinkSelection?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.insertCursorAbove",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.insertCursorBelow",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.selectHighlights",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.smartSelect.shrink",
+      {},
+    );
+  });
+
+  it("toggles column selection mode on and off via updateOptions", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "column.ts",
+      path: "/workspace/src/column.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const toggleColumnSelection = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.toggleColumnSelection");
+
+    expect(toggleColumnSelection).toBeDefined();
+
+    editor.updateOptions.mockClear();
+
+    toggleColumnSelection?.run();
+    expect(editor.updateOptions).toHaveBeenLastCalledWith({
+      columnSelection: true,
+    });
+
+    toggleColumnSelection?.run();
+    expect(editor.updateOptions).toHaveBeenLastCalledWith({
+      columnSelection: false,
+    });
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -7259,6 +7452,7 @@ function createMonaco(model: FakeModel) {
       KeyF: 10,
       KeyI: 15,
       KeyK: 13,
+      KeyL: 16,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,

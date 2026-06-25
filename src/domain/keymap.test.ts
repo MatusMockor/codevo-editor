@@ -215,6 +215,48 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults the multi-cursor breadth shortcuts to their VS Code keys", () => {
+    expect(defaultShortcutForCommand("editor.insertCursorAbove", "mac")).toBe(
+      "Cmd+Alt+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.insertCursorAbove", "linux")).toBe(
+      "Ctrl+Alt+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.insertCursorBelow", "mac")).toBe(
+      "Cmd+Alt+ArrowDown",
+    );
+    expect(
+      defaultShortcutForCommand("editor.insertCursorBelow", "windows"),
+    ).toBe("Ctrl+Alt+ArrowDown");
+    expect(
+      defaultShortcutForCommand("editor.selectAllOccurrences", "mac"),
+    ).toBe("Cmd+Shift+L");
+    expect(
+      defaultShortcutForCommand("editor.selectAllOccurrences", "linux"),
+    ).toBe("Ctrl+Shift+L");
+  });
+
+  it("defaults shrink selection to Alt+ArrowDown to mirror expand", () => {
+    expect(defaultShortcutForCommand("editor.extendSelection", "mac")).toBe(
+      "Alt+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.shrinkSelection", "mac")).toBe(
+      "Alt+ArrowDown",
+    );
+    expect(defaultShortcutForCommand("editor.shrinkSelection", "linux")).toBe(
+      "Alt+ArrowDown",
+    );
+  });
+
+  it("leaves toggle column selection unbound by default", () => {
+    expect(
+      defaultShortcutForCommand("editor.toggleColumnSelection", "mac"),
+    ).toBe("");
+    expect(
+      defaultShortcutForCommand("editor.toggleColumnSelection", "linux"),
+    ).toBe("");
+  });
+
   it("assigns every default shortcut to at most one command per platform", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
       const defaults = defaultKeymapSettings(platform);

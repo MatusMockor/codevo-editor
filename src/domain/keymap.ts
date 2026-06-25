@@ -103,6 +103,36 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Alt+ArrowDown",
+    id: "editor.shrinkSelection",
+    label: "Shrink Selection",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Alt+ArrowUp",
+    id: "editor.insertCursorAbove",
+    label: "Add Caret Above",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Alt+ArrowDown",
+    id: "editor.insertCursorBelow",
+    label: "Add Caret Below",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+L",
+    id: "editor.selectAllOccurrences",
+    label: "Select All Occurrences",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.toggleColumnSelection",
+    label: "Toggle Column Selection Mode",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+Shift+ArrowUp",
     id: "editor.moveStatementUp",
     label: "Move Statement Up",

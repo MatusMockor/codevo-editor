@@ -311,6 +311,10 @@ function EditorSurfaceComponent({
     isLanguageServerDocumentSynced,
   );
   const changeDecorationIdsRef = useRef<string[]>([]);
+  // Tracks whether persistent column-selection mode is on so the toggle action
+  // flips it. Per-editor state (one EditorSurface instance per tab), so it never
+  // leaks between open project tabs.
+  const columnSelectionEnabledRef = useRef(false);
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   // The path whose glyphs currently occupy implementationGutterDecorationIdsRef.
@@ -1040,6 +1044,49 @@ function EditorSurfaceComponent({
           }
 
           editorApi.trigger("keyboard", "editor.action.smartSelect.expand", {});
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.shrinkSelection",
+        label: "Shrink Selection",
+        keybindings: keybinding("editor.shrinkSelection"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.smartSelect.shrink"),
+      }),
+      editorApi.addAction({
+        id: "mockor.insertCursorAbove",
+        label: "Add Caret Above",
+        keybindings: keybinding("editor.insertCursorAbove"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.insertCursorAbove"),
+      }),
+      editorApi.addAction({
+        id: "mockor.insertCursorBelow",
+        label: "Add Caret Below",
+        keybindings: keybinding("editor.insertCursorBelow"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.insertCursorBelow"),
+      }),
+      editorApi.addAction({
+        id: "mockor.selectAllOccurrences",
+        label: "Select All Occurrences",
+        keybindings: keybinding("editor.selectAllOccurrences"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.selectHighlights"),
+      }),
+      editorApi.addAction({
+        id: "mockor.toggleColumnSelection",
+        label: "Toggle Column Selection Mode",
+        keybindings: keybinding("editor.toggleColumnSelection"),
+        run: () => {
+          if (!editorApi.getModel()) {
+            return;
+          }
+
+          columnSelectionEnabledRef.current = !columnSelectionEnabledRef.current;
+          editorApi.updateOptions({
+            columnSelection: columnSelectionEnabledRef.current,
+          });
         },
       }),
       editorApi.addAction({
@@ -1988,6 +2035,11 @@ function EditorSurfaceComponent({
       // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
       maxTokenizationLineLength: 2000,
       minimap: { enabled: false },
+      // Cmd/Ctrl is the multi-cursor modifier (VS Code parity), which frees Alt
+      // so Alt+drag does box/column selection. Add a cursor with Cmd/Ctrl+Click
+      // and toggle persistent column-selection mode with the
+      // `editor.toggleColumnSelection` action below.
+      multiCursorModifier: "ctrlCmd",
       padding: { top: 14, bottom: 14 },
       parameterHints: { enabled: true, cycle: true },
       quickSuggestions: { other: true, comments: false, strings: true },
