@@ -822,8 +822,13 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    /// Guarantees a distinct temp-repo path for every `TestGitRepo`, even when
+    /// the platform clock is too coarse to disambiguate concurrent tests.
+    static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn parses_porcelain_status_changes() {
@@ -1108,8 +1113,13 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system time")
                 .as_nanos();
+            // A process-global atomic counter guarantees uniqueness across
+            // parallel tests; the macOS clock only resolves to microseconds,
+            // so `nanos` alone collides when tests start in the same tick and
+            // both `git init` the same dir (templates/info/exclude clash).
+            let unique = TEST_REPO_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "mockor-editor-git-test-{}-{nanos}",
+                "mockor-editor-git-test-{}-{nanos}-{unique}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("create temp repo");
