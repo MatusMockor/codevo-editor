@@ -1,7 +1,15 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { RotateCcw, X } from "lucide-react";
-import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type * as Monaco from "monaco-editor";
 import type {
   EditorChangeHunk,
@@ -263,6 +271,9 @@ function EditorSurfaceComponent({
   );
   const applyPhpWorkspaceEditRef = useRef(applyPhpLanguageServerWorkspaceEdit);
   const errorReporterRef = useRef(onLanguageServerError);
+  // Holds the latest parent onChange so the Editor can receive a single stable
+  // handler (see handleEditorChange) without the closure ever going stale.
+  const onChangeRef = useRef(onChange);
   const isLanguageServerDocumentSyncedRef = useRef(
     isLanguageServerDocumentSynced,
   );
@@ -426,6 +437,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     errorReporterRef.current = onLanguageServerError;
   }, [onLanguageServerError]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
@@ -609,10 +624,10 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
-  const handleMount: OnMount = (_editor, monaco) => {
+  const handleMount: OnMount = useCallback((_editor, monaco) => {
     setEditorApi(_editor);
     setMonacoApi(monaco);
-  };
+  }, []);
 
   useEffect(() => {
     if (!editorApi) {
@@ -633,19 +648,15 @@ function EditorSurfaceComponent({
 
     const disposable = editorApi.onDidChangeCursorPosition((event) => {
       onCursorPositionChange(event.position);
-      setCursorPosition({
-        column: event.position.column,
-        lineNumber: event.position.lineNumber,
-      });
+      setCursorPosition((previous) =>
+        nextCursorPosition(previous, event.position),
+      );
     });
     const position = editorApi.getPosition();
 
     if (position) {
       onCursorPositionChange(position);
-      setCursorPosition({
-        column: position.column,
-        lineNumber: position.lineNumber,
-      });
+      setCursorPosition((previous) => nextCursorPosition(previous, position));
     }
 
     return () => disposable.dispose();
@@ -1676,27 +1687,43 @@ function EditorSurfaceComponent({
   ]);
 
   const breadcrumbSymbols = activeDocument
-    ? breadcrumbSymbolsByPath[activeDocument.path] ?? []
-    : [];
-  const breadcrumbPath =
-    activeDocument && cursorPosition
-      ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
-      : [];
+    ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS
+    : EMPTY_BREADCRUMB_SYMBOLS;
+  // Recomputed only when the cursor actually moves (line OR column) or the
+  // symbols change, so a re-render that leaves all three stable hands the same
+  // path array to the memo'd Breadcrumbs and skips its render. Keyed on the raw
+  // line/column rather than the cursorPosition object so the gate above does not
+  // need to share identity for the memo to hold.
+  const breadcrumbPath = useMemo(
+    () =>
+      activeDocument && cursorPosition
+        ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+        : EMPTY_BREADCRUMB_PATH,
+    [
+      activeDocument,
+      breadcrumbSymbols,
+      cursorPosition?.lineNumber,
+      cursorPosition?.column,
+    ],
+  );
 
-  const navigateToBreadcrumbSymbol = (symbol: LanguageServerDocumentSymbol) => {
-    if (!editorApi) {
-      return;
-    }
+  const navigateToBreadcrumbSymbol = useCallback(
+    (symbol: LanguageServerDocumentSymbol) => {
+      if (!editorApi) {
+        return;
+      }
 
-    const position: EditorPosition = {
-      lineNumber: symbol.selectionRange.start.line + 1,
-      column: symbol.selectionRange.start.character + 1,
-    };
+      const position: EditorPosition = {
+        lineNumber: symbol.selectionRange.start.line + 1,
+        column: symbol.selectionRange.start.character + 1,
+      };
 
-    editorApi.setPosition(position);
-    editorApi.revealPositionInCenter(position);
-    editorApi.focus();
-  };
+      editorApi.setPosition(position);
+      editorApi.revealPositionInCenter(position);
+      editorApi.focus();
+    },
+    [editorApi],
+  );
 
   const changePreviewStyle =
     activeDocument && changePreview && editorApi
@@ -1714,6 +1741,64 @@ function EditorSurfaceComponent({
   // and cover it with an overlay, instead of replacing the editor with a plain
   // div.
   const isReadOnly = activeDocument?.readOnly === true;
+
+  // Stable handler identity for the wrapped @monaco-editor/react Editor. It reads
+  // the latest parent onChange through a ref so the Editor never receives a fresh
+  // reference (which would dispose/recreate its model-content listener on every
+  // re-render) while still routing to the current handler (no stale closure).
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    onChangeRef.current(value || "");
+  }, []);
+
+  // beforeMount only depends on the theme, so a cursor move keeps the same
+  // reference and never re-runs Monaco's first-frame theme/feature setup.
+  const handleBeforeMount = useCallback(
+    (monaco: typeof Monaco) => beforeMonacoMount(monaco, monacoTheme),
+    [monacoTheme],
+  );
+
+  // The Editor options object is rebuilt ONLY when a value Monaco actually reads
+  // changes (read-only/format-on-paste flags and the three font settings). Every
+  // other option is a static literal. Holding the identity stable across cursor
+  // moves keeps @monaco-editor/react's memo intact, so it stops calling
+  // editor.updateOptions (deep clone + ~170 comparisons) on each cursor event,
+  // while a genuine settings/font change still recomputes and is applied.
+  const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
+    () => ({
+      autoIndent: "full",
+      automaticLayout: true,
+      bracketPairColorization: { enabled: true },
+      detectIndentation: true,
+      domReadOnly: isReadOnly,
+      formatOnPaste,
+      fontFamily: editorFontFamily,
+      fontLigatures: monacoFontLigatures,
+      fontSize: editorFontSize,
+      glyphMargin: true,
+      insertSpaces: true,
+      lineHeight: 20,
+      minimap: { enabled: false },
+      padding: { top: 14, bottom: 14 },
+      parameterHints: { enabled: true, cycle: true },
+      quickSuggestions: { other: true, comments: false, strings: true },
+      quickSuggestionsDelay: 10,
+      readOnly: isReadOnly,
+      scrollBeyondLastLine: false,
+      "semanticHighlighting.enabled": true,
+      smoothScrolling: true,
+      stickyScroll: { enabled: true },
+      suggestOnTriggerCharacters: true,
+      tabSize: 2,
+    }),
+    [
+      editorFontFamily,
+      editorFontSize,
+      formatOnPaste,
+      isReadOnly,
+      monacoFontLigatures,
+    ],
+  );
+
   const overlay = activeDocument ? null : isOpeningFile ? (
     <div className="editor-empty-overlay" data-testid="editor-opening">
       <p>Opening file…</p>
@@ -1741,38 +1826,13 @@ function EditorSurfaceComponent({
         />
       ) : null}
       <Editor
-        beforeMount={(monaco) => beforeMonacoMount(monaco, monacoTheme)}
+        beforeMount={handleBeforeMount}
         height="100%"
         language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
-        loading={<EditorLoadingPlaceholder />}
-        onChange={(value) => onChange(value || "")}
+        loading={EDITOR_LOADING_PLACEHOLDER}
+        onChange={handleEditorChange}
         onMount={handleMount}
-        options={{
-          autoIndent: "full",
-          automaticLayout: true,
-          bracketPairColorization: { enabled: true },
-          detectIndentation: true,
-          domReadOnly: isReadOnly,
-          formatOnPaste,
-          fontFamily: editorFontFamily,
-          fontLigatures: monacoFontLigatures,
-          fontSize: editorFontSize,
-          glyphMargin: true,
-          insertSpaces: true,
-          lineHeight: 20,
-          minimap: { enabled: false },
-          padding: { top: 14, bottom: 14 },
-          parameterHints: { enabled: true, cycle: true },
-          quickSuggestions: { other: true, comments: false, strings: true },
-          quickSuggestionsDelay: 10,
-          readOnly: isReadOnly,
-          scrollBeyondLastLine: false,
-          "semanticHighlighting.enabled": true,
-          smoothScrolling: true,
-          stickyScroll: { enabled: true },
-          suggestOnTriggerCharacters: true,
-          tabSize: 2,
-        }}
+        options={editorOptions}
         path={activeDocument ? activeDocument.path : PLACEHOLDER_PATH}
         theme={monacoTheme}
         value={activeDocument ? activeDocument.content : ""}
@@ -2322,6 +2382,10 @@ function currentEditorTextRange(
 // caller actually changes the path set.
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
+// Stable empty identities so an absent breadcrumb symbol set / path does not
+// produce a fresh array each render and break the breadcrumb path memo.
+const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];
+const EMPTY_BREADCRUMB_PATH: LanguageServerDocumentSymbol[] = [];
 
 // Stable placeholder model identity used while no document is open, so Monaco
 // keeps a single mounted instance instead of remounting when the first file
@@ -2334,6 +2398,31 @@ const PLACEHOLDER_LANGUAGE = "plaintext";
 // first Monaco chunk load does not flash white.
 function EditorLoadingPlaceholder() {
   return <div className="editor-loading-placeholder" aria-hidden="true" />;
+}
+
+// A single stable element identity for Monaco's `loading` prop. Recreating it on
+// every render would feed @monaco-editor/react a fresh reference and break its
+// memo, defeating the cursor-move stabilisation below.
+const EDITOR_LOADING_PLACEHOLDER = <EditorLoadingPlaceholder />;
+
+// Returns the previous cursor position unchanged when the incoming position is
+// identical, so a duplicate Monaco cursor event (e.g. clicking the current spot)
+// preserves referential identity and skips a re-render. A real move on either
+// line or column produces a fresh object so breadcrumbs (keyed on line+column)
+// stay correct.
+function nextCursorPosition(
+  previous: EditorPosition | null,
+  next: EditorPosition,
+): EditorPosition {
+  if (
+    previous &&
+    previous.lineNumber === next.lineNumber &&
+    previous.column === next.column
+  ) {
+    return previous;
+  }
+
+  return { column: next.column, lineNumber: next.lineNumber };
 }
 
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {

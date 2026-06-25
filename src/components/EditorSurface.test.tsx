@@ -43,6 +43,9 @@ interface FakeEditor {
   getSelection: ReturnType<typeof vi.fn>;
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
+  cursorPositionHandler:
+    | ((event: { position: EditorPosition }) => void)
+    | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
     | ((
@@ -84,7 +87,12 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
   monaco: null as ReturnType<typeof createMonaco> | null,
   renderCount: 0,
-  props: null as { options?: Record<string, unknown> } | null,
+  props: null as {
+    options?: Record<string, unknown>;
+    onChange?: (value: string | undefined) => void;
+    beforeMount?: (monaco: unknown) => void;
+    loading?: unknown;
+  } | null,
   registeredContext: null as {
     isDocumentSynced?: (rootPath: string, path: string) => boolean;
     provideBladeCompletions?: (
@@ -6105,6 +6113,270 @@ interface PaymentGateway
 
     expect(onEditorFocused).toHaveBeenCalled();
   });
+
+  it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, memoGuardProps(activeDocument)));
+      await Promise.resolve();
+    });
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    const onChangeBefore = editorSurfaceMocks.props?.onChange;
+    const beforeMountBefore = editorSurfaceMocks.props?.beforeMount;
+    const loadingBefore = editorSurfaceMocks.props?.loading;
+    const updateOptionsCallsBefore = editor.updateOptions.mock.calls.length;
+
+    // A real cursor move that lands on a different position must update the
+    // tracked position (breadcrumbs depend on it) without churning the heavy
+    // Monaco props - otherwise @monaco-editor/react re-runs updateOptions and
+    // disposes/recreates the model-content listener on every cursor move.
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 5, lineNumber: 2 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
+    expect(editorSurfaceMocks.props?.onChange).toBe(onChangeBefore);
+    expect(editorSurfaceMocks.props?.beforeMount).toBe(beforeMountBefore);
+    expect(editorSurfaceMocks.props?.loading).toBe(loadingBefore);
+    expect(editor.updateOptions.mock.calls.length).toBe(
+      updateOptionsCallsBefore,
+    );
+  });
+
+  it("recomputes the Monaco options when an editor setting changes so it is applied", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorFontSize: 14,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    expect(optionsBefore).toEqual(
+      expect.objectContaining({ fontSize: 14 }),
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorFontSize: 20,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).not.toBe(optionsBefore);
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ fontSize: 20 }),
+    );
+  });
+
+  it("recomputes the Monaco options when the read-only state changes", async () => {
+    const editableDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const readOnlyDocument: EditorDocument = {
+      ...editableDocument,
+      readOnly: true,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: editableDocument.path, path: editableDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, memoGuardProps(editableDocument)),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ readOnly: false }),
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, memoGuardProps(readOnlyDocument)),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ readOnly: true, domReadOnly: true }),
+    );
+  });
+
+  it("forwards the current parent onChange handler even though the prop identity is stable", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const firstOnChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onChange: firstOnChange,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const stableOnChange = editorSurfaceMocks.props?.onChange;
+
+    const secondOnChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onChange: secondOnChange,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // The wrapped Editor receives the same stable onChange reference so its memo
+    // is never broken by a fresh handler...
+    expect(editorSurfaceMocks.props?.onChange).toBe(stableOnChange);
+
+    // ...yet invoking it routes to the latest parent handler (no stale closure).
+    act(() => {
+      editorSurfaceMocks.props?.onChange?.("next");
+    });
+
+    expect(firstOnChange).not.toHaveBeenCalled();
+    expect(secondOnChange).toHaveBeenCalledWith("next");
+  });
+
+  it("does not update tracked cursor state when the cursor fires with an unchanged position", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class MyComponent {\n  render() {}\n}\n",
+      language: "typescript",
+      name: "App.tsx",
+      path: "/workspace/src/App.tsx",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({ column: 14, lineNumber: 1 });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbols: LanguageServerDocumentSymbol[] = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "MyComponent",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 2, character: 1 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 13 },
+          end: { line: 0, character: 24 },
+        },
+      },
+    ];
+    gateway.documentSymbols = vi.fn(
+      async () => documentSymbols,
+    ) as unknown as typeof gateway.documentSymbols;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    const labelsBefore = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(labelsBefore).toEqual(["App.tsx", "MyComponent"]);
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    const renderCountBefore = editorSurfaceMocks.renderCount;
+
+    // Monaco can fire onDidChangeCursorPosition with the same position (e.g. a
+    // repeated click on the current spot). The gate must skip the duplicate so
+    // the surface does not re-render at all.
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 14, lineNumber: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.renderCount).toBe(renderCountBefore);
+    expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
+
+    const labelsAfter = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
+  });
 });
 
 function memoGuardProps(
@@ -6284,9 +6556,16 @@ function createEditor(model: FakeModel): FakeEditor {
     getSelection: vi.fn(() => selection),
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
+    cursorPositionHandler: null,
     mouseDownHandler: null,
     modelContentChangeHandler: null,
-    onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeCursorPosition: vi.fn(
+      (handler: (event: { position: EditorPosition }) => void) => {
+        editor.cursorPositionHandler = handler;
+
+        return { dispose: vi.fn() };
+      },
+    ),
     onDidChangeModelContent: vi.fn(
       (handler: (event: { changes: Array<{ text: string }> }) => void) => {
         editor.modelContentChangeHandler = handler;
