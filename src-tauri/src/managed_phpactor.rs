@@ -53,7 +53,19 @@ const MANAGED_PHP_INI_FILE_NAME: &str = "codevo-php.ini";
 /// user's main `php.ini` (which may enable a broken `imagick`) with this clean,
 /// warning-free configuration. `display_errors`/`error_reporting` are pinned so a
 /// stray notice never reaches stdout and corrupts the handshake.
-const MANAGED_PHP_INI_BODY: &str = "; Codevo Editor managed PHP configuration for PHPactor.\n; Generated automatically — do not edit. This file replaces the user's\n; main php.ini when PHPactor is launched, isolating the LSP handshake from\n; broken or noisy user extensions (e.g. imagick).\ndisplay_errors = Off\ndisplay_startup_errors = Off\nerror_reporting = 0\n";
+///
+/// OPcache is enabled (including for the CLI SAPI, since PHPactor is a long-running
+/// PHP CLI process). PHPactor is a large PHP application that, without bytecode
+/// caching, recompiles its sources on every request — enabling OPcache caches the
+/// compiled bytecode and meaningfully lowers per-request CPU in IDE/PHP mode. The
+/// OPcache engine itself is provided by the host PHP's own `conf.d`, which is
+/// still scanned when PHPactor launches via `php -c <this ini>`, so NO
+/// `zend_extension=opcache` line is needed (and adding one would risk a
+/// missing-library startup warning on stdout that would corrupt the handshake).
+/// When the host PHP lacks OPcache entirely, these `opcache.*` directives are
+/// silently ignored by PHP — no startup warning — so the configuration stays
+/// safe across PHP builds. `validate_timestamps=1` keeps edits picked up promptly.
+const MANAGED_PHP_INI_BODY: &str = "; Codevo Editor managed PHP configuration for PHPactor.\n; Generated automatically — do not edit. This file replaces the user's\n; main php.ini when PHPactor is launched, isolating the LSP handshake from\n; broken or noisy user extensions (e.g. imagick).\ndisplay_errors = Off\ndisplay_startup_errors = Off\nerror_reporting = 0\n; Bytecode caching for the long-running PHPactor CLI process: lowers\n; per-request CPU by avoiding recompilation. Inert (no startup warning) when\n; the host PHP has no OPcache; the engine is loaded by the host PHP's conf.d.\nopcache.enable = 1\nopcache.enable_cli = 1\nopcache.memory_consumption = 128\nopcache.max_accelerated_files = 10000\nopcache.validate_timestamps = 1\n";
 
 /// Idempotently ensures the managed minimal `php.ini` exists next to the managed
 /// PHPactor install, returning its absolute path. Safe to call repeatedly: it
@@ -487,6 +499,40 @@ mod managed_php_ini_tests {
 
         assert_eq!(first, second);
         assert_eq!(first_contents, second_contents);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn managed_php_ini_enables_opcache_for_phpactor() {
+        let root = temp_dir("opcache");
+
+        let ini_path = ensure_managed_php_ini_in(&root).expect("ensure managed php ini");
+        let contents = fs::read_to_string(&ini_path).expect("read managed php ini");
+
+        // PHPactor is a large, long-running PHP CLI process that reparses bytecode
+        // on every request. Enabling OPcache (including for the CLI SAPI) caches
+        // the compiled bytecode and lowers per-request CPU. These directives are
+        // inert no-ops when the OPcache zend_extension is absent (PHP silently
+        // ignores unknown `opcache.*` keys), so they never emit a startup warning
+        // that would corrupt the LSP handshake.
+        assert!(has_active_directive(&contents, "opcache.enable"));
+        assert!(directive_lines(&contents).any(|line| {
+            let normalized = line.replace(' ', "");
+            normalized == "opcache.enable=1"
+        }));
+        assert!(directive_lines(&contents).any(|line| {
+            let normalized = line.replace(' ', "");
+            normalized == "opcache.enable_cli=1"
+        }));
+
+        // Enabling OPcache must NOT pull in any user extension or load a missing
+        // `.so` (no `zend_extension=`/`extension=` lines): the OPcache engine is
+        // provided by the host PHP's own `conf.d`, which is still scanned under
+        // `php -c <this ini>`. Adding an explicit load line would risk a
+        // missing-library startup warning on stdout.
+        assert!(!has_active_directive(&contents, "zend_extension"));
+        assert!(!has_active_directive(&contents, "extension"));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
