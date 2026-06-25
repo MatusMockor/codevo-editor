@@ -35215,6 +35215,308 @@ Route::post('/comments', [CommentController::class, 'store'])
     ]);
   });
 
+  it("suggests Laravel gate abilities inside Gate::allows strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace/app/Providers/AuthServiceProvider.php";
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function check(): bool
+    {
+        return Gate::allows('upd');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return `<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+Gate::define('delete-post', [PostPolicy::class, 'delete']);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "upd"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Providers/AuthServiceProvider.php",
+        insertText: "update-post",
+        kind: "config",
+        name: "update-post",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel gate abilities inside $user->can strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace/app/Providers/AuthServiceProvider.php";
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function update($user): bool
+    {
+        return $user->can('del');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return `<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+Gate::define('delete-post', [PostPolicy::class, 'delete']);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "del"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Providers/AuthServiceProvider.php",
+        insertText: "delete-post",
+        kind: "config",
+        name: "delete-post",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel middleware aliases inside ->middleware strings", async () => {
+    const routesPath = "/workspace/routes/web.php";
+    const kernelPath = "/workspace/app/Http/Kernel.php";
+    const routesSource = `<?php
+
+Route::get('/admin')->middleware('ver');
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return routesSource;
+        }
+
+        if (path === kernelPath) {
+          return `<?php
+
+class Kernel extends HttpKernel
+{
+    protected $middlewareAliases = [
+        'auth' => Authenticate::class,
+        'verified' => EnsureEmailIsVerified::class,
+    ];
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "middlewareAliases"
+          ? [
+              {
+                column: 5,
+                lineNumber: 5,
+                lineText: "    protected $middlewareAliases = [",
+                path: kernelPath,
+                relativePath: "app/Http/Kernel.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "ver"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Http/Kernel.php",
+        insertText: "verified",
+        kind: "config",
+        name: "verified",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("stops stale Laravel gate ability completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace-a/app/Providers/AuthServiceProvider.php";
+    const staleProviderRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function check(): bool
+    {
+        return Gate::allows('upd');
+    }
+}
+`;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return staleProviderRead.promise;
+        }
+
+        return "";
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "upd"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(completionsPromise).not.toBeNull();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleProviderRead.resolve(`<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+`);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("suggests Laravel named routes inside named route helper arguments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";

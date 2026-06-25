@@ -268,11 +268,15 @@ import {
   phpLaravelAuthGuardReferenceContextAt,
 } from "../domain/phpLaravelAuth";
 import {
+  phpLaravelGateAbilityCompletionInsertText,
   phpLaravelGateAbilityDefinitions,
+  phpLaravelGateAbilityReferenceContextAt,
   type PhpLaravelGateAbilityDefinition,
 } from "../domain/phpLaravelAuthorization";
 import {
+  phpLaravelMiddlewareAliasCompletionInsertText,
   phpLaravelMiddlewareAliasDefinitions,
+  phpLaravelMiddlewareAliasReferenceContextAt,
   type PhpLaravelMiddlewareAliasDefinition,
 } from "../domain/phpLaravelMiddleware";
 import {
@@ -15314,6 +15318,75 @@ export function useWorkbenchController(
           }));
       }
 
+      const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && gateAbilityContext && activeDocument) {
+        const normalizedPrefix = gateAbilityContext.prefix.toLowerCase();
+        const abilities = await collectPhpLaravelGateAbilityTargets(
+          source,
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return abilities
+          .filter((ability) =>
+            ability.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((ability) => ({
+            declaringClassName: ability.relativePath ?? getFileName(ability.path),
+            insertText: phpLaravelGateAbilityCompletionInsertText(ability.name),
+            kind: "config",
+            name: ability.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
+      const middlewareAliasContext = phpLaravelMiddlewareAliasReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (
+        isLaravelFrameworkActive &&
+        middlewareAliasContext &&
+        !middlewareAliasContext.aliasParameterStarted &&
+        activeDocument
+      ) {
+        const normalizedPrefix = middlewareAliasContext.alias.toLowerCase();
+        const aliases = await collectPhpLaravelMiddlewareAliasTargets(
+          source,
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return aliases
+          .filter((alias) =>
+            alias.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((alias) => ({
+            declaringClassName: alias.relativePath ?? getFileName(alias.path),
+            insertText: phpLaravelMiddlewareAliasCompletionInsertText(
+              alias.name,
+            ),
+            kind: "config",
+            name: alias.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const authGuardContext = phpLaravelAuthGuardReferenceContextAt(
         source,
         position,
@@ -15798,6 +15871,8 @@ export function useWorkbenchController(
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
+      collectPhpLaravelGateAbilityTargets,
+      collectPhpLaravelMiddlewareAliasTargets,
       collectPhpLaravelViewTargets,
       activeDocument,
       isLaravelFrameworkActive,

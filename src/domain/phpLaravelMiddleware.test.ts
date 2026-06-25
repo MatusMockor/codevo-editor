@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isUsableLaravelMiddlewareAlias,
+  phpLaravelMiddlewareAliasCompletionInsertText,
   phpLaravelMiddlewareAliasDefinitions,
   phpLaravelMiddlewareAliasReferenceContextAt,
 } from "./phpLaravelMiddleware";
@@ -63,6 +64,31 @@ describe("phpLaravelMiddleware", () => {
       ),
     ).toMatchObject({
       alias: "verified",
+      aliasParameterStarted: false,
+    });
+  });
+
+  it("marks the parameter portion of an alias reference after the colon", () => {
+    const source = `<?php\n\nRoute::middleware('auth:web')->group(fn () => null);\n`;
+
+    expect(
+      phpLaravelMiddlewareAliasReferenceContextAt(
+        source,
+        positionAfter(source, "auth:we"),
+      ),
+    ).toMatchObject({
+      alias: "auth",
+      aliasParameterStarted: true,
+    });
+
+    expect(
+      phpLaravelMiddlewareAliasReferenceContextAt(
+        source,
+        positionAfter(source, "'aut"),
+      ),
+    ).toMatchObject({
+      alias: "auth",
+      aliasParameterStarted: false,
     });
   });
 
@@ -228,6 +254,15 @@ class Kernel
 `;
 
     expect(phpLaravelMiddlewareAliasDefinitions(source)).toEqual([]);
+  });
+
+  it("builds the completion insert text from the alias name", () => {
+    expect(phpLaravelMiddlewareAliasCompletionInsertText("verified")).toBe(
+      "verified",
+    );
+    expect(phpLaravelMiddlewareAliasCompletionInsertText("auth.basic")).toBe(
+      "auth.basic",
+    );
   });
 
   it("validates usable middleware alias names", () => {
