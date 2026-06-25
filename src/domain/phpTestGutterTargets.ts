@@ -1,4 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import type { PhpTestFilterMatch } from "./phpTestCommand";
 
 /**
  * Pure parser that locates the "run test" gutter glyph anchors in a PHP test
@@ -15,8 +16,16 @@ import type { EditorPosition } from "./languageServerFeatures";
  *  - one METHOD target per Pest `it(...)` / `test(...)` top-level call. Its
  *    `filter` is the Pest description string.
  *
+ * Each target also carries a `match` mode telling the command builder how the
+ * filter must be encoded for the shell: PHPUnit class/method names are
+ * `identifier` (strict `[A-Za-z0-9_]` allow-list); Pest descriptions are
+ * `description` (free-form text, safely single-quoted).
+ *
  * The module is intentionally conservative: a file with no test class and no
  * Pest call yields no targets, so the glyph never appears on production code.
+ * `abstract` test classes are skipped entirely - an abstract class cannot be
+ * instantiated, so neither a class-level nor a method-level run would execute
+ * anything (and the search continues to the next, concrete `*Test` class).
  */
 
 export type PhpTestGutterTargetKind = "class" | "method";
@@ -25,6 +34,7 @@ export interface PhpTestGutterTarget {
   filter: string;
   kind: PhpTestGutterTargetKind;
   label: string;
+  match: PhpTestFilterMatch;
   position: EditorPosition;
 }
 
@@ -56,7 +66,13 @@ function phpUnitTargets(
   }
 
   const targets: PhpTestGutterTarget[] = [
-    target("class", declaration.className, declaration.nameOffset, lineStartOffsets),
+    target(
+      "class",
+      "identifier",
+      declaration.className,
+      declaration.nameOffset,
+      lineStartOffsets,
+    ),
   ];
 
   const body = source.slice(declaration.bodyStart);
@@ -70,7 +86,9 @@ function phpUnitTargets(
 
     const methodOffset =
       declaration.bodyStart + (method.index ?? 0) + method[0].lastIndexOf(methodName);
-    targets.push(target("method", methodName, methodOffset, lineStartOffsets));
+    targets.push(
+      target("method", "identifier", methodName, methodOffset, lineStartOffsets),
+    );
   }
 
   return targets;
@@ -93,7 +111,7 @@ function pestTargets(
     const callOffset =
       (call.index ?? 0) + matchText.length - matchText.replace(/^\n/, "").trimStart().length;
     targets.push(
-      target("method", description, callOffset, lineStartOffsets),
+      target("method", "description", description, callOffset, lineStartOffsets),
     );
   }
 
@@ -117,6 +135,14 @@ function firstTestClassDeclaration(
     }
 
     const declarationOffset = declaration.index ?? 0;
+
+    // An abstract class cannot be instantiated, so neither `--filter <Class>`
+    // nor a method run would execute anything. Skip it and keep searching for a
+    // concrete `*Test` class.
+    if (isAbstractClassDeclaration(source, declarationOffset)) {
+      continue;
+    }
+
     const nameOffset = declarationOffset + declaration[0].indexOf(className);
     const bodyStart = declarationOffset + declaration[0].length;
 
@@ -124,6 +150,32 @@ function firstTestClassDeclaration(
   }
 
   return null;
+}
+
+// A `class` keyword is preceded by zero or more class modifiers, which in PHP
+// are only `abstract`, `final` and `readonly`. We match a run of exactly those
+// keywords immediately before the keyword and check whether `abstract` is
+// present.
+const classModifiersBeforeClassPattern =
+  /(?:\b(?:abstract|final|readonly)\b\s+)*$/;
+
+// Matches a line comment (`//...` or `#...`) or a block comment (`/* ... */`),
+// used to blank out comment text before scanning for class modifiers so a
+// comment ending in the word "abstract" right above a concrete class is not
+// mistaken for the `abstract` modifier.
+const commentPattern = /\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g;
+
+function isAbstractClassDeclaration(
+  source: string,
+  classKeywordOffset: number,
+): boolean {
+  const preceding = source
+    .slice(0, classKeywordOffset)
+    .replace(commentPattern, " ");
+  const modifiers =
+    preceding.match(classModifiersBeforeClassPattern)?.[0] ?? "";
+
+  return /\babstract\b/.test(modifiers);
 }
 
 function isTestMethod(methodName: string, matchText: string): boolean {
@@ -136,6 +188,7 @@ function isTestMethod(methodName: string, matchText: string): boolean {
 
 function target(
   kind: PhpTestGutterTargetKind,
+  match: PhpTestFilterMatch,
   filter: string,
   offset: number,
   lineStartOffsets: number[],
@@ -144,6 +197,7 @@ function target(
     filter,
     kind,
     label: `Run ${filter}`,
+    match,
     position: lineColumnAt(lineStartOffsets, offset),
   };
 }

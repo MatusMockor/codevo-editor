@@ -3317,6 +3317,222 @@ class InvoiceServiceTest extends TestCase
     ).toBeNull();
   });
 
+  it("inserts unescaped wrapped text when the snippet controller is unavailable", async () => {
+    const lines = ['$total = $price * $qty;'];
+    const activeDocument: EditorDocument = {
+      content: `${lines.join("\n")}\n`,
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getEOL: vi.fn(() => "\n"),
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      getLineMaxColumn: vi.fn(
+        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+      ),
+      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getValueInRange: vi.fn(() => '$total = $price * $qty;'),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    // No snippet controller: the surround action must fall back to executeEdits
+    // and insert plain, UN-escaped text (no leftover snippet escaping).
+    editor.getContribution.mockReturnValue(null);
+    editor.getSelection.mockReturnValue({
+      endColumn: '$total = $price * $qty;'.length + 1,
+      endLineNumber: 1,
+      startColumn: 1,
+      startLineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const surroundWithAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.surroundWith");
+
+    await act(async () => {
+      surroundWithAction.run();
+      await Promise.resolve();
+    });
+
+    const picker = queryRequired<HTMLElement>(
+      document.body,
+      "[aria-label='Surround with']",
+    );
+    const ifButton = Array.from(
+      picker.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("if"));
+
+    await act(async () => {
+      ifButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.surroundWith",
+      [
+        expect.objectContaining({
+          text: [
+            "if (condition) {",
+            "    $total = $price * $qty;",
+            "}",
+          ].join("\n"),
+        }),
+      ],
+    );
+  });
+
+  it("preserves literal snippet markers in the fallback wrapped text", async () => {
+    // The selection itself contains text that looks like snippet structure
+    // ($0 caret, ${1:...} placeholder). The fallback must treat these as literal
+    // body content, not as markers to strip.
+    const selected = 'echo "$0 then ${1:x} and \\$y";';
+    const lines = [selected];
+    const activeDocument: EditorDocument = {
+      content: `${lines.join("\n")}\n`,
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getEOL: vi.fn(() => "\n"),
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      getLineMaxColumn: vi.fn(
+        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+      ),
+      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getValueInRange: vi.fn(() => selected),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editor.getContribution.mockReturnValue(null);
+    editor.getSelection.mockReturnValue({
+      endColumn: selected.length + 1,
+      endLineNumber: 1,
+      startColumn: 1,
+      startLineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const surroundWithAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.surroundWith");
+
+    await act(async () => {
+      surroundWithAction.run();
+      await Promise.resolve();
+    });
+
+    const picker = queryRequired<HTMLElement>(
+      document.body,
+      "[aria-label='Surround with']",
+    );
+    const ifButton = Array.from(
+      picker.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("if"));
+
+    await act(async () => {
+      ifButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.surroundWith",
+      [
+        expect.objectContaining({
+          text: [
+            "if (condition) {",
+            `    ${selected}`,
+            "}",
+          ].join("\n"),
+        }),
+      ],
+    );
+  });
+
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     stubNavigatorPlatform("Linux x86_64");
 

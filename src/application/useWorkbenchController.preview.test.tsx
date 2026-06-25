@@ -47871,6 +47871,7 @@ class InvoiceServiceTest extends TestCase
         filter: "testCalculate",
         kind: "method",
         label: "Run testCalculate",
+        match: "identifier",
         position: { column: 21, lineNumber: 9 },
       });
       await flushAsyncTurns();
@@ -47929,6 +47930,7 @@ class SampleTest extends TestCase
         filter: "SampleTest",
         kind: "class",
         label: "Run SampleTest",
+        match: "identifier",
         position: { column: 7, lineNumber: 3 },
       });
       await flushAsyncTurns();
@@ -47938,6 +47940,143 @@ class SampleTest extends TestCase
       3,
       "vendor/bin/phpunit --filter SampleTest\r",
     );
+  });
+
+  it("runs a Pest test by description with a safely single-quoted --filter", async () => {
+    const testPath = "/workspace/tests/Feature/CalculatorTest.php";
+    const testSource = `<?php
+
+it('adds two numbers', function () {
+});
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      if (path === "/workspace/artisan") {
+        return "#!/usr/bin/env php\n";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(testPath, "CalculatorTest.php"),
+      );
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(11);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "adds two numbers",
+        kind: "method",
+        label: "Run adds two numbers",
+        match: "description",
+        position: { column: 1, lineNumber: 3 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      11,
+      "php artisan test --filter 'adds two numbers'\r",
+    );
+  });
+
+  it("safely quotes a malicious Pest description without injecting shell input", async () => {
+    const testPath = "/workspace/tests/Feature/EvilTest.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === "/workspace/artisan") {
+          return "#!/usr/bin/env php\n";
+        }
+
+        return "<?php\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "EvilTest.php"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(13);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "boom'; rm -rf / #",
+        kind: "method",
+        label: "Run boom",
+        match: "description",
+        position: { column: 1, lineNumber: 3 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      13,
+      "php artisan test --filter 'boom'\\''; rm -rf / #'\r",
+    );
+  });
+
+  it("never writes a command for a Pest description with a line break", async () => {
+    const testPath = "/workspace/tests/Feature/NewlineTest.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\n"),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "NewlineTest.php"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(15);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "evil\nrm -rf /",
+        kind: "method",
+        label: "Run evil",
+        match: "description",
+        position: { column: 1, lineNumber: 3 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).not.toHaveBeenCalled();
   });
 
   it("never writes a command for a maliciously named filter", async () => {
@@ -47965,6 +48104,7 @@ class SampleTest extends TestCase
         filter: "foo; rm -rf /",
         kind: "method",
         label: "Run foo",
+        match: "identifier",
         position: { column: 1, lineNumber: 1 },
       });
       await flushAsyncTurns();
@@ -48028,6 +48168,7 @@ class SampleTest extends TestCase
         filter: "testItWorks",
         kind: "method",
         label: "Run testItWorks",
+        match: "identifier",
         position: { column: 21, lineNumber: 5 },
       });
     });

@@ -26,18 +26,21 @@ class InvoiceServiceTest extends TestCase
         filter: "InvoiceServiceTest",
         kind: "class",
         label: "Run InvoiceServiceTest",
+        match: "identifier",
         position: { column: 7, lineNumber: 7 },
       },
       {
         filter: "testItCalculatesTotals",
         kind: "method",
         label: "Run testItCalculatesTotals",
+        match: "identifier",
         position: { column: 21, lineNumber: 9 },
       },
       {
         filter: "testItAppliesDiscounts",
         kind: "method",
         label: "Run testItAppliesDiscounts",
+        match: "identifier",
         position: { column: 21, lineNumber: 13 },
       },
     ]);
@@ -113,15 +116,122 @@ test('applies discounts', function () {
         filter: "calculates totals",
         kind: "method",
         label: "Run calculates totals",
+        match: "description",
         position: { column: 1, lineNumber: 3 },
       },
       {
         filter: "applies discounts",
         kind: "method",
         label: "Run applies discounts",
+        match: "description",
         position: { column: 1, lineNumber: 6 },
       },
     ]);
+  });
+
+  it("marks PHPUnit class and method targets as identifier matches", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+class SampleTest extends TestCase
+{
+    public function testItRuns(): void
+    {
+    }
+}
+`);
+
+    expect(targets.map((target) => target.match)).toEqual([
+      "identifier",
+      "identifier",
+    ]);
+  });
+
+  it("preserves Pest descriptions verbatim so they can be safely quoted", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+it("it's a tricky $name; rm -rf /", function () {
+});
+`);
+
+    expect(targets).toEqual([
+      {
+        filter: "it's a tricky $name; rm -rf /",
+        kind: "method",
+        label: "Run it's a tricky $name; rm -rf /",
+        match: "description",
+        position: { column: 1, lineNumber: 3 },
+      },
+    ]);
+  });
+
+  it("does not emit run glyphs for an abstract test class", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+abstract class FeatureTest extends TestCase
+{
+    public function testSharedBehaviour(): void
+    {
+    }
+}
+`);
+
+    expect(targets).toEqual([]);
+  });
+
+  it("skips an abstract test class but still finds a following concrete one", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+abstract class BaseFeatureTest extends TestCase
+{
+    public function testShared(): void
+    {
+    }
+}
+
+class RealFeatureTest extends BaseFeatureTest
+{
+    public function testItWorks(): void
+    {
+    }
+}
+`);
+
+    expect(targets.map((target) => target.filter)).toEqual([
+      "RealFeatureTest",
+      "testItWorks",
+    ]);
+  });
+
+  it("still emits glyphs for a concrete class whose comment mentions abstract", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+// This base is intentionally not abstract
+class PaymentGatewayTest extends TestCase
+{
+    public function testItCharges(): void
+    {
+    }
+}
+`);
+
+    expect(targets.map((target) => target.filter)).toEqual([
+      "PaymentGatewayTest",
+      "testItCharges",
+    ]);
+  });
+
+  it("skips an abstract test class declared with other modifiers", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+abstract readonly class BaseFeatureTest extends TestCase
+{
+    public function testShared(): void
+    {
+    }
+}
+`);
+
+    expect(targets).toEqual([]);
   });
 
   it("returns no targets when there is no test class or Pest call", () => {

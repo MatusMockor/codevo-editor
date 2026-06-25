@@ -1828,9 +1828,28 @@ function applySurroundWith(
         request.selection.endLineNumber,
         request.selection.endColumn,
       ),
-      text: snippet.replace(/\$\{\d+:([^}]*)\}/g, "$1").replace(/\$0/g, ""),
+      text: plainSnippetText(snippet),
     },
   ]);
+}
+
+// Renders a Monaco snippet as the literal text it represents, for the rare
+// fallback path where the snippet controller is unavailable. Placeholders
+// (`${1:default}`) collapse to their default text, the final caret stop (`$0`)
+// is dropped, and the snippet escaping applied in `surroundWithSnippet`
+// (`\` -> `\\`, `$` -> `\$`, `}` -> `\}`) is reversed so the body text is
+// inserted verbatim instead of carrying stray backslashes (e.g. `\$total`).
+//
+// The placeholder / caret strips only match structural markers that are NOT
+// preceded by a backslash. Body characters are always escaped by
+// `surroundWithSnippet`, so a literal `$0` or `${1:...}` inside the selected
+// text appears as `\$0` / `\${1:...}` and is left untouched by the strips, then
+// un-escaped back to its literal form by the final pass.
+function plainSnippetText(snippet: string): string {
+  return snippet
+    .replace(/(?<!\\)\$\{\d+:((?:\\.|[^}])*)\}/g, "$1")
+    .replace(/(?<!\\)\$0/g, "")
+    .replace(/\\([$}\\])/g, "$1");
 }
 
 interface SnippetInsertingContribution extends Monaco.editor.IEditorContribution {

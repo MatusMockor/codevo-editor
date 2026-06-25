@@ -8084,12 +8084,14 @@ export function useWorkbenchController(
         return;
       }
 
-      const command = phpTestRunCommand({ filter: target.filter, runner });
+      const command = phpTestRunCommand({
+        filter: target.filter,
+        match: target.match,
+        runner,
+      });
 
       if (!command) {
-        setMessage(
-          `Run test: "${target.filter}" can only run by name (letters, digits, underscore).`,
-        );
+        setMessage(runTestRejectionNotice(target));
         return;
       }
 
@@ -26728,6 +26730,18 @@ function missingTestPartnerMessage(
   }
 
   return "No test found for this class. Run Generate Test to create one.";
+}
+
+// Notice shown when a parsed test target cannot be turned into a safe command.
+// PHPUnit identifiers are rejected only when they fall outside the word-character
+// allow-list; Pest descriptions are rejected only when they carry a newline or
+// other control character (the one input we refuse to quote into the terminal).
+function runTestRejectionNotice(target: PhpTestGutterTarget): string {
+  if (target.match === "description") {
+    return `Run test: "${target.filter}" contains a line break or control character and cannot be run safely.`;
+  }
+
+  return `Run test: "${target.filter}" can only run by name (letters, digits, underscore).`;
 }
 
 // Chooses the gutter test target that owns a cursor line: the nearest target at
