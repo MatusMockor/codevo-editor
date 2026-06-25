@@ -1189,6 +1189,8 @@ interface ParserFactory
       await Promise.resolve();
     });
 
+    await flushGutterDebounce();
+
     const decorationCall = editor.deltaDecorations.mock.calls.find(
       ([, decorations]) => decorations.length === 1,
     );
@@ -1302,6 +1304,8 @@ class InvoiceServiceTest extends TestCase
       );
       await Promise.resolve();
     });
+
+    await flushGutterDebounce();
 
     const testDecorationCall = editor.deltaDecorations.mock.calls.find(
       ([, decorations]) =>
@@ -1803,6 +1807,374 @@ class InvoiceServiceTest extends TestCase
     await renderWith({ ...activeDocument, content: "const value = 12;\n" });
 
     expect(languageServerMarkerCalls()).toHaveLength(0);
+  });
+
+  it("does not reopen PHP suggestions per keystroke when readiness is unchanged", async () => {
+    const content = "<?php\n$comment->\n";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/src/CommentController.php",
+      savedContent: "",
+    };
+    let modelValue = content;
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 11,
+      lineNumber: 2,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    // Stable callback identities across renders, matching the memoized callbacks
+    // the controller hands EditorSurface. Only the activeDocument object identity
+    // changes on a keystroke, which must not re-fire the auto-suggest effect.
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const providePhpMethodSignature = vi.fn(async () => null);
+    const phpSyntaxDiagnosticsGateway = { validate: vi.fn(async () => []) };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            phpIdeReadinessVersion={1}
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            providePhpMethodCompletions={providePhpMethodCompletions}
+            providePhpMethodSignature={providePhpMethodSignature}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(activeDocument);
+
+    const triggerSuggestCalls = () =>
+      editor.trigger.mock.calls.filter(
+        ([, action]) => action === "editor.action.triggerSuggest",
+      );
+
+    // The auto-suggest fired once when readiness was already at version 1 on
+    // mount. A keystroke must not re-fire it.
+    expect(triggerSuggestCalls().length).toBeGreaterThan(0);
+    editor.trigger.mockClear();
+
+    // Simulate a keystroke: a brand new activeDocument object (same path,
+    // mutated content) at the same readiness version.
+    modelValue = "<?php\n$comment->x\n";
+    await renderWith({ ...activeDocument, content: modelValue });
+
+    expect(triggerSuggestCalls()).toHaveLength(0);
+  });
+
+  it("does not re-parse implementation gutter targets per keystroke", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstContent = `<?php
+
+interface PaymentGateway
+{
+    public function charge(): void;
+}
+`;
+      const activeDocument: EditorDocument = {
+        content: firstContent,
+        language: "php",
+        name: "PaymentGateway.php",
+        path: "/workspace/src/PaymentGateway.php",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const editor = createEditor(model);
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      const renderWith = async (document: EditorDocument) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={document}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              languageServerDiagnosticsByPath={{}}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      const gutterDecorationCalls = () =>
+        editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+          (decorations as any[]).some(
+            (decoration) =>
+              decoration.options?.glyphMarginClassName ===
+              "implementation-gutter-glyph",
+          ),
+        );
+
+      await renderWith(activeDocument);
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      // The initial parse rendered one implementation glyph for the interface
+      // method declaration.
+      expect(gutterDecorationCalls().length).toBeGreaterThan(0);
+      editor.deltaDecorations.mockClear();
+
+      // Simulate a keystroke: same path, mutated content. The gutter must NOT
+      // re-parse + re-decorate synchronously during typing.
+      const secondContent = `<?php
+
+interface PaymentGateway
+{
+    public function charge(): void;
+    public function refund(): void;
+}
+`;
+      await renderWith({ ...activeDocument, content: secondContent });
+
+      expect(gutterDecorationCalls()).toHaveLength(0);
+
+      // After the debounce window the gutter catches up with the new content.
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      expect(gutterDecorationCalls().length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not re-map diagnostic overview decorations per keystroke when diagnostics are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    // Stable diagnostics map identity across renders so the only thing changing
+    // is the activeDocument object identity (a keystroke).
+    const diagnostics = {
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const overviewDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some(
+          (decoration) =>
+            decoration.options?.overviewRuler?.position ===
+            monaco.editor.OverviewRulerLane.Right,
+        ),
+      );
+
+    await renderWith(activeDocument);
+
+    expect(overviewDecorationCalls().length).toBeGreaterThan(0);
+    editor.deltaDecorations.mockClear();
+
+    // Simulate a keystroke: new activeDocument object, same path + same
+    // diagnostics identity. Overview decorations must NOT be re-mapped.
+    await renderWith({ ...activeDocument, content: "const value = 12;\n" });
+
+    expect(overviewDecorationCalls()).toHaveLength(0);
+  });
+
+  it("re-maps diagnostic overview decorations when diagnostics change", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (diagnostics: Record<string, unknown[]>) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics as never}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const overviewDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some(
+          (decoration) =>
+            decoration.options?.overviewRuler?.position ===
+            monaco.editor.OverviewRulerLane.Right,
+        ),
+      );
+
+    await renderWith({});
+    editor.deltaDecorations.mockClear();
+
+    await renderWith({
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused",
+          severity: "warning",
+          source: "typescript",
+        },
+      ],
+    });
+
+    expect(overviewDecorationCalls().length).toBeGreaterThan(0);
   });
 
   it("re-applies language-server markers when diagnostics actually change", async () => {
@@ -5520,6 +5892,15 @@ function createEditor(model: FakeModel): FakeEditor {
   };
 
   return editor;
+}
+
+// The gutter glyph recompute is debounced (~160ms) so it does not re-parse the
+// whole file on every keystroke. Tests that assert on the glyph decorations must
+// let the debounce window elapse first.
+async function flushGutterDebounce(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
 }
 
 function queryRequired<T extends Element>(

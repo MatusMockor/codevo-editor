@@ -261,6 +261,12 @@ function EditorSurfaceComponent({
   const changeDecorationIdsRef = useRef<string[]>([]);
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
+  // The path whose glyphs currently occupy implementationGutterDecorationIdsRef.
+  // The gutter recompute is debounced, so on a file switch we must clear the
+  // previous file's glyphs synchronously (a switch is a path change) rather than
+  // waiting for the debounced recompute, which would otherwise leave stale glyphs
+  // or duplicate them when revisiting a file. null means no glyphs are applied.
+  const implementationGutterDecoratedPathRef = useRef<string | null>(null);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   // Caches gutter targets so navigating back to an unchanged PHP file reuses
   // the previous parse instead of re-scanning the whole file on the navigation
@@ -272,6 +278,10 @@ function EditorSurfaceComponent({
     new PhpImplementationGutterTargetsCache(),
   );
   const testGutterDecorationIdsRef = useRef<string[]>([]);
+  // The path whose glyphs currently occupy testGutterDecorationIdsRef (see the
+  // implementation-gutter counterpart for why the debounced recompute needs a
+  // synchronous path-switch clear).
+  const testGutterDecoratedPathRef = useRef<string | null>(null);
   // Maps a line number to the parsed test target on that line so a Right-lane
   // gutter click can dispatch the exact test to run. Reset whenever the active
   // document changes so a stale tab's targets can never run.
@@ -460,8 +470,18 @@ function EditorSurfaceComponent({
     }
 
     editorApi.trigger("mockor.phpIdeReadiness", "editor.action.triggerSuggest", {});
+    // Re-key on the active document's *path* + *language* (stable strings), not
+    // its object identity. `activeDocument` is replaced with a fresh
+    // `{ ...doc, content }` on every keystroke; depending on the whole object
+    // re-ran this effect per character typed, each time copying the model value
+    // (O(file)) and scanning up to three completion contexts (O(file) each), and
+    // could even reopen the suggest widget mid-typing. The intent is to reopen
+    // suggestions on a readiness *bump* or a file switch - both still covered by
+    // `phpIdeReadinessVersion`, the path/language keys, and the provider becoming
+    // ready - never per keystroke.
   }, [
-    activeDocument,
+    activeDocument?.path,
+    activeDocument?.language,
     editorApi,
     phpIdeReadinessVersion,
     providePhpMethodCompletions,
@@ -1089,53 +1109,83 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (activeDocument.language !== "php") {
+    // Synchronously drop the previous file's glyphs on a path switch (or when the
+    // document is no longer PHP) so a switch never leaves stale glyphs while the
+    // debounced recompute is pending. A same-path keystroke does not clear, so
+    // the existing glyphs stay put (and track edits via stickiness) until the
+    // debounce flushes - no flicker.
+    const decoratedPath = implementationGutterDecoratedPathRef.current;
+    const isPathSwitch =
+      decoratedPath !== null && decoratedPath !== activeDocument.path;
+
+    if (activeDocument.language !== "php" || isPathSwitch) {
       implementationGutterTargetsRef.current = new Map();
       implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
         implementationGutterDecorationIdsRef.current,
         [],
       );
+      implementationGutterDecoratedPathRef.current = null;
+    }
+
+    if (activeDocument.language !== "php") {
       return;
     }
 
-    const targets = implementationGutterTargetsCacheRef.current.resolve(
-      activeDocument.path,
-      activeDocument.content,
-    );
-    implementationGutterTargetsRef.current = new Map(
-      targets.map((target) => [target.position.lineNumber, target.position]),
-    );
-    implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-      implementationGutterDecorationIdsRef.current,
-      targets.map((target) => ({
-        options: {
-          glyphMargin: {
-            position: monacoApi.editor.GlyphMarginLane.Center,
-          },
-          glyphMarginClassName: "implementation-gutter-glyph",
-          glyphMarginHoverMessage: {
-            value: "Go to implementation",
-          },
-          isWholeLine: false,
-          stickiness:
-            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          zIndex: 20,
-        },
-        range: new monacoApi.Range(
-          target.position.lineNumber,
-          1,
-          target.position.lineNumber,
-          1,
-        ),
-      })),
-    );
+    // Debounce the full-file parse + decoration replace. `activeDocument` gets a
+    // fresh `{ ...doc, content }` on every keystroke, which re-ran this effect
+    // (cache miss on changed content -> full re-parse + deltaDecorations) per
+    // character typed. The glyphs do not need to track typing in real time -
+    // their stickiness keeps existing glyphs anchored to the right lines while
+    // typing, and the recompute catches up ~160ms after the user pauses. This
+    // mirrors the syntax-diagnostics debounce. The cleanup only clears the
+    // pending timer so rapid keystrokes coalesce into a single parse without
+    // clearing the glyphs in between (no flicker).
+    const targetDocumentPath = activeDocument.path;
+    const targetDocumentContent = activeDocument.content;
+    const timeout = window.setTimeout(() => {
+      const liveModel = editorApi.getModel();
 
-    return () => {
-      implementationGutterTargetsRef.current = new Map();
+      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
+        return;
+      }
+
+      const targets = implementationGutterTargetsCacheRef.current.resolve(
+        targetDocumentPath,
+        targetDocumentContent,
+      );
+      implementationGutterTargetsRef.current = new Map(
+        targets.map((target) => [target.position.lineNumber, target.position]),
+      );
       implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
         implementationGutterDecorationIdsRef.current,
-        [],
+        targets.map((target) => ({
+          options: {
+            glyphMargin: {
+              position: monacoApi.editor.GlyphMarginLane.Center,
+            },
+            glyphMarginClassName: "implementation-gutter-glyph",
+            glyphMarginHoverMessage: {
+              value: "Go to implementation",
+            },
+            isWholeLine: false,
+            stickiness:
+              monacoApi.editor.TrackedRangeStickiness
+                .NeverGrowsWhenTypingAtEdges,
+            zIndex: 20,
+          },
+          range: new monacoApi.Range(
+            target.position.lineNumber,
+            1,
+            target.position.lineNumber,
+            1,
+          ),
+        })),
       );
+      implementationGutterDecoratedPathRef.current = targetDocumentPath;
+    }, 160);
+
+    return () => {
+      window.clearTimeout(timeout);
     };
   }, [activeDocument, editorApi, monacoApi]);
 
@@ -1156,53 +1206,75 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (activeDocument.language !== "php" || !isActiveDocumentPhpTest) {
+    // Synchronously drop the previous file's glyphs on a path switch (or when the
+    // document stops being a PHP test) so a switch never leaves stale glyphs while
+    // the debounced recompute is pending. Mirrors the implementation-gutter
+    // effect; see its comment for the no-flicker rationale.
+    const decoratedPath = testGutterDecoratedPathRef.current;
+    const isPathSwitch =
+      decoratedPath !== null && decoratedPath !== activeDocument.path;
+    const isApplicable =
+      activeDocument.language === "php" && isActiveDocumentPhpTest;
+
+    if (!isApplicable || isPathSwitch) {
       testGutterTargetsRef.current = new Map();
       testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
         testGutterDecorationIdsRef.current,
         [],
       );
+      testGutterDecoratedPathRef.current = null;
+    }
+
+    if (!isApplicable) {
       return;
     }
 
-    const targets = testGutterTargetsCacheRef.current.resolve(
-      activeDocument.path,
-      activeDocument.content,
-    );
-    testGutterTargetsRef.current = new Map(
-      targets.map((target) => [target.position.lineNumber, target]),
-    );
-    testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-      testGutterDecorationIdsRef.current,
-      targets.map((target) => ({
-        options: {
-          glyphMargin: {
-            position: monacoApi.editor.GlyphMarginLane.Right,
-          },
-          glyphMarginClassName: "test-run-gutter-glyph",
-          glyphMarginHoverMessage: {
-            value: target.label,
-          },
-          isWholeLine: false,
-          stickiness:
-            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          zIndex: 20,
-        },
-        range: new monacoApi.Range(
-          target.position.lineNumber,
-          1,
-          target.position.lineNumber,
-          1,
-        ),
-      })),
-    );
+    const targetDocumentPath = activeDocument.path;
+    const targetDocumentContent = activeDocument.content;
+    const timeout = window.setTimeout(() => {
+      const liveModel = editorApi.getModel();
 
-    return () => {
-      testGutterTargetsRef.current = new Map();
+      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
+        return;
+      }
+
+      const targets = testGutterTargetsCacheRef.current.resolve(
+        targetDocumentPath,
+        targetDocumentContent,
+      );
+      testGutterTargetsRef.current = new Map(
+        targets.map((target) => [target.position.lineNumber, target]),
+      );
       testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
         testGutterDecorationIdsRef.current,
-        [],
+        targets.map((target) => ({
+          options: {
+            glyphMargin: {
+              position: monacoApi.editor.GlyphMarginLane.Right,
+            },
+            glyphMarginClassName: "test-run-gutter-glyph",
+            glyphMarginHoverMessage: {
+              value: target.label,
+            },
+            isWholeLine: false,
+            stickiness:
+              monacoApi.editor.TrackedRangeStickiness
+                .NeverGrowsWhenTypingAtEdges,
+            zIndex: 20,
+          },
+          range: new monacoApi.Range(
+            target.position.lineNumber,
+            1,
+            target.position.lineNumber,
+            1,
+          ),
+        })),
       );
+      testGutterDecoratedPathRef.current = targetDocumentPath;
+    }, 160);
+
+    return () => {
+      window.clearTimeout(timeout);
     };
   }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
 
@@ -1411,8 +1483,16 @@ function EditorSurfaceComponent({
         [],
       );
     };
+    // Re-key on the active document's *path* + *language* (stable strings), not
+    // its object identity. `activeDocument` gets a fresh `{ ...doc, content }`
+    // on every keystroke, which re-mapped every diagnostic and re-ran
+    // deltaDecorations per character typed even though the diagnostics were
+    // unchanged. The decorations are derived purely from the diagnostics maps
+    // keyed by path, so real changes are covered by the diagnostics deps and a
+    // file switch is covered by the path/language keys.
   }, [
-    activeDocument,
+    activeDocument?.path,
+    activeDocument?.language,
     editorApi,
     languageServerDiagnosticsByPath,
     monacoApi,
