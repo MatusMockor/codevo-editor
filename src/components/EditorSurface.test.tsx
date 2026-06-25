@@ -246,9 +246,9 @@ describe("EditorSurface", () => {
 
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
-        // Cmd/Ctrl is the multi-cursor modifier so Alt+drag does box/column
-        // selection (VS Code parity) instead of adding cursors.
-        multiCursorModifier: "ctrlCmd",
+        // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so
+        // Cmd/Ctrl+Click stays bound to go-to-definition.
+        multiCursorModifier: "alt",
         parameterHints: {
           cycle: true,
           enabled: true,

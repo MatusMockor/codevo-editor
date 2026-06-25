@@ -2035,11 +2035,11 @@ function EditorSurfaceComponent({
       // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
       maxTokenizationLineLength: 2000,
       minimap: { enabled: false },
-      // Cmd/Ctrl is the multi-cursor modifier (VS Code parity), which frees Alt
-      // so Alt+drag does box/column selection. Add a cursor with Cmd/Ctrl+Click
-      // and toggle persistent column-selection mode with the
-      // `editor.toggleColumnSelection` action below.
-      multiCursorModifier: "ctrlCmd",
+      // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
+      // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
+      // toggle persistent column/box selection with the `editor.toggleColumnSelection`
+      // action below.
+      multiCursorModifier: "alt",
       padding: { top: 14, bottom: 14 },
       parameterHints: { enabled: true, cycle: true },
       quickSuggestions: { other: true, comments: false, strings: true },
