@@ -312,6 +312,14 @@ function componentReferenceAt(
   const nameEnd = componentNameEnd(source, componentNameStart);
   const name = source.slice(componentNameStart, nameEnd);
 
+  // Package-namespaced components use `<x-ns::name>` (e.g. `<x-mail::message>`).
+  // `componentNameEnd` stops at the `:`, truncating the name to the namespace
+  // (`mail`), which would otherwise mis-navigate to a local component sharing
+  // that short name. Decline conservatively rather than navigate incorrectly.
+  if (source.startsWith("::", nameEnd)) {
+    return null;
+  }
+
   // The trailing boundary is inclusive (`offset <= nameEnd`): a cursor sitting
   // immediately after the last name character is still "on" the name, matching
   // editor go-to-definition cursor semantics and the directive-literal path.

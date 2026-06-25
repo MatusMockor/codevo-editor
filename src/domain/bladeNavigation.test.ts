@@ -133,6 +133,49 @@ describe("detectBladeReferenceAt", () => {
     expect(detectBladeReferenceAt(source, offset)?.name).toBe("forms.input");
   });
 
+  it("declines a package-namespaced <x-ns::name> component on the namespace", () => {
+    const source = "<x-mail::message />";
+    const offset = offsetOf(source, "mail");
+
+    expect(detectBladeReferenceAt(source, offset)).toBeNull();
+  });
+
+  it("declines a package-namespaced <x-ns::name> component on the name", () => {
+    const source = "<x-mail::message />";
+    const offset = offsetOf(source, "message");
+
+    expect(detectBladeReferenceAt(source, offset)).toBeNull();
+  });
+
+  it("declines a closing package-namespaced </x-ns::name> component", () => {
+    const source = "</x-mail::message>";
+    const offset = offsetOf(source, "mail");
+
+    expect(detectBladeReferenceAt(source, offset)).toBeNull();
+  });
+
+  it("still resolves a dotted <x-foo.bar> component", () => {
+    const source = "<x-foo.bar />";
+    const offset = offsetOf(source, "foo.bar", 2);
+
+    expect(detectBladeReferenceAt(source, offset)).toEqual({
+      kind: "component",
+      name: "foo.bar",
+      nameStart: source.indexOf("foo.bar"),
+      nameEnd: source.indexOf("foo.bar") + "foo.bar".length,
+    });
+  });
+
+  it("still resolves a hyphenated dotted <x-input.text-field> component", () => {
+    const source = "<x-input.text-field />";
+    const offset = offsetOf(source, "input.text-field", 2);
+
+    expect(detectBladeReferenceAt(source, offset)?.kind).toBe("component");
+    expect(detectBladeReferenceAt(source, offset)?.name).toBe(
+      "input.text-field",
+    );
+  });
+
   it("detects @yield as a section reference", () => {
     const source = "@yield('content')";
     const offset = offsetOf(source, "content", 1);
