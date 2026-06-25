@@ -98,12 +98,24 @@ export const keymapCommands = [
   {
     category: "Editor",
     defaultShortcut: "Cmd+Shift+ArrowUp",
+    id: "editor.moveStatementUp",
+    label: "Move Statement Up",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+ArrowDown",
+    id: "editor.moveStatementDown",
+    label: "Move Statement Down",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Shift+Alt+ArrowUp",
     id: "editor.moveLineUp",
     label: "Move Line Up",
   },
   {
     category: "Editor",
-    defaultShortcut: "Cmd+Shift+ArrowDown",
+    defaultShortcut: "Shift+Alt+ArrowDown",
     id: "editor.moveLineDown",
     label: "Move Line Down",
   },

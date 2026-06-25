@@ -46,6 +46,10 @@ import {
   type SurroundWithTemplateId,
 } from "../domain/surroundWith";
 import { completePhpStatement } from "../domain/phpCompleteStatement";
+import {
+  phpMoveStatement,
+  type MoveStatementDirection,
+} from "../domain/phpMoveStatement";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
@@ -911,6 +915,36 @@ function EditorSurfaceComponent({
           }
 
           editorApi.trigger("keyboard", "editor.action.smartSelect.expand", {});
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.moveStatementUp",
+        label: "Move Statement Up",
+        keybindings: keybinding("editor.moveStatementUp"),
+        run: () => {
+          if (
+            activeDocumentRef.current?.language === "php" &&
+            applyMoveStatement(monacoApi, editorApi, "up")
+          ) {
+            return;
+          }
+
+          triggerEditorAction(editorApi, "editor.action.moveLinesUpAction");
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.moveStatementDown",
+        label: "Move Statement Down",
+        keybindings: keybinding("editor.moveStatementDown"),
+        run: () => {
+          if (
+            activeDocumentRef.current?.language === "php" &&
+            applyMoveStatement(monacoApi, editorApi, "down")
+          ) {
+            return;
+          }
+
+          triggerEditorAction(editorApi, "editor.action.moveLinesDownAction");
         },
       }),
       editorApi.addAction({
@@ -1958,6 +1992,69 @@ function precedingLinesSource(
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+// Moves the whole statement (or brace block) under the caret up or down past its
+// adjacent statement (PhpStorm Cmd+Shift+Up / Down). The pure analyser computes a
+// balanced line range swap; when it declines (ambiguous, file edge, multi-line
+// fragment) this returns false so the caller falls back to Monaco's Move Line.
+// Returns true only when an edit was applied to the live model.
+function applyMoveStatement(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  direction: MoveStatementDirection,
+): boolean {
+  const model = editor.getModel();
+  const position = editor.getPosition();
+
+  if (!model || !position) {
+    return false;
+  }
+
+  const edit = phpMoveStatement(
+    model.getValue(),
+    position.lineNumber,
+    direction,
+  );
+
+  if (!edit) {
+    return false;
+  }
+
+  const range = new monaco.Range(
+    edit.startLine,
+    1,
+    edit.endLine,
+    model.getLineMaxColumn(edit.endLine),
+  );
+
+  editor.executeEdits("mockor.moveStatement", [
+    {
+      forceMoveMarkers: true,
+      range,
+      text: edit.newText,
+    },
+  ]);
+  editor.setPosition({
+    column: position.column,
+    lineNumber: clampLine(model, edit.caretLine),
+  });
+  editor.focus();
+
+  return true;
+}
+
+function clampLine(
+  model: Monaco.editor.ITextModel,
+  lineNumber: number,
+): number {
+  if (lineNumber < 1) {
+    return 1;
+  }
+
+  const lineCount = model.getLineCount();
+
+  return lineNumber > lineCount ? lineCount : lineNumber;
 }
 
 // Completes the statement on the caret's line (PhpStorm Cmd+Shift+Enter): the

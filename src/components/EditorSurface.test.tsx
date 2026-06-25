@@ -4137,6 +4137,110 @@ interface PaymentGateway
     expect(editor.setPosition).not.toHaveBeenCalled();
   });
 
+  it("swaps a whole PHP block above its neighbour on Move Statement Up", async () => {
+    const lines = ["$before = 1;", "if ($ready) {", "    doStuff();", "}"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 2 });
+
+    const action = moveStatementAction(editor, "up");
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.moveStatement", [
+      expect.objectContaining({
+        range: expect.objectContaining({
+          startLineNumber: 1,
+          endLineNumber: 4,
+        }),
+        text: [
+          "if ($ready) {",
+          "    doStuff();",
+          "}",
+          "$before = 1;",
+        ].join("\n"),
+      }),
+    ]);
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 1,
+      lineNumber: 1,
+    });
+    expect(editor.trigger).not.toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.moveLinesUpAction",
+      {},
+    );
+  });
+
+  it("swaps two single-line PHP statements on Move Statement Down", async () => {
+    const lines = ["$a = 1;", "$b = 2;", "$c = 3;"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 2 });
+
+    const action = moveStatementAction(editor, "down");
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.moveStatement", [
+      expect.objectContaining({
+        text: ["$c = 3;", "$b = 2;"].join("\n"),
+      }),
+    ]);
+  });
+
+  it("falls back to Monaco Move Line when the PHP statement swap is ambiguous", async () => {
+    const lines = ["$a = 1;", "$b = 2;"];
+    const { editor } = await mountCompleteStatementSurface(root, lines);
+
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 1 });
+
+    const action = moveStatementAction(editor, "up");
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.moveLinesUpAction",
+      {},
+    );
+  });
+
+  it("falls back to Monaco Move Line for a non-PHP document", async () => {
+    const lines = ["const a = 1;", "const b = 2;", "const c = 3;"];
+    const { editor } = await mountCompleteStatementSurface(
+      root,
+      lines,
+      "typescript",
+    );
+
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 2 });
+
+    const action = moveStatementAction(editor, "down");
+
+    await act(async () => {
+      action.run();
+      await Promise.resolve();
+    });
+
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.moveLinesDownAction",
+      {},
+    );
+  });
+
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     stubNavigatorPlatform("Linux x86_64");
 
@@ -4391,19 +4495,36 @@ interface PaymentGateway
       }),
     );
 
-    expect(moveLineUp).toEqual(
+    const moveStatementUp = actionById("mockor.moveStatementUp");
+    const moveStatementDown = actionById("mockor.moveStatementDown");
+
+    expect(moveStatementUp).toEqual(
       expect.objectContaining({
         keybindings: [
           monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.UpArrow,
         ],
       }),
     );
-    expect(moveLineDown).toEqual(
+    expect(moveStatementDown).toEqual(
       expect.objectContaining({
         keybindings: [
           monaco.KeyMod.CtrlCmd |
             monaco.KeyMod.Shift |
             monaco.KeyCode.DownArrow,
+        ],
+      }),
+    );
+    expect(moveLineUp).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+        ],
+      }),
+    );
+    expect(moveLineDown).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
         ],
       }),
     );
@@ -5948,6 +6069,23 @@ function completeStatementAction(editor: FakeEditor): { run: () => void } {
 
   if (!action) {
     throw new Error("Expected the complete-statement action to be registered.");
+  }
+
+  return action;
+}
+
+function moveStatementAction(
+  editor: FakeEditor,
+  direction: "down" | "up",
+): { run: () => void } {
+  const id =
+    direction === "up" ? "mockor.moveStatementUp" : "mockor.moveStatementDown";
+  const action = editor.addAction.mock.calls
+    .map(([entry]) => entry)
+    .find((entry) => entry.id === id);
+
+  if (!action) {
+    throw new Error(`Expected the ${id} action to be registered.`);
   }
 
   return action;

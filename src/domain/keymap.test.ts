@@ -16,8 +16,10 @@ describe("keymap", () => {
       "editor.closeTab": "Cmd+W",
       "editor.fileStructure": "Cmd+R",
       "editor.extendSelection": "Alt+ArrowUp",
-      "editor.moveLineUp": "Cmd+Shift+ArrowUp",
-      "editor.moveLineDown": "Cmd+Shift+ArrowDown",
+      "editor.moveStatementUp": "Cmd+Shift+ArrowUp",
+      "editor.moveStatementDown": "Cmd+Shift+ArrowDown",
+      "editor.moveLineUp": "Shift+Alt+ArrowUp",
+      "editor.moveLineDown": "Shift+Alt+ArrowDown",
       "editor.duplicateLine": "Cmd+Shift+D",
       "editor.addSelectionToNextMatch": "Cmd+D",
       "editor.deleteLine": "Cmd+Shift+K",
@@ -161,16 +163,28 @@ describe("keymap", () => {
     );
   });
 
-  it("defaults the editor ergonomics shortcuts to their PhpStorm/VS Code keys", () => {
-    expect(defaultShortcutForCommand("editor.moveLineUp", "mac")).toBe(
+  it("defaults move statement to Cmd+Shift+Arrow and move line to Shift+Alt+Arrow", () => {
+    expect(defaultShortcutForCommand("editor.moveStatementUp", "mac")).toBe(
       "Cmd+Shift+ArrowUp",
     );
-    expect(defaultShortcutForCommand("editor.moveLineUp", "linux")).toBe(
+    expect(defaultShortcutForCommand("editor.moveStatementUp", "linux")).toBe(
       "Ctrl+Shift+ArrowUp",
     );
-    expect(defaultShortcutForCommand("editor.moveLineDown", "mac")).toBe(
+    expect(defaultShortcutForCommand("editor.moveStatementDown", "mac")).toBe(
       "Cmd+Shift+ArrowDown",
     );
+    expect(defaultShortcutForCommand("editor.moveLineUp", "mac")).toBe(
+      "Shift+Alt+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.moveLineUp", "linux")).toBe(
+      "Shift+Alt+ArrowUp",
+    );
+    expect(defaultShortcutForCommand("editor.moveLineDown", "mac")).toBe(
+      "Shift+Alt+ArrowDown",
+    );
+  });
+
+  it("defaults the editor ergonomics shortcuts to their PhpStorm/VS Code keys", () => {
     expect(defaultShortcutForCommand("editor.duplicateLine", "mac")).toBe(
       "Cmd+Shift+D",
     );
