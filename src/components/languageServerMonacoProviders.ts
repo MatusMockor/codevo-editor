@@ -41,7 +41,7 @@ import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
 } from "../domain/phpPostfixCompletions";
-import { matchingSnippetsForLanguage } from "../domain/snippets";
+import { snippetCompletionSuggestions } from "../domain/snippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -800,6 +800,12 @@ async function provideBladeCompletionItems(
   const source = modelSource(model, documentContext.activeDocument.content);
   const word = model.getWordUntilPosition(position);
   const fallbackRange = bladeCompletionFallbackRange(position, word);
+  const snippetSuggestions = bladeSnippetSuggestions(
+    monaco,
+    model,
+    position,
+    word,
+  );
 
   try {
     const completions = await context.provideBladeCompletions(source, position);
@@ -809,16 +815,19 @@ async function provideBladeCompletionItems(
     }
 
     return {
-      suggestions: completions.map((completion, index) =>
-        toMonacoBladeCompletion(
-          monaco,
-          model,
-          source,
-          fallbackRange,
-          completion,
-          index,
+      suggestions: [
+        ...completions.map((completion, index) =>
+          toMonacoBladeCompletion(
+            monaco,
+            model,
+            source,
+            fallbackRange,
+            completion,
+            index,
+          ),
         ),
-      ),
+        ...snippetSuggestions,
+      ],
     };
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
@@ -883,6 +892,43 @@ function bladeCompletionFallbackRange(
     startColumn: word.startColumn,
     startLineNumber: position.lineNumber,
   };
+}
+
+/**
+ * Built-in Blade live-template snippets (`@if`, `@foreach`, `bvar`, …) offered
+ * alongside the controller's directive/view completions. Blade directive
+ * prefixes carry a leading `@` that `getWordUntilPosition` strips, so the typed
+ * abbreviation is reconstructed from the line content (including the `@` when
+ * the word is directly preceded by one) and the replace range is widened to
+ * cover it. Sorted into the shared `2_` bucket so snippets sit below the live
+ * directive/view list, matching the PHP/JS-TS wiring.
+ */
+function bladeSnippetSuggestions(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number; word?: string },
+): Monaco.languages.CompletionItem[] {
+  const typedWord = typeof word.word === "string" ? word.word : "";
+  const line = model.getLineContent?.(position.lineNumber) ?? "";
+  const hasLeadingAt = line[word.startColumn - 2] === "@";
+  const typed = hasLeadingAt ? `@${typedWord}` : typedWord;
+  const startColumn = hasLeadingAt
+    ? Math.max(1, word.startColumn - 1)
+    : word.startColumn;
+  const range = {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn,
+    startLineNumber: position.lineNumber,
+  };
+
+  return snippetCompletionSuggestions(
+    monaco,
+    "blade",
+    typed,
+    range,
+  ) as Monaco.languages.CompletionItem[];
 }
 
 /**
@@ -3658,23 +3704,12 @@ function phpSnippetSuggestions(
 ): Monaco.languages.CompletionItem[] {
   const typed = typeof word.word === "string" ? word.word : "";
 
-  // Snippets are surfaced from a typed abbreviation (PhpStorm/VS Code live
-  // template behaviour). With no typed prefix the whole catalogue would flood
-  // every keystroke, so an empty word yields nothing.
-  if (typed.length === 0) {
-    return [];
-  }
-
-  return matchingSnippetsForLanguage(language, typed).map((snippet, index) => ({
-    detail: snippet.description,
-    insertText: snippet.body,
-    insertTextRules:
-      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-    kind: monaco.languages.CompletionItemKind.Snippet,
-    label: snippet.prefix,
+  return snippetCompletionSuggestions(
+    monaco,
+    language,
+    typed,
     range,
-    sortText: `2_${String(index).padStart(4, "0")}`,
-  }));
+  ) as Monaco.languages.CompletionItem[];
 }
 
 async function phpMethodSuggestions(

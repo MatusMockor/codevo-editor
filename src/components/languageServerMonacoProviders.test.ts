@@ -8980,6 +8980,89 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     );
   });
 
+  it("offers built-in blade live-template snippets alongside controller completions", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@fore\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "Blade directive",
+        insertText: "foreach",
+        kind: "directive" as const,
+        label: "@foreach",
+        replaceEnd: 5,
+        replaceStart: 1,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    // Monaco's getWordUntilPosition strips the leading `@` (not a word char), so
+    // the provider must reconstruct the `@fore` abbreviation from the line text.
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "@fore",
+        path: "/project/resources/views/show.blade.php",
+        word: { endColumn: 6, startColumn: 2, word: "fore" },
+      }),
+      { column: 6, lineNumber: 1 },
+    );
+
+    const snippet = result.suggestions.find(
+      (item: any) =>
+        item.kind === registered.monaco.languages.CompletionItemKind.Snippet &&
+        item.label === "@foreach",
+    );
+
+    expect(snippet).toEqual(
+      expect.objectContaining({
+        insertTextRules:
+          registered.monaco.languages.CompletionItemInsertTextRule
+            .InsertAsSnippet,
+        kind: registered.monaco.languages.CompletionItemKind.Snippet,
+        label: "@foreach",
+        range: expect.objectContaining({
+          endColumn: 6,
+          startColumn: 1,
+        }),
+      }),
+    );
+    expect(snippet.sortText.startsWith("2_")).toBe(true);
+    expect(snippet.insertText).toContain("$");
+  });
+
+  it("does not offer blade snippets without a typed prefix", async () => {
+    const registered = createRegisteredProviders();
+    const source = "\n";
+    const provideBladeCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "",
+        path: "/project/resources/views/show.blade.php",
+        word: { endColumn: 1, startColumn: 1, word: "" },
+      }),
+      { column: 1, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some(
+        (item: any) =>
+          item.kind ===
+          registered.monaco.languages.CompletionItemKind.Snippet,
+      ),
+    ).toBe(false);
+  });
+
   it("returns no blade completions for a non-blade active document", async () => {
     const registered = createRegisteredProviders();
     const provideBladeCompletions = vi.fn(async () => [

@@ -26,6 +26,13 @@ export interface Snippet {
 }
 
 const PHP = ["php"] as const;
+const JS_TS = [
+  "javascript",
+  "typescript",
+  "javascriptreact",
+  "typescriptreact",
+] as const;
+const BLADE = ["blade"] as const;
 
 /**
  * Built-in PHP / Laravel snippets. Bodies use Monaco snippet syntax so Monaco
@@ -107,6 +114,120 @@ const BUILT_IN_SNIPPETS: readonly Snippet[] = [
     languages: PHP,
     body: "${1:Job}::dispatch($0);",
   },
+  // JavaScript / TypeScript (light mode, VS Code parity).
+  {
+    prefix: "clg",
+    description: "console.log",
+    languages: JS_TS,
+    body: "console.log($0);",
+  },
+  {
+    prefix: "fn",
+    description: "function declaration",
+    languages: JS_TS,
+    body: "function ${1:name}(${2:}) {\n\t$0\n}",
+  },
+  {
+    prefix: "afn",
+    description: "arrow function",
+    languages: JS_TS,
+    body: "const ${1:name} = (${2:}) => {\n\t$0\n};",
+  },
+  {
+    prefix: "imp",
+    description: "import statement",
+    languages: JS_TS,
+    body: "import { ${1:} } from \"${2:module}\";$0",
+  },
+  {
+    prefix: "exp",
+    description: "export const",
+    languages: JS_TS,
+    body: "export const ${1:name} = $0;",
+  },
+  {
+    prefix: "forof",
+    description: "for…of loop",
+    languages: JS_TS,
+    body: "for (const ${1:item} of ${2:items}) {\n\t$0\n}",
+  },
+  {
+    prefix: "cls",
+    description: "class declaration",
+    languages: JS_TS,
+    body: "class ${1:Name} {\n\tconstructor(${2:}) {\n\t\t$0\n\t}\n}",
+  },
+  {
+    prefix: "tryc",
+    description: "try / catch",
+    languages: JS_TS,
+    body: "try {\n\t$1\n} catch (${2:error}) {\n\t$0\n}",
+  },
+  {
+    prefix: "prom",
+    description: "new Promise",
+    languages: JS_TS,
+    body: "new Promise((${1:resolve}, ${2:reject}) => {\n\t$0\n});",
+  },
+  {
+    prefix: "switch",
+    description: "switch statement",
+    languages: JS_TS,
+    body:
+      "switch (${1:value}) {\n\tcase ${2:case}:\n\t\t$0\n\t\tbreak;\n\tdefault:\n\t\tbreak;\n}",
+  },
+  // Blade (IDE mode, PhpStorm parity). Prefixes mirror the directive a developer
+  // types, including the leading `@`, so the live template fires from the same
+  // abbreviation the directive would.
+  {
+    prefix: "@if",
+    description: "Blade @if / @endif",
+    languages: BLADE,
+    body: "@if (${1:condition})\n\t$0\n@endif",
+  },
+  {
+    prefix: "@foreach",
+    description: "Blade @foreach / @endforeach",
+    languages: BLADE,
+    body: "@foreach (\\$${1:items} as \\$${2:item})\n\t$0\n@endforeach",
+  },
+  {
+    prefix: "@forelse",
+    description: "Blade @forelse / @empty / @endforelse",
+    languages: BLADE,
+    body:
+      "@forelse (\\$${1:items} as \\$${2:item})\n\t$0\n@empty\n\t${3:}\n@endforelse",
+  },
+  {
+    prefix: "@section",
+    description: "Blade @section / @endsection",
+    languages: BLADE,
+    body: "@section('${1:name}')\n\t$0\n@endsection",
+  },
+  {
+    prefix: "@extends",
+    description: "Blade @extends",
+    languages: BLADE,
+    body: "@extends('${1:layout}')$0",
+  },
+  {
+    prefix: "@component",
+    description: "Blade @component / @endcomponent",
+    languages: BLADE,
+    body: "@component('${1:name}')\n\t$0\n@endcomponent",
+  },
+  {
+    prefix: "@php",
+    description: "Blade @php / @endphp",
+    languages: BLADE,
+    body: "@php\n\t$0\n@endphp",
+  },
+  {
+    prefix: "bvar",
+    description: "Blade echoed variable",
+    languages: BLADE,
+    body: "{{ \\$${1:variable} }}$0",
+  },
 ];
 
 /**
@@ -134,4 +255,62 @@ export function matchingSnippetsForLanguage(
   return snippetsForLanguage(language).filter((snippet) =>
     snippet.prefix.toLowerCase().startsWith(normalized),
   );
+}
+
+/**
+ * Structural subset of the Monaco namespace the snippet completion helper needs.
+ * Declared locally so this pure-domain module never imports the editor runtime,
+ * yet the wiring layers can pass the real `typeof Monaco` straight through.
+ */
+export interface SnippetMonacoApi {
+  languages: {
+    CompletionItemInsertTextRule: { InsertAsSnippet: number };
+    CompletionItemKind: { Snippet: number };
+  };
+}
+
+/** A Monaco completion item carrying a live-template snippet body. */
+export interface SnippetCompletionItem {
+  detail: string;
+  insertText: string;
+  insertTextRules: number;
+  kind: number;
+  label: string;
+  range: unknown;
+  sortText: string;
+}
+
+/**
+ * Builds language-scoped live-template completion items for the typed `word`,
+ * shared by every editor wiring (PHP, JS/TS, Blade) so the InsertAsSnippet /
+ * `Snippet` kind / `2_` sort-bucket behaviour stays identical across modes.
+ *
+ * The snippet registry is a GLOBAL built-in (no workspace state), so this helper
+ * carries no per-project isolation risk; each caller keeps its own
+ * root/session/token guards around it.
+ *
+ * Snippets are surfaced from a typed abbreviation (PhpStorm / VS Code live
+ * template behaviour). With no typed prefix the whole catalogue would flood
+ * every keystroke, so an empty `word` yields nothing.
+ */
+export function snippetCompletionSuggestions(
+  monaco: SnippetMonacoApi,
+  language: SnippetLanguage,
+  word: string,
+  range: unknown,
+): SnippetCompletionItem[] {
+  if (word.length === 0) {
+    return [];
+  }
+
+  return matchingSnippetsForLanguage(language, word).map((snippet, index) => ({
+    detail: snippet.description,
+    insertText: snippet.body,
+    insertTextRules:
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    label: snippet.prefix,
+    range,
+    sortText: `2_${String(index).padStart(4, "0")}`,
+  }));
 }

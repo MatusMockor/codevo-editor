@@ -43,6 +43,7 @@ import {
 } from "../domain/documentHighlightRequestTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { snippetCompletionSuggestions } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -806,25 +807,117 @@ async function provideCompletionItems(
       startColumn: word.startColumn,
       startLineNumber: position.lineNumber,
     };
+    const lspSuggestions = completion.items.map((item, index) =>
+      toMonacoCompletionItem(
+        monaco,
+        item,
+        request.rootPath,
+        request.sessionId,
+        request.path,
+        range,
+        `0_${String(index).padStart(4, "0")}`,
+      ),
+    );
+    const snippetSuggestions = javaScriptTypeScriptSnippetSuggestions(
+      monaco,
+      model,
+      position,
+      word,
+      range,
+      context.getActiveDocument()?.language,
+    );
 
     return {
       ...(completion.isIncomplete ? { incomplete: true } : {}),
-      suggestions: completion.items.map((item, index) => {
-        return toMonacoCompletionItem(
-          monaco,
-          item,
-          request.rootPath,
-          request.sessionId,
-          request.path,
-          range,
-          `0_${String(index).padStart(4, "0")}`,
-        );
-      }),
+      suggestions: dedupeJavaScriptTypeScriptCompletionItems([
+        ...lspSuggestions,
+        ...snippetSuggestions,
+      ]),
     };
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return { suggestions: [] };
   }
+}
+
+/**
+ * Built-in JS/TS live-template snippets (`clg`, `fn`, `imp`, …) appended after
+ * the language-server suggestions. Mirrors the PHP wiring: snippets only make
+ * sense as free-standing statements typed from an abbreviation, never after a
+ * `.`/`?.` member-access dot, so they are suppressed in that context. Bodies are
+ * emitted with `InsertAsSnippet`, sort into the shared `2_` bucket (below LSP),
+ * and the snippet registry is a global built-in carrying no isolation risk.
+ */
+function javaScriptTypeScriptSnippetSuggestions(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { startColumn: number; word?: string },
+  range: Monaco.IRange,
+  language: string | undefined,
+): Monaco.languages.CompletionItem[] {
+  if (!language) {
+    return [];
+  }
+
+  if (isMemberAccessCompletion(model, position, word)) {
+    return [];
+  }
+
+  const typed = typeof word.word === "string" ? word.word : "";
+
+  return snippetCompletionSuggestions(
+    monaco,
+    language,
+    typed,
+    range,
+  ) as Monaco.languages.CompletionItem[];
+}
+
+/**
+ * Detects whether the cursor sits in a member-access position (`foo.bar`,
+ * `foo?.bar`) by inspecting the character(s) immediately before the word start.
+ * Tolerates a model without `getLineContent` (returns `false`) so snippets still
+ * surface when the line text is unavailable.
+ */
+function isMemberAccessCompletion(
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { startColumn: number },
+): boolean {
+  const line = model.getLineContent?.(position.lineNumber);
+
+  if (typeof line !== "string") {
+    return false;
+  }
+
+  return line[word.startColumn - 2] === ".";
+}
+
+function dedupeJavaScriptTypeScriptCompletionItems(
+  items: Monaco.languages.CompletionItem[],
+): Monaco.languages.CompletionItem[] {
+  const seen = new Set<string>();
+  const unique: Monaco.languages.CompletionItem[] = [];
+
+  for (const item of items) {
+    const key = `${item.kind}:${completionItemLabelKey(item.label)}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
+function completionItemLabelKey(
+  label: Monaco.languages.CompletionItem["label"],
+): string {
+  return typeof label === "string" ? label : label.label;
 }
 
 function toLanguageServerCompletionContext(

@@ -3364,6 +3364,116 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("offers JS/TS live-template snippets after language-server suggestions", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: "clamp",
+            kind: 3,
+            label: "clamp",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("clg"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const clg = result.suggestions.find((item: any) => item.label === "clg");
+
+    expect(clg).toEqual(
+      expect.objectContaining({
+        insertTextRules:
+          monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        label: "clg",
+      }),
+    );
+    expect(clg.sortText.startsWith("2_")).toBe(true);
+    expect(clg.insertText).toContain("$");
+  });
+
+  it("does not offer PHP snippets inside a TypeScript document", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("ncl"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.map((item: any) => item.label),
+    ).not.toContain("nclass");
+  });
+
+  it("suppresses snippets after a member-access dot", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("clg", {
+        endColumn: 8,
+        lineContent: "foo.clg",
+        startColumn: 5,
+      }),
+      { column: 8, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some((item: any) => item.label === "clg"),
+    ).toBe(false);
+  });
+
+  it("does not offer snippets without a typed prefix", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("", { startColumn: 4, endColumn: 4 }),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some(
+        (item: any) =>
+          item.kind === monaco.languages.CompletionItemKind.Snippet,
+      ),
+    ).toBe(false);
+  });
+
   it("maps TypeScript completion commands through the guarded language server executor", async () => {
     const monaco = createMonaco();
     const completionCommand = {
@@ -5223,6 +5333,35 @@ function textModel() {
       fsPath: "/project/src/user.ts",
       path: "/project/src/user.ts",
     },
+  };
+}
+
+/**
+ * A text model whose word-under-cursor and line content are controllable, so
+ * snippet-completion tests can drive the typed prefix and the member-access
+ * suppression path (character before the word).
+ */
+function snippetWordModel(
+  word: string,
+  options: {
+    endColumn?: number;
+    lineContent?: string;
+    startColumn?: number;
+  } = {},
+) {
+  const startColumn = options.startColumn ?? 1;
+  const endColumn = options.endColumn ?? startColumn + word.length;
+  const lineContent = options.lineContent ?? word;
+
+  return {
+    ...textModel(),
+    getLineContent: vi.fn(() => lineContent),
+    getValue: vi.fn(() => lineContent),
+    getWordUntilPosition: vi.fn(() => ({
+      endColumn,
+      startColumn,
+      word,
+    })),
   };
 }
 
