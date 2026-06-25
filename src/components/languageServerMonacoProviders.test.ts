@@ -6948,6 +6948,7 @@ function store($request): void
       registered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toEqual([
       {
@@ -7021,6 +7022,7 @@ function store($request): void
       disabledRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toBeNull();
     expect(disabledFlush).not.toHaveBeenCalled();
@@ -7053,6 +7055,7 @@ function store($request): void
       mismatchedRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toBeNull();
     expect(mismatchedFlush).not.toHaveBeenCalled();
@@ -7083,6 +7086,7 @@ function store($request): void
       sessionRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       );
 
     await Promise.resolve();
@@ -7113,6 +7117,7 @@ function store($request): void
       rootRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       );
 
     await Promise.resolve();
@@ -7125,6 +7130,112 @@ function store($request): void
     ]);
 
     await expect(rootPromise).resolves.toBeNull();
+  });
+
+  it("drops superseded PHP document highlights when the Monaco cancellation token is cancelled", async () => {
+    const registered = createRegisteredProviders();
+    const highlights = createDeferred<LanguageServerDocumentHighlight[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(
+      async () => highlights.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const promise =
+      registered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+        token,
+      );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    highlights.resolve([
+      {
+        kind: 2,
+        range: range(3, 4, 3, 9),
+      },
+    ]);
+
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("applies PHP document highlights when the Monaco cancellation token stays active", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    await expect(
+      registered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+        token,
+      ),
+    ).resolves.toEqual([
+      {
+        kind: 2,
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+      },
+    ]);
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips repeated PHP document highlight requests for the same word under the cursor", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const sameWordModel = model({ word: { endColumn: 5, startColumn: 2, word: "$user" } });
+    const token = { isCancellationRequested: false };
+
+    const first =
+      await registered.documentHighlightProvider.provideDocumentHighlights(
+        sameWordModel,
+        position(),
+        token,
+      );
+    const second =
+      await registered.documentHighlightProvider.provideDocumentHighlights(
+        sameWordModel,
+        position(),
+        token,
+      );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+
+    const otherWordModel = model({ word: { endColumn: 10, startColumn: 5, word: "$account" } });
+    await registered.documentHighlightProvider.provideDocumentHighlights(
+      otherWordModel,
+      position(),
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
   });
 
   it("maps and resolves PHP CodeLens showReferences commands with workspace filtering", async () => {

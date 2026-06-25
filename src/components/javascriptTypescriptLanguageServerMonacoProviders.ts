@@ -37,6 +37,10 @@ import {
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
+import {
+  createDocumentHighlightRequestTracker,
+  type DocumentHighlightRequestTracker,
+} from "../domain/documentHighlightRequestTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { EditorDocument } from "../domain/workspace";
@@ -245,6 +249,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
+  const documentHighlightTracker =
+    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
   const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -608,8 +614,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDocumentHighlightProvider) {
       disposables.push(
         registry.registerDocumentHighlightProvider(language, {
-          provideDocumentHighlights: (model, position) =>
-            provideDocumentHighlights(monaco, context, model, position),
+          provideDocumentHighlights: (model, position, token) =>
+            provideDocumentHighlights(
+              monaco,
+              context,
+              documentHighlightTracker,
+              model,
+              position,
+              token,
+            ),
         }),
       );
     }
@@ -1172,8 +1185,10 @@ async function provideReferences(
 async function provideDocumentHighlights(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
+  tracker: DocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>,
   model: MonacoModel,
   position: MonacoPosition,
+  token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
   const request = featureRequestContext(
     context,
@@ -1186,6 +1201,17 @@ async function provideDocumentHighlights(
     return null;
   }
 
+  const word = model.getWordAtPosition(position)?.word ?? null;
+  const version = model.getVersionId();
+
+  if (word !== null) {
+    const cached = tracker.cached(request.path, word, version);
+
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
     if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
       return null;
@@ -1196,13 +1222,23 @@ async function provideDocumentHighlights(
       request.position,
     );
 
+    if (token.isCancellationRequested) {
+      return null;
+    }
+
     if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
-    return highlights.map((highlight) =>
+    const mapped = highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
+
+    if (word !== null) {
+      tracker.remember(request.path, word, version, mapped);
+    }
+
+    return mapped;
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;

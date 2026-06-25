@@ -1626,10 +1626,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const highlightProvider = (
       monaco.languages.registerDocumentHighlightProvider as any
     ).mock.calls[0][1];
-    const highlights = await highlightProvider.provideDocumentHighlights(model, {
-      column: 9,
-      lineNumber: 4,
-    });
+    const highlights = await highlightProvider.provideDocumentHighlights(
+      model,
+      {
+        column: 9,
+        lineNumber: 4,
+      },
+      { isCancellationRequested: false },
+    );
 
     expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
       character: 8,
@@ -1690,6 +1694,134 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
     ]);
+  });
+
+  it("drops superseded TypeScript document highlights when the Monaco cancellation token is cancelled", async () => {
+    const monaco = createMonaco();
+    const highlights =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(
+      async () => highlights.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const token = { isCancellationRequested: false };
+    const promise = highlightProvider.provideDocumentHighlights(
+      textModel(),
+      { column: 9, lineNumber: 4 },
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    highlights.resolve([
+      {
+        kind: 2,
+        range: range(0, 6, 0, 10),
+      },
+    ]);
+
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("applies TypeScript document highlights when the Monaco cancellation token stays active", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(0, 6, 0, 10),
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const token = { isCancellationRequested: false };
+    const highlights = await highlightProvider.provideDocumentHighlights(
+      textModel(),
+      { column: 9, lineNumber: 4 },
+      token,
+    );
+
+    expect(highlights).toEqual([
+      {
+        kind: monaco.languages.DocumentHighlightKind.Read,
+        range: expect.objectContaining({
+          endColumn: 11,
+          endLineNumber: 1,
+          startColumn: 7,
+          startLineNumber: 1,
+        }),
+      },
+    ]);
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips repeated TypeScript document highlight requests for the same word under the cursor", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(0, 6, 0, 10),
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const wordModel = (word: string) => ({
+      ...textModel(),
+      getWordAtPosition: vi.fn(() => ({
+        endColumn: 5,
+        startColumn: 1,
+        word,
+      })),
+    });
+    const token = { isCancellationRequested: false };
+    const userModel = wordModel("user");
+
+    const first = await highlightProvider.provideDocumentHighlights(
+      userModel,
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+    const second = await highlightProvider.provideDocumentHighlights(
+      userModel,
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+
+    await highlightProvider.provideDocumentHighlights(
+      wordModel("account"),
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
   });
 
   it("drops in-flight TypeScript selection ranges after switching project tabs", async () => {

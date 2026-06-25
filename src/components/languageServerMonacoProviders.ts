@@ -28,6 +28,10 @@ import {
   type LanguageServerWorkspaceEditGateway,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
+import {
+  createDocumentHighlightRequestTracker,
+  type DocumentHighlightRequestTracker,
+} from "../domain/documentHighlightRequestTracker";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
@@ -324,6 +328,8 @@ export function registerLanguageServerMonacoProviders(
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
   const registry = monaco.languages as Partial<typeof monaco.languages>;
+  const documentHighlightTracker =
+    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
   const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -531,8 +537,15 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const documentHighlight = monaco.languages.registerDocumentHighlightProvider
     ? monaco.languages.registerDocumentHighlightProvider("php", {
-        provideDocumentHighlights: (model, position) =>
-          provideDocumentHighlights(monaco, context, model, position),
+        provideDocumentHighlights: (model, position, token) =>
+          provideDocumentHighlights(
+            monaco,
+            context,
+            documentHighlightTracker,
+            model,
+            position,
+            token,
+          ),
       })
     : { dispose: () => undefined };
   const documentSymbol = monaco.languages.registerDocumentSymbolProvider
@@ -1161,8 +1174,10 @@ async function provideTypeDefinition(
 async function provideDocumentHighlights(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
+  tracker: DocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>,
   model: MonacoModel,
   position: MonacoPosition,
+  token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
   const request = featureRequestContext(
     context,
@@ -1175,6 +1190,17 @@ async function provideDocumentHighlights(
     return null;
   }
 
+  const word = model.getWordAtPosition(position)?.word ?? null;
+  const version = model.getVersionId();
+
+  if (word !== null) {
+    const cached = tracker.cached(request.path, word, version);
+
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return null;
@@ -1185,13 +1211,23 @@ async function provideDocumentHighlights(
       request.position,
     );
 
+    if (token.isCancellationRequested) {
+      return null;
+    }
+
     if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
-    return highlights.map((highlight) =>
+    const mapped = highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
+
+    if (word !== null) {
+      tracker.remember(request.path, word, version, mapped);
+    }
+
+    return mapped;
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
