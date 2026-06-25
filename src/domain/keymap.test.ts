@@ -67,6 +67,12 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["php.goToTest"]).toBe("");
   });
 
+  it("leaves Run All Tests in File unbound by default (palette only)", () => {
+    expect(defaultShortcutForCommand("php.runTestFile", "mac")).toBe("");
+    expect(defaultShortcutForCommand("php.runTestFile", "linux")).toBe("");
+    expect(defaultKeymapSettings("mac")["php.runTestFile"]).toBe("");
+  });
+
   it("defaults complete current statement to Cmd+Shift+Enter on mac and Ctrl+Shift+Enter elsewhere", () => {
     expect(defaultShortcutForCommand("editor.completeStatement", "mac")).toBe(
       "Cmd+Shift+Enter",

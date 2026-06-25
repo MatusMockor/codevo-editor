@@ -438,6 +438,7 @@ import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import { phpTestGutterTargets } from "../domain/phpTestGutterTargets";
 import {
   phpTestRunCommand,
+  type PhpTestRunCommandInput,
   type PhpTestRunner,
 } from "../domain/phpTestCommand";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
@@ -8067,35 +8068,40 @@ export function useWorkbenchController(
   // terminal write. The command's filter is strictly sanitized in
   // `phpTestRunCommand`; a name that is not a safe identifier yields no command
   // (no write), so no file content can ever inject shell input.
-  const runTestAt = useCallback(
-    async (target: PhpTestGutterTarget) => {
+  // Shared per-workspace-isolated core for every "run test in terminal" action.
+  // It captures the requested root up front, probes the runner, re-checks the
+  // active root AFTER the await before any terminal write (so a mid-flight
+  // workspace switch drops the run), and builds the command via the strictly
+  // sanitizing `phpTestRunCommand`. A `null` filter runs the whole suite/class
+  // with no `--filter`. Returning the runner-built command unchanged means no
+  // value derived from file content can introduce shell metacharacters.
+  const runPhpTestCommand = useCallback(
+    async (
+      input: Omit<PhpTestRunCommandInput, "runner">,
+    ): Promise<PhpTestRunOutcome> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (!requestedRoot || !requestedDescriptor?.php) {
-        return;
+        return "dropped";
       }
 
       const runner = await detectPhpTestRunner(requestedRoot);
 
       if (!isRequestedRootActive()) {
-        return;
+        return "dropped";
       }
 
-      const command = phpTestRunCommand({
-        filter: target.filter,
-        match: target.match,
-        runner,
-      });
+      const command = phpTestRunCommand({ ...input, runner });
 
       if (!command) {
-        setMessage(runTestRejectionNotice(target));
-        return;
+        return "rejected";
       }
 
       runInActiveTerminal(command);
+      return "ran";
     },
     [
       detectPhpTestRunner,
@@ -8103,6 +8109,22 @@ export function useWorkbenchController(
       workspaceDescriptor,
       workspaceRoot,
     ],
+  );
+
+  const runTestAt = useCallback(
+    async (target: PhpTestGutterTarget) => {
+      const outcome = await runPhpTestCommand({
+        filter: target.filter,
+        match: target.match,
+      });
+
+      if (outcome !== "rejected") {
+        return;
+      }
+
+      setMessage(runTestRejectionNotice(target));
+    },
+    [runPhpTestCommand],
   );
 
   // Keymap entry point for "Run Test Under Cursor": parses the active PHP test
@@ -8145,6 +8167,52 @@ export function useWorkbenchController(
 
     await runTestAt(target);
   }, [runTestAt, workspaceDescriptor, workspaceRoot]);
+
+  // Keymap / palette entry point for "Run All Tests in File": runs the whole
+  // active test file rather than a single test. For a PHPUnit file we run the
+  // class target (its `--filter <ClassName>` runs every method in the class).
+  // For a Pest file (no test class) we fall back to running the whole suite with
+  // no `--filter`: a file-path argument cannot pass the identifier allow-list,
+  // and quoting an arbitrary path into the terminal is a needless injection
+  // surface, so the conservative whole-suite run is preferred. Gated to PHP test
+  // files; per-workspace isolation is inherited from `runTestAt` /
+  // `runPhpTestCommand` (requested root captured up front, re-checked after the
+  // runner probe before any terminal write).
+  const runAllTestsForActiveDocument = useCallback(async () => {
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const requestedDocument = activeDocumentRef.current;
+
+    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
+      return;
+    }
+
+    if (requestedDocument.language !== "php") {
+      return;
+    }
+
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocument.path,
+    );
+
+    if (
+      !relativePath ||
+      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
+    ) {
+      return;
+    }
+
+    const targets = phpTestGutterTargets(requestedDocument.content);
+    const classTarget = targets.find((target) => target.kind === "class");
+
+    if (classTarget) {
+      await runTestAt(classTarget);
+      return;
+    }
+
+    await runPhpTestCommand({ filter: null });
+  }, [runPhpTestCommand, runTestAt, workspaceDescriptor, workspaceRoot]);
 
   const openPathForNavigation = useCallback(
     async (
@@ -21421,6 +21489,16 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "php.runTestFile",
+      title: "Run All Tests in File",
+      category: "PHP",
+      shortcut: shortcut("php.runTestFile"),
+      isEnabled: (context) =>
+        context.hasWorkspace && isActiveDocumentPhpTest,
+      run: runAllTestsForActiveDocument,
+    });
+
+    registry.register({
       id: "file.quickOpen",
       title: "Quick Open File",
       category: "File",
@@ -22087,7 +22165,9 @@ export function useWorkbenchController(
     deleteActiveDocument,
     generateTestForActiveDocument,
     goToTestForActiveDocument,
+    isActiveDocumentPhpTest,
     runTestForActiveDocument,
+    runAllTestsForActiveDocument,
     goToDeclaration,
     canSearchClassOpenSymbols,
     goToDefinition,
@@ -26731,6 +26811,11 @@ function missingTestPartnerMessage(
 
   return "No test found for this class. Run Generate Test to create one.";
 }
+
+// Result of a single isolated "run test in terminal" attempt: `ran` wrote the
+// command, `dropped` short-circuited on a workspace guard (no root / stale root
+// after the runner probe), `rejected` means the sanitizer refused the filter.
+type PhpTestRunOutcome = "ran" | "dropped" | "rejected";
 
 // Notice shown when a parsed test target cannot be turned into a safe command.
 // PHPUnit identifiers are rejected only when they fall outside the word-character
