@@ -331,19 +331,31 @@ fn get_workspace_trust(
 }
 
 #[tauri::command]
-fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
+async fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
+    // tree-sitter parsing is CPU-bound; run it on the blocking pool so the Tauri
+    // WebView main thread stays responsive while a project is opening.
+    run_blocking_command(move || parse_php_syntax_blocking(&source)).await
+}
+
+fn parse_php_syntax_blocking(source: &str) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
     let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
-    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    let tree = parser.parse(source).map_err(|error| error.to_string())?;
     Ok(tree.diagnostics())
 }
 
 #[tauri::command]
-fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline, String> {
+async fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline, String> {
+    // tree-sitter parse + symbol extraction is the heaviest per-open command;
+    // keep it off the main thread.
+    run_blocking_command(move || parse_php_file_outline_blocking(&path, &source)).await
+}
+
+fn parse_php_file_outline_blocking(path: &str, source: &str) -> Result<PhpFileOutline, String> {
     let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
-    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    let tree = parser.parse(source).map_err(|error| error.to_string())?;
     let extractor = TreeSitterPhpSymbolExtractor;
-    let symbols = extractor.extract(&tree, &source);
-    let relative_path = path_file_label(&path);
+    let symbols = extractor.extract(&tree, source);
+    let relative_path = path_file_label(path);
     let records: Vec<PhpFileOutlineSymbolRecord> = symbols
         .into_iter()
         .map(|symbol| PhpFileOutlineSymbolRecord {
@@ -354,7 +366,7 @@ fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline
             kind: php_file_outline_node_kind_from_symbol(symbol.kind),
             line_number: symbol.range.start_line as i64,
             name: symbol.name,
-            path: path.clone(),
+            path: path.to_string(),
             relative_path: relative_path.clone(),
         })
         .collect();
@@ -498,6 +510,24 @@ impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
     fn emit_completion(&self, event: MetadataScanCompletionEvent) {
         let _ = self.app.emit(METADATA_SCAN_COMPLETED_EVENT, event);
     }
+}
+
+/// Runs a blocking command body on Tokio's dedicated blocking pool so the Tauri
+/// WebView main thread is never stalled by file-system, tree-sitter, or SQLite
+/// work — the same off-main-thread discipline used by the LSP feature commands
+/// (`LanguageServerRegistry::send_request_async`).
+///
+/// The closure must own everything it touches (`'static`); callers capture and
+/// clone their arguments before handing the work off, so nothing borrows across
+/// the `await` and per-workspace isolation is decided by the captured values.
+async fn run_blocking_command<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Command task failed: {error}"))?
 }
 
 fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
@@ -1373,19 +1403,29 @@ fn plan_javascript_typescript_language_server(
 }
 
 #[tauri::command]
-fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .read_directory(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
+async fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+    // Directory listing hits the disk; keep it off the main thread so opening a
+    // project (loadDirectory) cannot stall the WebView during index I/O.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .read_directory(&PathBuf::from(path))
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn read_text_file(path: String) -> Result<String, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .read_text_file(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
+async fn read_text_file(path: String) -> Result<String, String> {
+    // File reads (restored tabs at open) hit the disk; keep them off the main
+    // thread to avoid WebView stalls while the indexer contends for disk I/O.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .read_text_file(&PathBuf::from(path))
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1397,58 +1437,89 @@ fn rename_path(from: String, to: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn search_files(
+async fn search_files(
     root: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<FileSearchResult>, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .search_files(&PathBuf::from(root), &query, limit)
-        .map_err(|error| error.to_string())
+    // File-name search walks the workspace tree; keep it off the main thread.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .search_files(&PathBuf::from(root), &query, limit)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn search_text(root: String, query: String, limit: usize) -> Result<Vec<TextSearchResult>, String> {
-    let searcher = RipgrepTextSearcher;
-    searcher
-        .search(&PathBuf::from(root), &query, limit)
-        .map_err(|error| error.to_string())
+async fn search_text(
+    root: String,
+    query: String,
+    limit: usize,
+) -> Result<Vec<TextSearchResult>, String> {
+    // Full-text search spawns ripgrep and reads its output; keep it off the main
+    // thread so the WebView is not blocked while it runs.
+    run_blocking_command(move || {
+        let searcher = RipgrepTextSearcher;
+        searcher
+            .search(&PathBuf::from(root), &query, limit)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn search_project_symbols(
+async fn search_project_symbols(
     app: AppHandle,
     root: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<ProjectSymbolSearchResult>, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let index = open_workspace_index(&app, &root)?;
-    index
-        .search_project_symbols(&query, limit)
-        .map_err(|error| error.to_string())
+    // Opening the per-workspace SQLite index and scanning it (LIKE + ORDER BY)
+    // is blocking and contends with the background indexer; resolve the root and
+    // run the whole round-trip off the main thread. The captured `root` keeps
+    // this request bound to its own workspace database (no cross-root leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let index = open_workspace_index(&app, &root)?;
+        index
+            .search_project_symbols(&query, limit)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let index = open_workspace_index(&app, &root)?;
-    index.load_php_tree().map_err(|error| error.to_string())
+async fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
+    // Loading the full workspace symbol tree is a large SQLite read; resolve the
+    // requested root and run it off the main thread against that root's database
+    // only.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let index = open_workspace_index(&app, &root)?;
+        index.load_php_tree().map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_php_file_outline(
+async fn get_php_file_outline(
     app: AppHandle,
     root: String,
     path: String,
 ) -> Result<PhpFileOutline, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let path = resolve_workspace_path(&root, &path)?;
-    let index = open_workspace_index(&app, &root)?;
-    index
-        .load_php_file_outline(&path.to_string_lossy())
-        .map_err(|error| error.to_string())
+    // Path resolution + the per-file SQLite read both block; resolve the root
+    // and run them off the main thread, scoped to the requested workspace.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let path = resolve_workspace_path(&root, &path)?;
+        let index = open_workspace_index(&app, &root)?;
+        index
+            .load_php_file_outline(&path.to_string_lossy())
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -4048,7 +4119,8 @@ mod tests {
         filter_lsp_workspace_symbols_to_workspace,
         javascript_typescript_did_change_configuration_settings,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
-        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
+        parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
+        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, search_files,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -4064,6 +4136,8 @@ mod tests {
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
+    use crate::php_file_outline::PhpFileOutlineNodeKind;
+    use crate::workspace::FileEntryKind;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::{
@@ -5371,6 +5445,128 @@ mod tests {
         for (key, field) in payload {
             value.insert(key.clone(), field.clone());
         }
+    }
+
+    // The index/file/parse commands moved off the Tauri main thread (async fn +
+    // spawn_blocking). These tests drive the real async commands through the Tauri
+    // async runtime and assert behaviour is unchanged off-thread, that concurrent
+    // requests succeed, and that file commands stay isolated per workspace root.
+
+    #[test]
+    fn parse_php_file_outline_extracts_symbols_off_thread() {
+        let outline = tauri::async_runtime::block_on(parse_php_file_outline(
+            "/workspace/src/User.php".to_string(),
+            "<?php\n\nnamespace App;\n\nclass User\n{\n    public function name() {}\n}\n"
+                .to_string(),
+        ))
+        .expect("outline result");
+
+        let class = outline
+            .nodes
+            .iter()
+            .find(|node| node.label == "User")
+            .expect("class node");
+        assert_eq!(class.kind, PhpFileOutlineNodeKind::Class);
+        assert!(
+            class.children.iter().any(|child| child.label == "name"),
+            "expected method node under the class"
+        );
+    }
+
+    #[test]
+    fn parse_php_syntax_reports_no_diagnostics_for_valid_source_off_thread() {
+        let diagnostics =
+            tauri::async_runtime::block_on(parse_php_syntax("<?php\n\necho 'ok';\n".to_string()))
+                .expect("syntax result");
+
+        assert!(
+            diagnostics.is_empty(),
+            "valid PHP should produce no syntax diagnostics, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn parse_php_file_outline_handles_concurrent_requests_off_thread() {
+        let first_future = parse_php_file_outline(
+            "/workspace/src/First.php".to_string(),
+            "<?php\nclass First {}\n".to_string(),
+        );
+        let second_future = parse_php_file_outline(
+            "/workspace/src/Second.php".to_string(),
+            "<?php\nclass Second {}\n".to_string(),
+        );
+
+        // Spawn both on the runtime so they are genuinely in flight together on
+        // the blocking pool, then join them.
+        let first_task = tauri::async_runtime::spawn(first_future);
+        let second_task = tauri::async_runtime::spawn(second_future);
+
+        let first = tauri::async_runtime::block_on(first_task)
+            .expect("first join")
+            .expect("first outline");
+        let second = tauri::async_runtime::block_on(second_task)
+            .expect("second join")
+            .expect("second outline");
+
+        assert!(first.nodes.iter().any(|node| node.label == "First"));
+        assert!(second.nodes.iter().any(|node| node.label == "Second"));
+    }
+
+    #[test]
+    fn read_text_file_returns_contents_off_thread() {
+        let root = temp_workspace("read-text");
+        let file = root.join("greeting.txt");
+        fs::write(&file, "hello off thread").expect("write file");
+
+        let contents = tauri::async_runtime::block_on(read_text_file(path_string(&file)))
+            .expect("read result");
+
+        assert_eq!(contents, "hello off thread");
+    }
+
+    #[test]
+    fn read_directory_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("dir-iso-a");
+        let root_b = temp_workspace("dir-iso-b");
+        fs::write(root_a.join("only-in-a.php"), "<?php").expect("file in a");
+        fs::write(root_b.join("only-in-b.php"), "<?php").expect("file in b");
+
+        let entries_a = tauri::async_runtime::block_on(read_directory(path_string(&root_a)))
+            .expect("read directory a");
+        let entries_b = tauri::async_runtime::block_on(read_directory(path_string(&root_b)))
+            .expect("read directory b");
+
+        let names_a: Vec<&str> = entries_a.iter().map(|entry| entry.name.as_str()).collect();
+        let names_b: Vec<&str> = entries_b.iter().map(|entry| entry.name.as_str()).collect();
+
+        assert!(names_a.contains(&"only-in-a.php"));
+        assert!(!names_a.contains(&"only-in-b.php"));
+        assert!(names_b.contains(&"only-in-b.php"));
+        assert!(!names_b.contains(&"only-in-a.php"));
+        assert!(entries_a
+            .iter()
+            .all(|entry| matches!(entry.kind, FileEntryKind::File)));
+    }
+
+    #[test]
+    fn search_files_finds_workspace_files_off_thread() {
+        let root = temp_workspace("search-files");
+        fs::write(root.join("Controller.php"), "<?php").expect("controller");
+        fs::write(root.join("README.md"), "docs").expect("readme");
+
+        let results = tauri::async_runtime::block_on(search_files(
+            path_string(&root),
+            "Controller".to_string(),
+            10,
+        ))
+        .expect("search result");
+
+        assert!(
+            results
+                .iter()
+                .any(|result| result.path.ends_with("Controller.php")),
+            "expected Controller.php in results, got {results:?}"
+        );
     }
 }
 
