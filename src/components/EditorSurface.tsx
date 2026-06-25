@@ -164,6 +164,7 @@ interface EditorSurfaceProps {
   onGoForward(): void;
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
+  onGoToSuperMethod(): void;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
   onToggleGitBlame?(): void;
@@ -244,6 +245,7 @@ function EditorSurfaceComponent({
   onGoForward,
   onGoToDefinition,
   onGoToImplementationAt,
+  onGoToSuperMethod,
   onRunTestAt,
   onToggleBookmarkAtLine,
   onToggleGitBlame,
@@ -932,6 +934,14 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.goToSuperMethod",
+        label: "Go to Super Method",
+        keybindings: keybinding("editor.goToSuperMethod"),
+        run: () => {
+          onGoToSuperMethod();
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.openClass",
         label: "Open Class",
         keybindings: keybinding("class.quickOpen"),
@@ -1137,6 +1147,7 @@ function EditorSurfaceComponent({
     onGoForward,
     onGoToDefinition,
     onGoToImplementationAt,
+    onGoToSuperMethod,
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,

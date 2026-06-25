@@ -5,6 +5,7 @@ import {
   phpClassPathCandidates,
   phpDocPropertyPositionOrNull,
   phpDocMethodPositionOrNull,
+  phpEnclosingMethodNameAt,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -1724,6 +1725,59 @@ abstract class ParserFactory
       phpImplementationDeclarationContextAt(
         abstractSource,
         positionAfter(abstractSource, "label"),
+      ),
+    ).toBeNull();
+  });
+
+  it("resolves the enclosing method name from a position inside its body", () => {
+    const source = `<?php
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(string $name): string
+    {
+        $value = trim($name);
+
+        return $value;
+    }
+
+    protected function boot(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "trim($name")),
+    ).toBe("handle");
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "function handle")),
+    ).toBe("handle");
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "function boot")),
+    ).toBe("boot");
+  });
+
+  it("returns null when the position is outside any method body", () => {
+    const source = `<?php
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "class Child")),
+    ).toBeNull();
+    expect(
+      phpEnclosingMethodNameAt(
+        source,
+        positionAfter(source, "extends BaseService"),
       ),
     ).toBeNull();
   });

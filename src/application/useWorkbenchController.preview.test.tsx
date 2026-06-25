@@ -46203,6 +46203,428 @@ class BaseService
     await expect(actionsPromise).resolves.toEqual([]);
   });
 
+  it("navigates from an overriding method to the parent class super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(string $name): string
+    {
+        return parent::handle($name);
+    }
+}
+`;
+    const parentSource = `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return parentSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(parentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: parentPath,
+      position: positionAfter(parentSource, "function "),
+    });
+  });
+
+  it("navigates from an implementing method to the interface declaration", async () => {
+    const classPath = "/workspace/app/Services/FileMailer.php";
+    const interfacePath = "/workspace/app/Contracts/Mailer.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\Mailer;
+
+class FileMailer implements Mailer
+{
+    public function send(string $body): void
+    {
+    }
+}
+`;
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface Mailer
+{
+    public function send(string $body): void;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "FileMailer.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function send"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: positionAfter(interfaceSource, "function "),
+    });
+  });
+
+  it("navigates from a method to the trait that declares it", async () => {
+    const classPath = "/workspace/app/Services/Reporter.php";
+    const traitPath = "/workspace/app/Concerns/FormatsReports.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Concerns\\FormatsReports;
+
+class Reporter
+{
+    use FormatsReports;
+
+    public function format(string $body): string
+    {
+        return $body;
+    }
+}
+`;
+    const traitSource = `<?php
+
+namespace App\\Concerns;
+
+trait FormatsReports
+{
+    public function format(string $body): string
+    {
+        return strtoupper($body);
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === traitPath) {
+          return traitSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Reporter.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function format"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(traitPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: traitPath,
+      position: positionAfter(traitSource, "function "),
+    });
+  });
+
+  it("walks the hierarchy to the nearest ancestor that declares the super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const middlePath = "/workspace/app/Services/MiddleService.php";
+    const basePath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends MiddleService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const middleSource = `<?php
+
+namespace App\\Services;
+
+class MiddleService extends BaseService
+{
+    public function other(): void
+    {
+    }
+}
+`;
+    const baseSource = `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === middlePath) {
+          return middleSource;
+        }
+
+        if (path === basePath) {
+          return baseSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(basePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: basePath,
+      position: positionAfter(baseSource, "function "),
+    });
+  });
+
+  it("shows a notice when the current method does not override a super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function uniqueToChild(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function uniqueToChild"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(classPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").toContain("No super method");
+  });
+
+  it("drops stale go to super method targets after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Child.php";
+    const parentPath = "/workspace-a/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const parentRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === parentPath) {
+        return parentRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = runCommand(getWorkbench(), "editor.goToSuperMethod");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(parentPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    parentRead.resolve(`<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(parentPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").not.toContain("No super method");
+  });
+
   it("offers a generate getters and setters action for properties without accessors", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

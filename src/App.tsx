@@ -618,6 +618,9 @@ function App() {
     },
     [workbench.goToImplementationAt],
   );
+  const goToSuperMethod = useCallback(() => {
+    void workbench.goToSuperMethod();
+  }, [workbench.goToSuperMethod]);
   const markActiveFileRevealSignal = useCallback(() => {
     setActiveFileRevealSignal((current) => current + 1);
   }, []);
@@ -973,6 +976,7 @@ function App() {
             onGoForward={goForward}
             onGoToDefinition={goToDefinition}
             onGoToImplementationAt={goToImplementationAt}
+            onGoToSuperMethod={goToSuperMethod}
             onRunTestAt={workbench.runTestAt}
             onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
             onToggleGitBlame={workbench.toggleGitBlame}

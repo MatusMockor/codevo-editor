@@ -43,6 +43,16 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults Go to Super Method to Cmd+U on mac and Ctrl+U elsewhere (PhpStorm parity)", () => {
+    expect(defaultShortcutForCommand("editor.goToSuperMethod", "mac")).toBe(
+      "Cmd+U",
+    );
+    expect(defaultShortcutForCommand("editor.goToSuperMethod", "linux")).toBe(
+      "Ctrl+U",
+    );
+    expect(defaultKeymapSettings("mac")["editor.goToSuperMethod"]).toBe("Cmd+U");
+  });
+
   it("defaults the recent files switcher to Cmd+E on mac and Ctrl+E elsewhere", () => {
     expect(defaultShortcutForCommand("editor.recentFiles", "mac")).toBe("Cmd+E");
     expect(defaultShortcutForCommand("editor.recentFiles", "linux")).toBe(

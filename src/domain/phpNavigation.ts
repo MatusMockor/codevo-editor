@@ -1971,6 +1971,88 @@ function phpMethodDeclarationPrefixAt(
   return /\bfunction\s*&?\s*$/.test(prefix) ? prefix : null;
 }
 
+export function phpEnclosingMethodNameAt(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const offset = offsetAtPosition(source, position);
+  let enclosingMethodName: string | null = null;
+
+  for (const match of source.matchAll(
+    /\bfunction\s*&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
+  )) {
+    const methodName = match[1] || "";
+    const parametersStart = (match.index ?? 0) + match[0].length - 1;
+    const parametersEnd = matchingParenthesisOffset(source, parametersStart);
+
+    if (!parametersEnd) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", parametersEnd);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingBraceOffset(source, bodyStart);
+
+    if (!bodyEnd) {
+      continue;
+    }
+
+    if (offset >= (match.index ?? 0) && offset <= bodyEnd) {
+      enclosingMethodName = methodName;
+    }
+  }
+
+  return enclosingMethodName;
+}
+
+function matchingBraceOffset(source: string, openOffset: number): number | null {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = openOffset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
 function phpClassReferenceList(source: string): string[] {
   return source
     .split(",")

@@ -228,6 +228,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -298,6 +299,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -367,6 +369,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -444,6 +447,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -516,6 +520,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -577,6 +582,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
           onLanguageServerError={vi.fn()}
@@ -685,6 +691,7 @@ describe("EditorSurface", () => {
         onGoForward={vi.fn()}
         onGoToDefinition={vi.fn()}
         onGoToImplementationAt={vi.fn()}
+        onGoToSuperMethod={vi.fn()}
         onEditorFocused={vi.fn()}
         onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
         onLanguageServerError={vi.fn()}
@@ -753,6 +760,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -813,6 +821,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -873,6 +882,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -931,6 +941,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -997,6 +1008,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1059,6 +1071,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1133,6 +1146,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1251,6 +1265,7 @@ interface ParserFactory
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={onGoToImplementationAt}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1366,6 +1381,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onRunTestAt={onRunTestAt}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
@@ -1475,6 +1491,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onToggleBookmarkAtLine={onToggleBookmarkAtLine}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
@@ -1581,6 +1598,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1656,6 +1674,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1742,6 +1761,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1838,6 +1858,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -1952,6 +1973,7 @@ class InvoiceServiceTest extends TestCase
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2038,6 +2060,7 @@ class InvoiceServiceTest extends TestCase
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onEditorFocused={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
@@ -2121,6 +2144,7 @@ interface PaymentGateway
               onGoForward={vi.fn()}
               onGoToDefinition={vi.fn()}
               onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
               onEditorFocused={vi.fn()}
               onLanguageServerError={vi.fn()}
               onOpenClass={vi.fn()}
@@ -2236,6 +2260,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2314,6 +2339,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2395,6 +2421,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2469,6 +2496,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2555,6 +2583,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2637,6 +2666,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2741,6 +2771,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2844,6 +2875,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2966,6 +2998,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -3074,6 +3107,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -3188,6 +3222,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -3256,6 +3291,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3326,6 +3362,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3401,6 +3438,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3491,6 +3529,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3551,6 +3590,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3650,6 +3690,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3746,6 +3787,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3833,6 +3875,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3952,6 +3995,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4061,6 +4105,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4167,6 +4212,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4276,6 +4322,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4606,6 +4653,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={onGoToDefinition}
           onGoToImplementationAt={onGoToImplementationAt}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4700,6 +4748,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4782,6 +4831,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4950,6 +5000,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5030,6 +5081,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5128,6 +5180,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5227,6 +5280,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5334,6 +5388,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5419,6 +5474,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5540,6 +5596,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5659,6 +5716,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5747,6 +5805,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5813,6 +5872,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5892,6 +5952,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -5951,6 +6012,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -6002,6 +6064,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -6060,6 +6123,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -6117,6 +6181,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -6682,6 +6747,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -6763,6 +6829,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -6844,6 +6911,7 @@ interface PaymentGateway
       onGoForward: vi.fn(),
       onGoToDefinition: vi.fn(),
       onGoToImplementationAt: vi.fn(),
+      onGoToSuperMethod: vi.fn(),
       onLanguageServerError: vi.fn(),
       onOpenClass: vi.fn(),
       onOpenFile: vi.fn(),
@@ -6897,6 +6965,7 @@ function memoGuardProps(
     onGoForward: vi.fn(),
     onGoToDefinition: vi.fn(),
     onGoToImplementationAt: vi.fn(),
+    onGoToSuperMethod: vi.fn(),
     onEditorFocused: overrides.onEditorFocused ?? vi.fn(),
     onLanguageServerError: vi.fn(),
     onOpenClass: vi.fn(),
@@ -6977,6 +7046,7 @@ async function mountCompleteStatementSurface(
         onGoForward={vi.fn()}
         onGoToDefinition={vi.fn()}
         onGoToImplementationAt={vi.fn()}
+        onGoToSuperMethod={vi.fn()}
         onEditorFocused={vi.fn()}
         onLanguageServerError={vi.fn()}
         onOpenClass={vi.fn()}

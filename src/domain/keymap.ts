@@ -43,6 +43,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+U",
+    id: "editor.goToSuperMethod",
+    label: "Go to Super Method",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Shift+F12",
     id: "editor.findReferences",
     label: "Find All References",
