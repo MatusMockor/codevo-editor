@@ -2195,6 +2195,171 @@ interface PaymentGateway
     expect(overviewDecorationCalls()).toHaveLength(0);
   });
 
+  it("does not re-map bookmark gutter decorations per keystroke when bookmarks are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "constants.ts",
+      path: "/workspace/src/constants.ts",
+      savedContent: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    // Stable bookmark-line identity across renders so the only thing changing is
+    // the activeDocument object identity (a keystroke).
+    const bookmarkedLineNumbers = [2];
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            bookmarkedLineNumbers={bookmarkedLineNumbers}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const bookmarkDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some(
+          (decoration) =>
+            decoration.options?.linesDecorationsClassName ===
+            "bookmark-gutter-glyph",
+        ),
+      );
+
+    await renderWith(activeDocument);
+
+    expect(bookmarkDecorationCalls().length).toBeGreaterThan(0);
+    editor.deltaDecorations.mockClear();
+
+    // Simulate a keystroke: new activeDocument object, same path + same
+    // bookmarked-line identity. Bookmark gutter decorations must NOT re-map.
+    await renderWith({ ...activeDocument, content: "const one = 12;\nconst two = 2;\nconst three = 3;\n" });
+
+    expect(bookmarkDecorationCalls()).toHaveLength(0);
+  });
+
+  it("re-maps bookmark gutter decorations when bookmarked lines change", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "constants.ts",
+      path: "/workspace/src/constants.ts",
+      savedContent: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (bookmarkedLineNumbers: readonly number[]) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            bookmarkedLineNumbers={bookmarkedLineNumbers}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const bookmarkDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some(
+          (decoration) =>
+            decoration.options?.linesDecorationsClassName ===
+            "bookmark-gutter-glyph",
+        ),
+      );
+
+    await renderWith([2]);
+
+    expect(bookmarkDecorationCalls().length).toBeGreaterThan(0);
+    editor.deltaDecorations.mockClear();
+
+    // Toggle a bookmark: the bookmarked-line set changes, so the gutter must
+    // repaint with the new line's glyph.
+    await renderWith([3]);
+
+    const repaint = bookmarkDecorationCalls();
+    expect(repaint.length).toBeGreaterThan(0);
+    expect(repaint[repaint.length - 1]?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            linesDecorationsClassName: "bookmark-gutter-glyph",
+          }),
+          range: expect.objectContaining({
+            startLineNumber: 3,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("re-maps diagnostic overview decorations when diagnostics change", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",

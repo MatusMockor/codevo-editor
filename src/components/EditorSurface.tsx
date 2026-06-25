@@ -1184,7 +1184,11 @@ function EditorSurfaceComponent({
         [],
       );
     };
-  }, [activeDocument, bookmarkedLineNumbers, editorApi, monacoApi]);
+    // Depend on the active document path (not its full identity) so typing does
+    // not re-run this effect every keystroke. The body reads only the path (for
+    // the per-tab stale guard) plus bookmarkedLineNumbers, so the path covers
+    // file switches and bookmarkedLineNumbers covers bookmark toggles.
+  }, [activeDocument?.path, bookmarkedLineNumbers, editorApi, monacoApi]);
 
   useEffect(() => {
     if (!changePreview) {
