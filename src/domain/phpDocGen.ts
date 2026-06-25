@@ -25,6 +25,21 @@ import type {
 
 const NO_RETURN_TYPES = new Set(["void", "never"]);
 
+/**
+ * Reports whether `renderGeneratedPhpDoc` would emit any `@param` or `@return`
+ * line for `member`. It is `false` only for a no-parameter method whose return
+ * type is `void` / `never`, where the rendered block would be an empty
+ * `/** *\/`. Callers use this to suppress the "Generate PHPDoc" action in that
+ * case (PhpStorm offers nothing for an empty docblock).
+ */
+export function generatedPhpDocHasContent(member: PhpMethodMember): boolean {
+  if (member.parameters.length > 0) {
+    return true;
+  }
+
+  return !isNoReturnType(member.returnType);
+}
+
 export function renderGeneratedPhpDoc(
   member: PhpMethodMember,
   indent = "",

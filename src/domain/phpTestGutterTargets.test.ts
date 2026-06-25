@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { phpTestGutterTargets } from "./phpTestGutterTargets";
+import {
+  phpTestGutterTargets,
+  runAllTestsTarget,
+} from "./phpTestGutterTargets";
 
 describe("phpTestGutterTargets", () => {
   it("emits a class target plus a method target per PHPUnit test* method", () => {
@@ -247,5 +250,57 @@ class InvoiceService
 }
 `),
     ).toEqual([]);
+  });
+});
+
+describe("runAllTestsTarget", () => {
+  it("returns the class target for a pure PHPUnit file", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+class InvoiceServiceTest extends TestCase
+{
+    public function test_totals(): void
+    {
+    }
+}
+`);
+
+    const target = runAllTestsTarget(targets);
+
+    expect(target?.kind).toBe("class");
+    expect(target?.filter).toBe("InvoiceServiceTest");
+  });
+
+  it("runs the whole suite (no target) for a pure Pest file", () => {
+    const targets = phpTestGutterTargets(`<?php
+
+it('calculates totals', function () {
+});
+`);
+
+    expect(runAllTestsTarget(targets)).toBeNull();
+  });
+
+  it("runs the whole suite (no target) for a mixed Pest + class file", () => {
+    // A file with a concrete *Test class AND Pest it()/test() calls: filtering
+    // by the class name would skip the Pest tests, so prefer the whole suite.
+    const targets = phpTestGutterTargets(`<?php
+
+class FeatureTest extends TestCase
+{
+    public function test_legacy(): void
+    {
+    }
+}
+
+it('also runs as pest', function () {
+});
+`);
+
+    expect(runAllTestsTarget(targets)).toBeNull();
+  });
+
+  it("returns null when there are no targets at all", () => {
+    expect(runAllTestsTarget([])).toBeNull();
   });
 });

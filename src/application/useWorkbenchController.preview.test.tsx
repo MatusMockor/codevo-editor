@@ -46388,6 +46388,151 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers Generate PHPDoc when the cursor sits on a method's leading attribute", async () => {
+    const classPath = "/workspace/app/Http/Controllers/UserController.php";
+    const classSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+class UserController
+{
+    #[Route('/users/{id}')]
+    public function show(int $id): string
+    {
+        return (string) $id;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "UserController.php"));
+    });
+
+    // Cursor parked on the `#[Route(...)]` attribute line above the method.
+    const offset = classSource.indexOf("Route('/users");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const phpDocAction = actions.find(
+      (action) => action.title === "Generate PHPDoc",
+    );
+    expect(phpDocAction).toBeDefined();
+    expect(phpDocAction?.edits[0]?.text).toContain(" * @param int $id");
+
+    // The docblock is still inserted above the `function` line (below the
+    // attribute), not above the attribute line.
+    const declarationLineNumber =
+      classSource.slice(0, classSource.indexOf("public function show")).split(
+        "\n",
+      ).length;
+    expect(phpDocAction?.edits[0]?.range.startLineNumber).toBe(
+      declarationLineNumber,
+    );
+  });
+
+  it("offers Generate PHPDoc when the cursor sits on a method's modifier line", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function first(): int
+    {
+        return 1;
+    }
+
+    public function greet(string $name): bool
+    {
+        return true;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    // Cursor on the `public` modifier of `greet`, before its `function` keyword.
+    const offset = classSource.indexOf("public function greet");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const phpDocAction = actions.find(
+      (action) => action.title === "Generate PHPDoc",
+    );
+    expect(phpDocAction).toBeDefined();
+    // Resolves to `greet`, not the preceding `first` method.
+    expect(phpDocAction?.edits[0]?.text).toContain(" * @param string $name");
+    expect(phpDocAction?.edits[0]?.text).toContain(" * @return bool");
+  });
+
+  it("does not offer Generate PHPDoc when the docblock would be empty", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function boot(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    // A no-parameter `void` method would produce a docblock with neither
+    // `@param` nor `@return`; PhpStorm offers nothing here, so neither do we.
+    const offset = classSource.indexOf("boot(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Generate PHPDoc"),
+    ).toBe(false);
+  });
+
   it("offers an optimize imports action when an import is unused", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

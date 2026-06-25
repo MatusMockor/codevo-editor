@@ -55,6 +55,33 @@ export function phpTestGutterTargets(source: string): PhpTestGutterTarget[] {
   return targets;
 }
 
+/**
+ * Chooses the target for a "Run All Tests in File" run from the gutter targets
+ * of a file.
+ *
+ * For a pure PHPUnit file the class target runs the whole class via
+ * `--filter <ClassName>`. But that filter would skip Pest `it()` / `test()`
+ * tests, so as soon as any Pest target is present (a Pest file, or a mixed file
+ * that also declares a concrete `*Test` class), we return `null` to signal a
+ * whole-suite run (no `--filter`). `null` is also returned when there are no
+ * targets at all.
+ */
+export function runAllTestsTarget(
+  targets: readonly PhpTestGutterTarget[],
+): PhpTestGutterTarget | null {
+  if (targets.some(isPestTarget)) {
+    return null;
+  }
+
+  return targets.find((target) => target.kind === "class") ?? null;
+}
+
+// Pest `it()` / `test()` targets are the only ones encoded as free-form
+// descriptions; PHPUnit class and method targets are strict identifiers.
+function isPestTarget(target: PhpTestGutterTarget): boolean {
+  return target.kind === "method" && target.match === "description";
+}
+
 function phpUnitTargets(
   source: string,
   lineStartOffsets: number[],

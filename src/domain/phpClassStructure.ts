@@ -52,6 +52,18 @@ export interface PhpMethodMember {
   isAbstract: boolean;
   isFinal: boolean;
   isStatic: boolean;
+  /**
+   * Character offset of the first character that belongs to this member's
+   * declaration once leading attributes (`#[...]`) and modifier keywords
+   * (`public`, `static`, `final`, ...) above the `function` keyword are
+   * included. Equals `declarationOffset` when nothing precedes `function`.
+   *
+   * Cursor-to-member matching uses this as the span's lower bound so a cursor
+   * parked on an attribute or modifier line still resolves to this method.
+   * Code-gen insertion still anchors on `declarationOffset` (above the
+   * `function` line, below the attributes).
+   */
+  memberStartOffset: number;
   name: string;
   parameters: PhpStructuredParameter[];
   phpDoc: PhpMethodPhpDoc | null;
@@ -281,12 +293,155 @@ function buildMethodMember(
     isAbstract: isInterface || modifiers.has("abstract"),
     isFinal: modifiers.has("final"),
     isStatic: modifiers.has("static"),
+    memberStartOffset: memberStartOffset(
+      source,
+      masked,
+      declaration,
+      functionOffset,
+    ),
     name,
     parameters,
     phpDoc,
     returnType,
     visibility: visibilityFromModifiers(modifiers),
   };
+}
+
+// Walks back from the `function` keyword over the run of leading modifier
+// keywords (`public`, `static`, `readonly`, ...), attribute blocks (`#[...]`)
+// and whitespace that decorate the declaration. Stops at the previous member
+// boundary - a closing brace / semicolon of a sibling member, the class body's
+// opening brace, or any other non-decorator token. The returned offset is the
+// first character that belongs to this member; it never reaches into the source
+// of the preceding member.
+//
+// Token detection runs against the ORIGINAL source because the masked source
+// blanks out whole `#[...]` attribute blocks. To stay robust against `}`/`;`
+// inside a string or comment in the decorator gap (e.g. a PHPDoc), boundary
+// classification is cross-checked against the masked source, where such
+// characters are blanked.
+function memberStartOffset(
+  source: string,
+  masked: string,
+  declaration: PhpTypeDeclaration,
+  functionOffset: number,
+): number {
+  const lowerBound = declaration.bodyStart;
+  let cursor = functionOffset;
+
+  for (;;) {
+    const previous = previousMemberToken(source, masked, lowerBound, cursor);
+
+    if (previous === null) {
+      return cursor;
+    }
+
+    cursor = previous;
+  }
+}
+
+// Returns the start offset of the modifier keyword or attribute block that ends
+// immediately before `cursor` (ignoring whitespace), or `null` when the run of
+// member decorators is exhausted. `null` means `cursor` is already the member
+// start.
+function previousMemberToken(
+  source: string,
+  masked: string,
+  lowerBound: number,
+  cursor: number,
+): number | null {
+  let index = cursor - 1;
+
+  while (index >= lowerBound && /\s/.test(source[index] || "")) {
+    index -= 1;
+  }
+
+  if (index < lowerBound) {
+    return null;
+  }
+
+  if (source[index] === "]") {
+    return attributeBlockStart(source, lowerBound, index);
+  }
+
+  return modifierKeywordStart(source, masked, lowerBound, index);
+}
+
+// Given the offset of a `]` that closes an attribute block, returns the offset
+// of its matching `#[` by balancing brackets in the original source. Returns
+// `null` when the brackets do not resolve to a well-formed `#[...]` block within
+// the class body.
+//
+// Known limitation: brackets that appear inside an attribute argument's STRING
+// literal (e.g. `#[Route(']')]`) are counted literally, which can mis-place the
+// opener. This mirrors `maskPhpStringsAndComments`, which does not honour strings
+// inside `#[...]` either, so the limitation is pre-existing and consistent. The
+// impact is bounded: only the cursor-matching lower bound is affected for that
+// rare construct; docblock insertion still anchors on `declarationOffset`.
+function attributeBlockStart(
+  source: string,
+  lowerBound: number,
+  closeBracket: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = closeBracket; index >= lowerBound; index -= 1) {
+    const character = source[index] || "";
+
+    if (character === "]") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== "[") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth !== 0) {
+      continue;
+    }
+
+    if (source[index - 1] === "#") {
+      return index - 1;
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
+// Given the offset of the last character of a contiguous identifier token that
+// ends immediately before the member decorator run, returns the token's start
+// offset when it is a recognised member modifier, otherwise `null` (the run is
+// exhausted; this token belongs to a previous member or boundary). The token
+// must be real code - if the masked source blanked it (a string/comment), it is
+// not a modifier.
+function modifierKeywordStart(
+  source: string,
+  masked: string,
+  lowerBound: number,
+  tokenEnd: number,
+): number | null {
+  let start = tokenEnd;
+
+  while (start - 1 >= lowerBound && /[A-Za-z]/.test(source[start - 1] || "")) {
+    start -= 1;
+  }
+
+  if (masked.slice(start, tokenEnd + 1) !== source.slice(start, tokenEnd + 1)) {
+    return null;
+  }
+
+  const token = source.slice(start, tokenEnd + 1).toLowerCase();
+
+  if (!(MEMBER_MODIFIERS as readonly string[]).includes(token)) {
+    return null;
+  }
+
+  return start;
 }
 
 function parseStructuredParameters(

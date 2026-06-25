@@ -435,7 +435,10 @@ import {
   type PhpTestNavigationDirection,
 } from "../domain/phpTestNavigation";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
-import { phpTestGutterTargets } from "../domain/phpTestGutterTargets";
+import {
+  phpTestGutterTargets,
+  runAllTestsTarget,
+} from "../domain/phpTestGutterTargets";
 import {
   phpTestRunCommand,
   type PhpTestRunCommandInput,
@@ -443,7 +446,10 @@ import {
 } from "../domain/phpTestCommand";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
-import { renderGeneratedPhpDoc } from "../domain/phpDocGen";
+import {
+  generatedPhpDocHasContent,
+  renderGeneratedPhpDoc,
+} from "../domain/phpDocGen";
 import {
   detectMissingThisMember,
   renderCreateMethodStub,
@@ -8170,15 +8176,18 @@ export function useWorkbenchController(
   }, [runTestAt, workspaceDescriptor, workspaceRoot]);
 
   // Keymap / palette entry point for "Run All Tests in File": runs the whole
-  // active test file rather than a single test. For a PHPUnit file we run the
-  // class target (its `--filter <ClassName>` runs every method in the class).
-  // For a Pest file (no test class) we fall back to running the whole suite with
-  // no `--filter`: a file-path argument cannot pass the identifier allow-list,
-  // and quoting an arbitrary path into the terminal is a needless injection
-  // surface, so the conservative whole-suite run is preferred. Gated to PHP test
-  // files; per-workspace isolation is inherited from `runTestAt` /
-  // `runPhpTestCommand` (requested root captured up front, re-checked after the
-  // runner probe before any terminal write).
+  // active test file rather than a single test. For a pure PHPUnit file we run
+  // the class target (its `--filter <ClassName>` runs every method in the
+  // class). For a Pest file - or a mixed file that declares a concrete `*Test`
+  // class AND Pest `it()` / `test()` calls - we fall back to running the whole
+  // suite with no `--filter`: a `--filter <ClassName>` would skip the Pest
+  // tests, and a file-path argument cannot pass the identifier allow-list (and
+  // quoting an arbitrary path into the terminal is a needless injection
+  // surface), so the conservative whole-suite run is preferred. The selection is
+  // owned by `runAllTestsTarget`. Gated to PHP test files; per-workspace
+  // isolation is inherited from `runTestAt` / `runPhpTestCommand` (requested
+  // root captured up front, re-checked after the runner probe before any
+  // terminal write).
   const runAllTestsForActiveDocument = useCallback(async () => {
     const requestedRoot = workspaceRoot;
     const requestedDescriptor = workspaceDescriptor;
@@ -8205,10 +8214,10 @@ export function useWorkbenchController(
     }
 
     const targets = phpTestGutterTargets(requestedDocument.content);
-    const classTarget = targets.find((target) => target.kind === "class");
+    const target = runAllTestsTarget(targets);
 
-    if (classTarget) {
-      await runTestAt(classTarget);
+    if (target) {
+      await runTestAt(target);
       return;
     }
 
@@ -26232,6 +26241,12 @@ function phpGeneratePhpDocCodeAction(
     return null;
   }
 
+  // A no-parameter `void` / `never` method would render an empty `/** *\/`;
+  // PhpStorm offers nothing for that, so neither do we.
+  if (!generatedPhpDocHasContent(method)) {
+    return null;
+  }
+
   const lineStart = phpLineStartOffset(source, method.declarationOffset);
   const indent = phpLeadingIndent(source, lineStart);
   const docBlock = renderGeneratedPhpDoc(method, indent);
@@ -26249,24 +26264,26 @@ function phpGeneratePhpDocCodeAction(
 }
 
 /**
- * Selects the method whose span (declaration line start through to just before
- * the next method's declaration, or the end of source) contains the cursor
- * offset. This lets "Generate PHPDoc" fire whether the cursor is on the method
- * signature or anywhere inside its body. Returns `null` when the cursor sits
- * before the first method (e.g. on the class declaration).
+ * Selects the method whose span (the member start - which covers any leading
+ * attributes and modifier keywords above the `function` keyword - through to
+ * just before the next method's member start, or the end of source) contains
+ * the cursor offset. This lets "Generate PHPDoc" fire whether the cursor is on a
+ * leading `#[Attribute]` line, a modifier (`public`) line, the signature, or
+ * anywhere inside the body. Returns `null` when the cursor sits before the first
+ * method (e.g. on the class declaration).
  */
 function phpMethodAtOffset(
   structure: PhpClassStructure,
   offset: number,
 ): PhpMethodMember | null {
   const ordered = [...structure.methods].sort(
-    (a, b) => a.declarationOffset - b.declarationOffset,
+    (a, b) => a.memberStartOffset - b.memberStartOffset,
   );
 
   let match: PhpMethodMember | null = null;
 
   for (const method of ordered) {
-    if (method.declarationOffset > offset) {
+    if (method.memberStartOffset > offset) {
       break;
     }
 

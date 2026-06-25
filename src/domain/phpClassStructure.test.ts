@@ -82,6 +82,103 @@ class Foo {
     );
   });
 
+  it("records a member-start offset that covers leading modifiers", () => {
+    const source = `<?php
+class Foo {
+    public function bar(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    // The member start sits at the `public` modifier, not the `function`
+    // keyword, so a cursor on the modifier line still resolves to this method.
+    expect(bar.memberStartOffset).toBe(source.indexOf("public function bar"));
+    expect(bar.memberStartOffset).toBeLessThan(bar.declarationOffset);
+  });
+
+  it("extends the member-start offset above leading attributes", () => {
+    const source = `<?php
+class Foo {
+    #[Route('/x')]
+    #[Other]
+    public function bar(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    // The member start sits at the first attribute, above the modifiers.
+    expect(bar.memberStartOffset).toBe(source.indexOf("#[Route('/x')]"));
+    expect(bar.memberStartOffset).toBeLessThan(bar.declarationOffset);
+  });
+
+  it("does not swallow a preceding member into the member-start offset", () => {
+    const source = `<?php
+class Foo {
+    public function first(): void {}
+
+    #[Route('/x')]
+    public function second(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const second = methodNamed(methods, "second");
+
+    // The member start of `second` stops after `first`'s closing brace, at its
+    // own first attribute - it must not reach back into `first`.
+    expect(second.memberStartOffset).toBe(source.indexOf("#[Route('/x')]"));
+    expect(second.memberStartOffset).toBeGreaterThan(
+      source.indexOf("public function first"),
+    );
+  });
+
+  it("sets member-start to the function keyword when no modifiers precede it", () => {
+    const source = `<?php
+interface Foo {
+    function bar(): void;
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    expect(bar.memberStartOffset).toBe(bar.declarationOffset);
+  });
+
+  it("covers attributes carrying nested array arguments", () => {
+    const source = `<?php
+class Foo {
+    #[Attr([1, [2, 3]])]
+    public function bar(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    expect(bar.memberStartOffset).toBe(source.indexOf("#[Attr"));
+  });
+
+  it("does not let a leading PHPDoc bleed into the member-start offset", () => {
+    const source = `<?php
+class Foo {
+    /** does stuff */
+    public function bar(): void {}
+}
+`;
+
+    const { methods } = parsePhpClassStructure(source);
+    const bar = methodNamed(methods, "bar");
+
+    // The member start stops at the `public` modifier; the docblock above it is
+    // not part of the member span (insertion still anchors above `function`).
+    expect(bar.memberStartOffset).toBe(source.indexOf("public function bar"));
+  });
+
   it("defaults visibility to public when no modifier is present", () => {
     const source = `<?php
       class Foo {

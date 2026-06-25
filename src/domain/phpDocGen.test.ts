@@ -3,7 +3,10 @@ import type {
   PhpMethodMember,
   PhpStructuredParameter,
 } from "./phpClassStructure";
-import { renderGeneratedPhpDoc } from "./phpDocGen";
+import {
+  generatedPhpDocHasContent,
+  renderGeneratedPhpDoc,
+} from "./phpDocGen";
 
 function parameter(
   overrides: Partial<PhpStructuredParameter> = {},
@@ -25,6 +28,7 @@ function method(overrides: Partial<PhpMethodMember> = {}): PhpMethodMember {
     isAbstract: false,
     isFinal: false,
     isStatic: false,
+    memberStartOffset: 0,
     name: "doWork",
     parameters: [],
     phpDoc: null,
@@ -158,5 +162,46 @@ describe("renderGeneratedPhpDoc", () => {
     );
 
     expect(result).toContain(" * @param int $count");
+  });
+});
+
+describe("generatedPhpDocHasContent", () => {
+  it("is false for a no-parameter void method (empty docblock)", () => {
+    expect(
+      generatedPhpDocHasContent(
+        method({ parameters: [], returnType: "void" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is false for a no-parameter never method (empty docblock)", () => {
+    expect(
+      generatedPhpDocHasContent(
+        method({ parameters: [], returnType: "never" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is true when the method has at least one parameter", () => {
+    expect(
+      generatedPhpDocHasContent(
+        method({
+          parameters: [parameter({ name: "$id", type: "int" })],
+          returnType: "void",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("is true when the method has a documentable return type", () => {
+    expect(
+      generatedPhpDocHasContent(method({ parameters: [], returnType: "bool" })),
+    ).toBe(true);
+  });
+
+  it("is true when the return type is absent (renders @return mixed)", () => {
+    expect(
+      generatedPhpDocHasContent(method({ parameters: [], returnType: null })),
+    ).toBe(true);
   });
 });

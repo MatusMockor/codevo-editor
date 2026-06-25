@@ -32,6 +32,7 @@ function method(
     isAbstract: true,
     isFinal: false,
     isStatic: false,
+    memberStartOffset: 0,
     parameters: [],
     phpDoc: null,
     returnType: null,
