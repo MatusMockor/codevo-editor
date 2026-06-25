@@ -21,6 +21,7 @@ describe("keymap", () => {
       "editor.duplicateLine": "Cmd+Shift+D",
       "editor.addSelectionToNextMatch": "Cmd+D",
       "editor.deleteLine": "Cmd+Shift+K",
+      "editor.surroundWith": "Cmd+Alt+T",
       "editor.fontZoomIn": "Cmd+=",
       "editor.fontZoomOut": "Cmd+-",
       "editor.fontZoomReset": "Cmd+0",

@@ -121,6 +121,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+Alt+T",
+    id: "editor.surroundWith",
+    label: "Surround With",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",

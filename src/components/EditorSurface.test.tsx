@@ -18,9 +18,13 @@ import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
   dispose?: ReturnType<typeof vi.fn>;
+  getEOL?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
   getLineCount?: ReturnType<typeof vi.fn>;
+  getLineMaxColumn?: ReturnType<typeof vi.fn>;
+  getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
+  getValueInRange?: ReturnType<typeof vi.fn>;
   uri: {
     fsPath: string;
     path: string;
@@ -32,6 +36,7 @@ interface FakeEditor {
   deltaDecorations: ReturnType<typeof vi.fn>;
   executeEdits: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
+  getContribution: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
@@ -2860,6 +2865,339 @@ interface ParserFactory
     );
   });
 
+  it("surrounds the selected text with a chosen control-flow block via a snippet", async () => {
+    const lines = ["doStuff();", "more();"];
+    const activeDocument: EditorDocument = {
+      content: `${lines.join("\n")}\n`,
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getEOL: vi.fn(() => "\n"),
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      getLineMaxColumn: vi.fn(
+        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+      ),
+      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getValueInRange: vi.fn(() => "doStuff();"),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const snippetController = { insert: vi.fn() };
+    editor.getContribution.mockReturnValue(snippetController);
+    editor.getSelection.mockReturnValue({
+      endColumn: "doStuff();".length + 1,
+      endLineNumber: 1,
+      startColumn: 1,
+      startLineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const surroundWithAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.surroundWith");
+
+    expect(surroundWithAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyT],
+        label: "Surround With",
+      }),
+    );
+
+    await act(async () => {
+      surroundWithAction.run();
+      await Promise.resolve();
+    });
+
+    const picker = queryRequired<HTMLElement>(
+      document.body,
+      "[aria-label='Surround with']",
+    );
+    const ifButton = Array.from(
+      picker.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("if"));
+
+    expect(ifButton).toBeTruthy();
+
+    await act(async () => {
+      ifButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(editor.setSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endColumn: "doStuff();".length + 1,
+        endLineNumber: 1,
+        startColumn: 1,
+        startLineNumber: 1,
+      }),
+    );
+    expect(snippetController.insert).toHaveBeenCalledWith(
+      ["if (${1:condition}) {", "    doStuff();$0", "}"].join("\n"),
+    );
+
+    expect(
+      document.body.querySelector("[aria-label='Surround with']"),
+    ).toBeNull();
+  });
+
+  it("falls back to the current line when surround-with runs without a selection", async () => {
+    const lines = ["  doStuff();"];
+    const activeDocument: EditorDocument = {
+      content: `${lines.join("\n")}\n`,
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getEOL: vi.fn(() => "\n"),
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      getLineMaxColumn: vi.fn(
+        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+      ),
+      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getValueInRange: vi.fn(() => "  doStuff();"),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const snippetController = { insert: vi.fn() };
+    editor.getContribution.mockReturnValue(snippetController);
+    editor.getPosition.mockReturnValue({ column: 5, lineNumber: 1 });
+    editor.getSelection.mockReturnValue({
+      endColumn: 5,
+      endLineNumber: 1,
+      startColumn: 5,
+      startLineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const surroundWithAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.surroundWith");
+
+    await act(async () => {
+      surroundWithAction.run();
+      await Promise.resolve();
+    });
+
+    const picker = queryRequired<HTMLElement>(
+      document.body,
+      "[aria-label='Surround with']",
+    );
+    const foreachButton = Array.from(
+      picker.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("foreach"));
+
+    await act(async () => {
+      foreachButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(editor.setSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endColumn: "  doStuff();".length + 1,
+        endLineNumber: 1,
+        startColumn: 1,
+        startLineNumber: 1,
+      }),
+    );
+    expect(snippetController.insert).toHaveBeenCalledWith(
+      [
+        "  foreach (${1:\\$items} as ${2:\\$item}) {",
+        "      doStuff();$0",
+        "  }",
+      ].join("\n"),
+    );
+  });
+
+  it("never applies a captured surround-with wrap to a different document", async () => {
+    const lines = ["doStuff();"];
+    const activeDocument: EditorDocument = {
+      content: `${lines.join("\n")}\n`,
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getEOL: vi.fn(() => "\n"),
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      getLineMaxColumn: vi.fn(
+        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
+      ),
+      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getValueInRange: vi.fn(() => "doStuff();"),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const snippetController = { insert: vi.fn() };
+    editor.getContribution.mockReturnValue(snippetController);
+    editor.getSelection.mockReturnValue({
+      endColumn: "doStuff();".length + 1,
+      endLineNumber: 1,
+      startColumn: 1,
+      startLineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const surroundWithAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.surroundWith");
+
+    await act(async () => {
+      surroundWithAction.run();
+      await Promise.resolve();
+    });
+
+    // Simulate a tab switch underneath the open picker: the live model now
+    // points at a different document than the one the request was captured on.
+    editor.getModel.mockReturnValue({
+      ...model,
+      uri: { fsPath: "/workspace/Other.php", path: "/workspace/Other.php" },
+    });
+
+    const picker = queryRequired<HTMLElement>(
+      document.body,
+      "[aria-label='Surround with']",
+    );
+    const ifButton = Array.from(
+      picker.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("if"));
+
+    await act(async () => {
+      ifButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(snippetController.insert).not.toHaveBeenCalled();
+    expect(
+      document.body.querySelector("[aria-label='Surround with']"),
+    ).toBeNull();
+  });
+
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     stubNavigatorPlatform("Linux x86_64");
 
@@ -4595,6 +4933,7 @@ function createEditor(model: FakeModel): FakeEditor {
     ),
     executeEdits: vi.fn(),
     focus: vi.fn(),
+    getContribution: vi.fn(() => ({ insert: vi.fn() })),
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
       height: 480,
@@ -4676,6 +5015,7 @@ function createMonaco(model: FakeModel) {
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,
+      KeyT: 14,
       KeyW: 7,
       UpArrow: 9,
     },
@@ -4712,6 +5052,24 @@ function createMonaco(model: FakeModel) {
       parse: vi.fn((uri: string) => ({ uri })),
     },
     Range: class FakeRange {
+      endColumn: number;
+      endLineNumber: number;
+      startColumn: number;
+      startLineNumber: number;
+
+      constructor(
+        startLineNumber: number,
+        startColumn: number,
+        endLineNumber: number,
+        endColumn: number,
+      ) {
+        this.startLineNumber = startLineNumber;
+        this.startColumn = startColumn;
+        this.endLineNumber = endLineNumber;
+        this.endColumn = endColumn;
+      }
+    },
+    Selection: class FakeSelection {
       endColumn: number;
       endLineNumber: number;
       startColumn: number;

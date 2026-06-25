@@ -40,6 +40,11 @@ import {
   isLanguageServerDocument,
 } from "../domain/languageServerDocumentSync";
 import { Breadcrumbs } from "./Breadcrumbs";
+import { SurroundWithPicker } from "./SurroundWithPicker";
+import {
+  surroundWithSnippet,
+  type SurroundWithTemplateId,
+} from "../domain/surroundWith";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -290,9 +295,21 @@ function EditorSurfaceComponent({
   const [breadcrumbSymbolsByPath, setBreadcrumbSymbolsByPath] = useState<
     Record<string, LanguageServerDocumentSymbol[]>
   >({});
+  // Holds the captured selection context while the Surround With quick-pick is
+  // open. It is scoped to this editor surface and cleared as soon as a template
+  // is chosen or the picker is dismissed, so nothing leaks across tabs.
+  const [surroundWithRequest, setSurroundWithRequest] =
+    useState<SurroundWithRequest | null>(null);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
+  }, [activeDocument]);
+
+  // A document switch must never apply a wrap meant for the previous file, so
+  // any pending Surround With request is dropped when the active document
+  // changes.
+  useEffect(() => {
+    setSurroundWithRequest(null);
   }, [activeDocument]);
 
   useEffect(() => {
@@ -882,6 +899,20 @@ function EditorSurfaceComponent({
           triggerEditorAction(editorApi, "editor.action.deleteLines"),
       }),
       editorApi.addAction({
+        id: "mockor.surroundWith",
+        label: "Surround With",
+        keybindings: keybinding("editor.surroundWith"),
+        run: () => {
+          const request = surroundWithRequestFromEditor(monacoApi, editorApi);
+
+          if (!request) {
+            return;
+          }
+
+          setSurroundWithRequest(request);
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
@@ -916,6 +947,7 @@ function EditorSurfaceComponent({
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
+    setSurroundWithRequest,
   ]);
 
   useEffect(() => {
@@ -1491,6 +1523,25 @@ function EditorSurfaceComponent({
           </div>
         </div>
       ) : null}
+      <SurroundWithPicker
+        isOpen={surroundWithRequest !== null}
+        onClose={() => {
+          setSurroundWithRequest(null);
+          editorApi?.focus();
+        }}
+        onSelect={(templateId) => {
+          if (surroundWithRequest && editorApi && monacoApi) {
+            applySurroundWith(
+              monacoApi,
+              editorApi,
+              surroundWithRequest,
+              templateId,
+            );
+          }
+
+          setSurroundWithRequest(null);
+        }}
+      />
     </div>
   );
 }
@@ -1515,6 +1566,179 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
     case "undo":
       return "undo";
   }
+}
+
+// The selection context captured when the Surround With quick-pick opens. It is
+// snapshotted up front so the wrap is always applied to the exact range the
+// developer triggered the command on, even if focus moves to the picker.
+interface SurroundWithRequest {
+  eol: string;
+  indent: string;
+  indentUnit: string;
+  // Absolute path of the document the request was captured on. The apply path
+  // re-checks it against the live model so a wrap can never land on another tab.
+  path: string;
+  selection: {
+    endColumn: number;
+    endLineNumber: number;
+    startColumn: number;
+    startLineNumber: number;
+  };
+  text: string;
+}
+
+// Snapshots the active selection (or the current line when the selection is
+// empty) along with the document's indentation settings, so the chosen template
+// can be applied later from the picker without re-reading editor state.
+function surroundWithRequestFromEditor(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+): SurroundWithRequest | null {
+  const model = editor.getModel();
+  const selection = editor.getSelection();
+
+  if (!model || !selection) {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path) {
+    return null;
+  }
+
+  const range = surroundWithTargetRange(monaco, model, selection);
+  const firstLine = model.getLineContent(range.startLineNumber);
+  const indent = leadingWhitespace(firstLine);
+  const text = dedentSurroundWithText(model.getValueInRange(range), indent);
+
+  return {
+    eol: model.getEOL(),
+    indent,
+    indentUnit: indentUnitFromModel(model),
+    path,
+    selection: {
+      endColumn: range.endColumn,
+      endLineNumber: range.endLineNumber,
+      startColumn: range.startColumn,
+      startLineNumber: range.startLineNumber,
+    },
+    text,
+  };
+}
+
+// Removes the wrapper's base indentation from every captured line so the helper
+// re-indents the body relative to the new block. The relative indentation
+// between body lines is preserved because only the shared leading prefix is
+// stripped.
+function dedentSurroundWithText(text: string, indent: string): string {
+  if (indent.length === 0) {
+    return text;
+  }
+
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) => (line.startsWith(indent) ? line.slice(indent.length) : line))
+    .join("\n");
+}
+
+// Expands an empty selection to cover the whole current line so the developer
+// can surround a line without first selecting it (PhpStorm behaviour). A real
+// selection is normalised to a full-line range at both ends so the replacement
+// snippet's own indentation is authoritative.
+function surroundWithTargetRange(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  selection: Monaco.Selection,
+): Monaco.Range {
+  const startLineNumber = Math.min(
+    selection.startLineNumber,
+    selection.endLineNumber,
+  );
+  const endLineNumber = Math.max(
+    selection.startLineNumber,
+    selection.endLineNumber,
+  );
+
+  return new monaco.Range(
+    startLineNumber,
+    1,
+    endLineNumber,
+    model.getLineMaxColumn(endLineNumber),
+  );
+}
+
+function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
+  const options = model.getOptions();
+
+  if (!options.insertSpaces) {
+    return "\t";
+  }
+
+  const size = options.indentSize || options.tabSize || 4;
+  return " ".repeat(size);
+}
+
+// Replaces the captured range with the wrapped block, inserting it through the
+// snippet controller so the placeholders become tab-stops the developer can tab
+// through (condition / loop variables first, then the body / catch clause).
+function applySurroundWith(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  request: SurroundWithRequest,
+  templateId: SurroundWithTemplateId,
+): void {
+  const model = editor.getModel();
+
+  // The picker may outlive a tab switch; never apply a wrap captured on one
+  // document to a different one that is now active in this reused surface.
+  if (!model || modelPath(model) !== request.path) {
+    return;
+  }
+
+  const snippet = surroundWithSnippet({
+    eol: request.eol,
+    id: templateId,
+    indent: request.indent,
+    indentUnit: request.indentUnit,
+    text: request.text,
+  });
+
+  editor.focus();
+  editor.setSelection(
+    new monaco.Selection(
+      request.selection.startLineNumber,
+      request.selection.startColumn,
+      request.selection.endLineNumber,
+      request.selection.endColumn,
+    ),
+  );
+
+  const snippetController = editor.getContribution<SnippetInsertingContribution>(
+    "snippetController2",
+  );
+
+  if (snippetController) {
+    snippetController.insert(snippet);
+    return;
+  }
+
+  editor.executeEdits("mockor.surroundWith", [
+    {
+      forceMoveMarkers: true,
+      range: new monaco.Range(
+        request.selection.startLineNumber,
+        request.selection.startColumn,
+        request.selection.endLineNumber,
+        request.selection.endColumn,
+      ),
+      text: snippet.replace(/\$\{\d+:([^}]*)\}/g, "$1").replace(/\$0/g, ""),
+    },
+  ]);
+}
+
+interface SnippetInsertingContribution extends Monaco.editor.IEditorContribution {
+  insert(template: string): void;
 }
 
 // Runs a built-in Monaco editor action by id, so an ergonomics command (move /
