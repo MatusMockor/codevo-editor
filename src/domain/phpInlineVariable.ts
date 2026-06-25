@@ -807,10 +807,22 @@ function referencesSelf(
 }
 
 /**
- * Safe to duplicate when used at most once, or when the expression has no
- * function/method call (no `(` in its masked form) so re-evaluating it cannot
- * trigger side effects. A single property/array/variable access is pure enough
- * to repeat; anything that can invoke code is only inlined into one site.
+ * Safe to duplicate when used at most once (the expression is evaluated exactly
+ * once regardless of side effects), or — when used more than once — only when the
+ * expression is demonstrably side-effect free. Re-running an impure expression at
+ * a second site would change behaviour, so the refactor declines for it.
+ *
+ * Beyond a function/method call (`(` in its masked form), an expression carries a
+ * side effect or identity change when it contains:
+ *   - `++` / `--`  (in/decrement mutates its operand each evaluation),
+ *   - the `new` keyword (each evaluation allocates a distinct object — running it
+ *     twice changes object identity, not just cost),
+ *   - the `yield` keyword (a generator side effect / control transfer),
+ *   - a genuine `=` assignment (e.g. `$arr[$i = 3]` or a compound `+=`), which
+ *     mutates state — `==` / `===` / `!=` / `<=` / `>=` / `<=>` comparisons and
+ *     the `=>` array arrow are deliberately excluded as pure.
+ * A bare property / array / variable access or arithmetic over them is pure
+ * enough to repeat.
  */
 function isSafeToDuplicate(
   masked: string,
@@ -823,7 +835,46 @@ function isSafeToDuplicate(
 
   const expr = masked.slice(declaration.exprStart, declaration.exprEnd);
 
-  return !expr.includes("(");
+  return !hasDuplicationSideEffect(expr);
+}
+
+/**
+ * True when re-evaluating the (already string/comment-masked) expression a second
+ * time could change behaviour: a call, in/decrement, object allocation, generator
+ * yield, or a genuine assignment. Comparison operators and the array `=>` arrow
+ * are not assignments and stay pure.
+ */
+function hasDuplicationSideEffect(expr: string): boolean {
+  if (expr.includes("(")) {
+    return true;
+  }
+
+  if (/\+\+|--/.test(expr)) {
+    return true;
+  }
+
+  if (/\bnew\b/.test(expr) || /\byield\b/.test(expr)) {
+    return true;
+  }
+
+  return containsAssignment(expr);
+}
+
+/**
+ * True when the masked expression contains a genuine `=` assignment (plain or
+ * compound). PHP comparison operators (`==`, `===`, `!=`, `!==`, `<=`, `>=`,
+ * `<=>`) and the array `=>` arrow are stripped first so they never read as
+ * assignments; a `<=` / `>=` is only stripped when it is a real comparison and
+ * not the tail of a `<<=` / `>>=` shift-assignment. Any `=` surviving the strip
+ * is an assignment (`=`, `+=`, `.=`, `<<=`, `??=`, …) and a mutating side effect.
+ */
+function containsAssignment(expr: string): boolean {
+  const withoutComparisons = expr.replace(
+    /===|!==|<=>|==|!=|(?<![<>])<=|(?<![<>])>=|=>/g,
+    "",
+  );
+
+  return withoutComparisons.includes("=");
 }
 
 /**

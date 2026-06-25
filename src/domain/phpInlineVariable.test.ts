@@ -265,6 +265,205 @@ describe("planInlineVariable", () => {
     });
   });
 
+  describe("side-effect expressions are not duplicated", () => {
+    it("declines a multi-use post-increment subscript (would increment twice)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i++];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use pre-increment subscript (would increment twice)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[++$i];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use post-decrement subscript", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i--];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use `new` expression (would create two objects)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = new Foo;\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use `new` expression with arguments", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = new Foo();\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use embedded assignment side-effect", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i = 3];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use embedded left-shift compound assignment", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i <<= 2];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use embedded right-shift compound assignment", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i >>= 2];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines a multi-use null-coalescing compound assignment", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i ??= 2];\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("still inlines a multi-use spaceship comparison (`<=>` is not assignment)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $cmp = $a <=> $b;\n    foo($cmp);\n    bar($cmp);\n}\n";
+      const offset = cursorOn(source, "$cmp");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    foo($a <=> $b);\n    bar($a <=> $b);\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use left-shift expression (`<<` is not assignment)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $bits = $a << 2;\n    foo($bits);\n    bar($bits);\n}\n";
+      const offset = cursorOn(source, "$bits");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    foo($a << 2);\n    bar($a << 2);\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use less-or-equal comparison (`<=` is not assignment)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $le = $a <= $b;\n    foo($le);\n    bar($le);\n}\n";
+      const offset = cursorOn(source, "$le");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    foo($a <= $b);\n    bar($a <= $b);\n}\n",
+      );
+    });
+
+    it("declines a multi-use yield expression", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = yield $value;\n    echo $x;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("allows a single-use post-increment subscript (side effect runs once)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = $arr[$i++];\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    return $arr[$i++];\n}\n",
+      );
+    });
+
+    it("allows a single-use `new` expression (one object, no duplication)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $x = new Foo;\n    return $x;\n}\n";
+      const offset = cursorOn(source, "$x");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    return new Foo;\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use pure additive expression (no side effect, `=>` aside)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $sum = $a + $b;\n    echo $sum;\n    return $sum;\n}\n";
+      const offset = cursorOn(source, "$sum");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    echo $a + $b;\n    return $a + $b;\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use pure property access (no `=` / `++` / `new`)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $name = $user->name;\n    echo $name;\n    return $name;\n}\n";
+      const offset = cursorOn(source, "$name");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    echo $user->name;\n    return $user->name;\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use array literal (pure, contains `=>` not assignment)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $opts = ['a' => 1];\n    foo($opts);\n    bar($opts);\n}\n";
+      const offset = cursorOn(source, "$opts");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    foo(['a' => 1]);\n    bar(['a' => 1]);\n}\n",
+      );
+    });
+
+    it("still inlines a multi-use comparison expression (`==` is not assignment)", () => {
+      const source =
+        "<?php\nfunction handle() {\n    $eq = $a == $b;\n    foo($eq);\n    bar($eq);\n}\n";
+      const offset = cursorOn(source, "$eq");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction handle() {\n    foo($a == $b);\n    bar($a == $b);\n}\n",
+      );
+    });
+  });
+
   describe("string-literal and complex right-hand sides", () => {
     it("keeps a trailing string literal in a concatenation", () => {
       const source =

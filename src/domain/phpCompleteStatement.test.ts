@@ -303,4 +303,99 @@ describe("completePhpStatement", () => {
       });
     });
   });
+
+  describe("heredoc / nowdoc safety", () => {
+    it("declines on a top-level heredoc opener line (would terminate the opener)", () => {
+      const result = completePhpStatement("$x = <<<EOT", 12, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on a top-level nowdoc opener line", () => {
+      const result = completePhpStatement("$x = <<<'EOT'", 14, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on a heredoc body line (would inject `;` into string content)", () => {
+      const preceding = "$x = <<<EOT\n";
+      const result = completePhpStatement("heredoc body line", 18, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on a heredoc body line that holds an unbalanced call", () => {
+      const preceding = "$x = <<<EOT\n";
+      const result = completePhpStatement("call(arg in body", 17, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on a nowdoc body line", () => {
+      const preceding = "$x = <<<'EOT'\n";
+      const result = completePhpStatement("nowdoc body $not->interpolated", 31, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on an in-method heredoc opener line", () => {
+      const preceding = "class Foo {\n    public function bar() {\n";
+      const result = completePhpStatement("        $sql = <<<SQL", 22, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on an in-method heredoc body line", () => {
+      const preceding =
+        "class Foo {\n    public function bar() {\n        $sql = <<<SQL\n";
+      const result = completePhpStatement("        SELECT * FROM users", 28, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("declines on the heredoc closing-identifier line", () => {
+      const preceding = "$x = <<<EOT\nbody line\n";
+      const result = completePhpStatement("EOT", 4, preceding);
+
+      expect(result).toBeNull();
+    });
+
+    it("still completes a normal statement that follows a closed heredoc", () => {
+      const preceding = "$x = <<<EOT\nbody line\nEOT;\n";
+      const result = completePhpStatement("$y = 5", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$y = 5;",
+      });
+    });
+
+    it("ignores a `<<<` mention inside a preceding line comment", () => {
+      const preceding = "$x = 1; // not a heredoc <<<EOT\n";
+      const result = completePhpStatement("$y = 2", 7, preceding);
+
+      expect(result).toEqual({
+        caretColumn: 8,
+        kind: "replaceLine",
+        newText: "$y = 2;",
+      });
+    });
+
+    it("declines when a real opener follows a `<<<` inside a string on the same line", () => {
+      const result = completePhpStatement("$a = '<<<FAKE'; $b = <<<SQL", 28, "");
+
+      expect(result).toBeNull();
+    });
+
+    it("ignores a `<<<` that only appears inside a string literal (no real opener)", () => {
+      const result = completePhpStatement("$label = 'see <<<NOTE here'", 28, "");
+
+      expect(result).toEqual({
+        caretColumn: 29,
+        kind: "replaceLine",
+        newText: "$label = 'see <<<NOTE here';",
+      });
+    });
+  });
 });

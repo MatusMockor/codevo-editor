@@ -74,6 +74,16 @@ export function completePhpStatement(
     return null;
   }
 
+  // A heredoc / nowdoc literal spans multiple lines and its body is opaque string
+  // content. Whether the caret sits on the opener (`$x = <<<EOT`), on a body line
+  // or on the closing identifier, appending a `;` / `)` / `]` here would inject
+  // punctuation into the string (or truncate the opener), corrupting the literal.
+  // We carry the heredoc state across the preceding source plus the caret line and
+  // decline the moment the caret line is part of a heredoc/nowdoc construct.
+  if (isInsideHeredocConstruct(precedingSource, lineText)) {
+    return null;
+  }
+
   // When the caret sits inside a multiline construct (an array literal, call
   // argument list, closure body or `match` body opened on an earlier line), the
   // current line is only a fragment of a larger statement. Appending a `;` or
@@ -120,6 +130,107 @@ function isInsideMultilineConstruct(precedingSource: string): boolean {
   }
 
   return depth > 0;
+}
+
+// True when the caret line is part of a heredoc / nowdoc literal — its opener
+// line, any body line, or the closing-identifier line. We scan the preceding
+// source plus the caret line carrying the open-tag across line boundaries; the
+// caret line is "inside" when the heredoc was already open before it (body or
+// closer) or it opens a new heredoc itself (opener). In all three cases the line
+// is literal-or-delimiter text where injecting `;` / `)` / `]` corrupts the
+// string, so the caller must decline.
+function isInsideHeredocConstruct(
+  precedingSource: string,
+  caretLine: string,
+): boolean {
+  const state: HeredocState = { tag: null };
+
+  for (const line of splitPrecedingLines(precedingSource)) {
+    scanHeredocLine(line, state);
+  }
+
+  const openBefore = state.tag !== null;
+  scanHeredocLine(caretLine, state);
+  const openAfter = state.tag !== null;
+
+  return openBefore || openAfter;
+}
+
+// Splits `precedingSource` (joined caret-preceding lines, terminated by a
+// trailing `\n`) into its line array, dropping the synthetic trailing empty
+// segment so a phantom blank line never advances the heredoc scan.
+function splitPrecedingLines(precedingSource: string): string[] {
+  if (precedingSource.length === 0) {
+    return [];
+  }
+
+  const lines = precedingSource.split("\n");
+
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+interface HeredocState {
+  // Closing identifier of the heredoc/nowdoc currently open, or null when none.
+  tag: string | null;
+}
+
+// Advances the cross-line heredoc state by one line. When already inside a
+// heredoc, only its closing-identifier line clears the tag; otherwise a `<<<TAG`
+// opener (heredoc `<<<EOT` / `<<<"EOT"` or nowdoc `<<<'EOT'`) on this line opens
+// one. Comments are stripped first so a `<<<` mention in a `//` / `#` comment is
+// never read as an opener; the masked line is consulted to ensure the `<<<` does
+// not actually sit inside a string literal.
+function scanHeredocLine(line: string, state: HeredocState): void {
+  if (state.tag !== null) {
+    if (isHeredocCloser(line, state.tag)) {
+      state.tag = null;
+    }
+
+    return;
+  }
+
+  state.tag = heredocOpenerTag(line);
+}
+
+// Matches the closing-identifier line of a heredoc/nowdoc. PHP allows the closer
+// to be indented and to be followed immediately by `;`, `,`, `)` or `]` (or
+// nothing). The identifier must stand on a word boundary so `EOTHER` never closes
+// an `EOT` heredoc.
+function isHeredocCloser(line: string, tag: string): boolean {
+  return new RegExp(`^\\s*${tag}\\b`).test(line);
+}
+
+// Detects a heredoc/nowdoc opener on a raw line and returns its closing
+// identifier. `<<<EOT`, `<<<"EOT"` (heredoc) and `<<<'EOT'` (nowdoc) share the
+// closing identifier `EOT`. The tag is matched on the raw text (the masker would
+// blank the quoted nowdoc / double-quoted tag), but only after the `//` / `#`
+// comment body is dropped. Every `<<<` on the line is examined so a `<<<` sitting
+// inside a string literal (verified against the masked line) never hides a real
+// opener that follows it later on the same line. Returns null when none is real.
+function heredocOpenerTag(line: string): string | null {
+  const masked = maskLineStringsAndComments(line);
+  const commentStart = lineCommentStart(masked);
+  const codeEnd = commentStart === null ? line.length : commentStart;
+  const code = line.slice(0, codeEnd);
+  const codeMasked = masked.slice(0, codeEnd);
+
+  const pattern = /<<<\s*['"]?([A-Za-z_]\w*)['"]?/g;
+
+  for (
+    let match = pattern.exec(code);
+    match !== null;
+    match = pattern.exec(code)
+  ) {
+    if (codeMasked.slice(match.index, match.index + 3) === "<<<") {
+      return match[1];
+    }
+  }
+
+  return null;
 }
 
 // True when the caret line is a fragment that continues onto the next line and
