@@ -202,6 +202,11 @@ import {
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
 import {
+  phpCallArgumentInlayContexts,
+  phpParameterNameInlayHints,
+  type PhpParameterNameInlayHint,
+} from "../domain/phpInlayHints";
+import {
   isLaravelCollectionFluentMethod,
   isLaravelCollectionTerminalModelMethod,
   isLaravelDatabaseConnectionType,
@@ -607,6 +612,13 @@ interface PhpLaravelTargetCacheBucket {
 // by workspace root and reset on workspace switch and on index reindex so it
 // can never leak across project tabs or serve stale targets after a reindex.
 const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
+
+// Upper bound on the number of PHP call expressions whose target signature is
+// resolved per inlay-hints viewport request. Keeps a dense file from fanning out
+// an unbounded number of signature resolutions on every scroll; calls beyond the
+// cap simply receive no parameter-name hint until they scroll into a fresh
+// viewport window.
+const PHP_INLAY_HINT_CALL_LIMIT = 40;
 
 // Coalescing window for directory reloads triggered by external filesystem
 // changes so a burst (e.g. `git checkout`) reloads each affected directory
@@ -15947,6 +15959,60 @@ export function useWorkbenchController(
     ],
   );
 
+  const providePhpParameterInlayHints = useCallback(
+    async (
+      source: string,
+      range: { endLine: number; startLine: number },
+    ): Promise<PhpParameterNameInlayHint[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const calls = phpCallArgumentInlayContexts(source, range);
+
+      if (calls.length === 0) {
+        return [];
+      }
+
+      // Cap the calls resolved per viewport so a dense file does not fan out an
+      // unbounded number of signature resolutions on every scroll.
+      const hints: PhpParameterNameInlayHint[] = [];
+
+      for (const call of calls.slice(0, PHP_INLAY_HINT_CALL_LIMIT)) {
+        const firstArgument = call.arguments[0];
+
+        if (!firstArgument) {
+          continue;
+        }
+
+        // Reuse the signature-resolution flow by probing a position inside the
+        // call's argument list; it resolves method / static / receiver targets
+        // (free functions resolve to null, so they yield no hint).
+        const signature = await providePhpMethodSignature(source, {
+          column: firstArgument.character + 1,
+          lineNumber: firstArgument.line + 1,
+        });
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (!signature) {
+          continue;
+        }
+
+        hints.push(...phpParameterNameInlayHints(call, signature.parameters));
+      }
+
+      return hints;
+    },
+    [providePhpMethodSignature, workspaceRoot],
+  );
+
   const collectPhpAbstractMembersToImplement = useCallback(
     async (
       source: string,
@@ -25092,6 +25158,7 @@ export function useWorkbenchController(
     providePhpLaravelDefinition,
     providePhpMethodCompletions,
     providePhpMethodSignature,
+    providePhpParameterInlayHints,
     openSettingsPanel,
     openWorkspace,
     paletteOpen,

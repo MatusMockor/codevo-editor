@@ -614,6 +614,48 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists the PHP inlay hints toggle", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="php"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(checkboxWithLabel("PHP inlay hints").checked).toBe(true);
+
+    await act(async () => {
+      checkboxWithLabel("PHP inlay hints").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        phpInlayHints: false,
+      },
+    });
+  });
+
   it("restarts JavaScript and TypeScript service from settings", async () => {
     const onRestart = vi.fn(async () => undefined);
 

@@ -345,6 +345,12 @@ export function SettingsDialog({
                       phpBackend,
                     })
                   }
+                  onChangePhpInlayHints={(phpInlayHints) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      phpInlayHints,
+                    })
+                  }
                   onChangePhpVersionOverride={(phpVersionOverride) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -743,6 +749,7 @@ interface PhpSettingsProps {
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceSettings: WorkspaceSettings;
   onChangePhpBackend(backend: PhpBackendPreference): void;
+  onChangePhpInlayHints(enabled: boolean): void;
   onChangePhpVersionOverride(version: string): void;
   onChangeToolPath(
     key: "phpactorPath" | "intelephensePath",
@@ -753,6 +760,7 @@ interface PhpSettingsProps {
 function PhpSettings({
   hasWorkspace,
   onChangePhpBackend,
+  onChangePhpInlayHints,
   onChangePhpVersionOverride,
   onChangeToolPath,
   phpTools,
@@ -816,6 +824,18 @@ function PhpSettings({
           placeholder={detectedToolPath(phpTools?.intelephense)}
           value={workspaceSettings.intelephensePath || ""}
         />
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.phpInlayHints}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangePhpInlayHints(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>PHP inlay hints</span>
       </label>
 
       <div className="settings-readout">

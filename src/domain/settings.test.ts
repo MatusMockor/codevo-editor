@@ -48,6 +48,7 @@ describe("settings defaults", () => {
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
       phpBackend: "auto",
+      phpInlayHints: true,
       phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
@@ -254,6 +255,7 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptValidation: false,
         javaScriptTypeScriptVersion: "workspace",
         phpBackend: "phpactor",
+        phpInlayHints: false,
         phpVersionOverride: "8.3",
         phpactorPath: " /tools/phpactor ",
         revealActiveFileInTree: false,
@@ -294,6 +296,7 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
       phpBackend: "phpactor",
+      phpInlayHints: false,
       phpVersionOverride: "8.3",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
@@ -349,6 +352,19 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults phpInlayHints to true and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).phpInlayHints).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: "yes" }).phpInlayHints,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: false }).phpInlayHints,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: true }).phpInlayHints,
     ).toBe(true);
   });
 

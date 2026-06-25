@@ -117,6 +117,7 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
   phpBackend: PhpBackendPreference;
+  phpInlayHints: boolean;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
   revealActiveFileInTree: boolean;
@@ -225,6 +226,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
     phpBackend: "auto",
+    phpInlayHints: true,
     phpVersionOverride: null,
     phpactorPath: null,
     revealActiveFileInTree: true,
@@ -359,6 +361,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,
+    phpInlayHints: normalizeBoolean(
+      value.phpInlayHints,
+      defaults.phpInlayHints,
+    ),
     phpVersionOverride: normalizeNullableString(
       value.phpVersionOverride,
       defaults.phpVersionOverride,

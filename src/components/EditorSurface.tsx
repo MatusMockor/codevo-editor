@@ -78,6 +78,7 @@ import type {
   PhpMethodCompletion,
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
@@ -154,6 +155,7 @@ interface EditorSurfaceProps {
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
+  phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot?: string | null;
@@ -203,6 +205,10 @@ interface EditorSurfaceProps {
     source: string,
     position: EditorPosition,
   ): Promise<PhpMethodSignature | null>;
+  providePhpParameterInlayHints?(
+    source: string,
+    range: { endLine: number; startLine: number },
+  ): Promise<PhpParameterNameInlayHint[]>;
 }
 
 function EditorSurfaceComponent({
@@ -235,6 +241,7 @@ function EditorSurfaceComponent({
   monacoTheme,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
+  phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
   workspaceRoot = null,
@@ -265,6 +272,7 @@ function EditorSurfaceComponent({
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
   providePhpMethodSignature,
+  providePhpParameterInlayHints = async () => [],
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
@@ -373,6 +381,8 @@ function EditorSurfaceComponent({
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
+  const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
+  const phpInlayHintsEnabledRef = useRef(phpInlayHintsEnabled);
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
@@ -510,6 +520,14 @@ function EditorSurfaceComponent({
   }, [providePhpMethodSignature]);
 
   useEffect(() => {
+    phpParameterInlayHintsRef.current = providePhpParameterInlayHints;
+  }, [providePhpParameterInlayHints]);
+
+  useEffect(() => {
+    phpInlayHintsEnabledRef.current = phpInlayHintsEnabled;
+  }, [phpInlayHintsEnabled]);
+
+  useEffect(() => {
     provideGitBlameRef.current = provideGitBlame;
   }, [provideGitBlame]);
 
@@ -607,6 +625,7 @@ function EditorSurfaceComponent({
       isDocumentSynced: (rootPath, path) =>
         workspaceRootKeysEqual(rootPath, workspaceRoot) &&
         Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
+      isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
       limitNavigationResultsToOpenModels: true,
       provideBladeCompletions: (source, position) =>
         bladeCompletionsRef.current(source, position),
@@ -620,6 +639,8 @@ function EditorSurfaceComponent({
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
         phpMethodSignatureRef.current(source, position),
+      providePhpParameterInlayHints: (source, range) =>
+        phpParameterInlayHintsRef.current(source, range),
       refreshGateway: languageServerRefreshGateway,
       reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,

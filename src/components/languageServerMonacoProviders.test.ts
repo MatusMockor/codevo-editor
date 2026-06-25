@@ -8384,6 +8384,118 @@ function store($request): void
     expect(backedHint.kind).toBeUndefined();
   });
 
+  it("adds TS-fallback PHP parameter-name InlayHints alongside phpactor hints", async () => {
+    const registered = createRegisteredProviders();
+    const phpactorHint: LanguageServerInlayHint = {
+      kind: 1,
+      label: ": int",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 12, line: 1 },
+      tooltip: null,
+    };
+    const gateway = featuresGateway({ inlayHints: [phpactorHint] });
+    const providePhpParameterInlayHints = vi.fn(async () => [
+      { character: 6, line: 1, name: "count" },
+      { character: 9, line: 1, name: "label" },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      isPhpInlayHintsEnabled: () => true,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(2, 1, 2, 20),
+    );
+
+    expect(providePhpParameterInlayHints).toHaveBeenCalled();
+    const labels = result.hints.map((hint: any) => hint.label);
+    expect(labels).toContain(": int");
+    expect(labels).toContain("count:");
+    expect(labels).toContain("label:");
+    const parameterHint = result.hints.find(
+      (hint: any) => hint.label === "count:",
+    );
+    expect(parameterHint).toMatchObject({
+      kind: registered.monaco.languages.InlayHintKind.Parameter,
+      paddingRight: true,
+      position: { column: 7, lineNumber: 2 },
+    });
+  });
+
+  it("does not provide any PHP InlayHints when the PHP toggle is disabled", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      inlayHints: [
+        {
+          kind: 1,
+          label: ": int",
+          paddingLeft: true,
+          paddingRight: false,
+          position: { character: 12, line: 1 },
+          tooltip: null,
+        },
+      ],
+    });
+    const providePhpParameterInlayHints = vi.fn(async () => [
+      { character: 6, line: 1, name: "count" },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      isPhpInlayHintsEnabled: () => false,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.inlayHintsProvider.provideInlayHints(
+        model(),
+        new registered.monaco.Range(2, 1, 2, 20),
+      ),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    expect(gateway.inlayHints).not.toHaveBeenCalled();
+    expect(providePhpParameterInlayHints).not.toHaveBeenCalled();
+  });
+
+  it("drops in-flight TS-fallback PHP parameter hints after switching project tabs", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const parameterHints = createDeferred<
+      { character: number; line: number; name: string }[]
+    >();
+    const providePhpParameterInlayHints = vi.fn(async () => parameterHints.promise);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      getWorkspaceRoot: () => activeRoot,
+      isPhpInlayHintsEnabled: () => true,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const hintsPromise = registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(2, 1, 2, 20),
+    );
+
+    // Flush the phpactor inlay-hints await chain so the flow reaches the
+    // TS-fallback resolve, then switch tabs mid-resolution.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await Promise.resolve();
+    }
+
+    expect(providePhpParameterInlayHints).toHaveBeenCalled();
+    activeRoot = null;
+    parameterHints.resolve([{ character: 6, line: 1, name: "count" }]);
+
+    await expect(hintsPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      hints: [],
+    });
+  });
+
   it("provides mapped PHP semantic tokens with the active runtime legend", async () => {
     const registered = createRegisteredProviders();
     const customLegend = {
@@ -9223,6 +9335,7 @@ function providerContext(
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     isDocumentSynced(rootPath: string, path: string): boolean;
+    isPhpInlayHintsEnabled(): boolean;
     limitNavigationResultsToOpenModels: boolean;
     provideBladeCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
@@ -9242,6 +9355,9 @@ function providerContext(
     providePhpMethodSignature: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodSignature"]
     >;
+    providePhpParameterInlayHints: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpParameterInlayHints"]
+    >;
     reportError(error: unknown): void;
     refreshGateway: LanguageServerRefreshGateway;
     runtimeStatus: LanguageServerRuntimeStatus | null;
@@ -9260,6 +9376,7 @@ function providerContext(
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     isDocumentSynced: overrides.isDocumentSynced,
+    isPhpInlayHintsEnabled: overrides.isPhpInlayHintsEnabled,
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
     provideBladeCompletions: overrides.provideBladeCompletions,
@@ -9268,6 +9385,7 @@ function providerContext(
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
+    providePhpParameterInlayHints: overrides.providePhpParameterInlayHints,
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,

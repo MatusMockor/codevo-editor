@@ -23285,6 +23285,24 @@ class Request
         },
       ],
     });
+
+    const inlaySource = controllerSource.replace(
+      "$request->get",
+      "$request->get($id, 5)",
+    );
+    const inlayCallLine = inlaySource
+      .split("\n")
+      .findIndex((line) => line.includes("$request->get("));
+
+    await expect(
+      getWorkbench().providePhpParameterInlayHints(inlaySource, {
+        endLine: inlayCallLine,
+        startLine: inlayCallLine,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ name: "key" }),
+      expect.objectContaining({ name: "default" }),
+    ]);
   });
 
   it("uses semantic types from properties, assignments and static calls", async () => {

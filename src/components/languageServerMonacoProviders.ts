@@ -34,6 +34,7 @@ import {
   type DocumentHighlightRequestTracker,
 } from "../domain/documentHighlightRequestTracker";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
+import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
@@ -244,6 +245,13 @@ export interface LanguageServerMonacoProviderContext {
    * document on demand for interactive requests).
    */
   isDocumentSynced?(rootPath: string, path: string): boolean;
+  /**
+   * Reports whether PHP inlay hints (both the managed phpactor hints and the
+   * TS-domain parameter-name fallback) are enabled for the active workspace.
+   * When omitted the provider treats PHP inlay hints as enabled so callers that
+   * do not wire the toggle keep the prior behaviour.
+   */
+  isPhpInlayHintsEnabled?(): boolean;
   limitNavigationResultsToOpenModels?: boolean;
   /**
    * Resolves and navigates to the Blade target (a view referenced by
@@ -294,6 +302,19 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<PhpMethodSignature | null>;
+  /**
+   * Resolves PHP parameter-name inlay hints for the call expressions whose
+   * opening parenthesis sits inside `range` (a 0-based inclusive line span). The
+   * controller reuses the signature-resolution flow to map parameter names onto
+   * positional arguments and enforces per-project isolation (requested-root
+   * capture + re-check after each await), dropping stale results on a tab
+   * switch. Returns one hint per argument that should display its parameter
+   * name, with 0-based `line`/`character` positions.
+   */
+  providePhpParameterInlayHints?(
+    source: string,
+    range: { endLine: number; startLine: number },
+  ): Promise<PhpParameterNameInlayHint[]>;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -1756,6 +1777,13 @@ async function provideInlayHints(
   model: MonacoModel,
   range: Monaco.Range,
 ): Promise<Monaco.languages.InlayHintList> {
+  // The PHP inlay-hints toggle gates both the managed phpactor hints and the
+  // TS-domain parameter-name fallback. An unwired toggle defaults to enabled so
+  // existing callers keep producing phpactor hints.
+  if (context.isPhpInlayHintsEnabled && !context.isPhpInlayHintsEnabled()) {
+    return inlayHintList();
+  }
+
   const request = featureDocumentRequestContext(context, model, "inlayHint");
 
   if (!request) {
@@ -1777,21 +1805,114 @@ async function provideInlayHints(
       return inlayHintList();
     }
 
-    return inlayHintList(
-      hints.map((hint) =>
-        toMonacoInlayHint(
-          monaco,
-          request.rootPath,
-          request.path,
-          request.sessionId,
-          hint,
-        ),
+    const monacoHints = hints.map((hint) =>
+      toMonacoInlayHint(
+        monaco,
+        request.rootPath,
+        request.path,
+        request.sessionId,
+        hint,
       ),
+    );
+    const parameterHints = await providePhpParameterNameInlayHints(
+      context,
+      request,
+      model,
+      range,
+    );
+
+    return inlayHintList(
+      mergePhpInlayHints(parameterHints, monacoHints),
     );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return inlayHintList();
   }
+}
+
+/**
+ * Resolves the TS-domain parameter-name fallback hints for the viewport `range`
+ * and converts them into Monaco parameter inlay hints. phpactor parameter hints
+ * are unreliable, so this fallback (built on the signature-resolution flow)
+ * supplies `name:` hints in front of positional arguments. Re-checks the active
+ * request after the resolve await before returning (per-project isolation), and
+ * never throws: a failed fallback leaves the phpactor hints untouched.
+ */
+async function providePhpParameterNameInlayHints(
+  context: LanguageServerMonacoProviderContext,
+  request: { path: string; rootPath: string; sessionId: number },
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<LanguageServerBackedInlayHint[]> {
+  if (!context.providePhpParameterInlayHints) {
+    return [];
+  }
+
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return [];
+  }
+
+  try {
+    const hints = await context.providePhpParameterInlayHints(
+      modelSource(model, documentContext.activeDocument.content),
+      {
+        endLine: Math.max(0, range.endLineNumber - 1),
+        startLine: Math.max(0, range.startLineNumber - 1),
+      },
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return hints.map((hint) => toMonacoParameterNameInlayHint(hint));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
+  }
+}
+
+/**
+ * Converts a domain parameter-name hint (0-based line/character) into a Monaco
+ * `Parameter` inlay hint rendered as `name:` immediately before the argument.
+ */
+function toMonacoParameterNameInlayHint(
+  hint: PhpParameterNameInlayHint,
+): LanguageServerBackedInlayHint {
+  return {
+    label: `${hint.name}:`,
+    paddingLeft: false,
+    paddingRight: true,
+    position: {
+      column: hint.character + 1,
+      lineNumber: hint.line + 1,
+    },
+    kind: 2 as Monaco.languages.InlayHintKind,
+  };
+}
+
+/**
+ * Merges TS-fallback parameter hints with phpactor hints, dropping a fallback
+ * hint when phpactor already emitted a parameter hint at the same position so a
+ * call never shows the parameter name twice. phpactor hints win on overlap.
+ */
+function mergePhpInlayHints(
+  parameterHints: LanguageServerBackedInlayHint[],
+  phpactorHints: LanguageServerBackedInlayHint[],
+): LanguageServerBackedInlayHint[] {
+  const occupied = new Set(
+    phpactorHints.map(
+      (hint) => `${hint.position.lineNumber}:${hint.position.column}`,
+    ),
+  );
+  const fallback = parameterHints.filter(
+    (hint) =>
+      !occupied.has(`${hint.position.lineNumber}:${hint.position.column}`),
+  );
+
+  return [...phpactorHints, ...fallback];
 }
 
 async function resolveInlayHint(

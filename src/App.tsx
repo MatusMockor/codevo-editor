@@ -994,8 +994,12 @@ function App() {
             provideBladeDefinition={workbench.provideBladeDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
+            phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}
+            providePhpParameterInlayHints={
+              workbench.providePhpParameterInlayHints
+            }
             workspaceRoot={workbench.workspaceRoot}
           />
         )}
