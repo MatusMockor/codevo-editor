@@ -46701,6 +46701,98 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers an inline-variable code action when the cursor is on a single-assignment local", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): string
+    {
+        $name = $user->name;
+        echo $name;
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("$name");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const inline = actions.find((action) => action.title === "Inline variable");
+    expect(inline).toBeDefined();
+    // Declaration deletion plus one replacement per usage.
+    expect(inline?.edits).toHaveLength(3);
+    const deletion = inline?.edits.find((edit) => edit.text === "");
+    expect(deletion).toBeDefined();
+    expect(
+      inline?.edits.every(
+        (edit) => edit.text === "" || edit.text === "$user->name",
+      ),
+    ).toBe(true);
+  });
+
+  it("offers no inline-variable action when the local is reassigned", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): string
+    {
+        $name = $a;
+        $name = $b;
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("$name");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Inline variable"),
+    ).toBe(false);
+  });
+
   it("offers an introduce-constant code action when the cursor is on a literal", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const classSource = `<?php

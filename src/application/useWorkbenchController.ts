@@ -437,6 +437,7 @@ import {
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
 import { planExtractVariable } from "../domain/phpExtractVariable";
+import { planInlineVariable } from "../domain/phpInlineVariable";
 import {
   planIntroduceConstant,
   planIntroduceField,
@@ -15476,6 +15477,17 @@ export function useWorkbenchController(
         actions.push(extractVariableAction);
       }
 
+      // "Inline variable" is the inverse of "Extract variable": from the cursor
+      // on a single-assignment local it deletes the declaration and substitutes
+      // the value at every usage. Like extract it is a pure single-file
+      // synthesis valid in a class body or a free function, so it runs before
+      // the class-only guard below.
+      const inlineVariableAction = phpInlineVariableCodeAction(source, range);
+
+      if (inlineVariableAction) {
+        actions.push(inlineVariableAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
         return actions;
       }
@@ -25849,6 +25861,46 @@ function phpExtractVariableCodeAction(
     ],
     kind: "refactor.extract",
     title: "Extract variable",
+  };
+}
+
+/**
+ * Offers "Inline variable" when the request's cursor (the start offset) sits on
+ * a local variable that `planInlineVariable` confirms has a single, plain
+ * `$var = <expr>;` declaration. The plan yields non-overlapping edits against the
+ * original document: the declaration line is deleted and every usage of `$var`
+ * is replaced with `<expr>` (parenthesised where precedence requires). Returns
+ * `null` for any position the conservative planner rejects (multiple
+ * assignments, compound/foreach declaration, side-effecting value used more than
+ * once, …) so the action is never offered when inlining could change behaviour.
+ */
+function phpInlineVariableCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planInlineVariable(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    edits: plan.edits.map((edit) => {
+      const startPosition = offsetToPosition(source, edit.start);
+      const endPosition = offsetToPosition(source, edit.end);
+
+      return {
+        range: {
+          endColumn: endPosition.column + 1,
+          endLineNumber: endPosition.line + 1,
+          startColumn: startPosition.column + 1,
+          startLineNumber: startPosition.line + 1,
+        },
+        text: edit.text,
+      };
+    }),
+    kind: "refactor.inline",
+    title: "Inline variable",
   };
 }
 
