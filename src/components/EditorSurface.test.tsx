@@ -25,6 +25,10 @@ interface FakeModel {
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
+  isDisposed?: ReturnType<typeof vi.fn>;
+  tokenization?: {
+    forceTokenization: ReturnType<typeof vi.fn>;
+  };
   uri: {
     fsPath: string;
     path: string;
@@ -6523,6 +6527,114 @@ interface PaymentGateway
     ).map((segment) => segment.textContent);
     expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
   });
+
+  it("warms the active model's tokens progressively on idle after open", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 1200);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // Warming is deferred to idle, never run synchronously on the open path.
+    expect(model.tokenization?.forceTokenization).not.toHaveBeenCalled();
+    expect(idle.pending()).toBe(1);
+
+    await act(async () => {
+      idle.runAll();
+    });
+
+    // The whole model is warmed in chunks; the final call clamps to the last
+    // line and warming then stops re-arming.
+    const calls = (model.tokenization?.forceTokenization.mock.calls ?? []).map(
+      ([lineNumber]) => lineNumber,
+    );
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[calls.length - 1]).toBe(1200);
+    expect(idle.pending()).toBe(0);
+  });
+
+  it("stops warming the model when the surface unmounts", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 5000);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      idle.runNext();
+    });
+    const callsBeforeUnmount =
+      model.tokenization?.forceTokenization.mock.calls.length ?? 0;
+    expect(callsBeforeUnmount).toBeGreaterThan(0);
+
+    await act(async () => {
+      root.unmount();
+    });
+
+    // No pending idle slice survives the unmount, and draining the queue cannot
+    // resurrect warming for the now-gone surface.
+    expect(idle.pending()).toBe(0);
+    await act(async () => {
+      idle.runAll();
+    });
+    expect(model.tokenization?.forceTokenization.mock.calls.length).toBe(
+      callsBeforeUnmount,
+    );
+  });
+
+  it("never warms a disposed model's tokens", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 5000);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // The model is disposed (tab/file/workspace switch) while a slice is queued.
+    model.isDisposed?.mockReturnValue(true);
+
+    await act(async () => {
+      idle.runAll();
+    });
+
+    expect(model.tokenization?.forceTokenization).not.toHaveBeenCalled();
+    expect(idle.pending()).toBe(0);
+  });
 });
 
 function memoGuardProps(
@@ -6672,6 +6784,61 @@ function moveStatementAction(
   }
 
   return action;
+}
+
+// A FakeModel with the tokenization surface the background warmer drives:
+// getLineCount + isDisposed (public Monaco API) and the runtime-only
+// `tokenization.forceTokenization`.
+function tokenizableModel(path: string, lineCount: number): FakeModel {
+  return {
+    getLineCount: vi.fn(() => lineCount),
+    isDisposed: vi.fn(() => false),
+    tokenization: { forceTokenization: vi.fn() },
+    uri: { fsPath: path, path },
+  };
+}
+
+// Stubs `requestIdleCallback`/`cancelIdleCallback` so the surface's
+// idle-callback scheduler queues warming slices deterministically instead of
+// waiting on real browser idle time (jsdom has neither). Cancelled handles are
+// dropped so a cleared slice never runs. Auto-restored by the suite's
+// `vi.unstubAllGlobals()` in afterEach.
+function captureIdleCallbacks() {
+  const queue = new Map<number, () => void>();
+  let nextHandle = 1;
+
+  vi.stubGlobal("requestIdleCallback", (callback: () => void) => {
+    const handle = nextHandle++;
+    queue.set(handle, callback);
+    return handle;
+  });
+  vi.stubGlobal("cancelIdleCallback", (handle: number) => {
+    queue.delete(handle);
+  });
+
+  return {
+    pending: () => queue.size,
+    runNext: () => {
+      const entry = queue.entries().next().value as
+        | [number, () => void]
+        | undefined;
+      if (!entry) {
+        return;
+      }
+      queue.delete(entry[0]);
+      entry[1]();
+    },
+    runAll() {
+      let guard = 0;
+      while (queue.size > 0) {
+        this.runNext();
+        guard += 1;
+        if (guard > 100000) {
+          throw new Error("idle queue did not drain");
+        }
+      }
+    },
+  };
 }
 
 function createEditor(model: FakeModel): FakeEditor {

@@ -35,6 +35,11 @@ import {
   breadcrumbPathFromCursorAndSymbols,
 } from "../domain/breadcrumbs";
 import {
+  BackgroundTokenizer,
+  idleCallbackScheduler,
+  type BackgroundTokenizableModel,
+} from "../domain/backgroundTokenizer";
+import {
   detectKeymapPlatform,
   parseShortcut,
   shortcutForCommand,
@@ -258,6 +263,17 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  // Warms TextMate tokens for the active model on idle, off the synchronous
+  // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
+  // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
+  // One instance per surface; `start()` cancels the previous model's pending
+  // warming, so only the active model is ever warmed (per-tab isolation).
+  const backgroundTokenizerRef = useRef<BackgroundTokenizer | null>(null);
+  if (!backgroundTokenizerRef.current) {
+    backgroundTokenizerRef.current = new BackgroundTokenizer(
+      idleCallbackScheduler(),
+    );
+  }
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const javaScriptTypeScriptRuntimeStatusRef = useRef(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -661,6 +677,40 @@ function EditorSurfaceComponent({
 
     return () => disposable.dispose();
   }, [editorApi, onCursorPositionChange]);
+
+  // Eagerly warm the active model's TextMate tokens on idle after open/switch.
+  // @monaco-editor/react swaps the model when `path` changes, so this re-runs on
+  // every document switch: it adopts the new active model and (inside `start`)
+  // cancels any pending warming for the previous one, so a stale tab's model can
+  // never keep tokenizing. The cleanup stops warming on unmount/switch, and the
+  // tokenizer re-checks `model.isDisposed()` before each idle slice.
+  useEffect(() => {
+    const tokenizer = backgroundTokenizerRef.current;
+
+    if (!editorApi || !activeDocument || !tokenizer) {
+      return;
+    }
+
+    const requestedPath = activeDocument.path;
+    const model = editorApi.getModel();
+
+    // Only warm the model that actually backs the requested document. During a
+    // switch the editor can still hold the previous model for a frame; warming
+    // it would tokenize the wrong file, so we wait for the next effect run.
+    if (!model || modelPath(model) !== requestedPath) {
+      return;
+    }
+
+    tokenizer.start(model as unknown as BackgroundTokenizableModel);
+
+    return () => tokenizer.stop();
+  }, [activeDocument, editorApi]);
+
+  // Permanent teardown so a disposed surface leaves no pending idle slice.
+  useEffect(() => {
+    const tokenizer = backgroundTokenizerRef.current;
+    return () => tokenizer?.dispose();
+  }, []);
 
   useEffect(() => {
     if (!activeDocument || !workspaceRoot) {
