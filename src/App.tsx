@@ -21,6 +21,7 @@ import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
+import { FileHistoryPanel } from "./components/FileHistoryPanel";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitChangesPanel } from "./components/GitChangesPanel";
@@ -1189,6 +1190,22 @@ function App() {
           void workbench.openBookmark(bookmark);
         }}
         workspaceRoot={workbench.workspaceRoot}
+      />
+
+      <FileHistoryPanel
+        commits={workbench.fileHistoryCommits}
+        commitsLoading={workbench.fileHistoryLoading}
+        diff={workbench.fileHistoryDiff}
+        diffLoading={workbench.fileHistoryDiffLoading}
+        editorFontFamily={workbench.appSettings.editorFontFamily}
+        editorFontLigatures={workbench.appSettings.editorFontLigatures}
+        editorFontSize={workbench.appSettings.editorFontSize}
+        isOpen={workbench.fileHistoryPanelOpen}
+        monacoTheme={monacoTheme}
+        onClose={workbench.closeFileHistory}
+        onSelectCommit={(sha) => void workbench.selectFileHistoryCommit(sha)}
+        relativePath={workbench.fileHistoryRelativePath}
+        selectedSha={workbench.fileHistorySelectedSha}
       />
 
       <LanguageServerSetup

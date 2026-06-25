@@ -27,6 +27,7 @@ import {
   type GitBlameLine,
   type GitChangedFile,
   type GitFileDiff,
+  type GitFileHistoryEntry,
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
@@ -1069,6 +1070,21 @@ export function useWorkbenchController(
   // leak into another project's editor gutter or panel.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false);
+  const [fileHistoryPanelOpen, setFileHistoryPanelOpen] = useState(false);
+  const [fileHistoryRelativePath, setFileHistoryRelativePath] = useState<
+    string | null
+  >(null);
+  const [fileHistoryCommits, setFileHistoryCommits] = useState<
+    GitFileHistoryEntry[]
+  >([]);
+  const [fileHistoryLoading, setFileHistoryLoading] = useState(false);
+  const [fileHistorySelectedSha, setFileHistorySelectedSha] = useState<
+    string | null
+  >(null);
+  const [fileHistoryDiff, setFileHistoryDiff] = useState<GitFileDiff | null>(
+    null,
+  );
+  const [fileHistoryDiffLoading, setFileHistoryDiffLoading] = useState(false);
   // Git blame annotation toggle, tracked per absolute document path so the
   // annotation state never leaks across open tabs (each path is workspace-
   // scoped). Reset on workspace switch alongside the other per-tab state.
@@ -1160,6 +1176,12 @@ export function useWorkbenchController(
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const gitDiffRequestTokenRef = useRef(0);
+  const fileHistoryRequestTokenRef = useRef(0);
+  const fileHistoryDiffRequestTokenRef = useRef(0);
+  // Mirrors the file currently shown in the history panel. Read by
+  // selectFileHistoryCommit so a commit click always targets the panel's live
+  // file (not a stale state closure), keeping the diff request per-file isolated.
+  const fileHistoryRelativePathRef = useRef<string | null>(null);
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexRootRef = useRef<string | null>(null);
@@ -8790,6 +8812,151 @@ export function useWorkbenchController(
     },
     [gitGateway, workspaceRoot],
   );
+
+  // Closes the file history panel and invalidates any in-flight history/diff
+  // requests so their results are dropped instead of repopulating a closed
+  // panel (or a different tab's panel after a fast reopen).
+  const closeFileHistory = useCallback(() => {
+    fileHistoryRequestTokenRef.current += 1;
+    fileHistoryDiffRequestTokenRef.current += 1;
+    fileHistoryRelativePathRef.current = null;
+    setFileHistoryPanelOpen(false);
+    setFileHistoryCommits([]);
+    setFileHistoryLoading(false);
+    setFileHistorySelectedSha(null);
+    setFileHistoryDiff(null);
+    setFileHistoryDiffLoading(false);
+    setFileHistoryRelativePath(null);
+  }, []);
+
+  // Loads the diff for a single commit in the file history panel. The requested
+  // root, relative path, and request token are captured up front; after the
+  // await we re-check both the active workspace root and the token so a stale
+  // result from a switched-away tab or a superseded click is dropped.
+  const selectFileHistoryCommit = useCallback(
+    async (sha: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = fileHistoryRelativePathRef.current;
+
+      if (!requestedRoot || !relativePath) {
+        return;
+      }
+
+      const requestToken = fileHistoryDiffRequestTokenRef.current + 1;
+      fileHistoryDiffRequestTokenRef.current = requestToken;
+      setFileHistorySelectedSha(sha);
+      setFileHistoryDiffLoading(true);
+
+      try {
+        const diff = await gitGateway.fileCommitDiff(
+          requestedRoot,
+          relativePath,
+          sha,
+        );
+
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
+          fileHistoryDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setFileHistoryDiff(diff);
+      } catch (error) {
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
+          fileHistoryDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setFileHistoryDiff(null);
+        reportError("File History", error);
+      } finally {
+        if (
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) &&
+          fileHistoryDiffRequestTokenRef.current === requestToken
+        ) {
+          setFileHistoryDiffLoading(false);
+        }
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
+  );
+
+  // Opens the file history panel for the active document. The requested root and
+  // the active document's relative path are captured up front; after the await
+  // we re-check the active workspace root and the request token so a stale
+  // history list from a switched-away tab is dropped (per-tab isolation).
+  const openFileHistory = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+    const document = activeDocumentRef.current;
+
+    if (!requestedRoot || !document) {
+      return;
+    }
+
+    const requestedDocumentPath = document.path;
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocumentPath,
+    );
+
+    if (!relativePath) {
+      return;
+    }
+
+    const requestToken = fileHistoryRequestTokenRef.current + 1;
+    fileHistoryRequestTokenRef.current = requestToken;
+    // Reset any previously selected commit/diff for the new file.
+    fileHistoryDiffRequestTokenRef.current += 1;
+    fileHistoryRelativePathRef.current = relativePath;
+    setFileHistoryRelativePath(relativePath);
+    setFileHistorySelectedSha(null);
+    setFileHistoryDiff(null);
+    setFileHistoryDiffLoading(false);
+    setFileHistoryCommits([]);
+    setFileHistoryPanelOpen(true);
+    setFileHistoryLoading(true);
+
+    // Re-checks that, after the history await, the request still belongs to the
+    // active workspace root, the active document, and the latest open request.
+    // A switched-away tab or a superseded reopen drops the stale result.
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current?.path === requestedDocumentPath &&
+      fileHistoryRequestTokenRef.current === requestToken;
+
+    try {
+      const commits = await gitGateway.fileHistory(requestedRoot, relativePath);
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setFileHistoryCommits(commits);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setFileHistoryCommits([]);
+      reportError("File History", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setFileHistoryLoading(false);
+      }
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
 
   // The cursor anchor for next/previous bookmark navigation. Uses the active
   // document plus the live editor position so navigation steps relative to where
@@ -22789,6 +22956,18 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.showFileHistory",
+      title: "Show File History",
+      category: "Editor",
+      shortcut: shortcut("editor.showFileHistory"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: () => {
+        void openFileHistory();
+      },
+    });
+
+    registry.register({
       id: "editor.showCallHierarchy",
       title: "Show Call Hierarchy",
       category: "Editor",
@@ -23203,6 +23382,7 @@ export function useWorkbenchController(
     toggleTodoPanel,
     refreshWorkspaceTodos,
     toggleGitBlame,
+    openFileHistory,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
@@ -23901,6 +24081,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.showFileHistory")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openFileHistory();
+        }
+        return;
+      }
+
       if (matches("bookmark.showPanel")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -24127,6 +24315,7 @@ export function useWorkbenchController(
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
     toggleGitBlame,
+    openFileHistory,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
@@ -25503,6 +25692,16 @@ export function useWorkbenchController(
     openBookmarksPanel,
     closeBookmarksPanel,
     toggleBookmarksPanel,
+    fileHistoryPanelOpen,
+    fileHistoryRelativePath,
+    fileHistoryCommits,
+    fileHistoryLoading,
+    fileHistorySelectedSha,
+    fileHistoryDiff,
+    fileHistoryDiffLoading,
+    openFileHistory,
+    selectFileHistoryCommit,
+    closeFileHistory,
     clearNotices: () => setNotices([]),
     notices,
     navigateBackward,

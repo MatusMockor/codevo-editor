@@ -4,6 +4,7 @@ import {
   type GitBlameLine,
   type GitChangedFile,
   type GitFileDiff,
+  type GitFileHistoryEntry,
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
@@ -32,6 +33,49 @@ export class TauriGitGateway implements GitGateway {
       relativePath,
       rootPath,
     }) as Promise<GitBlameLine[]>;
+  }
+
+  async fileHistory(
+    rootPath: string,
+    relativePath: string,
+  ): Promise<GitFileHistoryEntry[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_file_history", {
+      relativePath,
+      rootPath,
+    }) as Promise<GitFileHistoryEntry[]>;
+  }
+
+  async fileCommitDiff(
+    rootPath: string,
+    relativePath: string,
+    sha: string,
+  ): Promise<GitFileDiff> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified",
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      };
+    }
+
+    return this.invokeCommand("get_git_file_commit_diff", {
+      relativePath,
+      rootPath,
+      sha,
+    }) as Promise<GitFileDiff>;
   }
 
   async getStatus(rootPath: string): Promise<GitStatus> {

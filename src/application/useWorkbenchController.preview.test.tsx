@@ -280,10 +280,210 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activePath).toBe(file.path);
   });
 
+  it("opens file history for the active document and loads a commit diff", async () => {
+    const commits = [
+      {
+        author: "Alice",
+        sha: "1a2b3c4",
+        subject: "Add user model",
+        timestamp: 1700000000,
+      },
+      {
+        author: "Bob",
+        sha: "f0e1d2c",
+        subject: "Refactor user model",
+        timestamp: 1700100000,
+      },
+    ];
+    const fileHistory = vi.fn(async () => commits);
+    const fileCommitDiff = vi.fn(async (_rootPath, relativePath, sha) => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: `/workspace/${relativePath}`,
+        relativePath,
+        status: "modified" as const,
+      },
+      language: "php",
+      modifiedContent: `<?php // ${sha}\n`,
+      originalContent: "<?php\n",
+    }));
+    const gitGateway = fileHistoryGitGateway({ fileCommitDiff, fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    await act(async () => {
+      await getWorkbench().openFileHistory();
+    });
+
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(true);
+    expect(getWorkbench().fileHistoryRelativePath).toBe("src/User.php");
+    expect(getWorkbench().fileHistoryCommits).toHaveLength(2);
+    expect(fileHistory).toHaveBeenCalledWith("/workspace", "src/User.php");
+
+    await act(async () => {
+      await getWorkbench().selectFileHistoryCommit("f0e1d2c");
+    });
+
+    expect(fileCommitDiff).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      "f0e1d2c",
+    );
+    expect(getWorkbench().fileHistorySelectedSha).toBe("f0e1d2c");
+    expect(getWorkbench().fileHistoryDiff?.modifiedContent).toContain(
+      "f0e1d2c",
+    );
+
+    await act(async () => {
+      getWorkbench().closeFileHistory();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+    expect(getWorkbench().fileHistorySelectedSha).toBeNull();
+    expect(getWorkbench().fileHistoryDiff).toBeNull();
+  });
+
+  it("drops a stale file history result after the panel is closed", async () => {
+    const historyDeferred = createDeferred<
+      Array<{
+        author: string;
+        sha: string;
+        subject: string;
+        timestamp: number;
+      }>
+    >();
+    const fileHistory = vi.fn(() => historyDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({ fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    let historyPromise: Promise<void> | null = null;
+    act(() => {
+      historyPromise = getWorkbench().openFileHistory();
+    });
+
+    // Close the panel while the history request is still in flight.
+    await act(async () => {
+      getWorkbench().closeFileHistory();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      historyDeferred.resolve([
+        {
+          author: "Alice",
+          sha: "1a2b3c4",
+          subject: "stale",
+          timestamp: 1700000000,
+        },
+      ]);
+      await historyPromise;
+    });
+
+    // The stale result must not repopulate a closed panel.
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+  });
+
+  it("drops a stale file history result after switching tabs", async () => {
+    const historyDeferred = createDeferred<
+      Array<{
+        author: string;
+        sha: string;
+        subject: string;
+        timestamp: number;
+      }>
+    >();
+    const fileHistory = vi.fn(() => historyDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({ fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const fileA = fileEntry("/workspace/src/A.php", "A.php");
+    const fileB = fileEntry("/workspace/src/B.php", "B.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileA);
+    });
+
+    let historyPromise: Promise<void> | null = null;
+    act(() => {
+      historyPromise = getWorkbench().openFileHistory();
+    });
+
+    // Switch to a different document while A's history is still in flight.
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileB);
+    });
+
+    await act(async () => {
+      historyDeferred.resolve([
+        {
+          author: "Alice",
+          sha: "1a2b3c4",
+          subject: "stale A history",
+          timestamp: 1700000000,
+        },
+      ]);
+      await historyPromise;
+    });
+
+    // The history for A must not populate the panel now that B is active.
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+    expect(fileHistory).toHaveBeenCalledWith("/workspace", "src/A.php");
+  });
+
   it("opens a Git diff as an active preview tab named for the changed file", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -329,6 +529,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -380,6 +595,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -427,6 +657,21 @@ describe("useWorkbenchController preview tabs", () => {
     const secondChange = gitChangedFile("src/Second.php", false);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -484,6 +729,21 @@ describe("useWorkbenchController preview tabs", () => {
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8883,6 +9143,21 @@ describe("useWorkbenchController preview tabs", () => {
     };
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8927,6 +9202,21 @@ describe("useWorkbenchController preview tabs", () => {
     const stagedChange = { ...change, isStaged: true };
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8971,6 +9261,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -9029,6 +9334,21 @@ describe("useWorkbenchController preview tabs", () => {
     const excluded = gitChangedFile("test.txt", true);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [excluded],
@@ -9086,6 +9406,21 @@ describe("useWorkbenchController preview tabs", () => {
     const unstaged = gitChangedFile("src/User.php", false);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -9145,6 +9480,21 @@ describe("useWorkbenchController preview tabs", () => {
     };
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -9198,6 +9548,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -9261,6 +9626,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -9315,6 +9695,21 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -51231,6 +51626,21 @@ function createControllerDependencies({
     documentSyncGateway,
     gitGateway: gitGateway ?? {
       blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, change) => ({
@@ -51711,6 +52121,43 @@ function gitChangedFile(relativePath: string, isStaged: boolean) {
     path: `/workspace/${relativePath}`,
     relativePath,
     status: "modified" as const,
+  };
+}
+
+function fileHistoryGitGateway(
+  overrides: Pick<Partial<GitGateway>, "fileCommitDiff" | "fileHistory">,
+): GitGateway {
+  return {
+    blame: vi.fn(async () => []),
+    fileHistory: overrides.fileHistory ?? vi.fn(async () => []),
+    fileCommitDiff:
+      overrides.fileCommitDiff ??
+      vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+    commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+      change: requestedChange,
+      language: "plaintext",
+      modifiedContent: "",
+      originalContent: "",
+    })),
+    getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
   };
 }
 

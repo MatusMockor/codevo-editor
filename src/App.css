@@ -3163,6 +3163,164 @@ button.problem-row:focus-visible {
   font-size: 12px;
 }
 
+.file-history-panel {
+  display: flex;
+  width: min(1080px, calc(100vw - 36px));
+  height: min(680px, calc(100vh - 96px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-modal);
+  box-shadow: var(--shadow-pop);
+  outline: 0;
+}
+
+.file-history-header {
+  display: grid;
+  min-height: 50px;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-strong);
+  padding: 7px 13px;
+}
+
+.file-history-header span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.file-history-header strong {
+  font-size: 15px;
+}
+
+.file-history-header small {
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-header button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.file-history-header button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+}
+
+.file-history-body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+}
+
+.file-history-commits {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--color-border);
+  padding: 7px 8px 9px;
+}
+
+.file-history-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.file-history-row {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.file-history-row:hover {
+  background: var(--color-hover);
+}
+
+.file-history-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.file-history-row svg {
+  color: var(--color-accent);
+}
+
+.file-history-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.file-history-row strong,
+.file-history-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-row strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.file-history-row small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.file-history-diff {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.file-history-diff .editor-loading-placeholder,
+.file-history-diff > div {
+  flex: 1 1 auto;
+}
+
+.file-history-diff-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}
+
 .todo-panel {
   width: min(680px, calc(100vw - 36px));
   max-height: min(540px, calc(100vh - 96px));

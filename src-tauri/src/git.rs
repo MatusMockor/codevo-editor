@@ -56,8 +56,28 @@ pub struct GitBlameLine {
     pub timestamp: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileHistoryEntry {
+    pub author: String,
+    pub sha: String,
+    pub subject: String,
+    pub timestamp: i64,
+}
+
 pub trait GitRepositoryGateway {
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
+    fn file_commit_diff(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        sha: &str,
+    ) -> io::Result<GitFileDiff>;
+    fn file_history(
+        &self,
+        root: &Path,
+        relative_path: &str,
+    ) -> io::Result<Vec<GitFileHistoryEntry>>;
     fn commit(
         &self,
         root: &Path,
@@ -97,6 +117,66 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         parse_blame_porcelain(&output.stdout)
+    }
+
+    fn file_commit_diff(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        sha: &str,
+    ) -> io::Result<GitFileDiff> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+        let sha = safe_commit_sha(sha)?;
+
+        let original_content = commit_blob_content(&root, &format!("{sha}^"), &relative)?;
+        let modified_content = commit_blob_content(&root, &sha, &relative)?;
+        let status = commit_file_change_status(&original_content, &modified_content);
+
+        Ok(GitFileDiff {
+            change: GitChangedFile {
+                is_staged: false,
+                is_unversioned: false,
+                old_path: None,
+                old_relative_path: None,
+                path: root.join(&relative).to_string_lossy().to_string(),
+                relative_path: relative.clone(),
+                status,
+            },
+            language: language_for_path(&relative),
+            modified_content,
+            original_content,
+        })
+    }
+
+    fn file_history(
+        &self,
+        root: &Path,
+        relative_path: &str,
+    ) -> io::Result<Vec<GitFileHistoryEntry>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("log")
+            .arg("--follow")
+            .arg(format!("--format={FILE_HISTORY_FORMAT}"))
+            .arg("--")
+            .arg(&relative)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_file_history(&String::from_utf8_lossy(&output.stdout)))
     }
 
     fn commit(
@@ -442,6 +522,89 @@ fn apply_blame_commit_meta(
 
 fn short_sha(sha: &str) -> String {
     sha.chars().take(7).collect()
+}
+
+/// `git log` record layout for file history. Fields are joined with the ASCII
+/// Unit Separator (`%x1f`) so commit subjects, author names, and timestamps are
+/// parsed unambiguously even when a subject contains spaces or tabs. Records are
+/// newline-delimited (one commit per line).
+const FILE_HISTORY_FORMAT: &str = "%H%x1f%an%x1f%at%x1f%s";
+
+fn parse_file_history(output: &str) -> Vec<GitFileHistoryEntry> {
+    output
+        .lines()
+        .filter_map(parse_file_history_record)
+        .collect()
+}
+
+fn parse_file_history_record(line: &str) -> Option<GitFileHistoryEntry> {
+    let mut fields = line.split('\u{1f}');
+    let sha = fields.next()?;
+
+    if sha.len() != 40 || !sha.chars().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let author = fields.next()?.to_string();
+    let timestamp = fields.next()?.trim().parse::<i64>().ok()?;
+    let subject = fields.next().unwrap_or_default().to_string();
+
+    Some(GitFileHistoryEntry {
+        author,
+        sha: short_sha(sha),
+        subject,
+        timestamp,
+    })
+}
+
+/// Validates a commit revision supplied by the front end before it reaches a
+/// `git` subprocess. Accepts the abbreviated SHAs surfaced by file history
+/// (hex digits only) so a crafted argument can neither inject git options nor
+/// escape into another revision (e.g. `HEAD`, ranges, or flags).
+fn safe_commit_sha(sha: &str) -> io::Result<String> {
+    let trimmed = sha.trim();
+
+    if trimmed.len() < 4
+        || trimmed.len() > 40
+        || !trimmed.chars().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git commit SHA is invalid.",
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// Reads a file's blob at a given revision. A missing path at that revision
+/// (the file did not exist yet, e.g. the parent of its first commit) is not an
+/// error: it yields empty content so the diff renders as a pure addition.
+fn commit_blob_content(root: &Path, revision: &str, relative_path: &str) -> io::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("show")
+        .arg(format!("{revision}:{relative_path}"))
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn commit_file_change_status(original: &str, modified: &str) -> GitChangeStatus {
+    if original.is_empty() && !modified.is_empty() {
+        return GitChangeStatus::Added;
+    }
+
+    if !original.is_empty() && modified.is_empty() {
+        return GitChangeStatus::Deleted;
+    }
+
+    GitChangeStatus::Modified
 }
 
 fn git_change_is_staged(status: &str) -> bool {
@@ -815,8 +978,9 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_blame_porcelain, parse_porcelain_status, safe_relative_path,
-        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitRepositoryGateway,
+        parse_blame_porcelain, parse_file_history, parse_porcelain_status, safe_commit_sha,
+        safe_relative_path, CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile,
+        GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -982,6 +1146,136 @@ mod tests {
         let gateway = CommandGitRepositoryGateway;
 
         assert!(gateway.blame(repo.path(), "../secret.txt").is_err());
+    }
+
+    #[test]
+    fn parses_file_history_records_separated_by_unit_separator() {
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\u{1f}Alice Example\u{1f}1700000000\u{1f}Add user model\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d\u{1f}Bob Example\u{1f}1700100000\u{1f}Refactor: split helpers\n",
+        );
+
+        let entries = parse_file_history(output);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].sha, "1a2b3c4");
+        assert_eq!(entries[0].author, "Alice Example");
+        assert_eq!(entries[0].timestamp, 1700000000);
+        assert_eq!(entries[0].subject, "Add user model");
+        assert_eq!(entries[1].sha, "f0e1d2c");
+        // A subject containing the delimiter-like text (colon, spaces) survives.
+        assert_eq!(entries[1].subject, "Refactor: split helpers");
+    }
+
+    #[test]
+    fn skips_malformed_file_history_records() {
+        let output = concat!(
+            "not-a-sha\u{1f}Author\u{1f}1700000000\u{1f}subject\n",
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\u{1f}Alice\u{1f}1700000000\u{1f}ok\n",
+            "\n",
+        );
+
+        let entries = parse_file_history(output);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].subject, "ok");
+    }
+
+    #[test]
+    fn safe_commit_sha_rejects_non_hex_and_options() {
+        assert!(safe_commit_sha("HEAD").is_err());
+        assert!(safe_commit_sha("--output=/etc/passwd").is_err());
+        assert!(safe_commit_sha("1a2").is_err());
+        assert!(safe_commit_sha("deadBEEF").is_ok());
+    }
+
+    #[test]
+    fn file_history_lists_commits_that_touched_the_file() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+        repo.write("other.txt", "unrelated\n");
+        repo.run(["add", "other.txt"]);
+        repo.run(["commit", "-m", "unrelated commit"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let entries = gateway.file_history(repo.path(), "file.txt").expect("history");
+
+        assert_eq!(entries.len(), 2);
+        // Newest commit first (git log default ordering).
+        assert_eq!(entries[0].subject, "second commit");
+        assert_eq!(entries[1].subject, "first commit");
+        assert_eq!(entries[0].author, "History Author");
+        assert!(!entries[0].sha.is_empty());
+    }
+
+    #[test]
+    fn file_history_rejects_paths_outside_workspace() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.file_history(repo.path(), "../secret.txt").is_err());
+    }
+
+    #[test]
+    fn file_commit_diff_reports_blob_contents_for_a_commit() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second"]);
+
+        let second_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let gateway = CommandGitRepositoryGateway;
+        let diff = gateway
+            .file_commit_diff(repo.path(), "file.txt", &second_sha)
+            .expect("diff");
+
+        assert_eq!(diff.original_content, "one\n");
+        assert_eq!(diff.modified_content, "one\ntwo\n");
+        assert_eq!(diff.change.relative_path, "file.txt");
+        assert_eq!(diff.change.status, GitChangeStatus::Modified);
+        assert_eq!(diff.language, "plaintext");
+    }
+
+    #[test]
+    fn file_commit_diff_treats_first_commit_as_addition() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("file.txt", "hello\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "create"]);
+
+        let first_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let gateway = CommandGitRepositoryGateway;
+        let diff = gateway
+            .file_commit_diff(repo.path(), "file.txt", &first_sha)
+            .expect("diff");
+
+        assert_eq!(diff.original_content, "");
+        assert_eq!(diff.modified_content, "hello\n");
+        assert_eq!(diff.change.status, GitChangeStatus::Added);
+    }
+
+    #[test]
+    fn file_commit_diff_rejects_invalid_sha() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway
+            .file_commit_diff(repo.path(), "file.txt", "HEAD")
+            .is_err());
     }
 
     #[test]

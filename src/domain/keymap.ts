@@ -216,6 +216,12 @@ export const keymapCommands = [
     label: "Annotate with Git Blame",
   },
   {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.showFileHistory",
+    label: "Show File History",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

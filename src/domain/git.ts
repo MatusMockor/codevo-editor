@@ -43,6 +43,13 @@ export interface GitBlameLine {
   timestamp: number;
 }
 
+export interface GitFileHistoryEntry {
+  author: string;
+  sha: string;
+  subject: string;
+  timestamp: number;
+}
+
 export interface GitGateway {
   blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
@@ -50,6 +57,15 @@ export interface GitGateway {
     message: string,
     changes: GitChangedFile[],
   ): Promise<GitStatus>;
+  fileCommitDiff(
+    rootPath: string,
+    relativePath: string,
+    sha: string,
+  ): Promise<GitFileDiff>;
+  fileHistory(
+    rootPath: string,
+    relativePath: string,
+  ): Promise<GitFileHistoryEntry[]>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
   push(rootPath: string): Promise<GitStatus>;

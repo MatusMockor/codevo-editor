@@ -32,8 +32,8 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff, GitRepositoryGateway,
-    GitStatus,
+    CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff, GitFileHistoryEntry,
+    GitRepositoryGateway, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1606,6 +1606,44 @@ async fn get_git_blame(
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway
             .blame(&root, &relative_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_file_history(
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<GitFileHistoryEntry>, String> {
+    // `git log --follow` shells out to a subprocess that can take a while on a
+    // file with deep history; keep it off the main thread so the WebView never
+    // stalls. The captured `root_path` + `relative_path` bind the request to its
+    // own repository and file (no cross-root or cross-file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_history(&root, &relative_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_file_commit_diff(
+    root_path: String,
+    relative_path: String,
+    sha: String,
+) -> Result<GitFileDiff, String> {
+    // Reading both blob revisions for a historical commit shells out to `git
+    // show` twice; keep the round-trip off the main thread. The captured
+    // `root_path`, `relative_path`, and `sha` bind the request to its own
+    // repository, file, and revision (no cross-root or cross-file leakage). The
+    // gateway validates `relative_path` and `sha` before they reach git.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_commit_diff(&root, &relative_path, &sha)
             .map_err(|error| error.to_string())
     })
     .await
@@ -4238,7 +4276,8 @@ mod tests {
         filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, get_git_blame, get_git_status,
+        filter_lsp_workspace_symbols_to_workspace, get_git_blame, get_git_file_commit_diff,
+        get_git_file_history, get_git_status,
         javascript_typescript_did_change_configuration_settings,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
@@ -5553,6 +5592,122 @@ mod tests {
         assert_ne!(blame_a[0].sha, blame_b[0].sha, "no cross-root leakage");
     }
 
+    #[test]
+    fn get_git_file_history_lists_commits_off_thread() {
+        let root = temp_workspace("git-file-history-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "first commit"]);
+        fs::write(root.join("file.txt"), "one\ntwo\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "second commit"]);
+
+        let entries = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root),
+            "file.txt".to_string(),
+        ))
+        .expect("file history result");
+
+        assert_eq!(entries.len(), 2);
+        // Newest commit first (git log default ordering).
+        assert_eq!(entries[0].subject, "second commit");
+        assert_eq!(entries[1].subject, "first commit");
+        assert_eq!(entries[0].author, "Test User");
+        assert!(!entries[0].sha.is_empty());
+    }
+
+    #[test]
+    fn get_git_file_history_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-file-history-iso-a");
+        let root_b = temp_workspace("git-file-history-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("shared.txt"), "from a\n").expect("file in a");
+        fs::write(root_b.join("shared.txt"), "from b\n").expect("file in b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a commit"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b commit"]);
+
+        let history_a = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root_a),
+            "shared.txt".to_string(),
+        ))
+        .expect("history a");
+        let history_b = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root_b),
+            "shared.txt".to_string(),
+        ))
+        .expect("history b");
+
+        assert_eq!(history_a[0].subject, "a commit");
+        assert_eq!(history_b[0].subject, "b commit");
+        assert_ne!(
+            history_a[0].sha, history_b[0].sha,
+            "no cross-root leakage"
+        );
+    }
+
+    #[test]
+    fn get_git_file_history_rejects_paths_outside_workspace_off_thread() {
+        let root = temp_workspace("git-file-history-escape");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root),
+            "../secret.txt".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn get_git_file_commit_diff_reports_commit_blobs_off_thread() {
+        let root = temp_workspace("git-file-commit-diff-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "first"]);
+        fs::write(root.join("file.txt"), "one\ntwo\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "second"]);
+
+        let sha = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&root)
+                .output()
+                .expect("rev-parse")
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        let diff = tauri::async_runtime::block_on(get_git_file_commit_diff(
+            path_string(&root),
+            "file.txt".to_string(),
+            sha,
+        ))
+        .expect("file commit diff result");
+
+        assert_eq!(diff.original_content, "one\n");
+        assert_eq!(diff.modified_content, "one\ntwo\n");
+        assert_eq!(diff.change.relative_path, "file.txt");
+    }
+
+    #[test]
+    fn get_git_file_commit_diff_rejects_invalid_sha_off_thread() {
+        let root = temp_workspace("git-file-commit-diff-bad-sha");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_file_commit_diff(
+            path_string(&root),
+            "file.txt".to_string(),
+            "HEAD".to_string(),
+        ))
+        .is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn index_path_guard_accepts_paths_through_symlinked_root() {
@@ -6051,6 +6206,8 @@ pub fn run() {
             get_php_file_outline,
             get_git_blame,
             get_git_diff,
+            get_git_file_commit_diff,
+            get_git_file_history,
             get_git_status,
             get_javascript_typescript_language_server_status,
             get_php_language_server_status,

@@ -82,6 +82,89 @@ describe("TauriGitGateway", () => {
     );
   });
 
+  it("invokes the file history command in Tauri", async () => {
+    const invoke = vi.fn(async () => [
+      {
+        author: "Alice",
+        sha: "1a2b3c4",
+        subject: "Add user model",
+        timestamp: 1700000000,
+      },
+      {
+        author: "Bob",
+        sha: "f0e1d2c",
+        subject: "Refactor user model",
+        timestamp: 1700100000,
+      },
+    ]);
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const history = await gateway.fileHistory("/workspace", "src/User.php");
+
+    expect(invoke).toHaveBeenCalledWith("get_git_file_history", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
+    expect(history).toHaveLength(2);
+    expect(history[0].subject).toBe("Add user model");
+    expect(history[0].sha).toBe("1a2b3c4");
+    expect(history[1].author).toBe("Bob");
+  });
+
+  it("returns no file history outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(
+      gateway.fileHistory("/workspace", "src/User.php"),
+    ).resolves.toEqual([]);
+  });
+
+  it("invokes the file commit diff command in Tauri", async () => {
+    const invoke = vi.fn(async () => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: "/workspace/src/User.php",
+        relativePath: "src/User.php",
+        status: "modified",
+      },
+      language: "php",
+      modifiedContent: "<?php changed",
+      originalContent: "<?php",
+    }));
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const diff = await gateway.fileCommitDiff(
+      "/workspace",
+      "src/User.php",
+      "1a2b3c4",
+    );
+
+    expect(invoke).toHaveBeenCalledWith("get_git_file_commit_diff", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+      sha: "1a2b3c4",
+    });
+    expect(diff.modifiedContent).toBe("<?php changed");
+    expect(diff.language).toBe("php");
+  });
+
+  it("returns an empty diff for file commit diff outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    const diff = await gateway.fileCommitDiff(
+      "/workspace",
+      "src/User.php",
+      "1a2b3c4",
+    );
+
+    expect(diff.originalContent).toBe("");
+    expect(diff.modifiedContent).toBe("");
+    expect(diff.change.relativePath).toBe("src/User.php");
+  });
+
   it("invokes local Git operation commands in Tauri", async () => {
     const change: GitChangedFile = {
       isStaged: false,
