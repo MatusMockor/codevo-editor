@@ -279,6 +279,41 @@ export const APP_SHIKI_THEMES = [
   ...customPalettes.map((palette) => palette.name),
 ] as const;
 
+const MONACO_FALLBACK_SHIKI_THEMES: ShikiThemeRegistration[] = [
+  {
+    name: "vs-dark",
+    type: "dark",
+    semanticHighlighting: true,
+    semanticTokenColors: {},
+    colors: {
+      "editor.background": "#1e1e1e",
+      "editor.foreground": "#d4d4d4",
+    },
+    tokenColors: [
+      {
+        scope: ["source"],
+        settings: { foreground: "#d4d4d4" },
+      },
+    ],
+  },
+  {
+    name: "vs",
+    type: "light",
+    semanticHighlighting: true,
+    semanticTokenColors: {},
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#000000",
+    },
+    tokenColors: [
+      {
+        scope: ["source"],
+        settings: { foreground: "#000000" },
+      },
+    ],
+  },
+];
+
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 
 export function createAppHighlighter(): Promise<HighlighterCore> {
@@ -304,6 +339,7 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/themes/ayu-mirage.mjs"),
       materialDeepOceanTheme(),
       ...customPalettes.map((palette) => buildShikiTheme(palette)),
+      ...MONACO_FALLBACK_SHIKI_THEMES,
     ],
     langs: [
       import("shiki/langs/php.mjs"),

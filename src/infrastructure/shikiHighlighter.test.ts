@@ -146,6 +146,14 @@ describe("createAppHighlighter", () => {
     expect(highlighter.getLoadedThemes()).toContain("ayu-mirage");
   });
 
+  it("loads Monaco fallback theme ids because shikiToMonaco forwards later setTheme calls to Shiki", async () => {
+    const highlighter = await createAppHighlighter();
+    expect(highlighter.getLoadedThemes()).toContain("vs-dark");
+    expect(highlighter.getLoadedThemes()).toContain("vs");
+    expect(() => highlighter.setTheme("vs-dark")).not.toThrow();
+    expect(() => highlighter.setTheme("vs")).not.toThrow();
+  });
+
   it("uses the official VS Code Ayu Mirage colors, not the legacy custom palette", async () => {
     const highlighter = await createAppHighlighter();
     const theme = highlighter.getTheme("ayu-mirage");
