@@ -105,7 +105,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
@@ -209,8 +209,44 @@ fn quit_application(app: AppHandle) {
     app.exit(0);
 }
 
+/// Process-wide cache of monospace font families. System fonts do not change
+/// for the lifetime of the session, so the expensive `fontdb` system scan is
+/// performed at most once and reused by every later `Settings` dialog open.
+static MONOSPACE_FONT_FAMILIES_CACHE: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Lists the monospace font families exposed to the `Settings` font picker.
+///
+/// The `fontdb` system scan walks every installed font (100ms-1s+ on macOS), so
+/// it must never run on the WebView main thread. The work is handed to Tokio's
+/// blocking pool (same off-main-thread discipline as the index/git commands) and
+/// the result is cached after the first enumeration.
 #[tauri::command]
-fn list_monospace_font_families() -> Vec<String> {
+async fn list_monospace_font_families() -> Vec<String> {
+    run_blocking_command(|| {
+        Ok(cached_monospace_font_families(
+            &MONOSPACE_FONT_FAMILIES_CACHE,
+            enumerate_monospace_font_families,
+        )
+        .clone())
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Returns the cached monospace font families, running `scan` exactly once and
+/// reusing its result on every later call for the given `cache` cell. Both the
+/// cache cell and `scan` are injected so the cache-once behaviour is verifiable
+/// without performing a real system font scan or touching global state.
+fn cached_monospace_font_families<F>(cache: &OnceLock<Vec<String>>, scan: F) -> &Vec<String>
+where
+    F: FnOnce() -> Vec<String>,
+{
+    cache.get_or_init(scan)
+}
+
+/// Performs the raw `fontdb` system scan, collecting de-duplicated, sorted
+/// monospace font family names. This is the expensive, blocking work.
+fn enumerate_monospace_font_families() -> Vec<String> {
     let mut database = fontdb::Database::new();
     database.load_system_fonts();
 
@@ -4172,6 +4208,7 @@ mod tests {
         ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
         ensure_lsp_text_document_content_in_workspace, ensure_lsp_text_document_path_in_workspace,
         ensure_lsp_type_hierarchy_item_in_workspace, ensure_lsp_workspace_edit_paths_in_workspace,
+        cached_monospace_font_families, enumerate_monospace_font_families,
         ensure_path_in_workspace, filter_lsp_call_hierarchy_items_to_workspace,
         filter_lsp_code_actions_to_workspace, filter_lsp_code_lenses_to_workspace,
         filter_lsp_completion_list_to_workspace, filter_lsp_document_links_to_workspace,
@@ -4203,6 +4240,8 @@ mod tests {
     use crate::workspace::FileEntryKind;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::OnceLock;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -5506,6 +5545,47 @@ mod tests {
         assert_eq!(
             workspace_root_for_disposal(&path_string(&root.join(".").join("src"))),
             nested.canonicalize().expect("canonical nested")
+        );
+    }
+
+    #[test]
+    fn monospace_font_cache_scans_once_and_reuses_result() {
+        let cache: OnceLock<Vec<String>> = OnceLock::new();
+        let scans = AtomicUsize::new(0);
+        let scan = || {
+            scans.fetch_add(1, Ordering::SeqCst);
+            vec!["Fira Code".to_string(), "Menlo".to_string()]
+        };
+
+        let first = cached_monospace_font_families(&cache, scan).clone();
+        let second = cached_monospace_font_families(&cache, scan).clone();
+        let third = cached_monospace_font_families(&cache, scan).clone();
+
+        assert_eq!(first, vec!["Fira Code".to_string(), "Menlo".to_string()]);
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(
+            scans.load(Ordering::SeqCst),
+            1,
+            "system font scan must run at most once per session cache",
+        );
+    }
+
+    #[test]
+    fn monospace_font_enumeration_returns_sorted_unique_families() {
+        let families = enumerate_monospace_font_families();
+
+        let mut sorted = families.clone();
+        sorted.sort();
+        assert_eq!(families, sorted, "families must be sorted");
+
+        let mut deduped = families.clone();
+        deduped.dedup();
+        assert_eq!(families, deduped, "families must be unique");
+
+        assert!(
+            families.iter().all(|family| !family.trim().is_empty()),
+            "families must not contain blank names",
         );
     }
 
