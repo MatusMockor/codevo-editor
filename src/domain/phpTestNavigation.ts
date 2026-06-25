@@ -66,6 +66,14 @@ export function isPhpTestRelativePath(
   const normalized = normalizeRelativePath(relativePath);
   const testsBaseDir = laravelTestsBaseDir(psr4Roots);
 
+  // The `Test` class-name suffix only marks a test when the file actually lives
+  // under the tests root. A production class that happens to end in `Test`
+  // (e.g. `app/Support/ManifestTest.php`) is a SUBJECT, not a test — treating it
+  // as a test would map it back through the tests root and double the path.
+  if (matchingSourceBaseDir(normalized, psr4Roots)) {
+    return false;
+  }
+
   if (isUnderDirectory(normalized, testsBaseDir)) {
     return true;
   }
@@ -111,19 +119,117 @@ function resolveSubject(
   }
 
   const subDirectory = subjectSubDirectory(relativePath, testsBaseDir);
-  const sourceBaseDir = primarySourceBaseDir(psr4Roots);
+  const target = subjectSourceTarget(subDirectory, psr4Roots);
 
-  if (!sourceBaseDir) {
+  if (!target) {
     return null;
   }
 
   const candidate = joinSegments([
-    sourceBaseDir,
-    subDirectory,
+    target.baseDir,
+    target.subPath,
     `${subjectClassName}.php`,
   ]);
 
   return { candidates: [candidate], direction: "toSubject" };
+}
+
+interface SubjectSourceTarget {
+  baseDir: string;
+  subPath: string;
+}
+
+/**
+ * Chooses the SOURCE root the subject belongs to from the test's sub-namespace
+ * directory. In a multi-root project the leading directory segment(s) of the
+ * sub-namespace mirror a non-App PSR-4 namespace (e.g. `Domain/Order` →
+ * `Domain\` root at `src/Domain`); that root's base dir is used and the matched
+ * namespace prefix is consumed, so the subject lands in the right tree rather
+ * than always under App. Falls back to the primary (App / first) source root
+ * with the full sub-directory when no namespace prefix matches.
+ */
+function subjectSourceTarget(
+  subDirectory: string,
+  psr4Roots: readonly Psr4Root[],
+): SubjectSourceTarget | null {
+  const segments = subDirectory.split("/").filter(Boolean);
+  const namespaced = matchNamespacedSourceTarget(segments, psr4Roots);
+
+  if (namespaced) {
+    return namespaced;
+  }
+
+  const baseDir = primarySourceBaseDir(psr4Roots);
+
+  if (!baseDir) {
+    return null;
+  }
+
+  return { baseDir, subPath: segments.join("/") };
+}
+
+/**
+ * When the sub-namespace's leading segment(s) match a non-App source root's
+ * namespace, returns that root's base dir plus the remaining segments. The
+ * longest matching namespace wins so nested roots resolve precisely. Returns
+ * `null` when no root's namespace prefixes the segments.
+ */
+function matchNamespacedSourceTarget(
+  segments: string[],
+  psr4Roots: readonly Psr4Root[],
+): SubjectSourceTarget | null {
+  const matches = sourceRoots(psr4Roots)
+    .map((root) => namespacedTargetForRoot(root, segments))
+    .filter((target): target is NamespacedSourceTarget => target !== null);
+
+  const best = matches.reduce<NamespacedSourceTarget | null>(
+    (longest, target) =>
+      !longest || target.consumed > longest.consumed ? target : longest,
+    null,
+  );
+
+  if (!best) {
+    return null;
+  }
+
+  return { baseDir: best.baseDir, subPath: best.subPath };
+}
+
+interface NamespacedSourceTarget extends SubjectSourceTarget {
+  consumed: number;
+}
+
+function namespacedTargetForRoot(
+  root: Psr4Root,
+  segments: string[],
+): NamespacedSourceTarget | null {
+  const namespaceSegments = root.namespace
+    .split("\\")
+    .filter(Boolean);
+
+  if (namespaceSegments.length === 0) {
+    return null;
+  }
+
+  const prefixesPath = namespaceSegments.every(
+    (segment, index) => segments[index] === segment,
+  );
+
+  if (!prefixesPath) {
+    return null;
+  }
+
+  const baseDir = trimSlashes(root.paths[0] ?? "");
+
+  if (!baseDir) {
+    return null;
+  }
+
+  return {
+    baseDir,
+    consumed: namespaceSegments.length,
+    subPath: segments.slice(namespaceSegments.length).join("/"),
+  };
 }
 
 function subjectSubDirectory(relativePath: string, testsBaseDir: string): string {

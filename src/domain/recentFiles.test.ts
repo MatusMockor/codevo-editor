@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   pushRecentFile,
   recentFilesForSwitcher,
+  removeRecentFile,
+  renameRecentFile,
   RECENT_FILES_LIMIT,
   type RecentFileEntry,
 } from "./recentFiles";
@@ -57,6 +59,91 @@ describe("pushRecentFile", () => {
     pushRecentFile(original, entry("/b.ts"));
 
     expect(original.map((item) => item.path)).toEqual(["/a.ts"]);
+  });
+});
+
+describe("removeRecentFile", () => {
+  it("drops the entry matching the path", () => {
+    const list = [entry("/a.ts"), entry("/b.ts"), entry("/c.ts")];
+
+    expect(removeRecentFile(list, "/b.ts").map((item) => item.path)).toEqual([
+      "/a.ts",
+      "/c.ts",
+    ]);
+  });
+
+  it("returns an equivalent list when the path is absent", () => {
+    const list = [entry("/a.ts"), entry("/b.ts")];
+
+    expect(removeRecentFile(list, "/missing.ts").map((item) => item.path)).toEqual(
+      ["/a.ts", "/b.ts"],
+    );
+  });
+
+  it("does not mutate the input list", () => {
+    const original = [entry("/a.ts"), entry("/b.ts")];
+    removeRecentFile(original, "/a.ts");
+
+    expect(original.map((item) => item.path)).toEqual(["/a.ts", "/b.ts"]);
+  });
+});
+
+describe("renameRecentFile", () => {
+  it("remaps the old path to the new path and name, preserving position", () => {
+    const list = [entry("/a.ts"), entry("/old.ts"), entry("/c.ts")];
+
+    const result = renameRecentFile(list, "/old.ts", {
+      name: "new.ts",
+      path: "/new.ts",
+    });
+
+    expect(result.map((item) => item.path)).toEqual(["/a.ts", "/new.ts", "/c.ts"]);
+    expect(result[1]).toEqual({ name: "new.ts", path: "/new.ts" });
+  });
+
+  it("leaves the list unchanged when the old path is absent", () => {
+    const list = [entry("/a.ts"), entry("/b.ts")];
+
+    const result = renameRecentFile(list, "/missing.ts", {
+      name: "new.ts",
+      path: "/new.ts",
+    });
+
+    expect(result.map((item) => item.path)).toEqual(["/a.ts", "/b.ts"]);
+  });
+
+  it("de-duplicates when the new path already exists after, keeping the renamed position", () => {
+    const list = [entry("/a.ts"), entry("/old.ts"), entry("/new.ts")];
+
+    const result = renameRecentFile(list, "/old.ts", {
+      name: "new.ts",
+      path: "/new.ts",
+    });
+
+    expect(result.map((item) => item.path)).toEqual(["/a.ts", "/new.ts"]);
+  });
+
+  it("keeps the remapped entry (name and slot) when the new path already exists before", () => {
+    const list = [
+      { name: "stale.ts", path: "/new.ts" },
+      entry("/a.ts"),
+      entry("/old.ts"),
+    ];
+
+    const result = renameRecentFile(list, "/old.ts", {
+      name: "fresh.ts",
+      path: "/new.ts",
+    });
+
+    expect(result.map((item) => item.path)).toEqual(["/a.ts", "/new.ts"]);
+    expect(result[1]).toEqual({ name: "fresh.ts", path: "/new.ts" });
+  });
+
+  it("does not mutate the input list", () => {
+    const original = [entry("/old.ts")];
+    renameRecentFile(original, "/old.ts", { name: "new.ts", path: "/new.ts" });
+
+    expect(original.map((item) => item.path)).toEqual(["/old.ts"]);
   });
 });
 

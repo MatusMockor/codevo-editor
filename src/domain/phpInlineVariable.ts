@@ -78,9 +78,25 @@ export function planInlineVariable(
     return null;
   }
 
+  // The variable's value may be read by name (`compact('x')`, `extract(...)`,
+  // `get_defined_vars()`, or `$$ref`) — those reads cannot be resolved to the
+  // inlined expression, so inlining would silently drop the variable.
+  if (bodyReadsVariablesByName(masked, body)) {
+    return null;
+  }
+
   const occurrences = variableOccurrences(masked, body, variable.name);
 
   if (occurrences.length < 2) {
+    return null;
+  }
+
+  // A capture in a closure `use (...)` clause or any reference inside a nested
+  // closure / arrow-function body is not a plain usage in the outer scope:
+  // rewriting a `use ($var)` capture into an expression is a fatal parse error,
+  // and substituting into a nested scope that captured the value changes
+  // semantics. Decline whenever any occurrence falls in either position.
+  if (occurrences.some((occurrence) => isCaptureOrNestedReference(masked, body, occurrence))) {
     return null;
   }
 
@@ -255,6 +271,226 @@ function variableOccurrences(
   }
 
   return tokens;
+}
+
+interface Range {
+  end: number;
+  start: number;
+}
+
+/**
+ * True when the enclosing function body reads locals by their string name —
+ * `compact(...)`, `extract(...)`, `get_defined_vars()`, or a variable-variable
+ * `$$ref`. Such reads resolve a local indirectly (by name, not by token), so
+ * the planner cannot prove `$var` is unused after inlining and would risk
+ * silently dropping its value. Conservatively declines whenever any of these
+ * constructs appear anywhere in the body. Detected on the MASKED body so a
+ * lookalike inside a string/comment never triggers it; `compact`/`extract` are
+ * matched by callee name (their string argument is the mechanism), so the exact
+ * referenced name need not be proven — presence of the call is enough. A
+ * method call of the same name (`$c->compact()`, `Foo::extract()`) is excluded
+ * via the `->`/`::` lookbehind so it never wrongly declines a valid inline.
+ */
+function bodyReadsVariablesByName(masked: string, body: FunctionBody): boolean {
+  const region = masked.slice(body.start, body.end);
+
+  if (/\$\$/.test(region)) {
+    return true;
+  }
+
+  return /(?<![>:])\b(?:compact|extract|get_defined_vars)\s*\(/.test(region);
+}
+
+/**
+ * True when this occurrence is not a plain outer-scope usage but a capture in a
+ * closure `use (...)` clause or a reference inside a nested closure /
+ * arrow-function body. Walks every nested `function`/`fn` declared inside the
+ * enclosing body and tests the occurrence against its use-clause and body spans.
+ */
+function isCaptureOrNestedReference(
+  masked: string,
+  body: FunctionBody,
+  occurrence: VariableToken,
+): boolean {
+  return nestedCallables(masked, body).some(
+    (callable) =>
+      isWithin(callable.body, occurrence) ||
+      (callable.useClause !== null && isWithin(callable.useClause, occurrence)),
+  );
+}
+
+interface NestedCallable {
+  body: Range;
+  useClause: Range | null;
+}
+
+/**
+ * Every closure / arrow function whose declaration sits strictly INSIDE the
+ * enclosing body (nested scopes), with its `use (...)` capture clause span (when
+ * present) and its body span. Used to detect occurrences that are captures or
+ * nested-scope references rather than plain outer-scope usages.
+ */
+function nestedCallables(masked: string, body: FunctionBody): NestedCallable[] {
+  const callables: NestedCallable[] = [];
+  const pattern = /\b(?:function|fn)\b/g;
+  pattern.lastIndex = body.start + 1;
+
+  for (
+    let match = pattern.exec(masked);
+    match && (match.index ?? 0) < body.end;
+    match = pattern.exec(masked)
+  ) {
+    const keyword = match[0];
+    const keywordOffset = match.index ?? 0;
+    const callable = keyword === "fn"
+      ? arrowCallable(masked, keywordOffset, body)
+      : closureCallable(masked, keywordOffset, body);
+
+    if (callable) {
+      callables.push(callable);
+    }
+  }
+
+  return callables;
+}
+
+/**
+ * Resolves a nested `function (...) [use (...)] { ... }` closure: its body span
+ * and the span of its `use (...)` capture clause when one is present. Returns
+ * `null` for the enclosing function itself or a malformed declaration.
+ */
+function closureCallable(
+  masked: string,
+  keywordOffset: number,
+  body: FunctionBody,
+): NestedCallable | null {
+  const openParen = masked.indexOf("(", keywordOffset);
+
+  if (openParen < 0) {
+    return null;
+  }
+
+  const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  const useClause = closureUseClause(masked, closeParen + 1);
+  const braceSearchStart = useClause ? useClause.end : closeParen + 1;
+  const bodyStart = nextBraceOrSemicolon(masked, braceSearchStart);
+
+  if (bodyStart === null || masked[bodyStart] !== "{") {
+    return null;
+  }
+
+  const bodyEnd = matchingBraceOffset(masked, bodyStart);
+
+  if (bodyEnd === null || bodyStart < body.start || bodyEnd > body.end) {
+    return null;
+  }
+
+  return { body: { end: bodyEnd, start: bodyStart }, useClause };
+}
+
+/**
+ * When a `use (...)` capture clause follows the closure parameter list, returns
+ * its parenthesised span (so a captured `$var` there is recognised as a
+ * non-inlinable capture). Returns `null` when no `use` clause is present.
+ */
+function closureUseClause(masked: string, from: number): Range | null {
+  const index = skipWhitespace(masked, from);
+  const match = /^use\b/.exec(masked.slice(index));
+
+  if (!match) {
+    return null;
+  }
+
+  const openParen = skipWhitespace(masked, index + match[0].length);
+
+  if (masked[openParen] !== "(") {
+    return null;
+  }
+
+  const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  return { end: closeParen + 1, start: openParen };
+}
+
+/**
+ * Resolves an arrow function `fn (...) => <expr>`: its body span runs from the
+ * `=>` to the end of the expression (the next top-level `;`, `,`, or closing
+ * bracket of the enclosing context). Arrow functions implicitly capture every
+ * referenced outer variable by value, so any reference inside this span is a
+ * capture and must not be inlined.
+ */
+function arrowCallable(
+  masked: string,
+  keywordOffset: number,
+  body: FunctionBody,
+): NestedCallable | null {
+  const openParen = masked.indexOf("(", keywordOffset);
+
+  if (openParen < 0 || openParen >= body.end) {
+    return null;
+  }
+
+  const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  const arrow = masked.indexOf("=>", closeParen + 1);
+
+  if (arrow < 0 || arrow >= body.end) {
+    return null;
+  }
+
+  const bodyEnd = arrowBodyEnd(masked, arrow + 2, body.end);
+
+  return { body: { end: bodyEnd, start: arrow + 2 }, useClause: null };
+}
+
+/**
+ * Finds where an arrow function's implicit body expression ends: the first
+ * top-level `;` or `,` or an unbalanced closing `)`/`]`/`}` at depth 0, bounded
+ * by the enclosing body end.
+ */
+function arrowBodyEnd(masked: string, from: number, limit: number): number {
+  let depth = 0;
+
+  for (let index = from; index < limit; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      if (depth === 0) {
+        return index;
+      }
+
+      depth -= 1;
+      continue;
+    }
+
+    if ((character === ";" || character === ",") && depth === 0) {
+      return index;
+    }
+  }
+
+  return limit;
+}
+
+function isWithin(range: Range, occurrence: VariableToken): boolean {
+  return occurrence.start >= range.start && occurrence.end <= range.end;
 }
 
 /**

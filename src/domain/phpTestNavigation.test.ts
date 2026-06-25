@@ -20,13 +20,23 @@ describe("isPhpTestRelativePath", () => {
     ).toBe(true);
   });
 
-  it("treats a *Test.php file outside the tests root as a test", () => {
-    expect(isPhpTestRelativePath("app/Services/FooTest.php", ROOTS)).toBe(true);
+  it("treats a *Test.php file outside every source and tests root as a test (suffix fallback)", () => {
+    expect(isPhpTestRelativePath("misc/Services/FooTest.php", ROOTS)).toBe(true);
+  });
+
+  it("treats a *Test.php file under a source root as a production subject (not a test)", () => {
+    expect(isPhpTestRelativePath("app/Services/FooTest.php", ROOTS)).toBe(false);
   });
 
   it("treats a production class as a subject (not a test)", () => {
     expect(
       isPhpTestRelativePath("app/Services/InvoiceService.php", ROOTS),
+    ).toBe(false);
+  });
+
+  it("treats a production *Test class under the source root as a subject", () => {
+    expect(
+      isPhpTestRelativePath("app/Support/ManifestTest.php", ROOTS),
     ).toBe(false);
   });
 });
@@ -76,6 +86,47 @@ describe("phpTestNavigationTargets src -> test", () => {
         relativePath: "vendor/acme/lib/Widget.php",
       }),
     ).toBeNull();
+  });
+
+  it("treats a production *Test class under the source root as a subject, mapping to a test (no doubled path)", () => {
+    const result = phpTestNavigationTargets({
+      psr4Roots: ROOTS,
+      relativePath: "app/Support/ManifestTest.php",
+    });
+
+    expect(result?.direction).toBe("toTest");
+    expect(result?.candidates).toEqual([
+      "tests/Unit/Support/ManifestTestTest.php",
+      "tests/Feature/Support/ManifestTestTest.php",
+    ]);
+  });
+});
+
+describe("phpTestNavigationTargets multi-root test -> subject", () => {
+  const DOMAIN_ROOT = psr4("Domain\\", ["src/Domain/"]);
+  const MULTI_ROOTS = [APP_ROOT, DOMAIN_ROOT, TESTS_DEV_ROOT];
+
+  it("resolves a Domain test to the Domain source root, not App", () => {
+    const result = phpTestNavigationTargets({
+      psr4Roots: MULTI_ROOTS,
+      relativePath: "tests/Unit/Domain/Order/OrderServiceTest.php",
+    });
+
+    expect(result?.direction).toBe("toSubject");
+    expect(result?.candidates).toEqual([
+      "src/Domain/Order/OrderService.php",
+    ]);
+  });
+
+  it("still resolves an App test to the App source root in a multi-root project", () => {
+    const result = phpTestNavigationTargets({
+      psr4Roots: MULTI_ROOTS,
+      relativePath: "tests/Unit/Services/InvoiceServiceTest.php",
+    });
+
+    expect(result?.candidates).toEqual([
+      "app/Services/InvoiceService.php",
+    ]);
   });
 });
 

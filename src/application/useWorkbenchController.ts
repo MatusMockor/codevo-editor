@@ -482,6 +482,8 @@ import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntim
 import {
   pushRecentFile,
   recentFilesForSwitcher,
+  removeRecentFile,
+  renameRecentFile,
   type RecentFileEntry,
 } from "../domain/recentFiles";
 import {
@@ -1537,6 +1539,17 @@ export function useWorkbenchController(
   const recordRecentFile = useCallback((entry: RecentFileEntry) => {
     setRecentFiles((current) => pushRecentFile(current, entry));
   }, []);
+
+  const forgetRecentFile = useCallback((path: string) => {
+    setRecentFiles((current) => removeRecentFile(current, path));
+  }, []);
+
+  const remapRecentFile = useCallback(
+    (oldPath: string, entry: RecentFileEntry) => {
+      setRecentFiles((current) => renameRecentFile(current, oldPath, entry));
+    },
+    [],
+  );
 
   const openRecentFilesSwitcher = useCallback(() => {
     if (!currentWorkspaceRootRef.current) {
@@ -7804,19 +7817,29 @@ export function useWorkbenchController(
 
   const openRecentFile = useCallback(
     async (entry: RecentFileEntry) => {
+      // Capture the requested root up front so a workspace switch during the
+      // open cannot make us prune another tab's MRU after the await resolves.
+      const requestedRoot = currentWorkspaceRootRef.current;
       const opened = await openFile({
         kind: "file",
         name: entry.name,
         path: entry.path,
       });
 
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       if (!opened) {
+        // The file vanished out from under the MRU (deleted/moved outside the
+        // editor). Prune the dead entry so it stops being offered.
+        forgetRecentFile(entry.path);
         return;
       }
 
       setRecentFilesSwitcherOpen(false);
     },
-    [openFile],
+    [forgetRecentFile, openFile],
   );
 
   const openClassSearchResult = useCallback(
@@ -20064,6 +20087,7 @@ export function useWorkbenchController(
         current.map((path) => (path === document.path ? nextPath : path)),
       );
       setActivePath(nextPath);
+      remapRecentFile(oldPath, { name: nextName, path: nextPath });
       await refreshDirectory(parentPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
@@ -20081,6 +20105,7 @@ export function useWorkbenchController(
     notifyPhpFileRenamed,
     prompter,
     refreshDirectory,
+    remapRecentFile,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -20127,6 +20152,7 @@ export function useWorkbenchController(
       }
 
       closeDocument(deletedPath);
+      forgetRecentFile(deletedPath);
       clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
       await refreshDirectory(parentPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -20141,6 +20167,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnosticsForPath,
     closeActiveSurface,
     closeDocument,
+    forgetRecentFile,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,

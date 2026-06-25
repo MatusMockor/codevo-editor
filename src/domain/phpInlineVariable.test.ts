@@ -385,6 +385,79 @@ describe("planInlineVariable", () => {
     });
   });
 
+  describe("closure capture (use clause / nested closures)", () => {
+    it("declines when the variable is captured in a closure use() clause", () => {
+      const source =
+        "<?php\nfunction h() {\n    $factor = $base * 2;\n    $f = function () use ($factor) { return $factor + 1; };\n    return $f;\n}\n";
+      const offset = cursorOn(source, "$factor");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines when the variable is referenced inside a nested closure body", () => {
+      const source =
+        "<?php\nfunction h() {\n    $value = $config->get('x');\n    $f = function () use ($value) { return $value; };\n    return $f($value);\n}\n";
+      const offset = cursorOn(source, "$value");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines when the variable is captured by an arrow function (fn)", () => {
+      const source =
+        "<?php\nfunction h() {\n    $factor = $base + 1;\n    $f = fn () => $factor * 2;\n    return $f;\n}\n";
+      const offset = cursorOn(source, "$factor");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+  });
+
+  describe("string-keyed variable access (compact/extract)", () => {
+    it("declines when the body uses compact() with the variable name", () => {
+      const source =
+        "<?php\nfunction h() {\n    $name = $u->name;\n    echo $name;\n    return compact('name');\n}\n";
+      const offset = cursorOn(source, "$name");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines when the body calls extract()", () => {
+      const source =
+        "<?php\nfunction h() {\n    $data = $payload;\n    extract($data);\n    return $name;\n}\n";
+      const offset = cursorOn(source, "$data");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("declines when the body calls get_defined_vars()", () => {
+      const source =
+        "<?php\nfunction h() {\n    $name = $u->name;\n    echo $name;\n    return get_defined_vars();\n}\n";
+      const offset = cursorOn(source, "$name");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+
+    it("still inlines when 'compact' is a method call, not the global function", () => {
+      const source =
+        "<?php\nfunction h() {\n    $items = $this->items;\n    return $this->collection->compact($items);\n}\n";
+      const offset = cursorOn(source, "$items = ");
+
+      const plan = planInlineVariable(source, offset);
+
+      expect(plan).not.toBeNull();
+      expect(applyPlan(source, plan!)).toBe(
+        "<?php\nfunction h() {\n    return $this->collection->compact($this->items);\n}\n",
+      );
+    });
+
+    it("declines when the body uses variable-variables ($$)", () => {
+      const source =
+        "<?php\nfunction h() {\n    $name = 'value';\n    $key = 'name';\n    echo $name;\n    return $$key;\n}\n";
+      const offset = cursorOn(source, "$name = 'value'");
+
+      expect(planInlineVariable(source, offset)).toBeNull();
+    });
+  });
+
   describe("precedence with word operators", () => {
     it("wraps a logical 'or' value inlined into '&&'", () => {
       const source =
