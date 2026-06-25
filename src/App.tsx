@@ -320,6 +320,12 @@ function App() {
       ),
     [navigationHistoryPathsKey],
   );
+  // Depend on the inputs editorChangeHunks actually reads (baseline + current
+  // content strings) rather than the whole activeDocument object. A cursor move
+  // hands down a new activeDocument identity with identical content, so keying
+  // on the strings keeps this array reference stable and stops the downstream
+  // change-hunk decoration effect from re-running when nothing changed. When the
+  // content genuinely changes (a keystroke) the hunks recompute as expected.
   const activeEditorChangeHunks = useMemo(
     () =>
       workbench.activeDocument
@@ -329,7 +335,11 @@ function App() {
             workbench.activeDocument.content,
           )
         : [],
-    [workbench.activeDocument, workbench.activeDocumentGitBaseline],
+    [
+      workbench.activeDocument?.content,
+      workbench.activeDocument?.savedContent,
+      workbench.activeDocumentGitBaseline,
+    ],
   );
   const activeBookmarkedLineNumbers = useMemo(() => {
     const activePath = workbench.activeDocument?.path;

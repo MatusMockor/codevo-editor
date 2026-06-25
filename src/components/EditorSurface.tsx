@@ -1164,7 +1164,12 @@ function EditorSurfaceComponent({
         [],
       );
     };
-  }, [activeDocument, changeHunks, editorApi, monacoApi]);
+    // Depend on the active document path (not its full identity) so typing does
+    // not re-run this effect every keystroke. The body reads only the path (for
+    // the per-tab stale guard) plus changeHunks, so the path covers file
+    // switches and changeHunks covers actual hunk changes. Mirrors the
+    // bookmark / diagnostic-overview / gutter path-gated effects.
+  }, [activeDocument?.path, changeHunks, editorApi, monacoApi]);
 
   // Renders a bookmark marker in the lines-decorations margin plus an overview
   // ruler tick for each bookmarked line of the active document. The stale-guard
@@ -1776,7 +1781,16 @@ function EditorSurfaceComponent({
       fontSize: editorFontSize,
       glyphMargin: true,
       insertSpaces: true,
+      // Skip memory- and CPU-intensive features (including per-line
+      // tokenization) on extreme lines. Monaco's default, kept explicit so the
+      // scroll-performance guards live together.
+      largeFileOptimizations: true,
       lineHeight: 20,
+      // Lines longer than this are not tokenized. Monaco tokenizes the visible
+      // viewport synchronously while scrolling, so a viewport full of very long
+      // lines blows the frame budget and makes fast scrolling lag. Mirrors the
+      // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
+      maxTokenizationLineLength: 2000,
       minimap: { enabled: false },
       padding: { top: 14, bottom: 14 },
       parameterHints: { enabled: true, cycle: true },
@@ -1785,8 +1799,15 @@ function EditorSurfaceComponent({
       readOnly: isReadOnly,
       scrollBeyondLastLine: false,
       "semanticHighlighting.enabled": true,
-      smoothScrolling: true,
+      // Smooth scrolling animates every fling into many onDidScrollChange
+      // events, each driving a synchronous viewport tokenization pass. Disabling
+      // it keeps fast scrolling of large files responsive (trade-off: the scroll
+      // animation is gone, but the lag is too).
+      smoothScrolling: false,
       stickyScroll: { enabled: true },
+      // Stop rendering a line after this many characters. Monaco's default, kept
+      // explicit alongside the other large-file scroll guards.
+      stopRenderingLineAfter: 10000,
       suggestOnTriggerCharacters: true,
       tabSize: 2,
     }),

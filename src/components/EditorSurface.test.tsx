@@ -891,6 +891,71 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("passes large-file and scroll guards that keep fast scrolling responsive", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // smoothScrolling animates each fling into many onDidScrollChange events,
+    // each driving a synchronous viewport tokenization pass. Turning it off
+    // keeps fast scrolling of large files responsive. The two length guards cap
+    // per-line tokenization and rendering work on extreme lines.
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({
+        smoothScrolling: false,
+        maxTokenizationLineLength: 2000,
+        stopRenderingLineAfter: 10000,
+        largeFileOptimizations: true,
+      }),
+    );
+  });
+
   it("passes Monaco read-only options for read-only documents", async () => {
     const activeDocument: EditorDocument = {
       content: "declare const value: string;\n",
@@ -2279,6 +2344,87 @@ interface PaymentGateway
     await renderWith({ ...activeDocument, content: "const one = 12;\nconst two = 2;\nconst three = 3;\n" });
 
     expect(bookmarkDecorationCalls()).toHaveLength(0);
+  });
+
+  it("does not re-map change-hunk decorations per keystroke when hunks are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "diff.ts",
+      path: "/workspace/src/diff.ts",
+      savedContent: "const one = 0;\nconst two = 2;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    // Stable change-hunk identity across renders so the only thing changing is
+    // the activeDocument object identity (a keystroke). The change-hunk effect
+    // must gate on the document path + hunk identity, not the document object.
+    const changeHunks = editorChangeHunks(
+      activeDocument.savedContent ?? "",
+      activeDocument.content,
+    );
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={changeHunks}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const changeDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some((decoration) =>
+          decoration.options?.glyphMarginClassName?.startsWith(
+            "editor-change-glyph",
+          ),
+        ),
+      );
+
+    await renderWith(activeDocument);
+
+    expect(changeDecorationCalls().length).toBeGreaterThan(0);
+    editor.deltaDecorations.mockClear();
+
+    // Simulate a keystroke: new activeDocument object, same path + same hunk
+    // identity. Change-hunk decorations must NOT be re-mapped.
+    await renderWith({ ...activeDocument, content: "const one = 11;\nconst two = 2;\n" });
+
+    expect(changeDecorationCalls()).toHaveLength(0);
   });
 
   it("re-maps bookmark gutter decorations when bookmarked lines change", async () => {

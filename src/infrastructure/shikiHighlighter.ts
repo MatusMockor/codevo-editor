@@ -537,6 +537,13 @@ export async function setupShikiTokenization(
   }
 
   configureShikiLanguageFeatures(monaco);
-  shikiToMonaco(highlighter, monaco);
+  // Cap synchronous TextMate tokenization to 2000 chars. Monaco tokenizes the
+  // visible viewport on the scroll path; a single very long PHP/Blade line
+  // (interpolation, long chains) costs ~0.8ms of regex work, so a viewport full
+  // of them blows the 16ms frame budget and makes fast scrolling lag. Lines
+  // longer than this fall back to one plain token instead of a regex pass.
+  // Short lines (the overwhelming majority) tokenize normally, so syntax
+  // highlighting is unaffected for real source.
+  shikiToMonaco(highlighter, monaco, { tokenizeMaxLineLength: 2000 });
   monaco.editor.setTheme(theme);
 }

@@ -6,8 +6,26 @@ import {
   buildShikiTheme,
   configureShikiLanguageFeatures,
   createAppHighlighter,
+  setupShikiTokenization,
 } from "./shikiHighlighter";
 import { calmDark } from "../components/themePalettes";
+
+const shikiToMonacoMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@shikijs/monaco", async () => {
+  const actual =
+    await vi.importActual<typeof import("@shikijs/monaco")>("@shikijs/monaco");
+
+  return {
+    ...actual,
+    shikiToMonaco: (
+      ...args: Parameters<typeof actual.shikiToMonaco>
+    ) => {
+      shikiToMonacoMock(...args);
+      return actual.shikiToMonaco(...args);
+    },
+  };
+});
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
@@ -269,5 +287,34 @@ describe("configureShikiLanguageFeatures", () => {
     });
 
     expect(registrations).toEqual([]);
+  });
+});
+
+describe("setupShikiTokenization", () => {
+  it("caps Shiki tokenization to 2000 chars so long lines fall back to a single plain token", async () => {
+    shikiToMonacoMock.mockClear();
+
+    const monaco = {
+      languages: {
+        getLanguages: () => [] as Array<{ id: string }>,
+        register: vi.fn(),
+        setLanguageConfiguration: vi.fn(),
+      },
+      editor: {
+        setTheme: vi.fn(),
+        defineTheme: vi.fn(),
+      },
+    };
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    expect(shikiToMonacoMock).toHaveBeenCalledTimes(1);
+    const options = shikiToMonacoMock.mock.calls[0]?.[2] as
+      | { tokenizeMaxLineLength?: number }
+      | undefined;
+    expect(options?.tokenizeMaxLineLength).toBe(2000);
   });
 });
