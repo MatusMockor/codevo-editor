@@ -730,7 +730,8 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "hostInfo": "Mockor Editor",
                     "supportsMoveToFileCodeAction": true,
                     "tsserver": {
-                        "useClientFileWatcher": true
+                        "useClientFileWatcher": true,
+                        "disableAutomaticTypingAcquisition": true
                     },
                     "preferences": {
                         "allowIncompleteCompletions": true,
@@ -1246,6 +1247,11 @@ mod tests {
             .ends_with("node_modules/typescript/lib/tsserver.js"));
         assert_eq!(
             request.params["initializationOptions"]["tsserver"]["useClientFileWatcher"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["tsserver"]
+                ["disableAutomaticTypingAcquisition"],
             true
         );
         assert_eq!(
