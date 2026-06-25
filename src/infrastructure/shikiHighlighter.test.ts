@@ -1,3 +1,4 @@
+import { EncodedTokenMetadata } from "@shikijs/vscode-textmate";
 import { describe, expect, it, vi } from "vitest";
 import {
   APP_SHIKI_THEMES,
@@ -10,22 +11,68 @@ import {
 } from "./shikiHighlighter";
 import { calmDark } from "../components/themePalettes";
 
-const shikiToMonacoMock = vi.hoisted(() => vi.fn());
+/**
+ * Minimal fake of the subset of the Monaco standalone API that
+ * `setupShikiTokenization` touches. It captures the registered encoded tokens
+ * providers and the installed color map so tests can drive the real Shiki
+ * tokenizer through the provider and assert on the produced binary tokens.
+ */
+interface FakeEncodedTokensProvider {
+  getInitialState(): unknown;
+  tokenizeEncoded(
+    line: string,
+    state: unknown,
+  ): { tokens: Uint32Array; endState: unknown };
+  tokenize?(line: string, state: unknown): unknown;
+}
 
-vi.mock("@shikijs/monaco", async () => {
-  const actual =
-    await vi.importActual<typeof import("@shikijs/monaco")>("@shikijs/monaco");
+function createMonacoStub() {
+  const providers = new Map<string, FakeEncodedTokensProvider>();
+  let colorMap: string[] = [];
+  const definedThemes: string[] = [];
+  const setThemeCalls: string[] = [];
 
-  return {
-    ...actual,
-    shikiToMonaco: (
-      ...args: Parameters<typeof actual.shikiToMonaco>
-    ) => {
-      shikiToMonacoMock(...args);
-      return actual.shikiToMonaco(...args);
+  const classicProviderRegistrations: string[] = [];
+  const monaco = {
+    languages: {
+      getLanguages: () => [] as Array<{ id: string }>,
+      register: vi.fn(),
+      setLanguageConfiguration: vi.fn(),
+      setTokensProvider: vi.fn(
+        (languageId: string, provider: FakeEncodedTokensProvider) => {
+          // Monaco routes both classic and encoded providers through this one
+          // call; the encoded variant is the one exposing tokenizeEncoded.
+          if (typeof provider?.tokenizeEncoded === "function") {
+            providers.set(languageId, provider);
+          } else {
+            classicProviderRegistrations.push(languageId);
+          }
+          return { dispose: vi.fn() };
+        },
+      ),
+      setColorMap: vi.fn((map: string[] | null) => {
+        colorMap = map ?? [];
+      }),
+    },
+    editor: {
+      defineTheme: vi.fn((name: string) => {
+        definedThemes.push(name);
+      }),
+      setTheme: vi.fn((name: string) => {
+        setThemeCalls.push(name);
+      }),
     },
   };
-});
+
+  return {
+    monaco,
+    providers,
+    classicProviderRegistrations,
+    definedThemes,
+    setThemeCalls,
+    getColorMap: () => colorMap,
+  };
+}
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
@@ -291,30 +338,173 @@ describe("configureShikiLanguageFeatures", () => {
 });
 
 describe("setupShikiTokenization", () => {
-  it("caps Shiki tokenization to 2000 chars so long lines fall back to a single plain token", async () => {
-    shikiToMonacoMock.mockClear();
-
-    const monaco = {
-      languages: {
-        getLanguages: () => [] as Array<{ id: string }>,
-        register: vi.fn(),
-        setLanguageConfiguration: vi.fn(),
-      },
-      editor: {
-        setTheme: vi.fn(),
-        defineTheme: vi.fn(),
-      },
-    };
+  it("registers an encoded tokens provider for every Shiki language", async () => {
+    const { monaco, providers, classicProviderRegistrations } =
+      createMonacoStub();
 
     await setupShikiTokenization(
       monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
       "calm-dark",
     );
 
-    expect(shikiToMonacoMock).toHaveBeenCalledTimes(1);
-    const options = shikiToMonacoMock.mock.calls[0]?.[2] as
-      | { tokenizeMaxLineLength?: number }
-      | undefined;
-    expect(options?.tokenizeMaxLineLength).toBe(2000);
+    for (const lang of SHIKI_LANGS) {
+      const provider = providers.get(lang);
+      expect(provider, `missing encoded provider for ${lang}`).toBeDefined();
+      // The encoded path streams binary tokens straight from Shiki, so the
+      // provider must expose tokenizeEncoded rather than the classic tokenize.
+      expect(typeof provider?.tokenizeEncoded).toBe("function");
+    }
+    // No classic (scope-string) provider should be registered.
+    expect(classicProviderRegistrations).toHaveLength(0);
+  });
+
+  it("installs the Shiki color map and applies the requested theme", async () => {
+    const { monaco, getColorMap, setThemeCalls } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    // The encoded foreground ids index this color map, so it must be installed
+    // for colors to render. shikiToMonaco never called setColorMap; we must.
+    expect(monaco.languages.setColorMap).toHaveBeenCalled();
+    expect(getColorMap().length).toBeGreaterThan(1);
+    expect(setThemeCalls).toContain("calm-dark");
+  });
+
+  it("produces non-empty encoded tokens for PHP whose foreground ids index the color map", async () => {
+    const { monaco, providers, getColorMap } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const php = providers.get("php");
+    expect(php).toBeDefined();
+    const result = php!.tokenizeEncoded(
+      "<?php function greet(string $name) { return $name; }",
+      php!.getInitialState(),
+    );
+
+    expect(result.tokens).toBeInstanceOf(Uint32Array);
+    expect(result.tokens.length).toBeGreaterThan(0);
+    // Even tokens are start offsets, odd tokens are encoded metadata.
+    const colorMap = getColorMap();
+    let sawColoredToken = false;
+    for (let i = 0; i < result.tokens.length; i += 2) {
+      const metadata = result.tokens[i + 1];
+      const foreground = EncodedTokenMetadata.getForeground(metadata);
+      expect(foreground).toBeLessThan(colorMap.length);
+      if (foreground > 0) {
+        sawColoredToken = true;
+      }
+    }
+    // Keywords/functions must resolve to real palette colors, not the default.
+    expect(sawColoredToken).toBe(true);
+  });
+
+  it("produces non-empty encoded tokens for TypeScript", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const ts = providers.get("typescript");
+    expect(ts).toBeDefined();
+    const result = ts!.tokenizeEncoded(
+      "const greet = (name: string): void => {};",
+      ts!.getInitialState(),
+    );
+    expect(result.tokens).toBeInstanceOf(Uint32Array);
+    expect(result.tokens.length).toBeGreaterThan(0);
+  });
+
+  it("carries grammar state across lines so multiline constructs stay highlighted", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const php = providers.get("php");
+    expect(php).toBeDefined();
+    // A block comment opened on line 1 must keep line 2 inside the comment
+    // state, which only works if the end state is threaded between calls.
+    const first = php!.tokenizeEncoded("<?php /* open", php!.getInitialState());
+    const threaded = php!.tokenizeEncoded("still comment */", first.endState);
+    const fresh = php!.tokenizeEncoded(
+      "still comment */",
+      php!.getInitialState(),
+    );
+    expect(threaded.tokens.length).toBeGreaterThan(0);
+    // Token type 1 === Comment in Monaco's StandardTokenType encoding. With the
+    // open comment state threaded in, the line's first token is a comment...
+    const threadedType = EncodedTokenMetadata.getTokenType(threaded.tokens[1]);
+    expect(threadedType).toBe(1);
+    // ...whereas tokenizing the same line from the initial state does not see a
+    // comment, proving the end state was actually carried across the boundary.
+    const freshType = EncodedTokenMetadata.getTokenType(fresh.tokens[1]);
+    expect(freshType).not.toBe(1);
+  });
+
+  it("falls back to a single plain token for lines beyond the 2000-char cap", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const php = providers.get("php");
+    expect(php).toBeDefined();
+    const longLine = `<?php $x = '${"a".repeat(2100)}';`;
+    const result = php!.tokenizeEncoded(longLine, php!.getInitialState());
+    // One token, starting at index 0, with no regex pass performed.
+    expect(result.tokens.length).toBe(2);
+    expect(result.tokens[0]).toBe(0);
+  });
+
+  it("forwards later setTheme calls to Shiki and refreshes the color map", async () => {
+    const { monaco, getColorMap } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const darkColorMap = [...getColorMap()];
+    monaco.languages.setColorMap.mockClear();
+
+    // Switching themes (light) must reinstall the matching color map so the
+    // already-tokenized encoded foreground ids keep resolving to real colors.
+    monaco.editor.setTheme("calm-light");
+    expect(monaco.languages.setColorMap).toHaveBeenCalled();
+    const lightColorMap = getColorMap();
+    expect(lightColorMap).not.toEqual(darkColorMap);
+  });
+
+  it("does not stack setTheme wrappers when run twice on the shared Monaco namespace", async () => {
+    const { monaco } = createMonacoStub();
+
+    // Monaco's namespace is a singleton shared across editor tabs; running
+    // setup twice (e.g. main editor + git diff) must wrap setTheme only once
+    // so a later theme switch installs the color map exactly one time.
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    monaco.languages.setColorMap.mockClear();
+    monaco.editor.setTheme("calm-light");
+    expect(monaco.languages.setColorMap).toHaveBeenCalledTimes(1);
   });
 });
