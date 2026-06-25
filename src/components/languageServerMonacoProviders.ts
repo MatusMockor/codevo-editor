@@ -41,6 +41,7 @@ import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
 } from "../domain/phpPostfixCompletions";
+import { matchingSnippetsForLanguage } from "../domain/snippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -3463,13 +3464,28 @@ async function provideCompletionItems(
           range,
           sortText: `0_${String(index).padStart(4, "0")}`,
         }));
-  const suggestions = [...methodSuggestions, ...variableSuggestions];
+  // Built-in live-template snippets (nclass/dd/route/…) only make sense as
+  // free-standing statements typed from an abbreviation, never after `->`/`::`,
+  // inside a Laravel scoped string, or while framework-backed method/Laravel
+  // completions are driving the list. They are suppressed in those contexts just
+  // like local variables.
+  const snippetSuggestions =
+    methodSuggestions.length > 0 || isScopedCompletion
+      ? []
+      : phpSnippetSuggestions(
+          monaco,
+          documentContext.activeDocument.language,
+          word,
+          range,
+        );
+  const localSuggestions = [...methodSuggestions, ...variableSuggestions];
+  const suggestions = [...localSuggestions, ...snippetSuggestions];
 
   const resolution = await lspCompletion;
 
-  // The locally-computed method/postfix/variable suggestions are returned as a
-  // graceful fallback when the language server is missing, mid-index or slow,
-  // so completion is never empty while phpactor warms up.
+  // The locally-computed method/postfix/variable/snippet suggestions are
+  // returned as a graceful fallback when the language server is missing,
+  // mid-index or slow, so completion is never empty while phpactor warms up.
   if (resolution.kind === "noRequest") {
     return { suggestions };
   }
@@ -3524,11 +3540,17 @@ async function provideCompletionItems(
     }];
   });
 
+  // Ordering for dedupe: locally-computed method/variable suggestions first,
+  // then language-server items, then snippets last. On a dedupe-key collision
+  // the LSP item wins over a like-named snippet (relevant for callable-shaped
+  // snippets such as `dd`). Monaco still orders the visible list by `sortText`,
+  // which keeps snippets (`2_`) below LSP (`1_`).
   return {
     ...(completion.isIncomplete ? { incomplete: true } : {}),
     suggestions: dedupeCompletionItems(monaco, [
-      ...suggestions,
+      ...localSuggestions,
       ...lspSuggestions,
+      ...snippetSuggestions,
     ]),
   };
 }
@@ -3617,6 +3639,41 @@ function phpPostfixCompletionSuggestions(
     label: item.label,
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
+  }));
+}
+
+/**
+ * Builds language-scoped live-template snippet completion items for the typed
+ * `word`. The snippet registry is a GLOBAL built-in (no workspace state), so it
+ * carries no per-project isolation risk; the surrounding completion flow keeps
+ * its root/session/token guards. Bodies are emitted with `InsertAsSnippet` so
+ * Monaco expands the `$1`/`${1:default}`/`$0` tab-stops natively, and sort with
+ * the `2_` bucket so they appear after language-server suggestions.
+ */
+function phpSnippetSuggestions(
+  monaco: MonacoApi,
+  language: string,
+  word: { word?: string },
+  range: ReturnType<typeof completionRange>,
+): Monaco.languages.CompletionItem[] {
+  const typed = typeof word.word === "string" ? word.word : "";
+
+  // Snippets are surfaced from a typed abbreviation (PhpStorm/VS Code live
+  // template behaviour). With no typed prefix the whole catalogue would flood
+  // every keystroke, so an empty word yields nothing.
+  if (typed.length === 0) {
+    return [];
+  }
+
+  return matchingSnippetsForLanguage(language, typed).map((snippet, index) => ({
+    detail: snippet.description,
+    insertText: snippet.body,
+    insertTextRules:
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    label: snippet.prefix,
+    range,
+    sortText: `2_${String(index).padStart(4, "0")}`,
   }));
 }
 

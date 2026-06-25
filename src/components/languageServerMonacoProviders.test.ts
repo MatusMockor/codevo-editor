@@ -1942,6 +1942,156 @@ function store($request): void
     ).toBe(true);
   });
 
+  it("offers PHP snippet completions for a typed prefix as InsertAsSnippet", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nncl\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "ncl",
+        word: {
+          endColumn: 4,
+          startColumn: 1,
+          word: "ncl",
+        },
+      }),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+    );
+
+    const snippet = (
+      result.suggestions as Array<{
+        insertText: string;
+        insertTextRules?: number;
+        kind: number;
+        label: unknown;
+        sortText?: string;
+      }>
+    ).find((item) => item.label === "nclass");
+
+    expect(snippet).toBeDefined();
+    expect(snippet?.insertTextRules).toBe(4);
+    expect(snippet?.kind).toBe(27);
+    expect(snippet?.insertText).toContain("class ${1:ClassName}");
+  });
+
+  it("sorts PHP snippet completions after LSP suggestions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\ndd\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [
+            {
+              detail: "function",
+              documentation: null,
+              insertText: "ddd_lsp",
+              kind: 3,
+              label: "ddd_lsp",
+            },
+          ],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "dd",
+        word: {
+          endColumn: 3,
+          startColumn: 1,
+          word: "dd",
+        },
+      }),
+      {
+        column: 3,
+        lineNumber: 2,
+      },
+    );
+
+    const items = result.suggestions as Array<{
+      label: unknown;
+      sortText?: string;
+    }>;
+    const lsp = items.find((item) => item.label === "ddd_lsp");
+    const snippet = items.find((item) => item.label === "dd");
+
+    expect(lsp?.sortText).toBeDefined();
+    expect(snippet?.sortText).toBeDefined();
+    expect(
+      String(snippet?.sortText).localeCompare(String(lsp?.sortText)),
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not offer PHP snippets inside member access completions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nfunction show($user): void\n{\n    $user->dd\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "    $user->dd",
+        word: {
+          endColumn: 14,
+          startColumn: 12,
+          word: "dd",
+        },
+      }),
+      {
+        column: 14,
+        lineNumber: 4,
+      },
+    );
+
+    const snippet = (result.suggestions as Array<{ kind: number }>).find(
+      (item) => item.kind === 27,
+    );
+
+    expect(snippet).toBeUndefined();
+  });
+
   it("filters PHP LSP locals and keywords inside member access completions", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
