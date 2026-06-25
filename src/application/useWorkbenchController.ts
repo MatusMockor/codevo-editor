@@ -470,6 +470,11 @@ import {
 } from "../domain/phpIntroduceMember";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
 import {
+  phpCurrentNamespace,
+  phpShortNameIsImported,
+  planPhpAddImport,
+} from "../domain/phpAddImport";
+import {
   renderImplementMethodsStubs,
   renderOverrideMethodsStubs,
   renderUseImports,
@@ -16298,11 +16303,48 @@ export function useWorkbenchController(
         actions.push(optimizeImportsAction);
       }
 
+      // "Import class" (PhpStorm Alt+Enter -> Import): when the cursor sits on an
+      // unimported, unqualified class reference, look the short name up in the
+      // workspace symbol index and offer a `use FQN;` insertion per candidate
+      // namespace. Indexed-only (the index is per-root); the requested root is
+      // re-checked after the async search and before mutating `actions` so a tab
+      // switch mid-search drops stale results (per-workspace isolation).
+      const importShortName = phpImportClassShortNameAt(source, range);
+
+      if (importShortName && shouldIndexWorkspace(intelligenceMode)) {
+        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+          requestedRoot,
+          importShortName,
+          25,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const candidateFqns = indexedSymbols
+          .filter(isTypeProjectSymbol)
+          .filter(
+            (symbol) =>
+              symbol.name.toLowerCase() === importShortName.toLowerCase(),
+          )
+          .map((symbol) => symbol.fullyQualifiedName);
+
+        for (const importAction of phpImportClassCodeActions(
+          source,
+          candidateFqns,
+        )) {
+          actions.push(importAction);
+        }
+      }
+
       return actions;
     },
     [
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
+      intelligenceMode,
+      projectSymbolSearch,
       workspaceRoot,
     ],
   );
@@ -27370,6 +27412,106 @@ function phpIntroduceMemberEdits(
       text: plan.replacementText,
     },
   ];
+}
+
+/**
+ * Returns the bare (single-segment) short class name under the cursor that is a
+ * candidate for an "Import class" quickfix, or `null` when it should not be
+ * offered. Conservative gates, in order:
+ *  - the cursor must sit on a `classIdentifier` reference (method calls,
+ *    property/static accesses, Laravel string helpers etc. are excluded by
+ *    {@link phpClassIdentifierNameAt});
+ *  - the name must be unqualified (no `\`) - a qualified reference already names
+ *    its namespace, so no `use` is needed;
+ *  - the name must NOT already be imported by a top-level `use` (alias-aware).
+ */
+function phpImportClassShortNameAt(
+  source: string,
+  range: PhpCodeActionRange,
+): string | null {
+  const shortName = phpClassIdentifierNameAt(source, range.start);
+
+  if (!shortName || shortName.includes("\\")) {
+    return null;
+  }
+
+  if (phpShortNameIsImported(source, shortName)) {
+    return null;
+  }
+
+  return shortName;
+}
+
+/**
+ * Builds the "Import \\Fully\\Qualified\\Name" code actions for an unimported
+ * class reference. Pure: the indexed candidate FQNs are resolved by the caller
+ * (workspace symbol index) and passed in. A candidate is offered only when it is
+ * namespaced AND its namespace differs from the file's current namespace (a
+ * same-namespace class needs no `use`); duplicates are de-duplicated and the
+ * actions are ordered alphabetically by FQN so an ambiguous short name yields a
+ * stable list of choices. Each action inserts `use FQN;` into the existing use
+ * block in sorted order (or starts a fresh block) via {@link planPhpAddImport}.
+ */
+function phpImportClassCodeActions(
+  source: string,
+  candidateFqns: readonly string[],
+): PhpCodeActionDescriptor[] {
+  const currentNamespace = (phpCurrentNamespace(source) ?? "").toLowerCase();
+  const seen = new Set<string>();
+  const actions: PhpCodeActionDescriptor[] = [];
+
+  for (const candidate of candidateFqns) {
+    const fqn = candidate.trim().replace(/^\\+/, "");
+
+    if (!fqn.includes("\\")) {
+      continue;
+    }
+
+    const key = fqn.toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+
+    const namespacePart = fqn.slice(0, fqn.lastIndexOf("\\")).toLowerCase();
+
+    if (namespacePart === currentNamespace) {
+      continue;
+    }
+
+    const action = phpImportClassCodeAction(source, fqn);
+
+    if (action) {
+      actions.push(action);
+    }
+  }
+
+  return actions.sort((a, b) => a.title.localeCompare(b.title));
+}
+
+function phpImportClassCodeAction(
+  source: string,
+  fqn: string,
+): PhpCodeActionDescriptor | null {
+  const plan = planPhpAddImport(source, fqn);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.offset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.text,
+      },
+    ],
+    title: `Import ${fqn}`,
+  };
 }
 
 /**

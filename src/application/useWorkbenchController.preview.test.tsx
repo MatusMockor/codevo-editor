@@ -47658,6 +47658,388 @@ class Account
     expect(optimizeEdit?.range.endLineNumber).toBe(5);
   });
 
+  it("offers an Import class action for an unimported class found in the index", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Models\\Comment;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "Post", 25);
+    const importAction = actions.find(
+      (action) => action.title === "Import App\\Models\\Post",
+    );
+    expect(importAction).toBeDefined();
+    const importEdit = importAction?.edits[0];
+    expect(importEdit?.text).toBe("use App\\Models\\Post;\n");
+    // Inserted before the alphabetically-later `use App\\Models\\Comment;`? No:
+    // Post sorts after Comment, so it lands on the line AFTER Comment (line 6).
+    expect(importEdit?.range.startColumn).toBe(1);
+    expect(importEdit?.range.endColumn).toBe(1);
+    expect(importEdit?.range.startLineNumber).toBe(6);
+    expect(importEdit?.range.endLineNumber).toBe(6);
+  });
+
+  it("offers one Import action per candidate namespace for an ambiguous class", async () => {
+    const classPath = "/workspace/app/Http/UserController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class UserController
+{
+    public function show(): User
+    {
+        return new User();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\User",
+        kind: "class",
+        lineNumber: 5,
+        name: "User",
+        path: "/workspace/app/Models/User.php",
+        relativePath: "app/Models/User.php",
+      },
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Support\\User",
+        kind: "class",
+        lineNumber: 9,
+        name: "User",
+        path: "/workspace/app/Support/User.php",
+        relativePath: "app/Support/User.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "UserController.php"));
+    });
+
+    const offset = classSource.indexOf("User", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const importTitles = actions
+      .map((action) => action.title)
+      .filter((title) => title.startsWith("Import "));
+    expect(importTitles).toEqual([
+      "Import App\\Models\\User",
+      "Import App\\Support\\User",
+    ]);
+  });
+
+  it("does not offer an Import action when the class is already imported", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Models\\Post;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("does not offer an Import action when the only candidate is in the current namespace", async () => {
+    const classPath = "/workspace/app/Models/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("does not offer an Import action when no candidate exists in the index", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("drops stale Import class actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => symbolSearch.promise);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: offset,
+        start: offset,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "Post", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    symbolSearch.resolve([
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace-a/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
   it("drops stale generate-constructor code actions after switching project tabs", async () => {
     const classPath = "/workspace-a/app/Services/Greeter.php";
     const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
