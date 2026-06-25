@@ -162,6 +162,93 @@ class Foo
     expect(organizePhpImports(source)?.removed).toEqual([]);
   });
 
+  it("keeps imports referenced only in @property / @method / @mixin docblock tags", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\Profile;
+use Illuminate\\Support\\Collection;
+use Illuminate\\Database\\Eloquent\\Builder;
+use App\\Macros\\BuilderMacros;
+
+/**
+ * @property Profile $profile
+ * @property-read Collection $events
+ * @method static Builder query()
+ * @mixin BuilderMacros
+ */
+class Foo
+{
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+  });
+
+  it("keeps a parameter-type class referenced only inside an @method signature", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\ValueObjects\\Money;
+
+/**
+ * @method static self credit(Money $amount)
+ */
+class Account
+{
+}
+`;
+
+    expect(organizePhpImports(source)?.removed).toEqual([]);
+  });
+
+  it("keeps a class referenced only in an @see tag", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Support\\Helper;
+
+/**
+ * @see Helper::run()
+ */
+class Foo
+{
+}
+`;
+
+    expect(organizePhpImports(source)?.removed).toEqual([]);
+  });
+
+  it("still removes an import that is only mentioned in a docblock description", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Services\\Ghost;
+
+/**
+ * @return void Ghost is only mentioned in prose, never as a type.
+ */
+class Foo
+{
+    public function go(): void
+    {
+    }
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual(["App\\Services\\Ghost"]);
+    expect(result?.changed).toBe(true);
+  });
+
   it("keeps an import referenced only in an attribute", () => {
     const source = `<?php
 

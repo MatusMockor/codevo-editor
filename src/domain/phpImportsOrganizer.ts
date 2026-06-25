@@ -112,14 +112,35 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * Collects identifiers from PHPDoc type tags (`@param`, `@return`, `@var`,
- * `@throws`) so a class referenced only in a docblock still counts as used.
+ * Collects identifiers from PHPDoc tags so a class referenced only in a docblock
+ * still counts as used.
  *
- * Conservative on purpose: it harvests every identifier-looking token from the
- * type portion of those tags (the part before the variable / description) so a
- * union/generic type such as `Foo|Bar` or `Collection<User>` keeps all members.
+ * Two tag families are harvested:
+ *  - "type-leading" tags (`@param`, `@return`, `@var`, `@throws`) where the type
+ *    is the part before the `$var` / prose: only that leading type expression is
+ *    harvested so a description mentioning a class never keeps an unused import.
+ *  - "signature" tags (`@property`, `@property-read`, `@property-write`,
+ *    `@method`, `@mixin`, `@see`) where class references can appear ANYWHERE in
+ *    the tag body - e.g. `@property Type $x`, `@method Ret name(Arg $y)`,
+ *    `@mixin Trait`, `@see Class::method`. For these, every identifier-looking
+ *    token in the whole tag body is harvested.
+ *
+ * Both are conservative: harvesting can only ADD survivors (keep imports), never
+ * remove one - in IDE/Laravel mode Eloquent magic `@property`/`@method`/`@mixin`
+ * docblocks are pervasive and reference real, used imports.
  */
 function phpDocTypeHaystack(source: string): string {
+  return [
+    leadingTypeTagHaystack(source),
+    signatureTagHaystack(source),
+  ].join(" ");
+}
+
+/**
+ * Harvests identifiers from the leading TYPE portion of `@param`/`@return`/
+ * `@var`/`@throws` (the part before any `$var` / description prose).
+ */
+function leadingTypeTagHaystack(source: string): string {
   const tokens: string[] = [];
 
   for (const match of source.matchAll(
@@ -128,6 +149,25 @@ function phpDocTypeHaystack(source: string): string {
     const typeExpression = stripDocDescription(match[1] ?? "");
 
     for (const token of typeExpression.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+      tokens.push(token[0]);
+    }
+  }
+
+  return tokens.join(" ");
+}
+
+/**
+ * Harvests EVERY identifier-looking token from `@property*`/`@method`/`@mixin`/
+ * `@see` tag bodies, since a class reference can sit anywhere in those tags
+ * (return type, parameter type in a `@method` signature, mixin/see target).
+ */
+function signatureTagHaystack(source: string): string {
+  const tokens: string[] = [];
+
+  for (const match of source.matchAll(
+    /@(?:property(?:-read|-write)?|method|mixin|see)\b([^\r\n*]*)/g,
+  )) {
+    for (const token of (match[1] ?? "").matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
       tokens.push(token[0]);
     }
   }
