@@ -174,6 +174,12 @@ export const keymapCommands = [
     label: "Toggle Editor Font Ligatures",
   },
   {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.toggleGitBlame",
+    label: "Annotate with Git Blame",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

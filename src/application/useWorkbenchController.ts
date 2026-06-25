@@ -24,6 +24,7 @@ import {
 import {
   emptyGitStatus,
   gitChangeKey,
+  type GitBlameLine,
   type GitChangedFile,
   type GitFileDiff,
   type GitGateway,
@@ -1037,6 +1038,12 @@ export function useWorkbenchController(
   // leak into another project's editor gutter or panel.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false);
+  // Git blame annotation toggle, tracked per absolute document path so the
+  // annotation state never leaks across open tabs (each path is workspace-
+  // scoped). Reset on workspace switch alongside the other per-tab state.
+  const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [classOpenOpen, setClassOpenOpen] = useState(false);
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
@@ -3316,6 +3323,7 @@ export function useWorkbenchController(
     setRecentFiles([]);
     setBookmarks([]);
     setBookmarksPanelOpen(false);
+    setGitBlameEnabledPaths(new Set());
     setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
@@ -4481,6 +4489,7 @@ export function useWorkbenchController(
         setPreviewPath(null);
         setRecentFiles([]);
         setBookmarks([]);
+        setGitBlameEnabledPaths(new Set());
         setNavigationHistory(createNavigationHistory());
         setSidebarView("files");
         setBottomPanelView("problems");
@@ -8657,6 +8666,50 @@ export function useWorkbenchController(
     const lineNumber = activeEditorPositionRef.current?.lineNumber ?? 1;
     toggleBookmarkAtLine(lineNumber);
   }, [toggleBookmarkAtLine]);
+
+  // Toggles git blame annotations for the active document. State is keyed by the
+  // absolute document path so it stays isolated per tab.
+  const toggleGitBlame = useCallback(() => {
+    const document = activeDocumentRef.current;
+
+    if (!document) {
+      return;
+    }
+
+    setGitBlameEnabledPaths((current) => {
+      const next = new Set(current);
+
+      if (next.has(document.path)) {
+        next.delete(document.path);
+        return next;
+      }
+
+      next.add(document.path);
+      return next;
+    });
+  }, []);
+
+  // Fetches per-line git blame for a document. The requested workspace root is
+  // captured up front; EditorSurface re-checks the active path after the await
+  // before rendering, so a stale result from a switched-away tab is dropped.
+  const provideGitBlame = useCallback(
+    async (path: string): Promise<GitBlameLine[]> => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const relativePath = workspaceRelativePath(requestedRoot, path);
+
+      if (!relativePath) {
+        return [];
+      }
+
+      return gitGateway.blame(requestedRoot, relativePath);
+    },
+    [gitGateway, workspaceRoot],
+  );
 
   // The cursor anchor for next/previous bookmark navigation. Uses the active
   // document plus the live editor position so navigation steps relative to where
@@ -22260,6 +22313,16 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.toggleGitBlame",
+      title: "Annotate with Git Blame",
+      category: "Editor",
+      shortcut: shortcut("editor.toggleGitBlame"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: toggleGitBlame,
+    });
+
+    registry.register({
       id: "editor.showCallHierarchy",
       title: "Show Call Hierarchy",
       category: "Editor",
@@ -22671,6 +22734,7 @@ export function useWorkbenchController(
     toggleEditorFontLigatures,
     toggleTodoPanel,
     refreshWorkspaceTodos,
+    toggleGitBlame,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
@@ -23309,6 +23373,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.toggleGitBlame")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          toggleGitBlame();
+        }
+        return;
+      }
+
       if (matches("bookmark.showPanel")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -23520,6 +23592,7 @@ export function useWorkbenchController(
     toggleTodoPanel,
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
+    toggleGitBlame,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
@@ -24770,6 +24843,11 @@ export function useWorkbenchController(
     bookmarks,
     sortedBookmarks: sortBookmarks(bookmarks),
     bookmarksPanelOpen,
+    isActiveDocumentGitBlameEnabled: activeDocument
+      ? gitBlameEnabledPaths.has(activeDocument.path)
+      : false,
+    toggleGitBlame,
+    provideGitBlame,
     toggleBookmarkAtCursor,
     toggleBookmarkAtLine,
     goToNextBookmark,

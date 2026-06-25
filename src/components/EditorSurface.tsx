@@ -64,6 +64,7 @@ import {
   type MoveStatementDirection,
 } from "../domain/phpMoveStatement";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { gitBlameAnnotation, type GitBlameLine } from "../domain/git";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
@@ -138,6 +139,7 @@ interface EditorSurfaceProps {
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   formatOnPaste?: boolean;
+  gitBlameEnabled?: boolean;
   isLanguageServerDocumentSynced?(path: string): boolean;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
@@ -164,6 +166,8 @@ interface EditorSurfaceProps {
   onGoToImplementationAt(position: EditorPosition): void;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
+  onToggleGitBlame?(): void;
+  provideGitBlame?(path: string): Promise<GitBlameLine[]>;
   isActiveDocumentPhpTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
@@ -214,6 +218,7 @@ function EditorSurfaceComponent({
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   formatOnPaste = false,
+  gitBlameEnabled = false,
   isActiveDocumentPhpTest = false,
   isLanguageServerDocumentSynced,
   languageServerDiagnosticsByPath,
@@ -241,6 +246,8 @@ function EditorSurfaceComponent({
   onGoToImplementationAt,
   onRunTestAt,
   onToggleBookmarkAtLine,
+  onToggleGitBlame,
+  provideGitBlame,
   onEditorFocused,
   onOpenClass,
   onOpenFile,
@@ -331,6 +338,20 @@ function EditorSurfaceComponent({
   // Right=test-run) so they never collide with those glyphs or their click
   // handlers, and work on every language (not just PHP).
   const bookmarkDecorationIdsRef = useRef<string[]>([]);
+  // Git blame annotations. Rendered as inline `before` injected text at the start
+  // of each line (the content area), so they occupy NONE of the four gutter lanes
+  // (glyph margin Left=git, Center=impl, Right=test-run; lines-decorations=
+  // bookmark) - no collision with those glyphs or their click handlers. PhpStorm
+  // shows author+date in a column beside the line numbers; Monaco has no native
+  // line-annotation column, so inline injected text is the closest non-colliding
+  // equivalent and matches how GitLens annotates in VS Code.
+  const gitBlameDecorationIdsRef = useRef<string[]>([]);
+  // The path whose annotations currently occupy gitBlameDecorationIdsRef. null
+  // means none are applied. Used to drop the previous file's annotations on a
+  // switch (per-tab isolation) and to ignore a stale async blame result whose
+  // requested path no longer matches the active document.
+  const gitBlameDecoratedPathRef = useRef<string | null>(null);
+  const provideGitBlameRef = useRef(provideGitBlame);
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   // Tracks the diagnostics map seen on the previous run and the set of model
   // objects already given language-server markers, so the marker effect can
@@ -485,6 +506,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     phpMethodSignatureRef.current = providePhpMethodSignature;
   }, [providePhpMethodSignature]);
+
+  useEffect(() => {
+    provideGitBlameRef.current = provideGitBlame;
+  }, [provideGitBlame]);
 
   useEffect(() => {
     if (!activeDocument || activeDocument.language !== "php") {
@@ -925,6 +950,14 @@ function EditorSurfaceComponent({
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
+        id: "mockor.toggleGitBlame",
+        label: "Annotate with Git Blame",
+        keybindings: keybinding("editor.toggleGitBlame"),
+        run: () => {
+          onToggleGitBlame?.();
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.formatDocument",
         label: "Format Document",
         keybindings: keybinding("editor.formatDocument"),
@@ -1107,6 +1140,7 @@ function EditorSurfaceComponent({
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
+    onToggleGitBlame,
     setSurroundWithRequest,
   ]);
 
@@ -1255,6 +1289,86 @@ function EditorSurfaceComponent({
     // the per-tab stale guard) plus bookmarkedLineNumbers, so the path covers
     // file switches and bookmarkedLineNumbers covers bookmark toggles.
   }, [activeDocument?.path, bookmarkedLineNumbers, editorApi, monacoApi]);
+
+  // Git blame annotations (PhpStorm "Annotate with Git Blame"). When enabled for
+  // the active document, fetch per-line blame off the parent gateway and render
+  // an inline author + relative-date annotation at the start of each line. The
+  // request captures the requested path up front and re-checks the active /
+  // model path AFTER the await before mutating decorations, so a tab switch in
+  // flight drops the stale result (per-tab + per-document isolation). Disabling
+  // (or switching away) clears the annotations synchronously.
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const clearAnnotations = () => {
+      gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
+        gitBlameDecorationIdsRef.current,
+        [],
+      );
+      gitBlameDecoratedPathRef.current = null;
+    };
+
+    const provider = provideGitBlameRef.current;
+
+    if (!gitBlameEnabled || !provider) {
+      clearAnnotations();
+      return;
+    }
+
+    // Capture the requested path BEFORE the await so a switch can be detected.
+    const requestedPath = activeDocument.path;
+    let cancelled = false;
+
+    void provider(requestedPath)
+      .then((blameLines) => {
+        // Re-check AFTER the await: drop stale results from a switched-away tab,
+        // an effect cleanup (cancelled), a disposed model, or a document whose
+        // path no longer matches the request.
+        if (cancelled || model.isDisposed?.()) {
+          return;
+        }
+
+        const currentModel = editorApi.getModel();
+
+        if (
+          !currentModel ||
+          modelPath(currentModel) !== requestedPath ||
+          activeDocumentRef.current?.path !== requestedPath
+        ) {
+          return;
+        }
+
+        const now = Date.now();
+        gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
+          gitBlameDecorationIdsRef.current,
+          blameLines.map((line) =>
+            toGitBlameDecoration(monacoApi, line, now),
+          ),
+        );
+        gitBlameDecoratedPathRef.current = requestedPath;
+      })
+      .catch(() => {
+        // Blame is best-effort decoration; a gateway failure leaves the editor
+        // untouched rather than surfacing an error.
+      });
+
+    return () => {
+      cancelled = true;
+      clearAnnotations();
+    };
+    // Keyed on the active path + the enabled flag (not the document identity), so
+    // typing does not refetch blame every keystroke; a file switch or a toggle
+    // re-runs it. Blame is anchored to committed lines and need not track live
+    // edits between toggles.
+  }, [activeDocument?.path, editorApi, gitBlameEnabled, monacoApi]);
 
   useEffect(() => {
     if (!changePreview) {
@@ -2759,6 +2873,33 @@ function toBookmarkDecoration(
       zIndex: 10,
     },
     range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+  };
+}
+
+function toGitBlameDecoration(
+  monaco: typeof Monaco,
+  line: GitBlameLine,
+  now: number,
+): Monaco.editor.IModelDeltaDecoration {
+  const annotation = gitBlameAnnotation(line, now);
+
+  return {
+    options: {
+      before: {
+        content: annotation,
+        // A non-breaking space pads the annotation from the code without
+        // injecting selectable spaces into the document text.
+        inlineClassName: "git-blame-annotation",
+      },
+      // Full commit detail on hover (short SHA + author + relative date), the
+      // PhpStorm annotation tooltip equivalent.
+      hoverMessage: {
+        value: `\`${line.sha}\` ${annotation}`,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+    range: new monaco.Range(line.lineNumber, 1, line.lineNumber, 1),
   };
 }
 

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyGitStatus,
+  type GitBlameLine,
   type GitChangedFile,
   type GitFileDiff,
   type GitGateway,
@@ -21,6 +22,17 @@ export class TauriGitGateway implements GitGateway {
     private readonly invokeCommand: InvokeGitCommand = invokeGitCommand,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
   ) {}
+
+  async blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_blame", {
+      relativePath,
+      rootPath,
+    }) as Promise<GitBlameLine[]>;
+  }
 
   async getStatus(rootPath: string): Promise<GitStatus> {
     if (!this.isRuntimeAvailable()) {

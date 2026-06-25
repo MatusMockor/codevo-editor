@@ -1833,6 +1833,21 @@ button {
   background: #ffc266;
 }
 
+/* Git blame annotation: inline author + relative date rendered as injected
+   `before` text at the start of each line, dimmed so it reads as metadata
+   beside the code (the closest Monaco equivalent to PhpStorm's annotate
+   column). It occupies none of the gutter lanes used by the change / impl /
+   test / bookmark glyphs. */
+.monaco-editor .git-blame-annotation {
+  margin-right: 1.25ch;
+  padding-right: 0.75ch;
+  border-right: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  font-style: italic;
+  opacity: 0.85;
+  white-space: pre;
+}
+
 .editor-change-popover {
   --change-popover-accent: var(--change-modified);
   --change-popover-accent-strong: var(--change-modified-strong);

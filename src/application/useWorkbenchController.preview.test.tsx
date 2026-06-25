@@ -282,6 +282,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("opens a Git diff as an active preview tab named for the changed file", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -326,6 +327,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("keeps an existing Git diff preview open when the same change is previewed again", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -376,6 +378,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("clears the Git diff view when its editor tab is closed", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -422,6 +425,7 @@ describe("useWorkbenchController preview tabs", () => {
     const firstChange = gitChangedFile("src/First.php", false);
     const secondChange = gitChangedFile("src/Second.php", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -478,6 +482,7 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8668,6 +8673,7 @@ describe("useWorkbenchController preview tabs", () => {
       status: "modified" as const,
     };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8711,6 +8717,7 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", false);
     const stagedChange = { ...change, isStaged: true };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8754,6 +8761,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("commits staged Git changes and clears the commit message", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -8811,6 +8819,7 @@ describe("useWorkbenchController preview tabs", () => {
     const included = gitChangedFile("src/User.php", true);
     const excluded = gitChangedFile("test.txt", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [excluded],
@@ -8867,6 +8876,7 @@ describe("useWorkbenchController preview tabs", () => {
     const staged = gitChangedFile("src/User.php", true);
     const unstaged = gitChangedFile("src/User.php", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8925,6 +8935,7 @@ describe("useWorkbenchController preview tabs", () => {
       status: "untracked" as const,
     };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8977,6 +8988,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("commits included files and pushes the branch", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -9039,6 +9051,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("resets Git operation UI state when switching workspaces", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -9092,6 +9105,7 @@ describe("useWorkbenchController preview tabs", () => {
   it("keeps post-commit status visible and reports when push fails", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -49778,6 +49792,7 @@ function createControllerDependencies({
   return {
     documentSyncGateway,
     gitGateway: gitGateway ?? {
+      blame: vi.fn(async () => []),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, change) => ({

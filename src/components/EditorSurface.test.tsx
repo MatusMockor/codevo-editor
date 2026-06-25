@@ -6635,6 +6635,244 @@ interface PaymentGateway
     expect(model.tokenization?.forceTokenization).not.toHaveBeenCalled();
     expect(idle.pending()).toBe(0);
   });
+
+  it("renders per-line git blame annotations when enabled", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 2),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const now = Math.floor(Date.now() / 1000);
+    const provideGitBlame = vi.fn(async () => [
+      { author: "Alice", lineNumber: 1, sha: "1a2b3c4", timestamp: now - 86400 },
+      { author: "Bob", lineNumber: 2, sha: "f0e1d2c", timestamp: now - 7200 },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          gitBlameEnabled
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideGitBlame={provideGitBlame}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(provideGitBlame).toHaveBeenCalledWith(activeDocument.path);
+    const blameCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+        ),
+    );
+    expect(blameCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            before: expect.objectContaining({
+              content: expect.stringContaining("Alice"),
+              inlineClassName: "git-blame-annotation",
+            }),
+          }),
+          range: expect.objectContaining({ startLineNumber: 1 }),
+        }),
+      ]),
+    );
+  });
+
+  it("renders no git blame annotations when disabled", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const provideGitBlame = vi.fn(async () => []);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          gitBlameEnabled={false}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideGitBlame={provideGitBlame}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(provideGitBlame).not.toHaveBeenCalled();
+    const blameCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+        ),
+    );
+    expect(blameCall).toBeUndefined();
+  });
+
+  it("drops stale git blame results after the active document switches", async () => {
+    const first: EditorDocument = {
+      content: "const one = 1;\n",
+      language: "typescript",
+      name: "first.ts",
+      path: "/workspace/src/first.ts",
+      savedContent: "",
+    };
+    const second: EditorDocument = {
+      content: "const two = 2;\n",
+      language: "typescript",
+      name: "second.ts",
+      path: "/workspace/src/second.ts",
+      savedContent: "",
+    };
+    // The model reports the SECOND document's path: the surface has already
+    // switched tabs by the time the first document's blame promise resolves.
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => second.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: second.path, path: second.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const now = Math.floor(Date.now() / 1000);
+    const provideGitBlame = vi.fn(async (path: string) =>
+      path === first.path
+        ? [{ author: "Stale", lineNumber: 1, sha: "1111111", timestamp: now - 60 }]
+        : [],
+    );
+
+    const props = (document: EditorDocument) => ({
+      activeDocument: document,
+      changeHunks: [],
+      editorRevealTarget: null,
+      flushPendingLanguageServerDocument: vi.fn(async () => undefined),
+      gitBlameEnabled: true,
+      languageServerDiagnosticsByPath: {},
+      languageServerFeaturesGateway: languageServerFeaturesGateway(),
+      languageServerRuntimeStatus: null,
+      keymap: defaultKeymapSettings(),
+      monacoTheme: "calm-dark" as const,
+      onChange: vi.fn(),
+      onCloseActiveTab: vi.fn(),
+      onCursorPositionChange: vi.fn(),
+      onEditorFocused: vi.fn(),
+      onGoBack: vi.fn(),
+      onGoForward: vi.fn(),
+      onGoToDefinition: vi.fn(),
+      onGoToImplementationAt: vi.fn(),
+      onLanguageServerError: vi.fn(),
+      onOpenClass: vi.fn(),
+      onOpenFile: vi.fn(),
+      onOpenFileStructure: vi.fn(),
+      onRevealTargetHandled: vi.fn(),
+      onRevertChangeHunk: vi.fn(),
+      phpSyntaxDiagnosticsGateway: { validate: vi.fn(async () => []) },
+      provideGitBlame,
+      providePhpMethodCompletions: vi.fn(async () => []),
+      providePhpMethodSignature: vi.fn(async () => null),
+    });
+
+    await act(async () => {
+      root.render(<EditorSurface {...props(first)} />);
+    });
+    await act(async () => {
+      root.render(<EditorSurface {...props(second)} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const staleCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.before?.content?.includes("Stale"),
+        ),
+    );
+    expect(staleCall).toBeUndefined();
+  });
 });
 
 function memoGuardProps(

@@ -32,7 +32,8 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    CommandGitRepositoryGateway, GitChangedFile, GitFileDiff, GitRepositoryGateway, GitStatus,
+    CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff, GitRepositoryGateway,
+    GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1583,6 +1584,24 @@ async fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFi
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway
             .diff(&root, &change)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_blame(
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<GitBlameLine>, String> {
+    // `git blame` shells out to a subprocess that can take a while on large
+    // files; keep it off the main thread so the WebView never stalls. The
+    // captured `root_path` + `relative_path` bind the request to its own
+    // repository and file (no cross-root or cross-file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .blame(&root, &relative_path)
             .map_err(|error| error.to_string())
     })
     .await
@@ -4215,7 +4234,7 @@ mod tests {
         filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, get_git_status,
+        filter_lsp_workspace_symbols_to_workspace, get_git_blame, get_git_status,
         javascript_typescript_did_change_configuration_settings,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
@@ -5478,6 +5497,58 @@ mod tests {
             .any(|change| change.relative_path == "b.txt"));
     }
 
+    #[test]
+    fn get_git_blame_reports_per_line_authors_off_thread() {
+        let root = temp_workspace("git-blame-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "alpha\nbeta\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        let lines = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root),
+            "file.txt".to_string(),
+        ))
+        .expect("blame result");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Test User");
+        assert!(!lines[0].sha.is_empty());
+        assert_eq!(lines[1].line_number, 2);
+    }
+
+    #[test]
+    fn git_blame_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-blame-iso-a");
+        let root_b = temp_workspace("git-blame-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        run_test_git(&root_a, &["config", "user.name", "Author A"]);
+        run_test_git(&root_b, &["config", "user.name", "Author B"]);
+        fs::write(root_a.join("shared.txt"), "from a\n").expect("file in a");
+        fs::write(root_b.join("shared.txt"), "from b\n").expect("file in b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a commit"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b commit"]);
+
+        let blame_a = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root_a),
+            "shared.txt".to_string(),
+        ))
+        .expect("blame a");
+        let blame_b = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root_b),
+            "shared.txt".to_string(),
+        ))
+        .expect("blame b");
+
+        assert_eq!(blame_a[0].author, "Author A");
+        assert_eq!(blame_b[0].author, "Author B");
+        assert_ne!(blame_a[0].sha, blame_b[0].sha, "no cross-root leakage");
+    }
+
     #[cfg(unix)]
     #[test]
     fn index_path_guard_accepts_paths_through_symlinked_root() {
@@ -5974,6 +6045,7 @@ pub fn run() {
             detect_workspace,
             dispose_workspace_root,
             get_php_file_outline,
+            get_git_blame,
             get_git_diff,
             get_git_status,
             get_javascript_typescript_language_server_status,

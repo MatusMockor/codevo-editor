@@ -932,6 +932,7 @@ function App() {
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
             formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            gitBlameEnabled={workbench.isActiveDocumentGitBlameEnabled}
             isActiveDocumentPhpTest={workbench.isActiveDocumentPhpTest}
             isLanguageServerDocumentSynced={
               workbench.isLanguageServerDocumentSynced
@@ -974,6 +975,8 @@ function App() {
             onGoToImplementationAt={goToImplementationAt}
             onRunTestAt={workbench.runTestAt}
             onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
+            onToggleGitBlame={workbench.toggleGitBlame}
+            provideGitBlame={workbench.provideGitBlame}
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}

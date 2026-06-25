@@ -47,7 +47,17 @@ pub struct GitFileDiff {
     pub original_content: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBlameLine {
+    pub author: String,
+    pub line_number: u32,
+    pub sha: String,
+    pub timestamp: i64,
+}
+
 pub trait GitRepositoryGateway {
+    fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
     fn commit(
         &self,
         root: &Path,
@@ -65,6 +75,30 @@ pub trait GitRepositoryGateway {
 pub struct CommandGitRepositoryGateway;
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
+    fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("blame")
+            .arg("--porcelain")
+            .arg("--")
+            .arg(&relative)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        parse_blame_porcelain(&output.stdout)
+    }
+
     fn commit(
         &self,
         root: &Path,
@@ -304,6 +338,110 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
     }
 
     Ok(changes)
+}
+
+struct BlameCommitMeta {
+    author: String,
+    timestamp: i64,
+}
+
+impl BlameCommitMeta {
+    fn empty() -> Self {
+        Self {
+            author: String::new(),
+            timestamp: 0,
+        }
+    }
+}
+
+fn parse_blame_porcelain(output: &[u8]) -> io::Result<Vec<GitBlameLine>> {
+    let text = String::from_utf8_lossy(output);
+    let mut commits: std::collections::HashMap<String, BlameCommitMeta> =
+        std::collections::HashMap::new();
+    let mut lines = Vec::new();
+    let mut current: Option<(String, u32)> = None;
+
+    for line in text.lines() {
+        // The single `\t`-prefixed line per group is the source line; it closes
+        // the in-flight group, resolving its metadata from the per-SHA cache.
+        if line.starts_with('\t') {
+            if let Some((sha, final_line)) = current.take() {
+                lines.push(blame_line_from(&commits, &sha, final_line));
+            }
+            continue;
+        }
+
+        if let Some((sha, final_line)) = parse_blame_header(line) {
+            commits.entry(sha.clone()).or_insert_with(BlameCommitMeta::empty);
+            current = Some((sha, final_line));
+            continue;
+        }
+
+        // Metadata line (author/author-time/...) for the in-flight commit.
+        if let Some((sha, _)) = current.as_ref() {
+            apply_blame_commit_meta(&mut commits, sha, line);
+        }
+    }
+
+    // Surface a final group whose closing content line was missing (truncated
+    // porcelain) so the line we already identified is not silently dropped.
+    if let Some((sha, final_line)) = current.take() {
+        lines.push(blame_line_from(&commits, &sha, final_line));
+    }
+
+    Ok(lines)
+}
+
+fn blame_line_from(
+    commits: &std::collections::HashMap<String, BlameCommitMeta>,
+    sha: &str,
+    final_line: u32,
+) -> GitBlameLine {
+    let meta = commits.get(sha);
+
+    GitBlameLine {
+        author: meta.map(|meta| meta.author.clone()).unwrap_or_default(),
+        line_number: final_line,
+        sha: short_sha(sha),
+        timestamp: meta.map(|meta| meta.timestamp).unwrap_or_default(),
+    }
+}
+
+fn parse_blame_header(line: &str) -> Option<(String, u32)> {
+    let mut parts = line.split(' ');
+    let sha = parts.next()?;
+
+    if sha.len() != 40 || !sha.chars().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let _original_line = parts.next()?;
+    let final_line = parts.next()?.parse::<u32>().ok()?;
+
+    Some((sha.to_string(), final_line))
+}
+
+fn apply_blame_commit_meta(
+    commits: &mut std::collections::HashMap<String, BlameCommitMeta>,
+    sha: &str,
+    line: &str,
+) {
+    let Some(meta) = commits.get_mut(sha) else {
+        return;
+    };
+
+    if let Some(author) = line.strip_prefix("author ") {
+        meta.author = author.to_string();
+        return;
+    }
+
+    if let Some(timestamp) = line.strip_prefix("author-time ") {
+        meta.timestamp = timestamp.trim().parse::<i64>().unwrap_or_default();
+    }
+}
+
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(7).collect()
 }
 
 fn git_change_is_staged(status: &str) -> bool {
@@ -677,8 +815,8 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_porcelain_status, safe_relative_path, CommandGitRepositoryGateway, GitChangeStatus,
-        GitChangedFile, GitRepositoryGateway,
+        parse_blame_porcelain, parse_porcelain_status, safe_relative_path,
+        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -718,6 +856,127 @@ mod tests {
         assert!(safe_relative_path("../secret.php").is_err());
         assert!(safe_relative_path("/secret.php").is_err());
         assert!(safe_relative_path("src/User.php").is_ok());
+    }
+
+    #[test]
+    fn parses_blame_porcelain_into_per_line_records() {
+        // Two commits, the second reusing the first commit's metadata via a bare
+        // SHA header line (the porcelain format omits author/time on repeats).
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 1 1 2\n",
+            "author Alice Example\n",
+            "author-mail <alice@example.com>\n",
+            "author-time 1700000000\n",
+            "author-tz +0100\n",
+            "committer Alice Example\n",
+            "committer-mail <alice@example.com>\n",
+            "committer-time 1700000000\n",
+            "committer-tz +0100\n",
+            "summary first commit\n",
+            "filename src/User.php\n",
+            "\tfirst line\n",
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 2 2\n",
+            "\tsecond line\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d 3 3 1\n",
+            "author Bob Example\n",
+            "author-mail <bob@example.com>\n",
+            "author-time 1700100000\n",
+            "author-tz +0000\n",
+            "committer Bob Example\n",
+            "committer-mail <bob@example.com>\n",
+            "committer-time 1700100000\n",
+            "committer-tz +0000\n",
+            "summary third commit\n",
+            "filename src/User.php\n",
+            "\tthird line\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Alice Example");
+        assert_eq!(lines[0].sha, "1a2b3c4");
+        assert_eq!(lines[0].timestamp, 1700000000);
+        // The repeated SHA inherits the metadata captured on its first appearance.
+        assert_eq!(lines[1].line_number, 2);
+        assert_eq!(lines[1].author, "Alice Example");
+        assert_eq!(lines[1].sha, "1a2b3c4");
+        assert_eq!(lines[2].line_number, 3);
+        assert_eq!(lines[2].author, "Bob Example");
+        assert_eq!(lines[2].sha, "f0e1d2c");
+        assert_eq!(lines[2].timestamp, 1700100000);
+    }
+
+    #[test]
+    fn keeps_the_final_line_when_porcelain_output_lacks_a_trailing_content_line() {
+        // Defensive: a truncated porcelain stream that ends mid-group (no `\t`
+        // content line) must still surface the line we already identified.
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 1 1 1\n",
+            "author Alice Example\n",
+            "author-time 1700000000\n",
+            "summary only commit\n",
+            "filename a.php\n",
+            "\tfirst line\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d 2 2 1\n",
+            "author Bob Example\n",
+            "author-time 1700100000\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].line_number, 2);
+        assert_eq!(lines[1].author, "Bob Example");
+        assert_eq!(lines[1].sha, "f0e1d2c");
+    }
+
+    #[test]
+    fn marks_uncommitted_lines_with_the_not_committed_yet_author() {
+        let output = concat!(
+            "0000000000000000000000000000000000000000 1 1 1\n",
+            "author Not Committed Yet\n",
+            "author-mail <not.committed.yet>\n",
+            "author-time 1700200000\n",
+            "author-tz +0000\n",
+            "summary Version of staged changes\n",
+            "filename new.php\n",
+            "\tpending line\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].author, "Not Committed Yet");
+        assert_eq!(lines[0].sha, "0000000");
+    }
+
+    #[test]
+    fn blame_reports_authors_for_committed_lines() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "blame@example.com"]);
+        repo.run(["config", "user.name", "Blame Author"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let lines = gateway.blame(repo.path(), "file.txt").expect("blame");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Blame Author");
+        assert!(!lines[0].sha.is_empty());
+        assert_eq!(lines[1].line_number, 2);
+    }
+
+    #[test]
+    fn blame_rejects_paths_outside_workspace() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.blame(repo.path(), "../secret.txt").is_err());
     }
 
     #[test]
