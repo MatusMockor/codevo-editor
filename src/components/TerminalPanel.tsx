@@ -11,6 +11,12 @@ import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
   isActive: boolean;
+  // Reports the backend session id of this terminal once it starts, and `null`
+  // when it is torn down (workspace switch / unmount). Lets the workbench
+  // address the active project terminal to run commands such as a gutter test
+  // run. Per-workspace isolation is preserved by the panel remounting on
+  // `rootPath` change, which fires `null` then a fresh id for the new project.
+  onSessionReady?: (sessionId: number | null) => void;
   profileId: string | null;
   rootPath: string | null;
   terminalGateway: TerminalGateway;
@@ -19,6 +25,7 @@ interface TerminalPanelProps {
 
 export function TerminalPanel({
   isActive,
+  onSessionReady,
   profileId,
   rootPath,
   terminalGateway,
@@ -27,6 +34,11 @@ export function TerminalPanel({
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  // Keep the latest callback in a ref so the session effect (which must only
+  // re-run on profile/root/gateway changes) always invokes the current handler
+  // without listing it as a dependency and remounting the terminal.
+  const onSessionReadyRef = useRef(onSessionReady);
+  onSessionReadyRef.current = onSessionReady;
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -52,6 +64,7 @@ export function TerminalPanel({
       fitAddon,
       gateway: terminalGateway,
       host,
+      onSessionReady: (sessionId) => onSessionReadyRef.current?.(sessionId),
       profileId,
       rootPath,
       scheduleFrame: (callback) => requestAnimationFrame(callback),

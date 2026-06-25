@@ -1235,6 +1235,125 @@ interface ParserFactory
     });
   });
 
+  it("renders a run-test gutter glyph and runs the test on a Right-lane click", async () => {
+    const activeDocument: EditorDocument = {
+      content: `<?php
+
+namespace Tests\\Unit;
+
+use Tests\\TestCase;
+
+class InvoiceServiceTest extends TestCase
+{
+    public function testItCalculatesTotals(): void
+    {
+    }
+}
+`,
+      language: "php",
+      name: "InvoiceServiceTest.php",
+      path: "/workspace/tests/Unit/InvoiceServiceTest.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onRunTestAt = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isActiveDocumentPhpTest
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onRunTestAt={onRunTestAt}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+        ),
+    );
+    expect(testDecorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMargin: {
+              position: monaco.editor.GlyphMarginLane.Right,
+            },
+            glyphMarginClassName: "test-run-gutter-glyph",
+          }),
+        }),
+      ]),
+    );
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Right,
+          },
+          position: {
+            column: 1,
+            lineNumber: 9,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(onRunTestAt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: "testItCalculatesTotals",
+        kind: "method",
+      }),
+    );
+  });
+
   it("reopens PHP suggestions when IDE readiness changes in member access context", async () => {
     const content = "<?php\n$comment->\n";
     const activeDocument: EditorDocument = {
@@ -4997,7 +5116,7 @@ function createMonaco(model: FakeModel) {
       defineTheme: vi.fn(),
       getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
-      GlyphMarginLane: { Center: 2, Left: 1 },
+      GlyphMarginLane: { Center: 2, Left: 1, Right: 3 },
       MouseTargetType: { GUTTER_GLYPH_MARGIN: 4 },
       OverviewRulerLane: { Left: 1, Right: 4 },
       setModelMarkers: vi.fn(),

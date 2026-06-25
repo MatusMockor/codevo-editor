@@ -174,6 +174,12 @@ export const keymapCommands = [
     label: "Go to Test / Test Subject",
   },
   {
+    category: "PHP",
+    defaultShortcut: "",
+    id: "php.runTest",
+    label: "Run Test Under Cursor",
+  },
+  {
     category: "Navigation",
     defaultShortcut: "Cmd+[",
     id: "navigation.back",

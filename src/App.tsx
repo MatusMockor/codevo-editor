@@ -909,6 +909,7 @@ function App() {
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
             formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            isActiveDocumentPhpTest={workbench.isActiveDocumentPhpTest}
             isLanguageServerDocumentSynced={
               workbench.isLanguageServerDocumentSynced
             }
@@ -948,6 +949,7 @@ function App() {
             onGoForward={goForward}
             onGoToDefinition={goToDefinition}
             onGoToImplementationAt={goToImplementationAt}
+            onRunTestAt={workbench.runTestAt}
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}
@@ -980,6 +982,7 @@ function App() {
             onResizeStart={startBottomPanelResize}
             onSelectView={workbench.showBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
+            onTerminalSessionReady={workbench.registerActiveTerminalSession}
             onTrustWorkspace={workbench.toggleWorkspaceTrust}
             terminalGateway={terminalGateway}
             terminalTheme={terminalTheme}

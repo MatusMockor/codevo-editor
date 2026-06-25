@@ -430,9 +430,16 @@ import {
   renderPhpTestSkeleton,
 } from "../domain/phpTestGen";
 import {
+  isPhpTestRelativePath,
   phpTestNavigationTargets,
   type PhpTestNavigationDirection,
 } from "../domain/phpTestNavigation";
+import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
+import { phpTestGutterTargets } from "../domain/phpTestGutterTargets";
+import {
+  phpTestRunCommand,
+  type PhpTestRunner,
+} from "../domain/phpTestCommand";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
 import {
@@ -1185,6 +1192,23 @@ export function useWorkbenchController(
   const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  // The backend session id of the project terminal currently mounted in the
+  // bottom panel, tagged with the workspace root it belongs to. The terminal
+  // panel reports this; "run test from gutter" writes into it. Tagging by root
+  // keeps the per-tab isolation invariant: a session reported for one project
+  // can never be addressed while a different project tab is active.
+  const activeTerminalSessionRef = useRef<{
+    rootPath: string;
+    sessionId: number;
+  } | null>(null);
+  // A test-run command staged while the terminal session for the active root is
+  // not yet ready (e.g. the panel was just revealed). It is flushed exactly once
+  // when a matching-root session registers, then cleared. A workspace switch
+  // before the session arrives discards it (root mismatch on flush).
+  const pendingTerminalCommandRef = useRef<{
+    command: string;
+    rootPath: string;
+  } | null>(null);
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
   >({});
@@ -1215,6 +1239,29 @@ export function useWorkbenchController(
   );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
+  // Whether the active document is a PHP test file (under the tests root or a
+  // `*Test` class). Drives the "run test from gutter" glyph in EditorSurface.
+  // Computed here so the PSR-4 mapping stays in the domain/controller layer and
+  // EditorSurface only consumes a boolean gate.
+  const isActiveDocumentPhpTest = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "php" || !workspaceRoot) {
+      return false;
+    }
+
+    const psr4Roots = workspaceDescriptor?.php?.psr4Roots;
+
+    if (!psr4Roots) {
+      return false;
+    }
+
+    const relativePath = workspaceRelativePath(workspaceRoot, activeDocument.path);
+
+    if (!relativePath) {
+      return false;
+    }
+
+    return isPhpTestRelativePath(relativePath, psr4Roots);
+  }, [activeDocument, workspaceDescriptor, workspaceRoot]);
   const openDocumentPaths = useMemo(
     () => visibleEditorPaths(openPaths, previewPath),
     [openPaths, previewPath],
@@ -7926,6 +7973,176 @@ export function useWorkbenchController(
   const toggleBottomPanel = useCallback(() => {
     setBottomPanelVisible((visible) => !visible);
   }, []);
+
+  // Picks the test runner for a workspace: Laravel `php artisan test` when an
+  // `artisan` console binary exists at the project root, otherwise the generic
+  // `vendor/bin/phpunit`. Probing the file (rather than guessing from the
+  // descriptor) keeps non-Laravel PHP projects working.
+  const detectPhpTestRunner = useCallback(
+    async (rootPath: string): Promise<PhpTestRunner> => {
+      const artisanPath = joinWorkspacePath(rootPath, "artisan");
+      const artisan = await readTestFileIfExists(artisanPath);
+
+      return artisan === null ? "phpunit" : "artisan";
+    },
+    [readTestFileIfExists],
+  );
+
+  // Writes a single command line into the active project terminal. The command
+  // string is built by the caller from a STATIC prefix + sanitized filter, so
+  // nothing here can introduce shell metacharacters. Isolation: the requested
+  // root is captured up front; the write only happens when a terminal session
+  // for that exact root is active. When no session is ready yet, the command is
+  // staged and flushed by `registerActiveTerminalSession` once a matching-root
+  // session arrives (a tab switch in between discards it on root mismatch).
+  const runInActiveTerminal = useCallback(
+    (command: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      // Reveal the terminal so the panel mounts (and reports its session id) and
+      // the user sees the run.
+      showBottomPanelView("terminal");
+
+      const active = activeTerminalSessionRef.current;
+
+      if (active && workspaceRootKeysEqual(active.rootPath, requestedRoot)) {
+        void terminalGateway
+          .writeInput(active.sessionId, `${command}\r`)
+          .catch((error) =>
+            reportErrorForActiveWorkspaceRoot(requestedRoot, "Run Test", error),
+          );
+        return;
+      }
+
+      pendingTerminalCommandRef.current = { command, rootPath: requestedRoot };
+    },
+    [reportErrorForActiveWorkspaceRoot, showBottomPanelView, terminalGateway],
+  );
+
+  // Receives the backend session id of the terminal panel for the active
+  // workspace (or `null` when it tears down). Tags it with the current root so
+  // later writes can re-check isolation, and flushes a pending test-run command
+  // when the session belongs to the same root the command was requested for.
+  const registerActiveTerminalSession = useCallback(
+    (sessionId: number | null) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (sessionId === null || !rootPath) {
+        activeTerminalSessionRef.current = null;
+        return;
+      }
+
+      activeTerminalSessionRef.current = { rootPath, sessionId };
+
+      const pending = pendingTerminalCommandRef.current;
+
+      if (!pending) {
+        return;
+      }
+
+      pendingTerminalCommandRef.current = null;
+
+      if (!workspaceRootKeysEqual(pending.rootPath, rootPath)) {
+        return;
+      }
+
+      void terminalGateway
+        .writeInput(sessionId, `${pending.command}\r`)
+        .catch((error) =>
+          reportErrorForActiveWorkspaceRoot(rootPath, "Run Test", error),
+        );
+    },
+    [reportErrorForActiveWorkspaceRoot, terminalGateway],
+  );
+
+  // PhpStorm-style "Run test from gutter": builds and writes the test command
+  // for a parsed gutter target into the active project terminal. The runner is
+  // auto-detected (Laravel `php artisan test` when an `artisan` binary exists,
+  // otherwise `vendor/bin/phpunit`). Per-workspace isolation: the requested root
+  // is captured up front and re-checked after the artisan probe await before any
+  // terminal write. The command's filter is strictly sanitized in
+  // `phpTestRunCommand`; a name that is not a safe identifier yields no command
+  // (no write), so no file content can ever inject shell input.
+  const runTestAt = useCallback(
+    async (target: PhpTestGutterTarget) => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return;
+      }
+
+      const runner = await detectPhpTestRunner(requestedRoot);
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      const command = phpTestRunCommand({ filter: target.filter, runner });
+
+      if (!command) {
+        setMessage(
+          `Run test: "${target.filter}" can only run by name (letters, digits, underscore).`,
+        );
+        return;
+      }
+
+      runInActiveTerminal(command);
+    },
+    [
+      detectPhpTestRunner,
+      runInActiveTerminal,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  // Keymap entry point for "Run Test Under Cursor": parses the active PHP test
+  // file, selects the test that owns the cursor line (the nearest test target at
+  // or above the caret, falling back to the class target), and runs it. Gated to
+  // PHP test files so it is a no-op on production code or non-PHP documents.
+  const runTestForActiveDocument = useCallback(async () => {
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const requestedDocument = activeDocumentRef.current;
+
+    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
+      return;
+    }
+
+    if (requestedDocument.language !== "php") {
+      return;
+    }
+
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocument.path,
+    );
+
+    if (
+      !relativePath ||
+      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
+    ) {
+      return;
+    }
+
+    const targets = phpTestGutterTargets(requestedDocument.content);
+    const cursorLine = activeEditorPositionRef.current?.lineNumber ?? 1;
+    const target = testTargetForCursorLine(targets, cursorLine);
+
+    if (!target) {
+      setMessage("Run test: no test found at the cursor.");
+      return;
+    }
+
+    await runTestAt(target);
+  }, [runTestAt, workspaceDescriptor, workspaceRoot]);
 
   const openPathForNavigation = useCallback(
     async (
@@ -21190,6 +21407,18 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "php.runTest",
+      title: "Run Test Under Cursor",
+      category: "PHP",
+      shortcut: shortcut("php.runTest"),
+      isEnabled: (context) =>
+        context.hasWorkspace &&
+        context.hasActiveDocument &&
+        activeDocument?.language === "php",
+      run: runTestForActiveDocument,
+    });
+
+    registry.register({
       id: "file.quickOpen",
       title: "Quick Open File",
       category: "File",
@@ -21856,6 +22085,7 @@ export function useWorkbenchController(
     deleteActiveDocument,
     generateTestForActiveDocument,
     goToTestForActiveDocument,
+    runTestForActiveDocument,
     goToDeclaration,
     canSearchClassOpenSymbols,
     goToDefinition,
@@ -22580,6 +22810,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("php.runTest")) {
+        event.preventDefault();
+        void runTestForActiveDocument();
+        return;
+      }
+
       if (matches("editor.findReferences")) {
         event.preventDefault();
         void openReferencesPanel();
@@ -22679,6 +22915,7 @@ export function useWorkbenchController(
     goToDefinition,
     goToImplementation,
     goToTestForActiveDocument,
+    runTestForActiveDocument,
     goToNextProblem,
     goToPreviousProblem,
     goToSourceDefinition,
@@ -23861,6 +24098,9 @@ export function useWorkbenchController(
     goToImplementationAt,
     goToNextProblem,
     goToPreviousProblem,
+    isActiveDocumentPhpTest,
+    registerActiveTerminalSession,
+    runTestAt,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelVisible,
     bottomPanelView,
@@ -26488,4 +26728,28 @@ function missingTestPartnerMessage(
   }
 
   return "No test found for this class. Run Generate Test to create one.";
+}
+
+// Chooses the gutter test target that owns a cursor line: the nearest target at
+// or above the caret. Method targets are preferred so a caret inside a test
+// method body runs that method; with the caret above the first method (e.g. on
+// the class line) the class target is selected. Returns `null` when there are no
+// targets at or above the caret.
+function testTargetForCursorLine(
+  targets: readonly PhpTestGutterTarget[],
+  cursorLine: number,
+): PhpTestGutterTarget | null {
+  let chosen: PhpTestGutterTarget | null = null;
+
+  for (const target of targets) {
+    if (target.position.lineNumber > cursorLine) {
+      continue;
+    }
+
+    if (!chosen || target.position.lineNumber >= chosen.position.lineNumber) {
+      chosen = target;
+    }
+  }
+
+  return chosen;
 }

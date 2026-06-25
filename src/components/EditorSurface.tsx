@@ -47,6 +47,8 @@ import {
 } from "../domain/surroundWith";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
+import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
+import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
   PhpSyntaxDiagnostic,
@@ -141,6 +143,8 @@ interface EditorSurfaceProps {
   onGoForward(): void;
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
+  onRunTestAt?(target: PhpTestGutterTarget): void;
+  isActiveDocumentPhpTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
   onOpenFile(): void;
@@ -189,6 +193,7 @@ function EditorSurfaceComponent({
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   formatOnPaste = false,
+  isActiveDocumentPhpTest = false,
   isLanguageServerDocumentSynced,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
@@ -213,6 +218,7 @@ function EditorSurfaceComponent({
   onGoForward,
   onGoToDefinition,
   onGoToImplementationAt,
+  onRunTestAt,
   onEditorFocused,
   onOpenClass,
   onOpenFile,
@@ -264,6 +270,16 @@ function EditorSurfaceComponent({
   const implementationGutterTargetsCacheRef = useRef(
     new PhpImplementationGutterTargetsCache(),
   );
+  const testGutterDecorationIdsRef = useRef<string[]>([]);
+  // Maps a line number to the parsed test target on that line so a Right-lane
+  // gutter click can dispatch the exact test to run. Reset whenever the active
+  // document changes so a stale tab's targets can never run.
+  const testGutterTargetsRef = useRef(new Map<number, PhpTestGutterTarget>());
+  // Caches test gutter targets per absolute document path (globally unique per
+  // workspace root) plus full content. Mirrors the implementation gutter cache,
+  // so revisiting an unchanged test file reuses the previous parse and a hit can
+  // never serve another file's targets across open project tabs.
+  const testGutterTargetsCacheRef = useRef(new PhpTestGutterTargetsCache());
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   // Tracks the diagnostics map seen on the previous run and the set of model
   // objects already given language-server markers, so the marker effect can
@@ -973,6 +989,19 @@ function EditorSurfaceComponent({
         changeHunksRef.current,
         lineNumber,
       );
+      const testTarget = testGutterTargetsRef.current.get(lineNumber);
+
+      if (
+        testTarget &&
+        onRunTestAt &&
+        lane === monacoApi.editor.GlyphMarginLane.Right
+      ) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        onRunTestAt(testTarget);
+        return;
+      }
+
       const target = implementationGutterTargetsRef.current.get(lineNumber);
 
       if (target && lane !== monacoApi.editor.GlyphMarginLane.Left) {
@@ -993,7 +1022,7 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [editorApi, monacoApi, onGoToImplementationAt]);
+  }, [editorApi, monacoApi, onGoToImplementationAt, onRunTestAt]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1096,6 +1125,73 @@ function EditorSurfaceComponent({
       );
     };
   }, [activeDocument, editorApi, monacoApi]);
+
+  // Renders the green "run test" play glyph on the Right glyph-margin lane for
+  // each parsed test target in the active PHP test file. Gated to PHP test
+  // documents (via the controller-supplied boolean) so the glyph never appears
+  // on production code or non-PHP files. The stale-guard (model path must equal
+  // the active document path) plus the absolute-path-keyed cache keep the
+  // per-tab isolation invariant intact.
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    if (activeDocument.language !== "php" || !isActiveDocumentPhpTest) {
+      testGutterTargetsRef.current = new Map();
+      testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+        testGutterDecorationIdsRef.current,
+        [],
+      );
+      return;
+    }
+
+    const targets = testGutterTargetsCacheRef.current.resolve(
+      activeDocument.path,
+      activeDocument.content,
+    );
+    testGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target]),
+    );
+    testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      testGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Right,
+          },
+          glyphMarginClassName: "test-run-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: target.label,
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+
+    return () => {
+      testGutterTargetsRef.current = new Map();
+      testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+        testGutterDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
 
   useEffect(() => {
     if (!editorApi) {

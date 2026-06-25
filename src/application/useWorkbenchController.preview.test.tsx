@@ -47814,6 +47814,239 @@ interface GreeterContract
     expect(getWorkbench().activePath).not.toBe(testPath);
   });
 
+  it("runs a gutter test by writing an artisan --filter command into the active terminal", async () => {
+    const testPath = "/workspace/tests/Unit/InvoiceServiceTest.php";
+    const testSource = `<?php
+
+namespace Tests\\Unit;
+
+use Tests\\TestCase;
+
+class InvoiceServiceTest extends TestCase
+{
+    public function testCalculate(): void
+    {
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      if (path === "/workspace/artisan") {
+        return "#!/usr/bin/env php\n";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(testPath, "InvoiceServiceTest.php"),
+      );
+    });
+
+    // The terminal panel reports its session id once it mounts and starts.
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(7);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "testCalculate",
+        kind: "method",
+        label: "Run testCalculate",
+        position: { column: 21, lineNumber: 9 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().bottomPanelView).toBe("terminal");
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      7,
+      "php artisan test --filter testCalculate\r",
+    );
+  });
+
+  it("falls back to vendor/bin/phpunit when there is no artisan binary", async () => {
+    const testPath = "/workspace/tests/Unit/SampleTest.php";
+    const testSource = `<?php
+
+class SampleTest extends TestCase
+{
+    public function testItWorks(): void
+    {
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "SampleTest.php"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(3);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "SampleTest",
+        kind: "class",
+        label: "Run SampleTest",
+        position: { column: 7, lineNumber: 3 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      3,
+      "vendor/bin/phpunit --filter SampleTest\r",
+    );
+  });
+
+  it("never writes a command for a maliciously named filter", async () => {
+    const testPath = "/workspace/tests/Unit/SampleTest.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\n"),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "SampleTest.php"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(5);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "foo; rm -rf /",
+        kind: "method",
+        label: "Run foo",
+        position: { column: 1, lineNumber: 1 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).not.toHaveBeenCalled();
+  });
+
+  it("drops a gutter test run after a workspace switch before the write", async () => {
+    const testPath = "/workspace/tests/Unit/SampleTest.php";
+    const testSource = `<?php
+
+class SampleTest extends TestCase
+{
+    public function testItWorks(): void
+    {
+    }
+}
+`;
+    let releaseArtisanProbe: (() => void) | null = null;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      if (path === "/workspace/artisan") {
+        await new Promise<void>((resolve) => {
+          releaseArtisanProbe = resolve;
+        });
+        return "#!/usr/bin/env php\n";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "SampleTest.php"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(9);
+    });
+
+    let run: Promise<unknown> | null = null;
+    act(() => {
+      run = getWorkbench().runTestAt({
+        filter: "testItWorks",
+        kind: "method",
+        label: "Run testItWorks",
+        position: { column: 21, lineNumber: 5 },
+      });
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await flushAsyncTurns();
+    });
+
+    await act(async () => {
+      releaseArtisanProbe?.();
+      await run;
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).not.toHaveBeenCalled();
+  });
+
   it("navigates a typed member property to its declared type class", async () => {
     const servicePath = "/workspace/app/Services/PostService.php";
     const repositoryPath = "/workspace/app/Repositories/PostRepository.php";

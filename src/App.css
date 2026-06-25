@@ -1782,6 +1782,30 @@ button {
   background: rgba(45, 185, 112, 0.28);
 }
 
+.monaco-editor .test-run-gutter-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .test-run-gutter-glyph::before {
+  position: absolute;
+  top: 6px;
+  left: 5px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #5fd98a;
+  content: "";
+  transition: border-left-color 0.1s ease;
+}
+
+.monaco-editor .test-run-gutter-glyph:hover::before {
+  border-left-color: #8af3ad;
+}
+
 .editor-change-popover {
   --change-popover-accent: var(--change-modified);
   --change-popover-accent-strong: var(--change-modified-strong);

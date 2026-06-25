@@ -41,6 +41,12 @@ interface TerminalSessionOptions {
   fitAddon: TerminalFitAddon;
   gateway: TerminalGateway;
   host: HTMLElement;
+  // Reports the backend session id once the terminal has started, and `null`
+  // when this session is disposed. The workbench uses this to address the
+  // active project terminal (e.g. "run test from gutter") without reaching into
+  // xterm internals. Always scoped to a single mounted terminal, so it can
+  // never leak another tab's session id.
+  onSessionReady?(sessionId: number | null): void;
   profileId: string | null;
   rootPath: string | null;
   scheduleFrame(callback: FrameRequestCallback): number;
@@ -53,6 +59,7 @@ export function createTerminalSession({
   fitAddon,
   gateway,
   host,
+  onSessionReady,
   profileId,
   rootPath,
   scheduleFrame,
@@ -179,6 +186,7 @@ export function createTerminalSession({
               }
 
               sessionId = startedSessionId;
+              onSessionReady?.(startedSessionId);
               flushPendingInput();
               flushPendingResize();
             })
@@ -191,6 +199,7 @@ export function createTerminalSession({
   return {
     dispose: () => {
       disposed = true;
+      onSessionReady?.(null);
 
       for (const frameId of pendingFrames) {
         cancelFrame(frameId);

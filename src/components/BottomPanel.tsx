@@ -28,6 +28,7 @@ interface BottomPanelProps {
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: BottomPanelView): void;
   onSoftReindex(): void;
+  onTerminalSessionReady?(sessionId: number | null): void;
   onTrustWorkspace(): void;
   terminalGateway: TerminalGateway;
   terminalTheme: TerminalTheme;
@@ -55,6 +56,7 @@ export function BottomPanel({
   onResizeStart,
   onSelectView,
   onSoftReindex,
+  onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
   terminalTheme,
@@ -219,6 +221,7 @@ export function BottomPanel({
           >
             <LazyTerminalPanel
               isActive={activeView === "terminal"}
+              onSessionReady={onTerminalSessionReady}
               profileId={selectedTerminalProfileId}
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
