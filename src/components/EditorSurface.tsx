@@ -74,6 +74,7 @@ import type {
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
+import { useDebouncedPhpEditTick } from "./useDebouncedPhpEditTick";
 import type {
   PhpMethodCompletion,
   PhpMethodSignature,
@@ -1466,6 +1467,23 @@ function EditorSurfaceComponent({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [changePreview]);
 
+  // ONE debounced snapshot of the active PHP file's content, shared by the
+  // implementation gutter, the test gutter and the syntax diagnostics. Each of
+  // those used to arm its own independent 160ms `setTimeout` on every keystroke,
+  // so a single edit fired three timers that each re-snapshotted the same
+  // content and scheduled a redundant full-file parse on the main thread. Now a
+  // single timer per edit publishes one snapshot and all three consumers react
+  // to it. Gated to PHP documents (the union of the three consumers); the test
+  // gutter applies its own narrower `isActiveDocumentPhpTest` gate downstream.
+  const phpEditTick = useDebouncedPhpEditTick(
+    activeDocument && activeDocument.language === "php"
+      ? activeDocument.path
+      : null,
+    activeDocument && activeDocument.language === "php"
+      ? activeDocument.content
+      : null,
+  );
+
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
       return;
@@ -1481,7 +1499,7 @@ function EditorSurfaceComponent({
     // document is no longer PHP) so a switch never leaves stale glyphs while the
     // debounced recompute is pending. A same-path keystroke does not clear, so
     // the existing glyphs stay put (and track edits via stickiness) until the
-    // debounce flushes - no flicker.
+    // shared debounce tick flushes - no flicker.
     const decoratedPath = implementationGutterDecoratedPathRef.current;
     const isPathSwitch =
       decoratedPath !== null && decoratedPath !== activeDocument.path;
@@ -1494,68 +1512,59 @@ function EditorSurfaceComponent({
       );
       implementationGutterDecoratedPathRef.current = null;
     }
+  }, [activeDocument, editorApi, monacoApi]);
 
-    if (activeDocument.language !== "php") {
+  // The debounced full-file parse + decoration replace. Driven by the shared
+  // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
+  // consumers) instead of arming its own timer per keystroke. The glyphs do not
+  // need to track typing in real time - their stickiness keeps existing glyphs
+  // anchored to the right lines while typing, and the recompute catches up once
+  // the user pauses. The live-model path guard re-checks isolation AFTER the
+  // debounce so a stale tab's snapshot can never decorate the active model.
+  useEffect(() => {
+    if (!phpEditTick || !editorApi || !monacoApi) {
       return;
     }
 
-    // Debounce the full-file parse + decoration replace. `activeDocument` gets a
-    // fresh `{ ...doc, content }` on every keystroke, which re-ran this effect
-    // (cache miss on changed content -> full re-parse + deltaDecorations) per
-    // character typed. The glyphs do not need to track typing in real time -
-    // their stickiness keeps existing glyphs anchored to the right lines while
-    // typing, and the recompute catches up ~160ms after the user pauses. This
-    // mirrors the syntax-diagnostics debounce. The cleanup only clears the
-    // pending timer so rapid keystrokes coalesce into a single parse without
-    // clearing the glyphs in between (no flicker).
-    const targetDocumentPath = activeDocument.path;
-    const targetDocumentContent = activeDocument.content;
-    const timeout = window.setTimeout(() => {
-      const liveModel = editorApi.getModel();
+    const liveModel = editorApi.getModel();
 
-      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
-        return;
-      }
+    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+      return;
+    }
 
-      const targets = implementationGutterTargetsCacheRef.current.resolve(
-        targetDocumentPath,
-        targetDocumentContent,
-      );
-      implementationGutterTargetsRef.current = new Map(
-        targets.map((target) => [target.position.lineNumber, target.position]),
-      );
-      implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        implementationGutterDecorationIdsRef.current,
-        targets.map((target) => ({
-          options: {
-            glyphMargin: {
-              position: monacoApi.editor.GlyphMarginLane.Center,
-            },
-            glyphMarginClassName: "implementation-gutter-glyph",
-            glyphMarginHoverMessage: {
-              value: "Go to implementation",
-            },
-            isWholeLine: false,
-            stickiness:
-              monacoApi.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-            zIndex: 20,
+    const targets = implementationGutterTargetsCacheRef.current.resolve(
+      phpEditTick.path,
+      phpEditTick.content,
+    );
+    implementationGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target.position]),
+    );
+    implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      implementationGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Center,
           },
-          range: new monacoApi.Range(
-            target.position.lineNumber,
-            1,
-            target.position.lineNumber,
-            1,
-          ),
-        })),
-      );
-      implementationGutterDecoratedPathRef.current = targetDocumentPath;
-    }, 160);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [activeDocument, editorApi, monacoApi]);
+          glyphMarginClassName: "implementation-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: "Go to implementation",
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+    implementationGutterDecoratedPathRef.current = phpEditTick.path;
+  }, [editorApi, monacoApi, phpEditTick]);
 
   // Renders the green "run test" play glyph on the Right glyph-margin lane for
   // each parsed test target in the active PHP test file. Gated to PHP test
@@ -1576,7 +1585,7 @@ function EditorSurfaceComponent({
 
     // Synchronously drop the previous file's glyphs on a path switch (or when the
     // document stops being a PHP test) so a switch never leaves stale glyphs while
-    // the debounced recompute is pending. Mirrors the implementation-gutter
+    // the shared debounce tick is pending. Mirrors the implementation-gutter
     // effect; see its comment for the no-flicker rationale.
     const decoratedPath = testGutterDecoratedPathRef.current;
     const isPathSwitch =
@@ -1592,59 +1601,56 @@ function EditorSurfaceComponent({
       );
       testGutterDecoratedPathRef.current = null;
     }
+  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
 
-    if (!isApplicable) {
+  // The debounced test-gutter parse + decoration replace, driven by the shared
+  // `phpEditTick`. Re-applies the `isActiveDocumentPhpTest` gate (the tick only
+  // knows the document is PHP) and re-checks the live model path AFTER the
+  // debounce so a stale tab's snapshot can never decorate the active model.
+  useEffect(() => {
+    if (!phpEditTick || !editorApi || !monacoApi || !isActiveDocumentPhpTest) {
       return;
     }
 
-    const targetDocumentPath = activeDocument.path;
-    const targetDocumentContent = activeDocument.content;
-    const timeout = window.setTimeout(() => {
-      const liveModel = editorApi.getModel();
+    const liveModel = editorApi.getModel();
 
-      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
-        return;
-      }
+    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+      return;
+    }
 
-      const targets = testGutterTargetsCacheRef.current.resolve(
-        targetDocumentPath,
-        targetDocumentContent,
-      );
-      testGutterTargetsRef.current = new Map(
-        targets.map((target) => [target.position.lineNumber, target]),
-      );
-      testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        testGutterDecorationIdsRef.current,
-        targets.map((target) => ({
-          options: {
-            glyphMargin: {
-              position: monacoApi.editor.GlyphMarginLane.Right,
-            },
-            glyphMarginClassName: "test-run-gutter-glyph",
-            glyphMarginHoverMessage: {
-              value: target.label,
-            },
-            isWholeLine: false,
-            stickiness:
-              monacoApi.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-            zIndex: 20,
+    const targets = testGutterTargetsCacheRef.current.resolve(
+      phpEditTick.path,
+      phpEditTick.content,
+    );
+    testGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target]),
+    );
+    testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      testGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Right,
           },
-          range: new monacoApi.Range(
-            target.position.lineNumber,
-            1,
-            target.position.lineNumber,
-            1,
-          ),
-        })),
-      );
-      testGutterDecoratedPathRef.current = targetDocumentPath;
-    }, 160);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
+          glyphMarginClassName: "test-run-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: target.label,
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+    testGutterDecoratedPathRef.current = phpEditTick.path;
+  }, [editorApi, isActiveDocumentPhpTest, monacoApi, phpEditTick]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -1867,6 +1873,9 @@ function EditorSurfaceComponent({
     syntaxDiagnosticsByPath,
   ]);
 
+  // Synchronously clears the PHP syntax markers + cached diagnostics when the
+  // active document is not (or stops being) PHP. The debounced re-validation for
+  // PHP documents is driven by the shared `phpEditTick` below.
   useEffect(() => {
     if (!monacoApi) {
       return;
@@ -1876,63 +1885,74 @@ function EditorSurfaceComponent({
       return;
     }
 
+    if (activeDocument.language === "php") {
+      return;
+    }
+
     const model = modelForPath(monacoApi, activeDocument.path);
 
     if (!model) {
       return;
     }
 
-    if (activeDocument.language !== "php") {
-      monacoApi.editor.setModelMarkers(model, "php-syntax", []);
-      setSyntaxDiagnosticsByPath((current) => {
-        if (!current[activeDocument.path]) {
-          return current;
-        }
+    monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+    setSyntaxDiagnosticsByPath((current) => {
+      if (!current[activeDocument.path]) {
+        return current;
+      }
 
-        const next = { ...current };
-        delete next[activeDocument.path];
-        return next;
-      });
+      const next = { ...current };
+      delete next[activeDocument.path];
+      return next;
+    });
+  }, [activeDocument, monacoApi]);
+
+  // The debounced PHP syntax validation, driven by the shared `phpEditTick` (one
+  // 160ms timer per edit for all PHP gutter/diagnostics consumers). The `active`
+  // flag drops a resolved validation whose tick has since changed or unmounted,
+  // and the model is re-resolved from the tick's path so a stale tab's snapshot
+  // can never mark the active model.
+  useEffect(() => {
+    if (!monacoApi || !phpEditTick) {
+      return;
+    }
+
+    const model = modelForPath(monacoApi, phpEditTick.path);
+
+    if (!model) {
       return;
     }
 
     let active = true;
-    const timeout = window.setTimeout(() => {
-      phpSyntaxDiagnosticsGateway
-        .validate(activeDocument.content)
-        .then((diagnostics) => {
-          if (!active) {
-            return;
-          }
+    phpSyntaxDiagnosticsGateway
+      .validate(phpEditTick.content)
+      .then((diagnostics) => {
+        if (!active) {
+          return;
+        }
 
-          const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
-            activeDocument.content,
-          );
-          const allDiagnostics = [...diagnostics, ...localDiagnostics];
-          setSyntaxDiagnosticsByPath((current) => ({
-            ...current,
-            [activeDocument.path]: allDiagnostics,
-          }));
-          monacoApi.editor.setModelMarkers(
-            model,
-            "php-syntax",
-            allDiagnostics.map((diagnostic) =>
-              toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
-            ),
-          );
-        })
-        .catch((error) => errorReporterRef.current(error));
-    }, 160);
+        const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
+          phpEditTick.content,
+        );
+        const allDiagnostics = [...diagnostics, ...localDiagnostics];
+        setSyntaxDiagnosticsByPath((current) => ({
+          ...current,
+          [phpEditTick.path]: allDiagnostics,
+        }));
+        monacoApi.editor.setModelMarkers(
+          model,
+          "php-syntax",
+          allDiagnostics.map((diagnostic) =>
+            toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
+          ),
+        );
+      })
+      .catch((error) => errorReporterRef.current(error));
 
     return () => {
       active = false;
-      window.clearTimeout(timeout);
     };
-  }, [
-    activeDocument,
-    monacoApi,
-    phpSyntaxDiagnosticsGateway,
-  ]);
+  }, [monacoApi, phpEditTick, phpSyntaxDiagnosticsGateway]);
 
   const breadcrumbSymbols = activeDocument
     ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS

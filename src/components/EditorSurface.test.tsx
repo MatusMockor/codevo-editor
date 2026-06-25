@@ -2210,6 +2210,161 @@ interface PaymentGateway
     }
   });
 
+  it("coalesces the impl gutter, test gutter and syntax diagnostics into a single debounce per edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstContent = `<?php
+
+class InvoiceServiceTest
+{
+    public function testCharges(): void
+    {
+    }
+}
+`;
+      const activeDocument: EditorDocument = {
+        content: firstContent,
+        language: "php",
+        name: "InvoiceServiceTest.php",
+        path: "/workspace/tests/Unit/InvoiceServiceTest.php",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const editor = createEditor(model);
+      const monaco = createMonaco(model);
+      const validate = vi.fn(async () => []);
+      const gateway = { validate };
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
+
+      const renderWith = async (document: EditorDocument) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={document}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              isActiveDocumentPhpTest
+              languageServerDiagnosticsByPath={{}}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={gateway}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      const testGlyphCalls = () =>
+        editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+          (decorations as any[]).some(
+            (decoration) =>
+              decoration.options?.glyphMarginClassName ===
+              "test-run-gutter-glyph",
+          ),
+        );
+      const syntaxMarkerCalls = () =>
+        monaco.editor.setModelMarkers.mock.calls.filter(
+          ([, owner]) => owner === "php-syntax",
+        );
+
+      // Initial mount + flush so all three consumers have rendered once.
+      await renderWith(activeDocument);
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      expect(testGlyphCalls().length).toBeGreaterThan(0);
+      expect(validate).toHaveBeenCalledTimes(1);
+
+      editor.deltaDecorations.mockClear();
+      monaco.editor.setModelMarkers.mockClear();
+      validate.mockClear();
+
+      // Record every 160ms debounce timer armed during the keystroke. With the
+      // shared debounce there is exactly ONE for all three PHP consumers (impl
+      // gutter, test gutter, syntax diagnostics); the pre-refactor code armed
+      // three independent timers. We restore the original setTimeout only AFTER
+      // switching back to real timers (in `finally`) so the spy never corrupts
+      // vitest's fake-timer patching of the global.
+      const debounceDelays: number[] = [];
+      const realSetTimeout = window.setTimeout;
+      const recordingSetTimeout = ((
+        handler: TimerHandler,
+        timeout?: number,
+        ...args: unknown[]
+      ) => {
+        if (timeout === 160) {
+          debounceDelays.push(timeout);
+        }
+        return (realSetTimeout as any)(handler, timeout, ...args);
+      }) as typeof window.setTimeout;
+      window.setTimeout = recordingSetTimeout;
+
+      // A single keystroke (same path, mutated content) must arm exactly ONE
+      // 160ms debounce timer shared by all three consumers, not three
+      // independent timers.
+      const secondContent = `<?php
+
+class InvoiceServiceTest
+{
+    public function testCharges(): void
+    {
+    }
+
+    public function testRefunds(): void
+    {
+    }
+}
+`;
+      await renderWith({ ...activeDocument, content: secondContent });
+
+      window.setTimeout = realSetTimeout;
+
+      expect(debounceDelays).toHaveLength(1);
+
+      // One flush updates all three consumers from the single shared snapshot.
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      // Impl + test gutter re-parsed and re-decorated, syntax re-validated once.
+      expect(testGlyphCalls().length).toBeGreaterThan(0);
+      expect(syntaxMarkerCalls().length).toBeGreaterThan(0);
+      expect(validate).toHaveBeenCalledTimes(1);
+      expect(validate).toHaveBeenCalledWith(secondContent);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not re-map diagnostic overview decorations per keystroke when diagnostics are unchanged", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
