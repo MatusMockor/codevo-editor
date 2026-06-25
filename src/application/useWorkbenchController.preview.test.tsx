@@ -59,13 +59,14 @@ import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
-import type {
-  FileEntry,
-  FileSearchResult,
-  ManagedPhpactorInstallCompletionEvent,
-  PhpProjectDescriptor,
-  TextSearchResult,
-  WorkspaceDescriptor,
+import {
+  defaultTextSearchOptions,
+  type FileEntry,
+  type FileSearchResult,
+  type ManagedPhpactorInstallCompletionEvent,
+  type PhpProjectDescriptor,
+  type TextSearchResult,
+  type WorkspaceDescriptor,
 } from "../domain/workspace";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
@@ -50442,6 +50443,111 @@ class PostRepository
     expect(getWorkbench().recentFiles.map((entry) => entry.path)).toEqual([
       "/workspace-a/a.ts",
     ]);
+  });
+
+  describe("find in path", () => {
+    it("forwards the active filters to the text search gateway", async () => {
+      const searchText = vi.fn(async () => []);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        searchText,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchOptions({
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: true,
+          fileMask: "*.php,!vendor",
+        });
+        getWorkbench().setTextSearchQuery("needle");
+      });
+
+      await vi.waitFor(() => {
+        expect(searchText).toHaveBeenCalledWith("/workspace", "needle", 100, {
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: true,
+          fileMask: "*.php,!vendor",
+        });
+      });
+    });
+
+    it("reveals the match position when a result is opened", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      const result: TextSearchResult = {
+        column: 13,
+        lineNumber: 7,
+        lineText: "final class UserService",
+        matchEnd: 23,
+        matchStart: 12,
+        path: "/workspace/app/Services/UserService.php",
+        relativePath: "app/Services/UserService.php",
+      };
+
+      await act(async () => {
+        await getWorkbench().openTextSearchResult(result);
+      });
+
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: "/workspace/app/Services/UserService.php",
+        position: { column: 13, lineNumber: 7 },
+      });
+      expect(getWorkbench().textSearchOpen).toBe(false);
+    });
+
+    it("resets filters to the default baseline between workspace tabs", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOptions({
+          ...defaultTextSearchOptions(),
+          isRegex: true,
+          fileMask: "*.php",
+        });
+      });
+
+      expect(getWorkbench().textSearchOptions.isRegex).toBe(true);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().textSearchOptions).toEqual(
+        defaultTextSearchOptions(),
+      );
+    });
   });
 
   function renderController({

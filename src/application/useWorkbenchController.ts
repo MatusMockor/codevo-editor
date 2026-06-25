@@ -546,7 +546,9 @@ import {
   type PhpToolGateway,
   type PhpToolAvailability,
   type TextSearchResult,
+  type TextSearchOptions,
   type TextSearchGateway,
+  defaultTextSearchOptions,
   type WorkspaceDescriptor,
   type WorkspaceDetectionGateway,
   type WorkspaceFileGateway,
@@ -1081,6 +1083,9 @@ export function useWorkbenchController(
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
   const [textSearchLoading, setTextSearchLoading] = useState(false);
+  const [textSearchOptions, setTextSearchOptions] = useState<TextSearchOptions>(
+    defaultTextSearchOptions,
+  );
   const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
     [],
   );
@@ -3388,6 +3393,7 @@ export function useWorkbenchController(
     setTextSearchQuery("");
     setTextSearchLoading(false);
     setTextSearchResults([]);
+    setTextSearchOptions(defaultTextSearchOptions);
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setFileStructureScope("current");
@@ -4589,6 +4595,7 @@ export function useWorkbenchController(
       setTextSearchQuery("");
       setTextSearchLoading(false);
       setTextSearchResults([]);
+      setTextSearchOptions(defaultTextSearchOptions);
       setFileStructureScope("current");
       setImplementationChooser(null);
       setCallHierarchyView(null);
@@ -8077,6 +8084,13 @@ export function useWorkbenchController(
       }
 
       setTextSearchOpen(false);
+      setEditorRevealTarget({
+        path: result.path,
+        position: {
+          column: Math.max(1, Number(result.column)),
+          lineNumber: Math.max(1, Number(result.lineNumber)),
+        },
+      });
       setMessage(
         `Opened ${result.relativePath}:${result.lineNumber}:${result.column}`,
       );
@@ -24310,12 +24324,17 @@ export function useWorkbenchController(
       return;
     }
 
+    // Capture the requested root + filters up front; the `active` flag (reset by
+    // cleanup whenever any of these change, including a workspace tab switch)
+    // drops stale results so a slow search from a previous root/filter set can
+    // never overwrite the current one.
+    const requestedRoot = workspaceRoot;
     let active = true;
     setTextSearchLoading(true);
 
     const timeout = window.setTimeout(() => {
       textSearch
-        .searchText(workspaceRoot, textSearchQuery, 100)
+        .searchText(requestedRoot, textSearchQuery, 100, textSearchOptions)
         .then((results) => {
           if (!active) {
             return;
@@ -24349,6 +24368,7 @@ export function useWorkbenchController(
     reportError,
     textSearchOpen,
     textSearchQuery,
+    textSearchOptions,
     textSearch,
     workspaceRoot,
   ]);
@@ -25225,6 +25245,7 @@ export function useWorkbenchController(
     setSettingsOpen,
     setTextSearchOpen,
     setTextSearchQuery,
+    setTextSearchOptions,
     setLanguageServerSetupOpen,
     setStatusBarItemVisibility,
     settingsInitialSection,
@@ -25245,6 +25266,7 @@ export function useWorkbenchController(
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,
+    textSearchOptions,
     textSearchResults,
     toggleDirectory,
     toggleGitChangeIncluded,

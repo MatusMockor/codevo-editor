@@ -1104,9 +1104,11 @@ function App() {
       <TextSearch
         isLoading={workbench.textSearchLoading}
         isOpen={workbench.textSearchOpen}
+        onChangeOptions={workbench.setTextSearchOptions}
         onChangeQuery={workbench.setTextSearchQuery}
         onClose={() => workbench.setTextSearchOpen(false)}
         onOpen={workbench.openTextSearchResult}
+        options={workbench.textSearchOptions}
         query={workbench.textSearchQuery}
         results={workbench.textSearchResults}
       />

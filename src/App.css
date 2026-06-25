@@ -2777,6 +2777,66 @@ button.problem-row:focus-visible {
   box-shadow: var(--shadow-pop);
 }
 
+.text-search-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+}
+
+.text-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-toggle:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.text-search-toggle.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft, var(--color-hover));
+  color: var(--color-accent);
+}
+
+.text-search-mask {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-subtle);
+}
+
+.text-search-mask input {
+  height: 28px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-strong);
+}
+
+.text-search-match {
+  background: var(--color-accent-soft, rgba(255, 213, 0, 0.28));
+  color: inherit;
+  border-radius: 2px;
+}
+
 .surround-with-picker {
   width: min(320px, calc(100vw - 36px));
 }

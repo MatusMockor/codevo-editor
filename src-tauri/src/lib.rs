@@ -97,7 +97,7 @@ use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
 use php_symbols::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor};
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
-use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
+use search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
 use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
@@ -1494,13 +1494,17 @@ async fn search_text(
     root: String,
     query: String,
     limit: usize,
+    options: Option<TextSearchOptions>,
 ) -> Result<Vec<TextSearchResult>, String> {
     // Full-text search spawns ripgrep and reads its output; keep it off the main
-    // thread so the WebView is not blocked while it runs.
+    // thread so the WebView is not blocked while it runs. `options` is optional so
+    // legacy 3-arg callers (no filters) keep the original literal, case-insensitive
+    // behaviour.
+    let options = options.unwrap_or_default();
     run_blocking_command(move || {
         let searcher = RipgrepTextSearcher;
         searcher
-            .search(&PathBuf::from(root), &query, limit)
+            .search(&PathBuf::from(root), &query, limit, &options)
             .map_err(|error| error.to_string())
     })
     .await

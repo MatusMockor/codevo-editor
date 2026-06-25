@@ -9,6 +9,7 @@ import type {
   PhpToolGateway,
   PhpToolAvailability,
   TextSearchGateway,
+  TextSearchOptions,
   TextSearchResult,
   WorkspaceDescriptor,
   WorkspaceDetectionGateway,
@@ -102,8 +103,14 @@ export class TauriWorkspaceGateway
     root: string,
     query: string,
     limit: number,
+    options?: TextSearchOptions,
   ): Promise<TextSearchResult[]> {
-    return invoke<TextSearchResult[]>("search_text", { root, query, limit });
+    return invoke<TextSearchResult[]>("search_text", {
+      root,
+      query,
+      limit,
+      options: options ?? null,
+    });
   }
 
   writeTextFile(path: string, content: string): Promise<void> {
