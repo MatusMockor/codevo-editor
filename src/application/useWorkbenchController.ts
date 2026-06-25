@@ -429,6 +429,10 @@ import {
   phpTestClassPlan,
   renderPhpTestSkeleton,
 } from "../domain/phpTestGen";
+import {
+  phpTestNavigationTargets,
+  type PhpTestNavigationDirection,
+} from "../domain/phpTestNavigation";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
 import {
@@ -486,6 +490,7 @@ import {
   getParentPath,
   isDirty,
   joinWorkspacePath,
+  workspaceRelativePath,
   nextActiveEditorPathAfterClose,
   visibleEditorPaths,
   type EditorDocument,
@@ -7703,6 +7708,80 @@ export function useWorkbenchController(
     reportErrorForActiveWorkspaceRoot,
     workspaceDescriptor,
     workspaceFiles,
+    workspaceRoot,
+  ]);
+
+  // PhpStorm-style "Go to Test / Test Subject": from the active PHP file, decide
+  // (via PSR-4) whether it is a TEST or a production SUBJECT and jump to its
+  // partner. From a source class, both Unit and Feature suites are probed and the
+  // first existing test wins; from a test, the single derived subject is opened.
+  // The partner is opened (never created); a missing partner only notifies. Per
+  // the per-workspace isolation rule the requested root is captured up front and
+  // re-checked after every await so a tab switch mid-flight drops the navigation.
+  const goToTestForActiveDocument = useCallback(async () => {
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const requestedDocument = activeDocumentRef.current;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
+      return;
+    }
+
+    if (requestedDocument.language !== "php") {
+      return;
+    }
+
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocument.path,
+    );
+
+    if (!relativePath) {
+      return;
+    }
+
+    const navigation = phpTestNavigationTargets({
+      psr4Roots: requestedDescriptor.php.psr4Roots,
+      relativePath,
+    });
+
+    if (!navigation) {
+      setMessage("Go to test: no test mapping for the active file.");
+      return;
+    }
+
+    try {
+      for (const candidate of navigation.candidates) {
+        const candidatePath = joinWorkspacePath(requestedRoot, candidate);
+        const existing = await readTestFileIfExists(candidatePath);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        if (existing === null) {
+          continue;
+        }
+
+        await openFile({
+          kind: "file",
+          name: getFileName(candidatePath),
+          path: candidatePath,
+        });
+        return;
+      }
+
+      setMessage(missingTestPartnerMessage(navigation.direction));
+    } catch (error) {
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Go to Test", error);
+    }
+  }, [
+    openFile,
+    readTestFileIfExists,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceDescriptor,
     workspaceRoot,
   ]);
 
@@ -21072,6 +21151,18 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "php.goToTest",
+      title: "Go to Test / Test Subject",
+      category: "PHP",
+      shortcut: shortcut("php.goToTest"),
+      isEnabled: (context) =>
+        context.hasWorkspace &&
+        context.hasActiveDocument &&
+        activeDocument?.language === "php",
+      run: goToTestForActiveDocument,
+    });
+
+    registry.register({
       id: "file.quickOpen",
       title: "Quick Open File",
       category: "File",
@@ -21737,6 +21828,7 @@ export function useWorkbenchController(
     createFile,
     deleteActiveDocument,
     generateTestForActiveDocument,
+    goToTestForActiveDocument,
     goToDeclaration,
     canSearchClassOpenSymbols,
     goToDefinition,
@@ -22455,6 +22547,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("php.goToTest")) {
+        event.preventDefault();
+        void goToTestForActiveDocument();
+        return;
+      }
+
       if (matches("editor.findReferences")) {
         event.preventDefault();
         void openReferencesPanel();
@@ -22553,6 +22651,7 @@ export function useWorkbenchController(
     goToDeclaration,
     goToDefinition,
     goToImplementation,
+    goToTestForActiveDocument,
     goToNextProblem,
     goToPreviousProblem,
     goToSourceDefinition,
@@ -26352,4 +26451,14 @@ function phpTypeTokenAlreadyResolvable(
   return (
     resolved.trim().replace(/^\\+/, "").toLowerCase() === fqn.toLowerCase()
   );
+}
+
+function missingTestPartnerMessage(
+  direction: PhpTestNavigationDirection,
+): string {
+  if (direction === "toSubject") {
+    return "No test subject found for this test. Create the class first.";
+  }
+
+  return "No test found for this class. Run Generate Test to create one.";
 }

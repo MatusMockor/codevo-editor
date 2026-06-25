@@ -324,3 +324,28 @@ export function joinWorkspacePath(rootPath: string, relativePath: string): strin
 
   return `${normalizedRootPath}/${normalizedRelativePath}`;
 }
+
+export function workspaceRelativePath(
+  rootPath: string,
+  absolutePath: string,
+): string | null {
+  const normalizedRootPath = rootPath
+    .trim()
+    .split("\\")
+    .join("/")
+    .replace(/\/+$/, "");
+  const normalizedAbsolutePath = absolutePath
+    .trim()
+    .split("\\")
+    .join("/")
+    .replace(/\/+$/, "");
+  const prefix = `${normalizedRootPath}/`;
+
+  if (!normalizedAbsolutePath.startsWith(prefix)) {
+    return null;
+  }
+
+  const relativePath = normalizedAbsolutePath.slice(prefix.length);
+
+  return relativePath || null;
+}

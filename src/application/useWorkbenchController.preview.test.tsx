@@ -47518,6 +47518,302 @@ interface GreeterContract
     expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
   });
 
+  it("jumps from a source class to its existing Unit test", async () => {
+    const sourcePath = "/workspace/app/Services/InvoiceService.php";
+    const testPath = "/workspace/tests/Unit/Services/InvoiceServiceTest.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    const testContent = "<?php\n// the existing unit test\n";
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      if (path === testPath) {
+        return testContent;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "InvoiceService.php"));
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.goToTest");
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(testPath);
+    expect(getWorkbench().activeDocument?.content).toBe(testContent);
+  });
+
+  it("falls back to a Feature test when no Unit test exists", async () => {
+    const sourcePath = "/workspace/app/Http/Controllers/UserController.php";
+    const unitPath =
+      "/workspace/tests/Unit/Http/Controllers/UserControllerTest.php";
+    const featurePath =
+      "/workspace/tests/Feature/Http/Controllers/UserControllerTest.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Http\\Controllers;",
+      "",
+      "class UserController",
+      "{",
+      "    public function index(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    const featureContent = "<?php\n// the existing feature test\n";
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      if (path === featurePath) {
+        return featureContent;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "UserController.php"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.goToTest");
+      await flushAsyncTurns();
+    });
+
+    expect(readTextFile).toHaveBeenCalledWith(unitPath);
+    expect(getWorkbench().activePath).toBe(featurePath);
+    expect(getWorkbench().activeDocument?.content).toBe(featureContent);
+  });
+
+  it("jumps from a Feature test back to its production subject", async () => {
+    const subjectPath = "/workspace/app/Http/Controllers/UserController.php";
+    const testPath =
+      "/workspace/tests/Feature/Http/Controllers/UserControllerTest.php";
+    const testContent = [
+      "<?php",
+      "",
+      "namespace Tests\\Feature\\Http\\Controllers;",
+      "",
+      "use Tests\\TestCase;",
+      "",
+      "class UserControllerTest extends TestCase",
+      "{",
+      "    public function testIndex(): void {}",
+      "}",
+      "",
+    ].join("\n");
+    const subjectContent = "<?php\n// the production controller\n";
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testContent;
+      }
+
+      if (path === subjectPath) {
+        return subjectContent;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(testPath, "UserControllerTest.php"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.goToTest");
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activePath).toBe(subjectPath);
+    expect(getWorkbench().activeDocument?.content).toBe(subjectContent);
+  });
+
+  it("reports a notice when no partner test exists on disk", async () => {
+    const sourcePath = "/workspace/app/Services/InvoiceService.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "InvoiceService.php"));
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.goToTest");
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().message).toContain("No test found");
+  });
+
+  it("drops a stale go-to-test navigation when the workspace switches mid-flight", async () => {
+    const sourcePath = "/workspace-a/app/Services/InvoiceService.php";
+    const testPath =
+      "/workspace-a/tests/Unit/Services/InvoiceServiceTest.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    let releaseExistenceCheck: (() => void) | null = null;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      if (path === testPath) {
+        await new Promise<void>((resolve) => {
+          releaseExistenceCheck = resolve;
+        });
+
+        return "<?php\n// the unit test\n";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "InvoiceService.php"),
+      );
+    });
+
+    let navigation: Promise<unknown> | null = null;
+    act(() => {
+      navigation = runCommand(getWorkbench(), "php.goToTest");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await flushAsyncTurns();
+    });
+
+    await act(async () => {
+      releaseExistenceCheck?.();
+      await navigation;
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activePath).not.toBe(testPath);
+  });
+
   it("navigates a typed member property to its declared type class", async () => {
     const servicePath = "/workspace/app/Services/PostService.php";
     const repositoryPath = "/workspace/app/Repositories/PostRepository.php";

@@ -162,6 +162,12 @@ export const keymapCommands = [
     label: "Open Class or Interface",
   },
   {
+    category: "PHP",
+    defaultShortcut: "",
+    id: "php.goToTest",
+    label: "Go to Test / Test Subject",
+  },
+  {
     category: "Navigation",
     defaultShortcut: "Cmd+[",
     id: "navigation.back",

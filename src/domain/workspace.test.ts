@@ -8,6 +8,7 @@ import {
   javaScriptTypeScriptVersionLabel,
   javaScriptTypeScriptWorkspaceLabel,
   joinWorkspacePath,
+  workspaceRelativePath,
   nextActiveEditorPathAfterClose,
   visibleEditorPaths,
   type EditorDocument,
@@ -41,6 +42,24 @@ describe("workspace path helpers", () => {
     expect(joinWorkspacePath("C:\\project\\", "\\src\\User.php")).toBe(
       "C:/project/src/User.php",
     );
+  });
+
+  it("derives a workspace-relative path from an absolute child path", () => {
+    expect(
+      workspaceRelativePath("/project", "/project/app/Services/Foo.php"),
+    ).toBe("app/Services/Foo.php");
+    expect(
+      workspaceRelativePath("/project/", "/project/app/Foo.php"),
+    ).toBe("app/Foo.php");
+    expect(
+      workspaceRelativePath("C:\\project", "C:\\project\\src\\Foo.php"),
+    ).toBe("src/Foo.php");
+  });
+
+  it("returns null when the path is outside the workspace root", () => {
+    expect(workspaceRelativePath("/project", "/other/Foo.php")).toBeNull();
+    expect(workspaceRelativePath("/project", "/project")).toBeNull();
+    expect(workspaceRelativePath("/project", "/projectile/Foo.php")).toBeNull();
   });
 
   it("detects dirty editor documents", () => {

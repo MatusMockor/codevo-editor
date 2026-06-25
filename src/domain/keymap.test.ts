@@ -60,6 +60,19 @@ describe("keymap", () => {
     );
   });
 
+  it("leaves Go to Test unbound to avoid the Cmd+Shift+T TODO panel collision", () => {
+    expect(defaultShortcutForCommand("php.goToTest", "mac")).toBe("");
+    expect(defaultShortcutForCommand("php.goToTest", "linux")).toBe("");
+    expect(defaultKeymapSettings("mac")["php.goToTest"]).toBe("");
+  });
+
+  it("never assigns the same default shortcut to two commands", () => {
+    const defaults = defaultKeymapSettings("mac");
+    const assigned = Object.values(defaults).filter(Boolean);
+
+    expect(new Set(assigned).size).toBe(assigned.length);
+  });
+
   it("defaults find all references to Shift+F12 on every platform", () => {
     expect(defaultShortcutForCommand("editor.findReferences", "mac")).toBe(
       "Shift+F12",
