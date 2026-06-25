@@ -32,6 +32,10 @@ import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
+  phpPostfixCompletionContextAt,
+  phpPostfixCompletionItems,
+} from "../domain/phpPostfixCompletions";
+import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
   phpStaticAccessCompletionContextAt,
@@ -455,7 +459,7 @@ export function registerLanguageServerMonacoProviders(
     provideHover: (model, position) => provideHover(monaco, context, model, position),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
-    triggerCharacters: ["$", ">", ":", "'", "\""],
+    triggerCharacters: ["$", ">", ":", "'", "\"", "."],
     provideCompletionItems: (model, position) =>
       provideCompletionItems(monaco, context, model, position),
   });
@@ -3190,6 +3194,17 @@ async function provideCompletionItems(
   const word = model.getWordUntilPosition(position);
   const range = completionRange(model, position, word);
   const source = modelSource(model, documentContext.activeDocument.content);
+  const postfixSuggestions = phpPostfixCompletionSuggestions(
+    monaco,
+    model,
+    source,
+    position,
+  );
+
+  if (postfixSuggestions) {
+    return { suggestions: postfixSuggestions };
+  }
+
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
@@ -3299,6 +3314,41 @@ async function provideCompletionItems(
 
     return { suggestions: [] };
   }
+}
+
+function phpPostfixCompletionSuggestions(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  position: MonacoPosition,
+): Monaco.languages.CompletionItem[] | null {
+  const postfixContext = phpPostfixCompletionContextAt(source, position);
+
+  if (!postfixContext) {
+    return null;
+  }
+
+  const start = model.getPositionAt(postfixContext.replaceRange.start);
+  const range = {
+    endColumn: position.column,
+    endLineNumber: position.lineNumber,
+    startColumn: start.column,
+    startLineNumber: start.lineNumber,
+  };
+
+  return phpPostfixCompletionItems(
+    postfixContext.receiverExpression,
+    postfixContext.keyword,
+  ).map((item, index) => ({
+    detail: item.detail,
+    insertText: item.insertText,
+    insertTextRules:
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    kind: monaco.languages.CompletionItemKind.Snippet,
+    label: item.label,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  }));
 }
 
 async function phpMethodSuggestions(

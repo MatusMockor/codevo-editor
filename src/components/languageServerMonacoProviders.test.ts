@@ -43,6 +43,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       ":",
       "'",
       "\"",
+      ".",
     ]);
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
@@ -1541,6 +1542,129 @@ function store($request): void
       suggestions: [],
     });
     expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
+
+  it("expands a PHP postfix keyword into a snippet over the receiver range", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "class",
+            documentation: null,
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const source = "<?php\nfunction show($user): void\n{\n    $user.if\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "    $user.if",
+        word: {
+          endColumn: 13,
+          startColumn: 11,
+        },
+      }),
+      {
+        column: 13,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        insertText: "if ($user) {\n\t$0\n}",
+        insertTextRules: 4,
+        label: "if",
+        range: {
+          endColumn: 13,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        },
+      }),
+    ]);
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
+  it("does not treat PHP concatenation as a postfix completion", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "variable",
+            documentation: null,
+            insertText: "$banana",
+            kind: 6,
+            label: "$banana",
+          },
+        ],
+      },
+    });
+    const source = "<?php\nfunction show($a, $b): void\n{\n    $a . $b\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "    $a . $b",
+        word: {
+          endColumn: 11,
+          startColumn: 10,
+        },
+      }),
+      {
+        column: 11,
+        lineNumber: 4,
+      },
+    );
+
+    const suggestions = result.suggestions as Array<{
+      insertText: string;
+      insertTextRules?: number;
+      label: unknown;
+    }>;
+
+    expect(gateway.completion).toHaveBeenCalled();
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.insertTextRules === 4 &&
+          typeof suggestion.insertText === "string" &&
+          suggestion.insertText.includes("{\n\t$0\n}"),
+      ),
+    ).toBe(false);
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.label === "$banana",
+      ),
+    ).toBe(true);
   });
 
   it("filters PHP LSP locals and keywords inside member access completions", async () => {
@@ -8499,6 +8623,7 @@ function createRegisteredProviders() {
         Keyword: 18,
         Method: 2,
         Property: 10,
+        Snippet: 27,
         Text: 1,
         Value: 12,
         Variable: 6,
