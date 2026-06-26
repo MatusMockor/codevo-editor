@@ -38,6 +38,19 @@ pub struct LanguageServerCommand {
     pub executable: String,
     pub args: Vec<String>,
     pub working_directory: String,
+    /// Extra environment variables applied to the spawned process (and inherited
+    /// by any children it spawns). For managed PHPactor this carries
+    /// `PHPRC=<managed.ini>` so every child PHP process PHPactor outsources to
+    /// (php-lint, code-action, diagnostics, psalm, phpstan, php-cs-fixer) boots
+    /// with the clean managed `php.ini` instead of the user's main `php.ini`. A
+    /// broken `extension=imagick.so` in the user's main `php.ini` prints a startup
+    /// warning onto the child's stdout *before* its JSON, the parent `json_decode`
+    /// returns null, and PHPactor surfaces "Could not decode JSON: Warning: PHP
+    /// Startup... imagick". Unlike the `-c <ini>` CLI argument (NOT inherited by
+    /// children), `PHPRC` is an environment variable, so this isolation propagates
+    /// to the whole PHPactor process tree.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -128,6 +141,16 @@ impl Default for PhpLanguageServerSettings {
         }
     }
 }
+
+/// PHP's environment variable for the `php.ini` location. Set to the managed
+/// minimal `php.ini` on the PHPactor process so it is inherited by every child
+/// PHP process PHPactor spawns (outsourced code actions, diagnostics, php-lint,
+/// psalm, phpstan, php-cs-fixer). Those children are launched via `PHP_BINARY`
+/// without the parent's `-c <ini>` argument (CLI args are not inherited), so
+/// without `PHPRC` they boot with the user's main `php.ini` and a broken
+/// `extension=imagick.so` prints a startup warning onto their stdout, corrupting
+/// the JSON the parent reads.
+const PHP_RUN_CONFIG_ENV: &str = "PHPRC";
 
 /// A resolved isolated PHP launcher for the managed PHPactor engine: an explicit
 /// `php` interpreter plus a minimal `php.ini` that replaces the user's main
@@ -220,8 +243,20 @@ where
                 executable: phpactor.path.clone(),
                 args: vec!["language-server".to_string()],
                 working_directory,
+                env: Vec::new(),
             };
         };
+
+        // `PHPRC` points every PHP process in the PHPactor tree at the managed,
+        // imagick-free `php.ini`. The `-c <ini>` argument isolates only the parent
+        // launcher; PHPactor outsources work (php-lint, code actions, diagnostics,
+        // psalm, phpstan, php-cs-fixer) to child `php` processes spawned via
+        // `PHP_BINARY` with NO `-c`, which would otherwise boot with the user's
+        // main `php.ini` and print an imagick startup warning onto the child's
+        // stdout, corrupting the JSON the parent reads ("Could not decode JSON:
+        // Warning: PHP Startup... imagick"). `PHPRC`, being an env var, is
+        // inherited by those children, so the whole tree stays clean.
+        let php_run_config = (PHP_RUN_CONFIG_ENV.to_string(), launcher.ini_path.clone());
 
         LanguageServerCommand {
             executable: launcher.php_path,
@@ -232,6 +267,7 @@ where
                 "language-server".to_string(),
             ],
             working_directory,
+            env: vec![php_run_config],
         }
     }
 }
@@ -418,6 +454,7 @@ where
                 executable: server.path.clone(),
                 args: vec!["--stdio".to_string()],
                 working_directory: root.to_string_lossy().to_string(),
+                env: Vec::new(),
             }),
             initialize_request: Some(initialize_request),
         }
@@ -1641,6 +1678,34 @@ mod tests {
                 "language-server".to_string(),
             ]
         );
+        // PHPRC must carry the managed ini so PHPactor's outsourced child PHP
+        // processes (php-lint, code actions, diagnostics) inherit the clean,
+        // imagick-free configuration. Unlike `-c`, env vars propagate to children.
+        assert_eq!(
+            command.env,
+            vec![("PHPRC".to_string(), "/managed/codevo-php.ini".to_string())]
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_direct_launch_fallback_has_no_php_env() {
+        let root = create_temp_dir("lsp-php-launcher-fallback-env");
+        let planner = planner_without_php();
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        let command = plan.command.expect("language server command");
+        // The direct-launch fallback has no resolved managed ini, so it carries no
+        // PHP env override (the transport-level startup-noise resilience remains
+        // the safety net there).
+        assert!(command.env.is_empty());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

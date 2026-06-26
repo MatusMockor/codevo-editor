@@ -341,6 +341,15 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // Apply per-command environment (e.g. `PHPRC=<managed.ini>` for managed
+        // PHPactor). Env vars are inherited by child processes the server spawns,
+        // so this isolates the whole PHPactor process tree from a noisy user
+        // `php.ini` — unlike the `-c <ini>` CLI argument, which children do not
+        // inherit.
+        for (key, value) in &command.env {
+            command_builder.env(key, value);
+        }
+
         #[cfg(unix)]
         {
             command_builder.process_group(0);
@@ -1910,6 +1919,7 @@ fn clone_command(command: &LanguageServerCommand) -> LanguageServerCommand {
         executable: command.executable.clone(),
         args: command.args.clone(),
         working_directory: command.working_directory.clone(),
+        env: command.env.clone(),
     }
 }
 
@@ -5089,6 +5099,7 @@ mod tests {
             executable: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/tmp/workspace-a".to_string(),
+            env: Vec::new(),
         };
 
         supervisor
@@ -5839,6 +5850,7 @@ mod tests {
             executable: "phpactor".to_string(),
             args: vec!["language-server".to_string()],
             working_directory: ".".to_string(),
+            env: Vec::new(),
         }
     }
 
@@ -5847,6 +5859,7 @@ mod tests {
             executable: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: root_path.to_string(),
+            env: Vec::new(),
         }
     }
 

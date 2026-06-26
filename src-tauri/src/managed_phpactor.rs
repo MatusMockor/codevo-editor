@@ -607,6 +607,7 @@ mod tests {
             args: vec!["language-server".to_string()],
             executable: "/workspace/vendor/bin/phpactor".to_string(),
             working_directory: "/workspace".to_string(),
+            env: Vec::new(),
         };
 
         assert!(!should_cleanup_orphaned_managed_phpactor_processes(
@@ -631,6 +632,7 @@ mod tests {
                 "language-server".to_string(),
             ],
             working_directory: "/workspace-a".to_string(),
+            env: Vec::new(),
         };
 
         assert!(is_managed_phpactor_command(&command));
@@ -659,6 +661,7 @@ mod tests {
                 "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
                     .to_string(),
             working_directory: workspace.to_string(),
+            env: Vec::new(),
         }
     }
 }
