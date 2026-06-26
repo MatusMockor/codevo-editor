@@ -1,23 +1,13 @@
-import { DiffEditor } from "@monaco-editor/react";
 import { ChevronDown, ChevronUp, Minus, Plus, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import type * as Monaco from "monaco-editor";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
 import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
   defaultEditorFontSize,
-  monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
 import type { GitChangedFile, GitDiffHunk, GitFileDiff } from "../domain/git";
-import {
-  applyImmediateFallbackTheme,
-  setupShikiTokenization,
-} from "../infrastructure/shikiHighlighter";
-import {
-  gitDiffModifiedModelPath,
-  gitDiffOriginalModelPath,
-} from "./gitDiffModelPaths";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -39,7 +29,7 @@ interface GitDiffPreviewProps {
 export function GitDiffPreview({
   diff,
   isLoading,
-  monacoTheme,
+  monacoTheme: _monacoTheme,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
@@ -50,25 +40,9 @@ export function GitDiffPreview({
   onStageHunk,
   onUnstageHunk,
 }: GitDiffPreviewProps) {
-  const [diffEditor, setDiffEditor] = useState<
-    Monaco.editor.IStandaloneDiffEditor | null
-  >(null);
-  const monacoFontLigatures =
-    monacoFontLigaturesForEditorSetting(editorFontLigatures);
-
-  useEffect(() => {
-    if (!diffEditor) {
-      return;
-    }
-
-    diffEditor.updateOptions({
-      fontFamily: editorFontFamily,
-      fontLigatures: monacoFontLigatures,
-      fontSize: editorFontSize,
-    });
-  }, [diffEditor, editorFontFamily, monacoFontLigatures, editorFontSize]);
-
   const [hunks, setHunks] = useState<GitDiffHunk[]>([]);
+  const [activeChangeIndex, setActiveChangeIndex] = useState(0);
+  const changeRowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
   const changeRelativePath = diff?.change.relativePath ?? null;
   const changeIsStaged = diff?.change.isStaged ?? false;
   const changeStatus = diff?.change.status ?? null;
@@ -84,6 +58,24 @@ export function GitDiffPreview({
   // including them re-loads the hunks to reflect the new index state.
   const diffOriginalContent = diff?.originalContent ?? "";
   const diffModifiedContent = diff?.modifiedContent ?? "";
+  const diffRows = useMemo(
+    () => buildPlainDiffRows(diffOriginalContent, diffModifiedContent),
+    [diffOriginalContent, diffModifiedContent],
+  );
+  const changeRowCount = diffRows.reduce(
+    (count, row) => count + (isChangedPlainDiffRow(row) ? 1 : 0),
+    0,
+  );
+
+  useEffect(() => {
+    setActiveChangeIndex(0);
+    changeRowRefs.current = [];
+  }, [
+    changeRelativePath,
+    changeIsStaged,
+    diffOriginalContent,
+    diffModifiedContent,
+  ]);
 
   useEffect(() => {
     if (!loadFileHunks || !changeRelativePath || !supportsHunkStaging) {
@@ -108,13 +100,14 @@ export function GitDiffPreview({
 
       // Per-hunk staging is a non-essential overlay on top of the diff. A
       // malformed/undefined payload from the hunk command must never break the
-      // diff render, so coerce anything that is not an array to an empty list.
-      setHunks(Array.isArray(loaded) ? loaded : []);
+      // diff render, so only keep hunks that are safe to render and address
+      // back to the hunk-staging command.
+      setHunks(normalizeGitDiffHunks(loaded));
     };
 
     // The hunk load is best-effort. If the underlying command rejects (missing,
     // failing, or unavailable), swallow it and keep the hunk list empty so the
-    // diff editor still renders instead of crashing the whole view to a blank
+    // diff preview still renders instead of crashing the whole view to a blank
     // screen (there is no error boundary around this tree).
     void Promise.resolve()
       .then(() => loadFileHunks(relativePath, staged))
@@ -165,18 +158,22 @@ export function GitDiffPreview({
 
   const goToChange = useCallback(
     (target: DiffNavigationTarget) => {
-      if (!diffEditor) {
+      if (changeRowCount === 0) {
         return;
       }
 
-      if (typeof diffEditor.goToDiff === "function") {
-        diffEditor.goToDiff(target);
-        return;
-      }
+      const nextIndex =
+        target === "next"
+          ? (activeChangeIndex + 1) % changeRowCount
+          : (activeChangeIndex - 1 + changeRowCount) % changeRowCount;
+      setActiveChangeIndex(nextIndex);
 
-      navigateLineChanges(diffEditor, target);
+      changeRowRefs.current[nextIndex]?.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+      });
     },
-    [diffEditor],
+    [activeChangeIndex, changeRowCount],
   );
 
   const onNextChange = useCallback(() => goToChange("next"), [goToChange]);
@@ -218,7 +215,7 @@ export function GitDiffPreview({
         </div>
         <div className="git-diff-toolbar" aria-label="Diff actions">
           <button
-            disabled={!diffEditor}
+            disabled={changeRowCount === 0}
             onClick={onPreviousChange}
             title="Previous change"
             type="button"
@@ -226,7 +223,7 @@ export function GitDiffPreview({
             <ChevronUp aria-hidden="true" size={14} />
           </button>
           <button
-            disabled={!diffEditor}
+            disabled={changeRowCount === 0}
             onClick={onNextChange}
             title="Next change"
             type="button"
@@ -251,55 +248,16 @@ export function GitDiffPreview({
           onToggleHunk={onToggleHunk}
         />
       ) : null}
-      <div className="editor-panel">
-        <DiffEditor
-          onMount={(editor) => setDiffEditor(editor)}
-          beforeMount={(monaco) => {
-            // Apply a matching built-in dark/light theme synchronously so the
-            // diff editor paints the correct background on its first frame.
-            // Without this, Monaco renders the default white `vs` theme until
-            // the async Shiki setup below resolves and calls `setTheme`,
-            // producing a white flash when switching to/from the git diff view.
-            applyImmediateFallbackTheme(monaco, monacoTheme);
-            setupShikiTokenization(monaco, monacoTheme).catch((error) => {
-              console.error("Shiki tokenization setup failed", error);
-            });
-          }}
-          height="100%"
-          language={diff.language}
-          loading={<GitDiffLoadingPlaceholder />}
-          modified={diff.modifiedContent ?? ""}
-          // Distinct, stable per-change Uris keep each file's original/modified
-          // diff models isolated. Without explicit paths both sides resolve to
-          // Uri.parse("") and reuse a stale model from the previously viewed
-          // diff when switching files.
-          modifiedModelPath={gitDiffModifiedModelPath(diff)}
-          original={diff.originalContent ?? ""}
-          originalModelPath={gitDiffOriginalModelPath(diff)}
-          options={{
-            automaticLayout: true,
-            fontFamily: editorFontFamily,
-            fontLigatures: monacoFontLigatures,
-            fontSize: editorFontSize,
-            lineHeight: 20,
-            minimap: { enabled: false },
-            originalEditable: false,
-            readOnly: true,
-            renderSideBySide: true,
-            scrollBeyondLastLine: false,
-          }}
-          theme={monacoTheme}
-        />
-      </div>
+      <PlainGitDiff
+        activeChangeIndex={activeChangeIndex}
+        changeRowRefs={changeRowRefs}
+        fontFamily={editorFontFamily}
+        fontLigatures={editorFontLigatures}
+        fontSize={editorFontSize}
+        rows={diffRows}
+      />
     </section>
   );
-}
-
-// Rendered via the Monaco `loading` prop. Monaco's default loading element is a
-// white "Loading…" box; this matches the dark editor surface background so the
-// diff editor never flashes white while the Monaco chunk loads.
-function GitDiffLoadingPlaceholder() {
-  return <div className="editor-loading-placeholder" aria-hidden="true" />;
 }
 
 interface GitDiffHunkListProps {
@@ -310,7 +268,7 @@ interface GitDiffHunkListProps {
 }
 
 // PhpStorm-style per-hunk staging. A checkbox per hunk stages (or, when viewing
-// the staged side, unstages) exactly that hunk; the surrounding diff editor
+// the staged side, unstages) exactly that hunk; the surrounding diff preview
 // re-renders against the new index state after the operation resolves.
 function GitDiffHunkList({
   disabled,
@@ -355,11 +313,103 @@ function GitDiffHunkList({
   );
 }
 
+interface PlainGitDiffProps {
+  activeChangeIndex: number;
+  changeRowRefs: MutableRefObject<Array<HTMLTableRowElement | null>>;
+  fontFamily: string;
+  fontLigatures: boolean;
+  fontSize: number;
+  rows: PlainDiffRow[];
+}
+
+function PlainGitDiff({
+  activeChangeIndex,
+  changeRowRefs,
+  fontFamily,
+  fontLigatures,
+  fontSize,
+  rows,
+}: PlainGitDiffProps) {
+  let changeIndex = -1;
+
+  return (
+    <div
+      className="git-plain-diff"
+      data-testid="plain-git-diff"
+      style={{
+        fontFamily,
+        fontSize,
+        fontVariantLigatures: fontLigatures ? "normal" : "none",
+      }}
+    >
+      {rows.length === 0 ? (
+        <div className="git-plain-diff-empty">No differences.</div>
+      ) : (
+        <table>
+          <tbody>
+            {rows.map((row, index) => {
+              if (row.kind === "header") {
+                return (
+                  <tr className="git-plain-diff-row header" key={index}>
+                    <td className="git-plain-diff-line" />
+                    <td className="git-plain-diff-line" />
+                    <td className="git-plain-diff-code" colSpan={2}>
+                      {row.text}
+                    </td>
+                  </tr>
+                );
+              }
+
+              const changed = isChangedPlainDiffRow(row);
+              if (changed) {
+                changeIndex += 1;
+              }
+
+              return (
+                <tr
+                  className={`git-plain-diff-row ${row.kind}${
+                    changed && changeIndex === activeChangeIndex ? " active" : ""
+                  }`}
+                  key={index}
+                  ref={
+                    changed
+                      ? (element) => {
+                          changeRowRefs.current[changeIndex] = element;
+                        }
+                      : undefined
+                  }
+                >
+                  <td className="git-plain-diff-line">
+                    {row.originalLineNumber ?? ""}
+                  </td>
+                  <td className="git-plain-diff-line">
+                    {row.modifiedLineNumber ?? ""}
+                  </td>
+                  <td className="git-plain-diff-marker">{row.marker}</td>
+                  <td className="git-plain-diff-code">
+                    {row.text.length > 0 ? row.text : " "}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function hunkSummary(hunk: GitDiffHunk): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
 
-  for (const line of hunk.lines) {
+  const lines = Array.isArray(hunk.lines) ? hunk.lines : [];
+
+  for (const line of lines) {
+    if (typeof line !== "string") {
+      continue;
+    }
+
     if (line.startsWith("+")) {
       added += 1;
       continue;
@@ -373,58 +423,192 @@ function hunkSummary(hunk: GitDiffHunk): { added: number; removed: number } {
   return { added, removed };
 }
 
-type DiffNavigationTarget = "next" | "previous";
-
-// Fallback used when the Monaco diff editor build does not expose `goToDiff`.
-// Computes the diff regions via `getLineChanges`, then moves the modified
-// editor's caret to the change before/after the current caret line and reveals
-// it centered. Keeps navigation local to this diff editor instance.
-function navigateLineChanges(
-  diffEditor: Monaco.editor.IStandaloneDiffEditor,
-  target: DiffNavigationTarget,
-): void {
-  const lineChanges = diffEditor.getLineChanges?.();
-
-  if (!lineChanges || lineChanges.length === 0) {
-    return;
+function normalizeGitDiffHunks(loaded: unknown): GitDiffHunk[] {
+  if (!Array.isArray(loaded)) {
+    return [];
   }
 
-  const modifiedEditor = diffEditor.getModifiedEditor?.();
+  const hunks: GitDiffHunk[] = [];
 
-  if (!modifiedEditor) {
-    return;
+  for (const hunk of loaded) {
+    if (!isRenderableGitDiffHunk(hunk)) {
+      continue;
+    }
+
+    hunks.push({
+      header: hunk.header,
+      index: hunk.index,
+      isStaged: hunk.isStaged,
+      lines: hunk.lines.filter(
+        (line): line is string => typeof line === "string",
+      ),
+    });
   }
 
-  const changeLines = lineChanges.map((change) =>
-    Math.max(
-      1,
-      change.modifiedStartLineNumber ?? change.modifiedEndLineNumber,
-    ),
-  );
-  const currentLine = modifiedEditor.getPosition()?.lineNumber ?? 1;
-  const targetLine = nextChangeLine(changeLines, currentLine, target);
-
-  if (targetLine === null) {
-    return;
-  }
-
-  modifiedEditor.setPosition({ column: 1, lineNumber: targetLine });
-  modifiedEditor.revealLineInCenter(targetLine);
-  modifiedEditor.focus();
+  return hunks;
 }
 
-function nextChangeLine(
-  changeLines: number[],
-  currentLine: number,
-  target: DiffNavigationTarget,
-): number | null {
-  if (target === "next") {
-    const forward = changeLines.find((line) => line > currentLine);
-    return forward ?? changeLines[0] ?? null;
+function isRenderableGitDiffHunk(hunk: unknown): hunk is GitDiffHunk {
+  if (!hunk || typeof hunk !== "object") {
+    return false;
   }
 
-  const backward = [...changeLines]
-    .reverse()
-    .find((line) => line < currentLine);
-  return backward ?? changeLines[changeLines.length - 1] ?? null;
+  const candidate = hunk as Partial<GitDiffHunk>;
+  const index = candidate.index;
+
+  return (
+    typeof candidate.header === "string" &&
+    typeof index === "number" &&
+    Number.isInteger(index) &&
+    index >= 0 &&
+    Array.isArray(candidate.lines) &&
+    typeof candidate.isStaged === "boolean"
+  );
+}
+
+type DiffNavigationTarget = "next" | "previous";
+
+type PlainDiffRow =
+  | { kind: "header"; text: string }
+  | {
+      kind: "context" | "added" | "removed";
+      marker: " " | "+" | "-";
+      modifiedLineNumber: number | null;
+      originalLineNumber: number | null;
+      text: string;
+    };
+
+function isChangedPlainDiffRow(row: PlainDiffRow): boolean {
+  return row.kind === "added" || row.kind === "removed";
+}
+
+function buildPlainDiffRows(
+  originalContent: string,
+  modifiedContent: string,
+): PlainDiffRow[] {
+  const originalLines = splitDiffLines(originalContent ?? "");
+  const modifiedLines = splitDiffLines(modifiedContent ?? "");
+
+  if (linesEqual(originalLines, modifiedLines)) {
+    return [];
+  }
+
+  let prefixLength = 0;
+  while (
+    prefixLength < originalLines.length &&
+    prefixLength < modifiedLines.length &&
+    originalLines[prefixLength] === modifiedLines[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    suffixLength < originalLines.length - prefixLength &&
+    suffixLength < modifiedLines.length - prefixLength &&
+    originalLines[originalLines.length - 1 - suffixLength] ===
+      modifiedLines[modifiedLines.length - 1 - suffixLength]
+  ) {
+    suffixLength += 1;
+  }
+
+  const context = 3;
+  const originalChangeEnd = originalLines.length - suffixLength;
+  const modifiedChangeEnd = modifiedLines.length - suffixLength;
+  const originalHunkStart = Math.max(0, prefixLength - context);
+  const modifiedHunkStart = Math.max(0, prefixLength - context);
+  const originalHunkEnd = Math.min(
+    originalLines.length,
+    originalChangeEnd + context,
+  );
+  const modifiedHunkEnd = Math.min(
+    modifiedLines.length,
+    modifiedChangeEnd + context,
+  );
+  const rows: PlainDiffRow[] = [
+    {
+      kind: "header",
+      text: `@@ -${formatRange(
+        originalHunkStart + 1,
+        originalHunkEnd - originalHunkStart,
+      )} +${formatRange(
+        modifiedHunkStart + 1,
+        modifiedHunkEnd - modifiedHunkStart,
+      )} @@`,
+    },
+  ];
+
+  for (let index = originalHunkStart; index < prefixLength; index += 1) {
+    rows.push({
+      kind: "context",
+      marker: " ",
+      modifiedLineNumber: index + 1,
+      originalLineNumber: index + 1,
+      text: originalLines[index] ?? "",
+    });
+  }
+
+  for (let index = prefixLength; index < originalChangeEnd; index += 1) {
+    rows.push({
+      kind: "removed",
+      marker: "-",
+      modifiedLineNumber: null,
+      originalLineNumber: index + 1,
+      text: originalLines[index] ?? "",
+    });
+  }
+
+  for (let index = prefixLength; index < modifiedChangeEnd; index += 1) {
+    rows.push({
+      kind: "added",
+      marker: "+",
+      modifiedLineNumber: index + 1,
+      originalLineNumber: null,
+      text: modifiedLines[index] ?? "",
+    });
+  }
+
+  for (let index = originalChangeEnd; index < originalHunkEnd; index += 1) {
+    const modifiedLineNumber =
+      modifiedChangeEnd + (index - originalChangeEnd) + 1;
+    rows.push({
+      kind: "context",
+      marker: " ",
+      modifiedLineNumber,
+      originalLineNumber: index + 1,
+      text: originalLines[index] ?? "",
+    });
+  }
+
+  return rows;
+}
+
+function splitDiffLines(content: string): string[] {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  const lines = normalized.split("\n");
+
+  if (lines.length > 1 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+function linesEqual(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((line, index) => line === right[index])
+  );
+}
+
+function formatRange(startLine: number, lineCount: number): string {
+  if (lineCount <= 1) {
+    return String(startLine);
+  }
+
+  return `${startLine},${lineCount}`;
 }

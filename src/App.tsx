@@ -931,9 +931,6 @@ function App() {
               gitOperationLoading={workbench.gitOperationLoading}
               onClose={workbench.closeGitDiffPreview}
               onRevertFile={(change) => workbench.revertGitChanges([change])}
-              loadFileHunks={workbench.loadGitFileHunks}
-              onStageHunk={workbench.stageGitHunk}
-              onUnstageHunk={workbench.unstageGitHunk}
             />
           </ErrorBoundary>
         ) : (

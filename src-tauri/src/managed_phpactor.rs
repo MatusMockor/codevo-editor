@@ -45,6 +45,7 @@ where
 /// emit PHP startup warnings onto stdout — the channel PHPactor uses for the LSP
 /// handshake.
 const MANAGED_PHP_INI_FILE_NAME: &str = "codevo-php.ini";
+const MANAGED_PHP_INI_SCAN_DIR_NAME: &str = "empty-php-conf.d";
 
 /// Minimal `php.ini` body for the managed PHPactor interpreter. It intentionally
 /// loads NO user extensions. PHPactor only requires `mbstring` and `tokenizer`,
@@ -54,18 +55,12 @@ const MANAGED_PHP_INI_FILE_NAME: &str = "codevo-php.ini";
 /// warning-free configuration. `display_errors`/`error_reporting` are pinned so a
 /// stray notice never reaches stdout and corrupts the handshake.
 ///
-/// OPcache is enabled (including for the CLI SAPI, since PHPactor is a long-running
-/// PHP CLI process). PHPactor is a large PHP application that, without bytecode
-/// caching, recompiles its sources on every request — enabling OPcache caches the
-/// compiled bytecode and meaningfully lowers per-request CPU in IDE/PHP mode. The
-/// OPcache engine itself is provided by the host PHP's own `conf.d`, which is
-/// still scanned when PHPactor launches via `php -c <this ini>`, so NO
-/// `zend_extension=opcache` line is needed (and adding one would risk a
-/// missing-library startup warning on stdout that would corrupt the handshake).
-/// When the host PHP lacks OPcache entirely, these `opcache.*` directives are
-/// silently ignored by PHP — no startup warning — so the configuration stays
-/// safe across PHP builds. `validate_timestamps=1` keeps edits picked up promptly.
-const MANAGED_PHP_INI_BODY: &str = "; Codevo Editor managed PHP configuration for PHPactor.\n; Generated automatically — do not edit. This file replaces the user's\n; main php.ini when PHPactor is launched, isolating the LSP handshake from\n; broken or noisy user extensions (e.g. imagick).\ndisplay_errors = Off\ndisplay_startup_errors = Off\nerror_reporting = 0\n; Bytecode caching for the long-running PHPactor CLI process: lowers\n; per-request CPU by avoiding recompilation. Inert (no startup warning) when\n; the host PHP has no OPcache; the engine is loaded by the host PHP's conf.d.\nopcache.enable = 1\nopcache.enable_cli = 1\nopcache.memory_consumption = 128\nopcache.max_accelerated_files = 10000\nopcache.validate_timestamps = 1\n";
+/// OPcache is enabled when the engine is already available in the PHP build, but
+/// this file intentionally contains no `zend_extension=` line. The launcher also
+/// sets `PHP_INI_SCAN_DIR` to the managed empty scan directory so host `conf.d`
+/// fragments are not scanned; that is what prevents broken user extensions from
+/// leaking startup warnings into the LSP JSON channel.
+const MANAGED_PHP_INI_BODY: &str = "; Codevo Editor managed PHP configuration for PHPactor.\n; Generated automatically — do not edit. This file replaces the user's\n; main php.ini when PHPactor is launched, isolating the LSP handshake from\n; broken or noisy user extensions (e.g. imagick).\ndisplay_errors = Off\ndisplay_startup_errors = Off\nerror_reporting = 0\n; Bytecode caching for the long-running PHPactor CLI process when OPcache is\n; already available in the PHP build. The launcher disables host conf.d scanning,\n; so this file must not load any extension explicitly.\nopcache.enable = 1\nopcache.enable_cli = 1\nopcache.memory_consumption = 128\nopcache.max_accelerated_files = 10000\nopcache.validate_timestamps = 1\n";
 
 /// Idempotently ensures the managed minimal `php.ini` exists next to the managed
 /// PHPactor install, returning its absolute path. Safe to call repeatedly: it
@@ -75,6 +70,15 @@ pub(crate) fn ensure_managed_php_ini() -> Result<PathBuf, String> {
     let phpactor_root = managed_phpactor_root()?;
 
     ensure_managed_php_ini_in(&phpactor_root)
+}
+
+/// Ensures an intentionally empty PHP scan directory exists next to the managed
+/// PHPactor install. Launchers point `PHP_INI_SCAN_DIR` here instead of using an
+/// empty env value so PHPactor child process wrappers preserve the isolation.
+pub(crate) fn ensure_managed_php_ini_scan_dir() -> Result<PathBuf, String> {
+    let phpactor_root = managed_phpactor_root()?;
+
+    ensure_managed_php_ini_scan_dir_in(&phpactor_root)
 }
 
 fn ensure_managed_php_ini_in(phpactor_root: &Path) -> Result<PathBuf, String> {
@@ -90,6 +94,47 @@ fn ensure_managed_php_ini_in(phpactor_root: &Path) -> Result<PathBuf, String> {
     Ok(ini_path)
 }
 
+fn ensure_managed_php_ini_scan_dir_in(phpactor_root: &Path) -> Result<PathBuf, String> {
+    let scan_dir = phpactor_root.join(MANAGED_PHP_INI_SCAN_DIR_NAME);
+
+    if scan_dir.exists() && !scan_dir.is_dir() {
+        fs::remove_file(&scan_dir)
+            .map_err(|error| format!("Unable to replace managed PHP scan directory: {error}"))?;
+    }
+
+    fs::create_dir_all(&scan_dir)
+        .map_err(|error| format!("Unable to create managed PHP scan directory: {error}"))?;
+    empty_managed_php_ini_scan_dir(&scan_dir)?;
+
+    Ok(scan_dir)
+}
+
+fn empty_managed_php_ini_scan_dir(scan_dir: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(scan_dir)
+        .map_err(|error| format!("Unable to read managed PHP scan directory: {error}"))?;
+
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("Unable to inspect managed PHP scan directory: {error}"))?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!("Unable to inspect managed PHP scan directory entry: {error}")
+        })?;
+        let path = entry.path();
+
+        if file_type.is_dir() {
+            fs::remove_dir_all(&path).map_err(|error| {
+                format!("Unable to remove stale managed PHP scan directory entry: {error}")
+            })?;
+        } else {
+            fs::remove_file(&path).map_err(|error| {
+                format!("Unable to remove stale managed PHP scan directory entry: {error}")
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 fn managed_php_ini_is_current(ini_path: &Path) -> bool {
     fs::read_to_string(ini_path)
         .map(|contents| contents == MANAGED_PHP_INI_BODY)
@@ -102,6 +147,7 @@ pub(crate) fn install_managed_phpactor() -> Result<(), String> {
     // Always (re)materialise the minimal php.ini so a freshly installed engine —
     // or one whose config drifted — launches with a clean, isolated interpreter.
     ensure_managed_php_ini_in(&phpactor_root)?;
+    ensure_managed_php_ini_scan_dir_in(&phpactor_root)?;
 
     if managed_phpactor_binary_exists(&phpactor_root) {
         return Ok(());
@@ -504,6 +550,58 @@ mod managed_php_ini_tests {
     }
 
     #[test]
+    fn creates_empty_php_ini_scan_dir_for_launcher_env() {
+        let root = temp_dir("scan-dir");
+
+        let scan_dir =
+            ensure_managed_php_ini_scan_dir_in(&root).expect("ensure managed php scan dir");
+
+        assert_eq!(scan_dir, root.join(MANAGED_PHP_INI_SCAN_DIR_NAME));
+        assert!(scan_dir.is_dir());
+        assert_eq!(
+            fs::read_dir(&scan_dir).expect("read scan dir").count(),
+            0,
+            "managed PHP scan dir must stay empty so no extension fragments load"
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn ensure_managed_php_ini_scan_dir_is_idempotent() {
+        let root = temp_dir("scan-dir-idempotent");
+
+        let first = ensure_managed_php_ini_scan_dir_in(&root).expect("first ensure");
+        let second = ensure_managed_php_ini_scan_dir_in(&root).expect("second ensure");
+
+        assert_eq!(first, second);
+        assert!(second.is_dir());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn ensure_managed_php_ini_scan_dir_removes_stale_fragments() {
+        let root = temp_dir("scan-dir-stale");
+        let scan_dir = root.join(MANAGED_PHP_INI_SCAN_DIR_NAME);
+        fs::create_dir_all(&scan_dir).expect("create scan dir");
+        fs::write(scan_dir.join("imagick.ini"), "extension=imagick.so\n")
+            .expect("write stale fragment");
+
+        let ensured =
+            ensure_managed_php_ini_scan_dir_in(&root).expect("ensure managed php scan dir");
+
+        assert_eq!(ensured, scan_dir);
+        assert_eq!(
+            fs::read_dir(&ensured).expect("read scan dir").count(),
+            0,
+            "managed PHP scan dir must remove stale extension fragments"
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn managed_php_ini_enables_opcache_for_phpactor() {
         let root = temp_dir("opcache");
 
@@ -527,10 +625,9 @@ mod managed_php_ini_tests {
         }));
 
         // Enabling OPcache must NOT pull in any user extension or load a missing
-        // `.so` (no `zend_extension=`/`extension=` lines): the OPcache engine is
-        // provided by the host PHP's own `conf.d`, which is still scanned under
-        // `php -c <this ini>`. Adding an explicit load line would risk a
-        // missing-library startup warning on stdout.
+        // `.so` (no `zend_extension=`/`extension=` lines). The launcher points
+        // `PHP_INI_SCAN_DIR` at an empty managed directory, so this file must stay
+        // self-contained and warning-free.
         assert!(!has_active_directive(&contents, "zend_extension"));
         assert!(!has_active_directive(&contents, "extension"));
 

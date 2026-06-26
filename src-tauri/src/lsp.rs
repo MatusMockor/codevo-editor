@@ -39,16 +39,13 @@ pub struct LanguageServerCommand {
     pub args: Vec<String>,
     pub working_directory: String,
     /// Extra environment variables applied to the spawned process (and inherited
-    /// by any children it spawns). For managed PHPactor this carries
-    /// `PHPRC=<managed.ini>` so every child PHP process PHPactor outsources to
-    /// (php-lint, code-action, diagnostics, psalm, phpstan, php-cs-fixer) boots
-    /// with the clean managed `php.ini` instead of the user's main `php.ini`. A
-    /// broken `extension=imagick.so` in the user's main `php.ini` prints a startup
-    /// warning onto the child's stdout *before* its JSON, the parent `json_decode`
-    /// returns null, and PHPactor surfaces "Could not decode JSON: Warning: PHP
-    /// Startup... imagick". Unlike the `-c <ini>` CLI argument (NOT inherited by
-    /// children), `PHPRC` is an environment variable, so this isolation propagates
-    /// to the whole PHPactor process tree.
+    /// by any children it spawns). For managed PHPactor this carries both
+    /// `PHPRC=<managed.ini>` and `PHP_INI_SCAN_DIR=<managed-empty-dir>` so every
+    /// PHP process in the PHPactor tree boots from the clean managed `php.ini`
+    /// and skips noisy user or package scan-dir fragments such as a broken
+    /// `imagick.ini`. Without both, child PHP helpers can print startup warnings
+    /// onto stdout before their JSON, causing PHPactor to surface "Could not
+    /// decode JSON: Warning: PHP Startup...".
     #[serde(default)]
     pub env: Vec<(String, String)>,
 }
@@ -147,19 +144,23 @@ impl Default for PhpLanguageServerSettings {
 /// PHP process PHPactor spawns (outsourced code actions, diagnostics, php-lint,
 /// psalm, phpstan, php-cs-fixer). Those children are launched via `PHP_BINARY`
 /// without the parent's `-c <ini>` argument (CLI args are not inherited), so
-/// without `PHPRC` they boot with the user's main `php.ini` and a broken
-/// `extension=imagick.so` prints a startup warning onto their stdout, corrupting
-/// the JSON the parent reads.
+/// `PHPRC` is needed to avoid the user's main `php.ini`.
 const PHP_RUN_CONFIG_ENV: &str = "PHPRC";
+/// PHP's additional ini scan directory variable. Pointing it at the managed
+/// empty scan directory disables the normal `conf.d` scan for the managed
+/// PHPactor process tree, preventing extension fragments such as `imagick.ini`
+/// from loading after the clean `PHPRC` main ini.
+const PHP_INI_SCAN_DIR_ENV: &str = "PHP_INI_SCAN_DIR";
 
 /// A resolved isolated PHP launcher for the managed PHPactor engine: an explicit
 /// `php` interpreter plus a minimal `php.ini` that replaces the user's main
-/// `php.ini`. Running `php -c <ini_path> <phpactor> language-server` keeps broken
-/// or noisy user extensions (e.g. `imagick`) out of the LSP handshake on stdout.
+/// `php.ini`. The command env also disables PHP's scan-dir loading so broken or
+/// noisy extension fragments (e.g. `imagick.ini`) stay out of the LSP handshake.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhpLauncher {
     pub php_path: String,
     pub ini_path: String,
+    pub ini_scan_dir_path: String,
 }
 
 /// Resolves an isolated PHP launcher for the managed PHPactor engine. Returning
@@ -180,10 +181,12 @@ impl PhpInterpreterLauncher for ManagedPhpInterpreterLauncher {
     fn resolve(&self) -> Option<PhpLauncher> {
         let php_path = crate::tools::php_executable_path()?;
         let ini_path = crate::managed_phpactor::ensure_managed_php_ini().ok()?;
+        let ini_scan_dir_path = crate::managed_phpactor::ensure_managed_php_ini_scan_dir().ok()?;
 
         Some(PhpLauncher {
             php_path,
             ini_path: ini_path.to_string_lossy().to_string(),
+            ini_scan_dir_path: ini_scan_dir_path.to_string_lossy().to_string(),
         })
     }
 }
@@ -232,9 +235,10 @@ where
     }
 
     /// Builds the PHPactor launch command. When an isolated PHP interpreter is
-    /// available we launch `php -c <managed.ini> <phpactor> language-server` so a
-    /// broken user `php.ini` (imagick warning on stdout) cannot corrupt the LSP
-    /// handshake. Otherwise we fall back to invoking PHPactor directly.
+    /// available we launch `php -n -c <managed.ini> <phpactor> language-server`
+    /// so a broken user/global `php.ini` (imagick warning on stdout) cannot
+    /// corrupt the LSP handshake. Otherwise we fall back to invoking PHPactor
+    /// directly.
     fn phpactor_command(&self, root: &Path, phpactor: &ToolLocation) -> LanguageServerCommand {
         let working_directory = root.to_string_lossy().to_string();
 
@@ -247,27 +251,30 @@ where
             };
         };
 
-        // `PHPRC` points every PHP process in the PHPactor tree at the managed,
-        // imagick-free `php.ini`. The `-c <ini>` argument isolates only the parent
-        // launcher; PHPactor outsources work (php-lint, code actions, diagnostics,
-        // psalm, phpstan, php-cs-fixer) to child `php` processes spawned via
-        // `PHP_BINARY` with NO `-c`, which would otherwise boot with the user's
-        // main `php.ini` and print an imagick startup warning onto the child's
-        // stdout, corrupting the JSON the parent reads ("Could not decode JSON:
-        // Warning: PHP Startup... imagick"). `PHPRC`, being an env var, is
-        // inherited by those children, so the whole tree stays clean.
-        let php_run_config = (PHP_RUN_CONFIG_ENV.to_string(), launcher.ini_path.clone());
+        // `-n -c <managed.ini>` makes the parent PHPactor process ignore every
+        // user/global startup ini and load only the managed file. `PHPRC` and
+        // `PHP_INI_SCAN_DIR` are still required for PHPactor's helper PHP
+        // processes, which are spawned via `PHP_BINARY` without inheriting the
+        // parent's CLI flags.
+        let php_env = vec![
+            (PHP_RUN_CONFIG_ENV.to_string(), launcher.ini_path.clone()),
+            (
+                PHP_INI_SCAN_DIR_ENV.to_string(),
+                launcher.ini_scan_dir_path.clone(),
+            ),
+        ];
 
         LanguageServerCommand {
             executable: launcher.php_path,
             args: vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 launcher.ini_path,
                 phpactor.path.clone(),
                 "language-server".to_string(),
             ],
             working_directory,
-            env: vec![php_run_config],
+            env: php_env,
         }
     }
 }
@@ -351,18 +358,9 @@ impl InitializeRequestFactory for PhpactorInitializeRequestFactory {
                 "initializationOptions": {
                     "language_server.diagnostic_outsource": false,
                     // Run code actions in-process for the same reason as
-                    // diagnostics: phpactor's default `OutsourcedCodeActionProvider`
-                    // spawns a child `php <phpactor> language-server:code-action`
-                    // process. That child does NOT inherit the parent's `-c
-                    // <managed.ini>` CLI argument (CLI args are not inherited by
-                    // children), so it boots with the user's main `php.ini`. A
-                    // broken `extension=imagick.so` there prints a startup warning
-                    // onto the child's stdout *before* its JSON, the parent
-                    // `json_decode` returns null, and phpactor surfaces "Could not
-                    // decode JSON: Warning: PHP Startup... imagick" — breaking all
-                    // code actions / smart features. Running code actions in-process
-                    // keeps them inside the already-clean managed-PHP parent, so no
-                    // child PHP process and no imagick warning are ever produced.
+                    // diagnostics: avoid extra helper PHP processes in the reduced
+                    // Tauri GUI environment and keep smart features inside the
+                    // already-clean managed-PHP parent.
                     "language_server.code_action_outsource": false,
                     "language_server.diagnostic_sleep_time": 150,
                     // Keep the Laravel Idea (PhpStorm plugin) IDE-helper stubs out
@@ -1047,10 +1045,8 @@ mod tests {
             request.params["initializationOptions"]["language_server.diagnostic_outsource"],
             Value::Bool(false)
         );
-        // Code actions must also run in-process: phpactor's default outsourced
-        // provider spawns a child `php` that does not inherit our `-c
-        // <managed.ini>` and therefore boots with the user's main php.ini, whose
-        // broken imagick extension corrupts the child's JSON output.
+        // Code actions must also run in-process so smart features avoid extra
+        // helper PHP processes in the reduced Tauri GUI environment.
         assert_eq!(
             request.params["initializationOptions"]["language_server.code_action_outsource"],
             Value::Bool(false)
@@ -1083,8 +1079,7 @@ mod tests {
             json!(150)
         );
 
-        let exclude_patterns = request.params["initializationOptions"]
-            ["indexer.exclude_patterns"]
+        let exclude_patterns = request.params["initializationOptions"]["indexer.exclude_patterns"]
             .as_array()
             .expect("indexer.exclude_patterns must be an array");
         let patterns: Vec<&str> = exclude_patterns
@@ -1627,6 +1622,7 @@ mod tests {
     fn planner_with_php(
         php_path: &str,
         ini_path: &str,
+        ini_scan_dir_path: &str,
     ) -> PhpactorLanguageServerPlanner<PhpactorInitializeRequestFactory, StubPhpLauncher> {
         PhpactorLanguageServerPlanner::with_launcher(
             PhpactorInitializeRequestFactory,
@@ -1634,6 +1630,7 @@ mod tests {
                 launcher: Some(PhpLauncher {
                     php_path: php_path.to_string(),
                     ini_path: ini_path.to_string(),
+                    ini_scan_dir_path: ini_scan_dir_path.to_string(),
                 }),
             },
         )
@@ -1650,7 +1647,11 @@ mod tests {
     #[test]
     fn phpactor_launches_through_isolated_php_interpreter_when_available() {
         let root = create_temp_dir("lsp-php-launcher");
-        let planner = planner_with_php("/usr/bin/php", "/managed/codevo-php.ini");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
 
         let plan = planner.plan(
             &root,
@@ -1672,19 +1673,62 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 "/managed/codevo-php.ini".to_string(),
                 phpactor_path,
                 "language-server".to_string(),
             ]
         );
-        // PHPRC must carry the managed ini so PHPactor's outsourced child PHP
-        // processes (php-lint, code actions, diagnostics) inherit the clean,
-        // imagick-free configuration. Unlike `-c`, env vars propagate to children.
+        // PHPRC must carry the managed ini and PHP_INI_SCAN_DIR must point at the
+        // managed empty scan dir so PHPactor's outsourced child PHP processes
+        // inherit the clean, imagick-free configuration. Unlike `-c`, env vars
+        // propagate to children.
         assert_eq!(
             command.env,
-            vec![("PHPRC".to_string(), "/managed/codevo-php.ini".to_string())]
+            vec![
+                ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "/managed/empty-php-conf.d".to_string()
+                ),
+            ]
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_isolated_launcher_disables_php_ini_scan_dir_for_child_helpers() {
+        let root = create_temp_dir("lsp-php-launcher-scan-dir");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        let command = plan.command.expect("language server command");
+        assert!(
+            command
+                .env
+                .contains(&("PHPRC".to_string(), "/managed/codevo-php.ini".to_string())),
+            "PHPRC isolates the main php.ini for parent and child PHP processes"
+        );
+        assert!(
+            command.env.contains(&(
+                "PHP_INI_SCAN_DIR".to_string(),
+                "/managed/empty-php-conf.d".to_string()
+            )),
+            "managed empty PHP_INI_SCAN_DIR disables user/package conf.d fragments like imagick.ini"
+        );
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1738,7 +1782,11 @@ mod tests {
         fs::write(&configured_phpactor_path, "").expect("write configured phpactor");
         make_executable(&configured_phpactor_path);
         let configured_phpactor = configured_phpactor_path.to_string_lossy().to_string();
-        let planner = planner_with_php("/usr/bin/php", "/managed/codevo-php.ini");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
 
         let plan = planner.plan(
             &root,
@@ -1758,6 +1806,7 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 "/managed/codevo-php.ini".to_string(),
                 configured_phpactor,

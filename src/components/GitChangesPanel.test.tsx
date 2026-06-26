@@ -78,6 +78,26 @@ describe("GitChangesPanel", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("previews a worktree README modification with the plain single-click path", async () => {
+    const change = gitChange("modified", "README.md", false);
+    const onPreviewChange = vi.fn();
+    const onOpenChange = vi.fn();
+    await renderPanel({
+      includedChangePaths: new Set(),
+      onOpenChange,
+      onPreviewChange,
+      status: gitStatus([change]),
+    });
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>(".git-change-row")?.click();
+    });
+
+    expect(onPreviewChange).toHaveBeenCalledTimes(1);
+    expect(onPreviewChange).toHaveBeenCalledWith(change);
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
   it("pins a diff when a change row is double clicked", async () => {
     const change = gitChange("modified", "src/User.php", true);
     const onPreviewChange = vi.fn();

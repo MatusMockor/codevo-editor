@@ -275,7 +275,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
-    expect(getWorkbench().activePath).toContain(file.path);
+    expect(getWorkbench().activePath).toBe(file.path);
 
     await act(async () => {
       getWorkbench().closeGitDiffPreview();
@@ -988,14 +988,15 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().previewGitChange(change);
     });
 
-    expect(getWorkbench().activePath).toContain("assets/spinner.gif");
-    expect(getWorkbench().previewPath).toBe(getWorkbench().activePath);
-    expect(getWorkbench().openDocuments).toEqual([
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
-        name: "Diff: spinner.gif",
-        path: getWorkbench().activePath,
+        change,
       }),
-    ]);
+    );
   });
 
   it("surfaces a recoverable notice (never an unhandled crash) when get_git_diff rejects for a README change", async () => {
@@ -1103,21 +1104,19 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
+    const activePath = getWorkbench().activePath;
 
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
 
-    expect(getWorkbench().activePath).toBe(diffPath);
-    expect(getWorkbench().previewPath).toBe(diffPath);
+    expect(getWorkbench().activePath).toBe(activePath);
+    expect(getWorkbench().previewPath).toBeNull();
     expect(getWorkbench().selectedGitChange).toEqual(change);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({ change }),
     );
-    expect(getWorkbench().openDocuments).toEqual([
-      expect.objectContaining({ path: diffPath }),
-    ]);
+    expect(getWorkbench().openDocuments).toEqual([]);
   });
 
   it("clears the Git diff view when its editor tab is closed", async () => {
@@ -1182,10 +1181,9 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
 
     act(() => {
-      getWorkbench().closeDocument(diffPath);
+      getWorkbench().closeGitDiffPreview();
     });
 
     expect(getWorkbench().selectedGitChange).toBeNull();
@@ -1194,7 +1192,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().openDocuments).toEqual([]);
   });
 
-  it("loads the next Git diff when closing the active diff tab", async () => {
+  it("replaces the active Git diff preview when opening another changed file", async () => {
     const firstChange = gitChangedFile("src/First.php", false);
     const secondChange = gitChangedFile("src/Second.php", false);
     const gitGateway: GitGateway = {
@@ -1257,18 +1255,6 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(firstChange);
     });
-    const firstDiffPath = getWorkbench().activePath!;
-    await act(async () => {
-      await getWorkbench().openGitChange(secondChange);
-    });
-    const secondDiffPath = getWorkbench().activePath!;
-
-    act(() => {
-      getWorkbench().closeDocument(secondDiffPath);
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().activePath).toBe(firstDiffPath);
     expect(getWorkbench().selectedGitChange).toEqual(firstChange);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
@@ -1277,9 +1263,24 @@ describe("useWorkbenchController preview tabs", () => {
         originalContent: "old src/First.php",
       }),
     );
+
+    await act(async () => {
+      await getWorkbench().openGitChange(secondChange);
+    });
+
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().selectedGitChange).toEqual(secondChange);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change: secondChange,
+        modifiedContent: "new src/Second.php",
+        originalContent: "old src/Second.php",
+      }),
+    );
   });
 
-  it("reloads a pinned Git diff when its tab is activated again", async () => {
+  it("keeps Git diff preview separate from active editor documents", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const gitGateway: GitGateway = {
@@ -1342,23 +1343,21 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({ change }),
+    );
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
 
     await act(async () => {
       await getWorkbench().openPinnedFile(file);
     });
     expect(getWorkbench().selectedGitChange).toBeNull();
 
-    act(() => {
-      getWorkbench().setActivePath(diffPath);
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().selectedGitChange).toEqual(change);
-    expect(getWorkbench().gitDiffPreview).toEqual(
-      expect.objectContaining({ change }),
-    );
-    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().activePath).toBe(file.path);
   });
 
   it("switches between persisted project tabs without stopping another project runtime", async () => {
@@ -3150,6 +3149,163 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
       expect.objectContaining({ path }),
     );
+  });
+
+  it("populates a Quick Open document immediately when a delayed read resolves", async () => {
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const read = createDeferred<string>();
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      return read.promise;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activeDocument).toBeNull();
+
+    let openPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      openPromise = getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath: "app/Http/Controllers/CommentController.php",
+      });
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().activeDocument).toBeNull();
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      read.resolve("<?php\nfinal class CommentController {}\n");
+      await openPromise;
+    });
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nfinal class CommentController {}\n",
+    );
+  });
+
+  it("refreshes a Quick Open PHP document when the initial read is unexpectedly empty", async () => {
+    const path =
+      "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const source =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+    let readCount = 0;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      readCount += 1;
+      return readCount === 1 ? "" : source;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(source);
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === path)
+        ?.content,
+    ).toBe(source);
+  });
+
+  it("refreshes an already-open empty Quick Open PHP document without reopening", async () => {
+    const path =
+      "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const source =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+    let readCount = 0;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      readCount += 1;
+      return readCount < 3 ? "" : source;
+    });
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      session: {
+        activePath: path,
+        bottomPanelView: "terminal" as const,
+        openPaths: [path],
+        sidebarView: "files" as const,
+      },
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings,
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(3);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(source);
   });
 
   it("reports an in-flight open while reading the file and clears it once visible", async () => {
@@ -47676,6 +47832,55 @@ final class InvoiceAdapter
     expect(readTextFile).toHaveBeenCalledTimes(1);
     expect(getWorkbench().activePath).toBe(file.path);
     expect(getWorkbench().activeDocument?.content).toContain(file.path);
+  });
+
+  it("re-reads when Quick Open finds empty prefetched content for a non-empty file", async () => {
+    const path = "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry(path, "CommentController.php");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(readTextFile).toHaveBeenCalledWith(path);
+
+    contentsByPath[path] =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toContain(
+      "final class CommentController",
+    );
   });
 
   it("invalidates the prefetch cache for a file after it is saved", async () => {
