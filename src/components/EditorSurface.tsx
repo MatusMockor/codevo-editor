@@ -1037,6 +1037,13 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.formatSelection",
+        label: "Format Selection",
+        keybindings: keybinding("editor.formatSelection"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.formatSelection"),
+      }),
+      editorApi.addAction({
         id: "mockor.quickFix",
         label: "Show Context Actions",
         keybindings: keybinding("editor.quickFix"),

@@ -403,6 +403,18 @@ describe("keymap", () => {
     }
   });
 
+  it("defaults format selection to Cmd+Alt+L mirroring PhpStorm reformat", () => {
+    expect(defaultShortcutForCommand("editor.formatSelection", "mac")).toBe(
+      "Cmd+Alt+L",
+    );
+    expect(defaultShortcutForCommand("editor.formatSelection", "linux")).toBe(
+      "Ctrl+Alt+L",
+    );
+    expect(defaultShortcutForCommand("editor.formatSelection", "windows")).toBe(
+      "Ctrl+Alt+L",
+    );
+  });
+
   it("matches the format document shortcut against Shift+Alt+F", () => {
     expect(
       matchesShortcut(
