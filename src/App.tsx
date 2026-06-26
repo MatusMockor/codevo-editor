@@ -920,6 +920,7 @@ function App() {
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
             onClose={workbench.closeGitDiffPreview}
+            onRevertFile={(change) => workbench.revertGitChanges([change])}
           />
         ) : (
           <EditorSurface

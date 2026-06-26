@@ -1330,10 +1330,22 @@ button {
   color: var(--color-text-muted);
 }
 
-.git-diff-header button:hover {
+.git-diff-header button:hover:not(:disabled) {
   border-color: var(--color-border-strong);
   background: var(--color-panel-soft);
   color: var(--color-text);
+}
+
+.git-diff-header button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.git-diff-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .tree-chevron {

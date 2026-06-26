@@ -1,6 +1,6 @@
 import { DiffEditor } from "@monaco-editor/react";
-import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import {
   defaultEditorFontFamily,
@@ -9,7 +9,7 @@ import {
   monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
-import type { GitFileDiff } from "../domain/git";
+import type { GitChangedFile, GitFileDiff } from "../domain/git";
 import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
@@ -23,6 +23,7 @@ interface GitDiffPreviewProps {
   editorFontLigatures?: boolean;
   editorFontSize?: number;
   onClose(): void;
+  onRevertFile?(change: GitChangedFile): void;
 }
 
 export function GitDiffPreview({
@@ -33,6 +34,7 @@ export function GitDiffPreview({
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   onClose,
+  onRevertFile,
 }: GitDiffPreviewProps) {
   const [diffEditor, setDiffEditor] = useState<
     Monaco.editor.IStandaloneDiffEditor | null
@@ -51,6 +53,36 @@ export function GitDiffPreview({
       fontSize: editorFontSize,
     });
   }, [diffEditor, editorFontFamily, monacoFontLigatures, editorFontSize]);
+
+  const goToChange = useCallback(
+    (target: DiffNavigationTarget) => {
+      if (!diffEditor) {
+        return;
+      }
+
+      if (typeof diffEditor.goToDiff === "function") {
+        diffEditor.goToDiff(target);
+        return;
+      }
+
+      navigateLineChanges(diffEditor, target);
+    },
+    [diffEditor],
+  );
+
+  const onNextChange = useCallback(() => goToChange("next"), [goToChange]);
+  const onPreviousChange = useCallback(
+    () => goToChange("previous"),
+    [goToChange],
+  );
+
+  const onRevert = useCallback(() => {
+    if (!diff || !onRevertFile) {
+      return;
+    }
+
+    onRevertFile(diff.change);
+  }, [diff, onRevertFile]);
 
   if (isLoading) {
     return (
@@ -75,9 +107,32 @@ export function GitDiffPreview({
           <strong>{diff.change.relativePath}</strong>
           <span>{diff.change.status}</span>
         </div>
-        <button onClick={onClose} title="Close diff" type="button">
-          <X aria-hidden="true" size={14} />
-        </button>
+        <div className="git-diff-toolbar" aria-label="Diff actions">
+          <button
+            disabled={!diffEditor}
+            onClick={onPreviousChange}
+            title="Previous change"
+            type="button"
+          >
+            <ChevronUp aria-hidden="true" size={14} />
+          </button>
+          <button
+            disabled={!diffEditor}
+            onClick={onNextChange}
+            title="Next change"
+            type="button"
+          >
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+          {onRevertFile ? (
+            <button onClick={onRevert} title="Revert file" type="button">
+              <RotateCcw aria-hidden="true" size={14} />
+            </button>
+          ) : null}
+          <button onClick={onClose} title="Close diff" type="button">
+            <X aria-hidden="true" size={14} />
+          </button>
+        </div>
       </header>
       <div className="editor-panel">
         <DiffEditor
@@ -122,4 +177,60 @@ export function GitDiffPreview({
 // diff editor never flashes white while the Monaco chunk loads.
 function GitDiffLoadingPlaceholder() {
   return <div className="editor-loading-placeholder" aria-hidden="true" />;
+}
+
+type DiffNavigationTarget = "next" | "previous";
+
+// Fallback used when the Monaco diff editor build does not expose `goToDiff`.
+// Computes the diff regions via `getLineChanges`, then moves the modified
+// editor's caret to the change before/after the current caret line and reveals
+// it centered. Keeps navigation local to this diff editor instance.
+function navigateLineChanges(
+  diffEditor: Monaco.editor.IStandaloneDiffEditor,
+  target: DiffNavigationTarget,
+): void {
+  const lineChanges = diffEditor.getLineChanges?.();
+
+  if (!lineChanges || lineChanges.length === 0) {
+    return;
+  }
+
+  const modifiedEditor = diffEditor.getModifiedEditor?.();
+
+  if (!modifiedEditor) {
+    return;
+  }
+
+  const changeLines = lineChanges.map((change) =>
+    Math.max(
+      1,
+      change.modifiedStartLineNumber ?? change.modifiedEndLineNumber,
+    ),
+  );
+  const currentLine = modifiedEditor.getPosition()?.lineNumber ?? 1;
+  const targetLine = nextChangeLine(changeLines, currentLine, target);
+
+  if (targetLine === null) {
+    return;
+  }
+
+  modifiedEditor.setPosition({ column: 1, lineNumber: targetLine });
+  modifiedEditor.revealLineInCenter(targetLine);
+  modifiedEditor.focus();
+}
+
+function nextChangeLine(
+  changeLines: number[],
+  currentLine: number,
+  target: DiffNavigationTarget,
+): number | null {
+  if (target === "next") {
+    const forward = changeLines.find((line) => line > currentLine);
+    return forward ?? changeLines[0] ?? null;
+  }
+
+  const backward = [...changeLines]
+    .reverse()
+    .find((line) => line < currentLine);
+  return backward ?? changeLines[changeLines.length - 1] ?? null;
 }
