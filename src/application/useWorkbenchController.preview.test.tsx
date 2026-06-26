@@ -49427,6 +49427,178 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers an Add parameter code action that appends an optional parameter to a method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("greet(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addParameterAction = actions.find(
+      (action) => action.title === "Add parameter",
+    );
+    expect(addParameterAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addParameterAction!)).toBe(`<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name, $parameter = null): string
+    {
+        return $name;
+    }
+}
+`);
+  });
+
+  it("offers an Add parameter code action on a free function with the cursor in its body", async () => {
+    const filePath = "/workspace/app/helpers.php";
+    const fileSource = `<?php
+
+function add(int $a, int $b): int
+{
+    return $a + $b;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "helpers.php"));
+    });
+
+    const offset = fileSource.indexOf("return $a");
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addParameterAction = actions.find(
+      (action) => action.title === "Add parameter",
+    );
+    expect(addParameterAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(fileSource, addParameterAction!)).toBe(`<?php
+
+function add(int $a, int $b, $parameter = null): int
+{
+    return $a + $b;
+}
+`);
+  });
+
+  it("does not offer Add parameter on an abstract method declaration", async () => {
+    const classPath = "/workspace/app/Contracts/Base.php";
+    const classSource = `<?php
+
+namespace App\\Contracts;
+
+abstract class Base
+{
+    abstract public function handle(string $name): void;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Base.php"));
+    });
+
+    const offset = classSource.indexOf("handle(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add parameter"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add parameter when the cursor is not on any function", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add parameter"),
+    ).toBe(false);
+  });
+
   it("offers an optimize imports action when an import is unused", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

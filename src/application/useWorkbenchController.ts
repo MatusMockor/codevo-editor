@@ -484,6 +484,7 @@ import {
   renderCreateMethodStub,
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
+import { planAddParameter } from "../domain/phpAddParameter";
 import { planExtractMethod } from "../domain/phpExtractMethod";
 import { planExtractVariable } from "../domain/phpExtractVariable";
 import { planInlineVariable } from "../domain/phpInlineVariable";
@@ -17649,6 +17650,16 @@ export function useWorkbenchController(
         actions.push(inlineVariableAction);
       }
 
+      // "Add parameter" (Change Signature - slice 1) appends an optional
+      // placeholder parameter to the enclosing function's signature. It is a
+      // pure single-file synthesis valid on a class method OR a free function,
+      // so it runs before the class-only guard below.
+      const addParameterAction = phpAddParameterCodeAction(source, range);
+
+      if (addParameterAction) {
+        actions.push(addParameterAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
         return actions;
       }
@@ -29271,6 +29282,43 @@ function phpExtractMethodCodeAction(
     ],
     kind: "refactor.extract",
     title: "Extract method",
+  };
+}
+
+/**
+ * Offers "Add parameter" (Change Signature - slice 1) when the request's cursor
+ * sits on the signature or inside the body of a class method or free function
+ * that `planAddParameter` confirms can safely receive an appended OPTIONAL
+ * parameter. The plan is a single zero-length insertion that appends a
+ * placeholder `$parameter = null` to the END of the parameter list. Because the
+ * appended parameter is optional (carries a default), every existing call-site
+ * stays valid - so this is a pure single-file refactor with no cross-file edits.
+ * Returns `null` for any shape the conservative planner rejects (abstract /
+ * interface declaration, trailing variadic, unbalanced signature, cursor not on
+ * a function) so the action is never offered where it could corrupt the file or
+ * require call-site changes.
+ */
+function phpAddParameterCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddParameter(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add parameter",
   };
 }
 
