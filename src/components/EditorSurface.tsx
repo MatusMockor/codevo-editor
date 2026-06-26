@@ -1319,15 +1319,26 @@ function EditorSurfaceComponent({
       // before the selection settles, and the controller reads the active
       // editor position), then run the same callback as the keyboard shortcut
       // and suppress the native gesture so navigation does not fire twice.
+      //
+      // The gesture must be a primary (left) click only. On macOS Ctrl+click is
+      // the OS secondary/context click, so we navigate solely on Cmd (metaKey)
+      // and explicitly bail when Ctrl is held - otherwise a Mac user opening the
+      // context menu would be yanked to the definition instead.
       const isContentText =
         targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
+      const isLeftClick = event.event.leftButton === true;
       const definitionModifierPressed =
         mouseDownPlatform === "mac"
-          ? event.event.metaKey === true
+          ? event.event.metaKey === true && event.event.ctrlKey !== true
           : event.event.ctrlKey === true;
       const contentPosition = event.target.position;
 
-      if (isContentText && definitionModifierPressed && contentPosition) {
+      if (
+        isContentText &&
+        isLeftClick &&
+        definitionModifierPressed &&
+        contentPosition
+      ) {
         event.event.preventDefault();
         event.event.stopPropagation();
         editorApi.setPosition(contentPosition);

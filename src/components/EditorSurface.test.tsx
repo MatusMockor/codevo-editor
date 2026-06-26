@@ -77,6 +77,8 @@ interface FakeMouseDownEvent {
   event: {
     ctrlKey?: boolean;
     metaKey?: boolean;
+    leftButton?: boolean;
+    rightButton?: boolean;
     preventDefault: ReturnType<typeof vi.fn>;
     stopPropagation: ReturnType<typeof vi.fn>;
   };
@@ -1699,6 +1701,7 @@ class InvoiceServiceTest extends TestCase
     act(() => {
       editor.mouseDownHandler?.({
         event: {
+          leftButton: true,
           metaKey: true,
           preventDefault,
           stopPropagation,
@@ -1784,6 +1787,7 @@ class InvoiceServiceTest extends TestCase
       editor.mouseDownHandler?.({
         event: {
           ctrlKey: true,
+          leftButton: true,
           preventDefault,
           stopPropagation,
         },
@@ -1798,6 +1802,183 @@ class InvoiceServiceTest extends TestCase
     expect(onGoToDefinition).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("does not navigate on a Ctrl+click on code text on macOS (that gesture is the secondary/context click)", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    // Holding Cmd together with Ctrl is still the secondary/context gesture on
+    // macOS: the Ctrl exclusion must win over the Cmd modifier, so this must not
+    // navigate either (this is the case that proves the `ctrlKey !== true`
+    // clause, since the old metaKey-only check would have navigated here).
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          metaKey: true,
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate on a Cmd+secondary (non-left) click on code text on macOS", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: false,
+          metaKey: true,
+          rightButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("does not navigate on a plain click on code text without the definition modifier", async () => {

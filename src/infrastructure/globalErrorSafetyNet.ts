@@ -37,6 +37,59 @@ function errorMessage(value: unknown): string {
   }
 }
 
+// Browser noise and expected cancellations that must never surface as a
+// "Something went wrong" notice. These are not application failures: the
+// ResizeObserver warnings are a benign browser quirk (the observer simply
+// reschedules its callback), and "Canceled"/AbortError are the expected
+// outcome of a superseded LSP request or aborted promise. Alarming the user
+// for them is pure noise.
+const BENIGN_ERROR_NAMES = new Set([
+  "AbortError",
+  // Monaco's CancellationError sets name === "Canceled" (canceledName).
+  "Canceled",
+  "CanceledError",
+  "CancellationError",
+]);
+const BENIGN_ERROR_PATTERNS: readonly RegExp[] = [
+  /resizeobserver loop/i,
+  /^cancell?ed$/i,
+  /the (?:operation|user aborted a request|request) (?:was )?aborted/i,
+];
+
+/**
+ * Returns true for failures that are browser noise or expected cancellations
+ * rather than real application errors, so the safety net can stay silent for
+ * them. A null/empty failure carries no actionable message and is treated as
+ * benign too.
+ */
+export function isBenignError(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (value instanceof Error) {
+    if (BENIGN_ERROR_NAMES.has(value.name)) {
+      return true;
+    }
+    return isBenignMessage(value.message);
+  }
+
+  if (typeof value === "string") {
+    return isBenignMessage(value);
+  }
+
+  return false;
+}
+
+function isBenignMessage(message: string | undefined): boolean {
+  const normalized = message?.trim() ?? "";
+  if (normalized.length === 0) {
+    return true;
+  }
+
+  return BENIGN_ERROR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 function styleOverlay(overlay: HTMLDivElement): void {
   overlay.style.position = "fixed";
   overlay.style.zIndex = "2147483647";
@@ -118,7 +171,15 @@ export function installGlobalErrorSafetyNet(
   };
 
   const onError = (event: ErrorEvent): void => {
-    showNotice(event.error ?? event.message);
+    const failure = event.error ?? event.message;
+    if (isBenignError(failure)) {
+      // Browser noise (e.g. ResizeObserver loop warnings). Swallow it so it does
+      // not bubble up as an uncaught error, but never alarm the user with it.
+      event.preventDefault();
+      return;
+    }
+
+    showNotice(failure);
     // We have surfaced and recovered the error; stop it from propagating as an
     // uncaught failure (and silence the default console spam, which we replace
     // with our own contextual log).
@@ -127,6 +188,12 @@ export function installGlobalErrorSafetyNet(
 
   const onRejection = (event: Event): void => {
     const reason = (event as Event & { reason?: unknown }).reason;
+    if (isBenignError(reason)) {
+      // Expected cancellation (superseded LSP request / aborted promise).
+      event.preventDefault();
+      return;
+    }
+
     showNotice(reason);
     event.preventDefault();
   };

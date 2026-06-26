@@ -83,6 +83,67 @@ describe("installGlobalErrorSafetyNet", () => {
     expect(overlays[0]?.textContent).toContain("third");
   });
 
+  it("ignores the benign ResizeObserver loop warning instead of alarming the user", () => {
+    uninstall = installGlobalErrorSafetyNet();
+
+    // Swallow it ourselves so the test runner does not flag the dispatched
+    // error as a false-positive unhandled failure when our net (correctly)
+    // declines to handle it.
+    const swallow = (event: Event) => event.preventDefault();
+    window.addEventListener("error", swallow);
+    try {
+      dispatchError(
+        "ResizeObserver loop completed with undelivered notifications.",
+      );
+      dispatchError("ResizeObserver loop limit exceeded");
+    } finally {
+      window.removeEventListener("error", swallow);
+    }
+
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("ignores benign request/promise cancellations instead of alarming the user", () => {
+    uninstall = installGlobalErrorSafetyNet();
+
+    dispatchRejection(new Error("Canceled"));
+    dispatchRejection(new Error("Cancelled"));
+
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    dispatchRejection(abortError);
+
+    // Some clients (e.g. axios) name their cancellation error differently from
+    // its message; the name alone must be enough to treat it as benign.
+    const namedCancellation = new Error("request superseded");
+    namedCancellation.name = "CanceledError";
+    dispatchRejection(namedCancellation);
+
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("ignores empty / null failures that carry no actionable message", () => {
+    uninstall = installGlobalErrorSafetyNet();
+
+    dispatchRejection(null);
+    dispatchRejection(undefined);
+    dispatchRejection(new Error(""));
+
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("still surfaces a genuine error (e.g. a TypeError) after filtering benign noise", () => {
+    uninstall = installGlobalErrorSafetyNet();
+
+    dispatchRejection(new TypeError("Cannot read properties of undefined"));
+
+    const overlay = document.querySelector('[role="alert"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay?.textContent).toContain(
+      "Cannot read properties of undefined",
+    );
+  });
+
   it("does nothing once uninstalled (no leaked listeners across reloads)", () => {
     uninstall = installGlobalErrorSafetyNet();
     uninstall();
