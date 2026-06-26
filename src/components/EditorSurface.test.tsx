@@ -786,6 +786,69 @@ describe("EditorSurface", () => {
     );
   });
 
+  // Smart Backspace (VS Code / PhpStorm muscle memory): pressing Backspace while
+  // the cursor sits inside a line's leading whitespace unindents to the previous
+  // tab stop instead of deleting a single space. Monaco provides this natively
+  // via `useTabStops`, whose default is `true`, so the only way the project could
+  // break it is by explicitly disabling the option. This guards that the editor
+  // options never set `useTabStops: false`, preserving the built-in behaviour.
+  it("keeps Monaco's useTabStops default so Backspace unindents to the previous tab stop", async () => {
+    const activeDocument: EditorDocument = {
+      content: "function example() {\n    return 1;\n}\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toBeDefined();
+    expect(editorSurfaceMocks.props?.options?.useTabStops).not.toBe(false);
+  });
+
   it("enables the Monaco formatOnPaste option when the setting is enabled", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
