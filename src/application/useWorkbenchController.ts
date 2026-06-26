@@ -19,7 +19,6 @@ import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
 import {
   shouldIndexWorkspace,
   shouldStartLanguageServer,
-  shouldUsePhpIntelligence,
   type SmartModeGateway,
 } from "../domain/intelligence";
 import {
@@ -10607,6 +10606,62 @@ export function useWorkbenchController(
     ],
   );
 
+  // Probes a list of deterministic PSR-4 candidate paths and returns only those
+  // that actually exist AND declare the requested class. This is the cheap,
+  // instant alternative to the project-wide findPhpClassSourcePathsByFileName
+  // fuzzy search: each probe is a single read against a known path. The caller
+  // owns the requested-root capture; we re-check it after every await and bail
+  // with [] the moment the active workspace changes, so a stale resolution can
+  // never leak a path into another project tab.
+  const verifyPhpClassCandidatePaths = useCallback(
+    async (
+      candidatePaths: string[],
+      normalizedClassName: string,
+      isRequestedRootActive: () => boolean,
+    ): Promise<string[]> => {
+      const normalizedLookup = normalizedClassName.toLowerCase();
+      const verified: string[] = [];
+      const visited = new Set<string>();
+
+      for (const path of candidatePaths) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (visited.has(path)) {
+          continue;
+        }
+
+        visited.add(path);
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          if (
+            phpCurrentClassName(content)?.toLowerCase() === normalizedLookup
+          ) {
+            verified.push(path);
+          }
+        } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          // Missing/unreadable candidate (the guessed path does not exist) -
+          // skip it and keep probing the remaining candidates.
+          continue;
+        }
+      }
+
+      return verified;
+    },
+    [readNavigationFileContent],
+  );
+
   const findPhpClassSourcePathsByFileName = useCallback(
     async (className: string): Promise<string[]> => {
       const requestedRoot = workspaceRoot;
@@ -10686,13 +10741,12 @@ export function useWorkbenchController(
         return [];
       }
 
-      const paths = new Set(
-        phpClassPathCandidates(
-          requestedRoot,
-          requestedDescriptor.php,
-          normalizedClassName,
-        ),
+      const candidatePaths = phpClassPathCandidates(
+        requestedRoot,
+        requestedDescriptor.php,
+        normalizedClassName,
       );
+      const paths = new Set(candidatePaths);
       let hasIndexedPath = false;
 
       if (shouldIndexWorkspace(intelligenceMode)) {
@@ -10723,6 +10777,39 @@ export function useWorkbenchController(
 
           hasIndexedPath = true;
           paths.add(symbol.path);
+        }
+      }
+
+      // INSTANT PATH (Fleet parity, every mode incl. basic/light): the PSR-4
+      // candidates above are deterministic guesses. Before paying for the
+      // project-wide fuzzy file search, probe those candidates directly - a
+      // candidate read is a single I/O against a known path (sub-ms), whereas
+      // findPhpClassSourcePathsByFileName walks the whole workspace tree and
+      // reads dozens of files (cold 5-10s on large repos). If a candidate
+      // exists and declares the requested class, it is the authoritative
+      // target and we skip the expensive fallback entirely. Skip when the index
+      // already produced a verified path (hasIndexedPath) - that is just as
+      // authoritative and avoids redundant reads.
+      if (!hasIndexedPath && candidatePaths.length > 0) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const verifiedCandidates = await verifyPhpClassCandidatePaths(
+          candidatePaths,
+          normalizedClassName,
+          isRequestedRootActive,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (verifiedCandidates.length > 0) {
+          // Authoritative resolution from a deterministic candidate - no
+          // project-wide search needed. Return only the verified paths so
+          // downstream readers do not have to skip non-existent guesses.
+          return verifiedCandidates;
         }
       }
 
@@ -10762,6 +10849,7 @@ export function useWorkbenchController(
       findPhpClassSourcePathsByFileName,
       intelligenceMode,
       projectSymbolSearch,
+      verifyPhpClassCandidatePaths,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -20864,10 +20952,8 @@ export function useWorkbenchController(
       // A bare class / interface / trait / enum type reference (e.g. a
       // constructor-promoted property or parameter type-hint). Resolve it with
       // our deterministic use/namespace resolver and open the declaration line
-      // BEFORE phpactor. This whole contextual-PHP path only runs once the
-      // goToDefinition cascade has confirmed PHP intelligence is enabled (Smart
-      // Index / IDE mode) - light mode never reaches here, so type navigation
-      // stays off in basic mode. goToPhpClassIdentifierDefinition carries the
+      // BEFORE phpactor, so type navigation works regardless of the indexed
+      // workspace gate. goToPhpClassIdentifierDefinition carries the
       // per-workspace isolation guards (requested-root capture + re-check after
       // each await) via openPhpClassTarget, and returns false for an
       // unresolvable type so the phpactor fallback still runs.
@@ -21739,16 +21825,6 @@ export function useWorkbenchController(
       return;
     }
 
-    // Light (`basic`) mode is pure JS/TS (VS Code parity): no PHP/Laravel
-    // navigation and no indexed-symbol search. Skipping these steps keeps the
-    // workspace isolated to the JS/TS language server and avoids the
-    // project-wide file search that contextual PHP type resolution would
-    // otherwise trigger when no index exists. PHP intelligence is reserved for
-    // Smart Index / IDE mode.
-    if (!shouldUsePhpIntelligence(intelligenceMode)) {
-      return;
-    }
-
     const openedContextualPhpTarget = await goToContextualPhpDefinition();
 
     if (openedContextualPhpTarget) {
@@ -21770,7 +21846,6 @@ export function useWorkbenchController(
     goToIndexedSymbolDefinition,
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
-    intelligenceMode,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {

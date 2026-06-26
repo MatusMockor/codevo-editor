@@ -20717,11 +20717,6 @@ function helper_call(): string
     await flushAsyncTurns(24);
 
     await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    await act(async () => {
       await getWorkbench().openFile(fileEntry(sourcePath, "UserController.php"));
     });
     act(() => {
@@ -20806,11 +20801,6 @@ $result = helper_call();
       readTextFile: vi.fn(async () => source),
       runtimeStatus,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
     });
     await flushAsyncTurns(24);
 
@@ -20931,11 +20921,6 @@ function helper_call(): string
       readTextFile,
       runtimeStatus: runningStatus(61),
       workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
     });
     await flushAsyncTurns(24);
 
@@ -23961,7 +23946,7 @@ export abstract class BaseAdapter implements PlatformAdapter {
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
-  it("does not navigate a PHP class type-hint in basic (light) mode", async () => {
+  it("navigates a class type-hint to its definition without Smart Index", async () => {
     const servicePath = "/workspace/app/Services/PageService.php";
     const repositoryPath = "/workspace/app/Repositories/PageRepository.php";
     const serviceSource = `<?php
@@ -24029,176 +24014,115 @@ class PageRepository
       await command?.run();
     });
 
-    // Light mode is pure JS/TS - no PHP navigation, no project-wide file
-    // search to resolve the type-hint target.
+    expect(getWorkbench().activePath).toBe(repositoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: repositoryPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
+      },
+    });
+  });
+
+  it("resolves a basic-mode method call instantly without a project-wide file search", async () => {
+    // Performance / Fleet-parity guard for the slow path. Method-call
+    // navigation resolves the receiver's class through
+    // resolvePhpClassSourcePaths. In basic (light) mode that class lives at its
+    // deterministic PSR-4 path, so resolution must come straight from that
+    // verified candidate. It must NOT fall back to the project-wide fuzzy
+    // fileSearch.searchFiles (the cold 5-10s tree walk on large repos like
+    // kontentino) on every Cmd+B. If this regresses, basic-mode method
+    // navigation goes slow again.
+    const controllerPath =
+      "/workspace/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace/app/Services/CommentsService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentsService;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentsService $commentsService,
+    ) {}
+
+    public function store(): void
+    {
+        $this->commentsService->create();
+    }
+}
+`;
+    const serviceSource = `<?php
+namespace App\\Services;
+
+class CommentsService
+{
+    public function create(): void
+    {
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const searchFiles = vi.fn(async () => []);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchFiles,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$this->commentsService->create"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
     expect(getWorkbench().activePath).toBe(servicePath);
-    expect(getWorkbench().editorRevealTarget).toBeNull();
-    expect(readTextFile).not.toHaveBeenCalledWith(repositoryPath);
-  });
-
-  it("navigates a PHP class type-hint in IDE (full smart) mode", async () => {
-    const servicePath = "/workspace/app/Services/PageService.php";
-    const repositoryPath = "/workspace/app/Repositories/PageRepository.php";
-    const serviceSource = `<?php
-
-namespace App\\Services;
-
-use App\\Repositories\\PageRepository;
-
-class PageService
-{
-    public function __construct(private PageRepository $pageRepository)
-    {
-    }
-}
-`;
-    const repositorySource = `<?php
-
-namespace App\\Repositories;
-
-class PageRepository
-{
-}
-`;
-    const readTextFile = vi.fn(async (path: string) => {
-      if (path === servicePath) {
-        return serviceSource;
-      }
-
-      if (path === repositoryPath) {
-        return repositorySource;
-      }
-
-      throw new Error(`Unexpected read ${path}`);
-    });
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
-      readTextFile,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
-    });
-    act(() => {
-      getWorkbench().updateActiveEditorPosition(
-        positionAfter(serviceSource, "private PageReposit"),
-      );
-    });
-
-    const command = getWorkbench().commands.find(
-      (candidate) => candidate.id === "editor.goToDefinition",
-    );
-
-    await act(async () => {
-      await command?.run();
-    });
-
-    expect(getWorkbench().activePath).toBe(repositoryPath);
     expect(getWorkbench().editorRevealTarget).toEqual({
-      path: repositoryPath,
+      path: servicePath,
       position: {
-        column: 7,
-        lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
+        column: 21,
+        lineNumber: lineNumberOf(serviceSource, "public function create"),
       },
     });
+    expect(searchFiles).not.toHaveBeenCalled();
   });
 
-  it("navigates a class type-hint to its definition with Smart Index", async () => {
-    const servicePath = "/workspace/app/Services/PageService.php";
-    const repositoryPath = "/workspace/app/Repositories/PageRepository.php";
-    const serviceSource = `<?php
-
-namespace App\\Services;
-
-use App\\Repositories\\PageRepository;
-
-class PageService
-{
-    public function __construct(private PageRepository $pageRepository)
-    {
-    }
-}
-`;
-    const repositorySource = `<?php
-
-namespace App\\Repositories;
-
-class PageRepository
-{
-}
-`;
-    const readTextFile = vi.fn(async (path: string) => {
-      if (path === servicePath) {
-        return serviceSource;
-      }
-
-      if (path === repositoryPath) {
-        return repositorySource;
-      }
-
-      throw new Error(`Unexpected read ${path}`);
-    });
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
-      readTextFile,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "lightSmart",
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-    expect(getWorkbench().intelligenceMode).toBe("lightSmart");
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
-    });
-    act(() => {
-      getWorkbench().updateActiveEditorPosition(
-        positionAfter(serviceSource, "private PageReposit"),
-      );
-    });
-
-    const command = getWorkbench().commands.find(
-      (candidate) => candidate.id === "editor.goToDefinition",
-    );
-
-    await act(async () => {
-      await command?.run();
-    });
-
-    expect(getWorkbench().activePath).toBe(repositoryPath);
-    expect(getWorkbench().editorRevealTarget).toEqual({
-      path: repositoryPath,
-      position: {
-        column: 7,
-        lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
-      },
-    });
-  });
-
-  it("navigates an interface type-hint to its definition with Smart Index", async () => {
+  it("navigates an interface type-hint to its definition without Smart Index", async () => {
     const servicePath = "/workspace/app/Services/PageService.php";
     const interfacePath =
       "/workspace/app/Contracts/PageRepositoryInterface.php";
@@ -24243,16 +24167,13 @@ interface PageRepositoryInterface
       readTextFile,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        intelligenceMode: "lightSmart",
+        intelligenceMode: "basic",
       },
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
 
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-    expect(getWorkbench().intelligenceMode).toBe("lightSmart");
+    expect(getWorkbench().intelligenceMode).toBe("basic");
 
     await act(async () => {
       await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
@@ -24281,7 +24202,7 @@ interface PageRepositoryInterface
     });
   });
 
-  it("does not navigate a type-hint with no resolvable class with Smart Index", async () => {
+  it("does not navigate a type-hint with no resolvable class without Smart Index", async () => {
     const servicePath = "/workspace/app/Services/PageService.php";
     const serviceSource = `<?php
 
@@ -24309,16 +24230,11 @@ class PageService
       readTextFile,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        intelligenceMode: "lightSmart",
+        intelligenceMode: "basic",
       },
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-    expect(getWorkbench().intelligenceMode).toBe("lightSmart");
 
     await act(async () => {
       await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
@@ -24380,7 +24296,7 @@ class PageService
       readTextFile,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        intelligenceMode: "lightSmart",
+        intelligenceMode: "basic",
       },
       workspaceDescriptor: {
         ...phpWorkspaceDescriptor(),
@@ -24388,11 +24304,6 @@ class PageService
       },
     });
     await flushAsyncTurns(24);
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-    expect(getWorkbench().intelligenceMode).toBe("lightSmart");
 
     await act(async () => {
       await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
@@ -24601,10 +24512,6 @@ class Comment
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-
-    await act(async () => {
       await getWorkbench().openFile(
         fileEntry(controllerPath, "CommentController.php"),
       );
@@ -24745,10 +24652,6 @@ class Comment
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
-
-    await act(async () => {
       await getWorkbench().openFile(
         fileEntry(controllerPath, "CommentController.php"),
       );
@@ -24868,10 +24771,6 @@ class Comment
       }),
     });
     await flushAsyncTurns();
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -47024,10 +46923,6 @@ class StoreCommentRequest extends FormRequest
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
-
-    await act(async () => {
-      await getWorkbench().setSmartMode("lightSmart");
-    });
 
     await act(async () => {
       await getWorkbench().openFile(

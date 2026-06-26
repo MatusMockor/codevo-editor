@@ -20,16 +20,3 @@ export function shouldIndexWorkspace(mode: IntelligenceMode): boolean {
 export function shouldStartLanguageServer(mode: IntelligenceMode): boolean {
   return mode === "fullSmart";
 }
-
-/**
- * Whether PHP / Laravel navigation (contextual go-to-definition, type-hint
- * resolution, indexed symbol search) may run for the given mode.
- *
- * Light (`basic`) mode is pure JS/TS - it targets VS Code parity and must NOT
- * perform any PHP/Laravel navigation or trigger project-wide file searches.
- * PHP intelligence is reserved for Smart Index (`lightSmart`) and IDE
- * (`fullSmart`) modes, where the workspace is indexed.
- */
-export function shouldUsePhpIntelligence(mode: IntelligenceMode): boolean {
-  return mode === "lightSmart" || mode === "fullSmart";
-}
