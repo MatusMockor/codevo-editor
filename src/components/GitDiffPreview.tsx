@@ -91,7 +91,7 @@ export function GitDiffPreview({
     const relativePath = changeRelativePath;
     const staged = changeIsStaged;
 
-    void loadFileHunks(relativePath, staged).then((loaded) => {
+    const applyLoadedHunks = (loaded: GitDiffHunk[]) => {
       // Guard against an out-of-order resolve after the selected change moved
       // on (per-tab isolation; the latest selection wins).
       if (
@@ -102,8 +102,28 @@ export function GitDiffPreview({
         return;
       }
 
-      setHunks(loaded);
-    });
+      // Per-hunk staging is a non-essential overlay on top of the diff. A
+      // malformed/undefined payload from the hunk command must never break the
+      // diff render, so coerce anything that is not an array to an empty list.
+      setHunks(Array.isArray(loaded) ? loaded : []);
+    };
+
+    // The hunk load is best-effort. If the underlying command rejects (missing,
+    // failing, or unavailable), swallow it and keep the hunk list empty so the
+    // diff editor still renders instead of crashing the whole view to a blank
+    // screen (there is no error boundary around this tree).
+    void Promise.resolve()
+      .then(() => loadFileHunks(relativePath, staged))
+      .then(applyLoadedHunks)
+      .catch((error) => {
+        console.error("Loading git file hunks failed", error);
+
+        if (cancelled) {
+          return;
+        }
+
+        setHunks([]);
+      });
 
     return () => {
       cancelled = true;
@@ -219,7 +239,7 @@ export function GitDiffPreview({
           </button>
         </div>
       </header>
-      {supportsHunkStaging && hunks.length > 0 ? (
+      {supportsHunkStaging && Array.isArray(hunks) && hunks.length > 0 ? (
         <GitDiffHunkList
           disabled={gitOperationLoading}
           hunks={hunks}

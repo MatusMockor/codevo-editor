@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitFileDiff } from "../domain/git";
+import type { GitDiffHunk, GitFileDiff } from "../domain/git";
 import { GitDiffPreview } from "./GitDiffPreview";
 
 interface FakeMonaco {
@@ -448,6 +448,81 @@ describe("GitDiffPreview", () => {
     });
 
     expect(onStageHunk).not.toHaveBeenCalled();
+  });
+
+  it("renders the diff editor when loadFileHunks rejects", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loadFileHunks = vi.fn(() =>
+      Promise.reject(new Error("get_git_file_hunks failed")),
+    );
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={vi.fn()}
+          onUnstageHunk={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
+    expect(hunkCheckboxes()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledWith(
+      "Loading git file hunks failed",
+      expect.any(Error),
+    );
+  });
+
+  it("renders the diff editor when loadFileHunks resolves undefined", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const loadFileHunks = vi.fn(
+      () => Promise.resolve(undefined) as unknown as Promise<GitDiffHunk[]>,
+    );
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={vi.fn()}
+          onUnstageHunk={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
+    expect(hunkCheckboxes()).toHaveLength(0);
+  });
+
+  it("renders the diff editor for a modified file with no hunk props", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
   });
 });
 
