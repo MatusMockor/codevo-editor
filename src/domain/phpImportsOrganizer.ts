@@ -35,6 +35,12 @@ interface ParsedUse {
   statement: string;
   /** Sort key: FQN, lower-cased. */
   sortKey: string;
+  /**
+   * When true the statement is reproduced verbatim and never removed - used for
+   * non-grouped comma lists (`use A, B;`) where splitting risks dropping a used
+   * member, so we conservatively keep the whole statement untouched.
+   */
+  verbatim?: boolean;
 }
 
 export function organizePhpImports(source: string): OrganizedPhpImports | null {
@@ -77,7 +83,107 @@ export function organizePhpImports(source: string): OrganizedPhpImports | null {
   };
 }
 
+/**
+ * Applies "Optimize imports" to a whole PHP source string and returns the
+ * rewritten source, or `null` when nothing should change.
+ *
+ * Reuses {@link organizePhpImports} for the analysis and replaces the exact span
+ * of the existing top-level `use` block with the organized block. Conservative:
+ * returns `null` when there is no top-level `use` block, when the rewrite would
+ * not change anything, or when any non-whitespace content sits between the `use`
+ * statements or trails the last one on its line (e.g. a stray comment) - so no
+ * unrelated content is ever swallowed or relocated.
+ *
+ * This is the content-in / content-out variant used by format-on-save; the
+ * Monaco-range variant lives next to the code-action provider.
+ */
+export function optimizePhpImportsSource(source: string): string | null {
+  const organized = organizePhpImports(source);
+
+  if (!organized) {
+    return null;
+  }
+
+  const range = topLevelUseBlockRange(source);
+
+  if (!range) {
+    return null;
+  }
+
+  const optimized =
+    source.slice(0, range.start) +
+    organized.organizedUseBlock +
+    source.slice(range.end);
+
+  // Reordering alone (no removals) leaves `organized.changed` false, so compare
+  // the rewritten source against the original to also catch sort-only changes -
+  // a no-op when the block is already clean and sorted.
+  if (optimized === source) {
+    return null;
+  }
+
+  return optimized;
+}
+
+/**
+ * Locates the contiguous span covering the existing top-level `use` statements:
+ * from the start of the first `use` to the end of the last one (before the first
+ * type body opens). Returns `null` when no top-level `use` is found or when the
+ * gaps between statements are not whitespace-only (conservative guard).
+ */
+function topLevelUseBlockRange(
+  source: string,
+): { end: number; start: number } | null {
+  const masked = maskPhpStringsAndComments(source);
+  const statements = parseTopLevelUseStatements(masked);
+
+  if (statements.length === 0) {
+    return null;
+  }
+
+  for (let index = 1; index < statements.length; index += 1) {
+    const gap = source.slice(statements[index - 1].end, statements[index].start);
+
+    if (gap.trim().length > 0) {
+      return null;
+    }
+  }
+
+  const lastEnd = statements[statements.length - 1].end;
+
+  // The block end stops at the final `use;` terminator, so anything trailing on
+  // that same physical line (e.g. `use App\Foo; // note`) sits in the
+  // after-block tail and would be re-attached to the wrong import. Bail out
+  // rather than relocate it - conservative no-op over corruption.
+  if (!trailingLineIsBlank(source, lastEnd)) {
+    return null;
+  }
+
+  return {
+    end: lastEnd,
+    start: statements[0].start,
+  };
+}
+
+/**
+ * True when the remainder of the physical line starting at `offset` (up to the
+ * next newline or end of source) holds nothing but whitespace.
+ */
+function trailingLineIsBlank(source: string, offset: number): boolean {
+  const newlineIndex = source.indexOf("\n", offset);
+  const lineRemainder =
+    newlineIndex === -1
+      ? source.slice(offset)
+      : source.slice(offset, newlineIndex);
+
+  return lineRemainder.trim().length === 0;
+}
+
 function shouldKeep(use: ParsedUse, usageHaystack: string): boolean {
+  if (use.verbatim) {
+    return true;
+  }
+
   if (use.kind !== "class") {
     return true;
   }
@@ -310,9 +416,59 @@ function parseUseStatement(body: string): ParsedUse[] {
     return parseGroupedUse(withoutKeyword, kind);
   }
 
+  // A non-grouped comma list (`use A\B, A\C;`) is reproduced verbatim and never
+  // dropped: splitting it would risk silently removing a USED member (the old
+  // single-parse path baked the whole tail into one symbol whose alias was just
+  // the last segment, so a used leading member could vanish). Conservative
+  // no-op over corruption.
+  if (hasTopLevelComma(withoutKeyword)) {
+    return [verbatimUse(trimmed, kind)];
+  }
+
   const single = parseSymbol(withoutKeyword, kind);
 
   return single ? [single] : [];
+}
+
+/** True when `body` contains a comma that is not nested inside `{...}`. */
+function hasTopLevelComma(body: string): boolean {
+  let depth = 0;
+
+  for (const character of body) {
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Builds an opaque, always-kept entry whose statement reproduces the original
+ * `use` body verbatim. Carries a sort key so it still orders alongside the
+ * single-symbol survivors without being mangled.
+ */
+function verbatimUse(bodyWithoutSurroundingSpace: string, kind: UseKind): ParsedUse {
+  const statement = `use ${bodyWithoutSurroundingSpace};`;
+
+  return {
+    alias: "",
+    fqn: bodyWithoutSurroundingSpace,
+    kind,
+    sortKey: bodyWithoutSurroundingSpace.toLowerCase(),
+    statement,
+    verbatim: true,
+  };
 }
 
 function useKind(body: string): UseKind {

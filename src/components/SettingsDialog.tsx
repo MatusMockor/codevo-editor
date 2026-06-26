@@ -255,6 +255,12 @@ export function SettingsDialog({
                       formatOnSave,
                     })
                   }
+                  onChangeOptimizeImportsOnSave={(optimizeImportsOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      optimizeImportsOnSave,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptService={(
                     javaScriptTypeScriptService,
                   ) =>
@@ -452,6 +458,7 @@ interface GeneralSettingsProps {
   onChangeAutoSave(autoSave: boolean): void;
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
+  onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
@@ -481,6 +488,7 @@ function GeneralSettings({
   onChangeAutoSave,
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
+  onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptCodeLens,
@@ -656,6 +664,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>Format on Save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.optimizeImportsOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeOptimizeImportsOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Optimize imports on save</span>
       </label>
 
       <label className="settings-toggle">

@@ -484,7 +484,10 @@ import {
   planIntroduceConstant,
   planIntroduceField,
 } from "../domain/phpIntroduceMember";
-import { organizePhpImports } from "../domain/phpImportsOrganizer";
+import {
+  optimizePhpImportsSource,
+  organizePhpImports,
+} from "../domain/phpImportsOrganizer";
 import {
   phpCurrentNamespace,
   phpShortNameIsImported,
@@ -7591,6 +7594,27 @@ export function useWorkbenchController(
     ],
   );
 
+  // Optimize-imports-on-save: a pure, synchronous PHP `use` reorganizer applied
+  // to the (already formatted) content just before it is written. It only runs
+  // for PHP documents in a PHP workspace when the setting is on, and is a no-op
+  // (returns the input) for any other language or when the imports are already
+  // clean. Being synchronous, it adds no extra await to the save path, so the
+  // existing post-format workspace-root re-check still fully guards the write.
+  const optimizedImportsContentForSave = useCallback(
+    (document: EditorDocument, content: string): string => {
+      if (!workspaceSettingsRef.current.optimizeImportsOnSave) {
+        return content;
+      }
+
+      if (!isLanguageServerDocument(document) || !workspaceDescriptor?.php) {
+        return content;
+      }
+
+      return optimizePhpImportsSource(content) ?? content;
+    },
+    [workspaceDescriptor?.php],
+  );
+
   // Records a Local History snapshot for a saved document, scoped to the
   // workspace root captured by the caller. Best-effort: a snapshot failure must
   // never surface as a save error, so it is swallowed (logged) rather than
@@ -7642,9 +7666,17 @@ export function useWorkbenchController(
         return;
       }
 
+      // Optimize imports AFTER formatting and AFTER the root re-check, on the
+      // formatted content, so the two save-time fixers compose (format then
+      // organize imports) and never act on a stale or cross-tab document.
+      const contentToSave = optimizedImportsContentForSave(
+        documentToFormat,
+        formattedContent,
+      );
+
       const documentToSave: EditorDocument = {
         ...documentToFormat,
-        content: formattedContent,
+        content: contentToSave,
       };
 
       await workspaceFiles.writeTextFile(
@@ -7694,6 +7726,7 @@ export function useWorkbenchController(
   }, [
     captureLocalHistorySnapshot,
     formattedContentForSave,
+    optimizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,

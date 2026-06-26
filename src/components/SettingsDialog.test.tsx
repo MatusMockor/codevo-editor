@@ -152,6 +152,47 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps Optimize imports on save disabled by default and persists enabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(optimizeImportsOnSaveCheckbox().checked).toBe(false);
+
+    await act(async () => {
+      optimizeImportsOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        optimizeImportsOnSave: true,
+      },
+    });
+  });
+
   it("keeps Format on Paste enabled by default and persists disabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -942,6 +983,10 @@ describe("SettingsDialog", () => {
 
   function formatOnPasteCheckbox(): HTMLInputElement {
     return checkboxWithLabel("Format on Paste");
+  }
+
+  function optimizeImportsOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("Optimize imports on save");
   }
 
   function javaScriptTypeScriptServiceSelect(): HTMLSelectElement {

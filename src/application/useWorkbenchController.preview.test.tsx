@@ -7308,6 +7308,219 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  describe("optimize imports on save", () => {
+    const phpWithUnusedImport = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "use App\\Services\\UsedService;",
+      "use App\\Services\\UnusedService;",
+      "",
+      "class Foo",
+      "{",
+      "    public function bar(UsedService $service): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    const phpWithOptimizedImport = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "use App\\Services\\UsedService;",
+      "",
+      "class Foo",
+      "{",
+      "    public function bar(UsedService $service): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    it("optimizes PHP imports before writing when optimizeImportsOnSave is enabled", async () => {
+      const path = "/workspace/src/Foo.php";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithOptimizedImport);
+      expect(getWorkbench().activeDocument?.content).toBe(
+        phpWithOptimizedImport,
+      );
+    });
+
+    it("does not change PHP imports on save when optimizeImportsOnSave is disabled", async () => {
+      const path = "/workspace/src/Foo.php";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithUnusedImport);
+    });
+
+    it("leaves non-PHP documents untouched even when optimizeImportsOnSave is enabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const content = "import { used } from './used';\nused();\n";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => content),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(content);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, content);
+    });
+
+    it("formats first then optimizes imports on the formatted content", async () => {
+      const path = "/workspace/src/Foo.php";
+      const runningPhpStatus: LanguageServerRuntimeStatus = {
+        capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 91,
+      };
+      const phpFeaturesGateway = featuresGateway();
+      const lines = phpWithUnusedImport.split("\n");
+      // The formatter rewrites the whole document but still leaves the unused
+      // import in place; optimize-imports must then run on that formatted output
+      // and drop it before the file is written.
+      vi.mocked(phpFeaturesGateway.formatting).mockResolvedValue([
+        {
+          newText: phpWithUnusedImport,
+          range: {
+            end: {
+              character: lines[lines.length - 1]?.length ?? 0,
+              line: lines.length - 1,
+            },
+            start: { character: 0, line: 0 },
+          },
+        },
+      ]);
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        languageServerFeaturesGateway: phpFeaturesGateway,
+        runtimeStatus: runningPhpStatus,
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(phpFeaturesGateway.formatting).toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithOptimizedImport);
+    });
+  });
+
   it("does not send PHP didSave after switching project tabs while didOpen is pending", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),

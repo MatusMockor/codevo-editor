@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { organizePhpImports } from "./phpImportsOrganizer";
+import {
+  optimizePhpImportsSource,
+  organizePhpImports,
+} from "./phpImportsOrganizer";
 
 describe("organizePhpImports", () => {
   it("returns null when there are no use statements", () => {
@@ -465,5 +468,266 @@ class Foo
 
     expect(result?.removed).toEqual(["App\\Concerns\\Unused"]);
     expect(result?.organizedUseBlock).toBe("use App\\Concerns\\Loggable;");
+  });
+
+  it("never drops a used import from a comma-separated use statement (last member unused)", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Used, App\\Unused;
+
+class Foo
+{
+    public function m(Used $u): void
+    {
+    }
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+    // The whole comma-list is preserved verbatim - no used import may vanish.
+    expect(result?.organizedUseBlock).toBe("use App\\Used, App\\Unused;");
+  });
+
+  it("keeps a comma-separated use statement verbatim when the last member is used", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Unused, App\\Used;
+
+class Foo
+{
+    public function m(Used $u): void
+    {
+    }
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+    expect(result?.organizedUseBlock).toBe("use App\\Unused, App\\Used;");
+  });
+
+  it("keeps a fully-unused comma-separated use statement verbatim (conservative)", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\A, App\\B;
+
+class Foo
+{
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+    expect(result?.organizedUseBlock).toBe("use App\\A, App\\B;");
+  });
+});
+
+describe("optimizePhpImportsSource", () => {
+  it("returns null when there are no use statements", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("returns null when the imports are already clean and sorted", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\User;
+
+class Foo
+{
+    public function bar(User $user): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("rewrites the source dropping an unused import", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Services\\UsedService;
+use App\\Services\\UnusedService;
+
+class Foo
+{
+    public function bar(UsedService $service): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBe(`<?php
+
+namespace App;
+
+use App\\Services\\UsedService;
+
+class Foo
+{
+    public function bar(UsedService $service): void
+    {
+    }
+}
+`);
+  });
+
+  it("sorts surviving imports alphabetically without touching the rest", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\Zebra;
+use App\\Models\\Apple;
+
+class Foo
+{
+    public function bar(Zebra $zebra, Apple $apple): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBe(`<?php
+
+namespace App;
+
+use App\\Models\\Apple;
+use App\\Models\\Zebra;
+
+class Foo
+{
+    public function bar(Zebra $zebra, Apple $apple): void
+    {
+    }
+}
+`);
+  });
+
+  it("returns null when a comment sits between use statements", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\User;
+// keep this around
+use App\\Models\\Unused;
+
+class Foo
+{
+    public function bar(User $user): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("returns null when a trailing comment follows the last use statement", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\Zebra;
+use App\\Models\\Apple; // keep this comment where it is
+
+class Foo
+{
+    public function bar(Zebra $zebra, Apple $apple): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("returns null when a removable import carries a trailing comment", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\Used;
+use App\\Models\\Unused; // drop me
+
+class Foo
+{
+    public function bar(Used $used): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("returns null (no-op) for a comma-separated use statement so no used import is corrupted", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Used, App\\Unused;
+
+class Foo
+{
+    public function m(Used $u): void
+    {
+    }
+}
+`;
+
+    expect(optimizePhpImportsSource(source)).toBeNull();
+  });
+
+  it("does not drop a used import from a mixed block containing a comma-separated use", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Used, App\\Unused;
+use App\\Models\\Lonely;
+
+class Foo
+{
+    public function m(Used $u, Lonely $l): void
+    {
+    }
+}
+`;
+
+    const optimized = optimizePhpImportsSource(source);
+
+    // Whatever the rewrite does, the used comma-list members must survive.
+    if (optimized !== null) {
+      expect(optimized).toContain("App\\Used");
+      expect(optimized).toContain("App\\Unused");
+    }
   });
 });

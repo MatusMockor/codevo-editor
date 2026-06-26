@@ -123,6 +123,12 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
+  /**
+   * Reorganizes PHP `use` imports (drops unused, sorts) right before a PHP file
+   * is written on save. Off by default, mirroring PhpStorm's opt-in "Optimize
+   * imports on the fly / on save".
+   */
+  optimizeImportsOnSave: boolean;
   phpBackend: PhpBackendPreference;
   phpInlayHints: boolean;
   phpVersionOverride: string | null;
@@ -233,6 +239,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
+    optimizeImportsOnSave: false,
     phpBackend: "auto",
     phpInlayHints: true,
     phpVersionOverride: null,
@@ -368,6 +375,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     )
       ? value.javaScriptTypeScriptVersion
       : defaults.javaScriptTypeScriptVersion,
+    optimizeImportsOnSave: normalizeBoolean(
+      value.optimizeImportsOnSave,
+      defaults.optimizeImportsOnSave,
+    ),
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,

@@ -48,6 +48,7 @@ describe("settings defaults", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      optimizeImportsOnSave: false,
       phpBackend: "auto",
       phpInlayHints: true,
       phpVersionOverride: null,
@@ -290,6 +291,7 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptService: "off",
         javaScriptTypeScriptValidation: false,
         javaScriptTypeScriptVersion: "workspace",
+        optimizeImportsOnSave: true,
         phpBackend: "phpactor",
         phpInlayHints: false,
         phpVersionOverride: "8.3",
@@ -331,6 +333,7 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      optimizeImportsOnSave: true,
       phpBackend: "phpactor",
       phpInlayHints: false,
       phpVersionOverride: "8.3",
@@ -389,6 +392,22 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
     ).toBe(true);
+  });
+
+  it("defaults optimizeImportsOnSave to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).optimizeImportsOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: "yes" })
+        .optimizeImportsOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: true })
+        .optimizeImportsOnSave,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: false })
+        .optimizeImportsOnSave,
+    ).toBe(false);
   });
 
   it("defaults phpInlayHints to true and respects explicit boolean values", () => {
