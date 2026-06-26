@@ -50,6 +50,13 @@ export interface GitFileHistoryEntry {
   timestamp: number;
 }
 
+export interface GitStashEntry {
+  branch: string | null;
+  index: number;
+  message: string;
+  timestamp: number;
+}
+
 export interface GitGateway {
   blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
@@ -72,6 +79,12 @@ export interface GitGateway {
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  stashSave(rootPath: string, message: string): Promise<void>;
+  stashList(rootPath: string): Promise<GitStashEntry[]>;
+  stashApply(rootPath: string, index: number): Promise<void>;
+  stashPop(rootPath: string, index: number): Promise<void>;
+  stashShow(rootPath: string, index: number): Promise<string>;
+  stashDrop(rootPath: string, index: number): Promise<void>;
 }
 
 export function gitChangeKey(change: GitChangedFile): string {

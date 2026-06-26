@@ -22,6 +22,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
+import { GitStashPanel } from "./components/GitStashPanel";
 import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
@@ -1240,6 +1241,23 @@ function App() {
         selectedVersionId={workbench.localHistorySelectedId}
         versions={workbench.localHistoryVersions}
         versionsLoading={workbench.localHistoryLoading}
+      />
+
+      <GitStashPanel
+        diff={workbench.gitStashDiff}
+        diffLoading={workbench.gitStashDiffLoading}
+        isLoading={workbench.gitStashLoading}
+        isOpen={workbench.gitStashPanelOpen}
+        message={workbench.gitStashMessage}
+        onApply={(index) => void workbench.applyGitStash(index)}
+        onClose={workbench.closeGitStashPanel}
+        onDrop={(index) => void workbench.dropGitStash(index)}
+        onMessageChange={workbench.setGitStashMessage}
+        onPop={(index) => void workbench.popGitStash(index)}
+        onSave={(message) => void workbench.saveGitStash(message)}
+        onSelect={(index) => void workbench.selectGitStash(index)}
+        selectedIndex={workbench.gitStashSelectedIndex}
+        stashes={workbench.gitStashEntries}
       />
 
       <LanguageServerSetup

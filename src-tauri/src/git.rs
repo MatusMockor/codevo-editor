@@ -65,6 +65,15 @@ pub struct GitFileHistoryEntry {
     pub timestamp: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStashEntry {
+    pub branch: Option<String>,
+    pub index: u32,
+    pub message: String,
+    pub timestamp: i64,
+}
+
 pub trait GitRepositoryGateway {
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
     fn file_commit_diff(
@@ -90,6 +99,12 @@ pub trait GitRepositoryGateway {
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
     fn unstage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
+    fn stash_save(&self, root: &Path, message: &str) -> io::Result<()>;
+    fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>>;
+    fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn stash_show(&self, root: &Path, index: u32) -> io::Result<String>;
+    fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()>;
 }
 
 pub struct CommandGitRepositoryGateway;
@@ -316,6 +331,116 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         self.status(&root)
+    }
+
+    fn stash_save(&self, root: &Path, message: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let message = message.trim();
+
+        if message.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Stash message is required.",
+            ));
+        }
+
+        // `--include-untracked` mirrors PhpStorm's "stash changes" (untracked
+        // working-tree files are part of WIP). When the working tree is clean,
+        // `git stash push` exits 0 and prints "No local changes to save" rather
+        // than failing; surface that as an error so the UI never reports a
+        // phantom stash.
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("push")
+            .arg("--include-untracked")
+            .arg("-m")
+            .arg(message)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if stdout.contains("No local changes to save") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "No local changes to stash.",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>> {
+        let root = root.canonicalize()?;
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("list")
+            .arg(format!("--format={STASH_LIST_FORMAT}"))
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_stash_list(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "apply", reference.as_str()])
+    }
+
+    fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "pop", reference.as_str()])
+    }
+
+    fn stash_show(&self, root: &Path, index: u32) -> io::Result<String> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("show")
+            .arg("-p")
+            .arg(&reference)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "drop", reference.as_str()])
     }
 }
 
@@ -554,6 +679,87 @@ fn parse_file_history_record(line: &str) -> Option<GitFileHistoryEntry> {
         sha: short_sha(sha),
         subject,
         timestamp,
+    })
+}
+
+/// `git stash list` record layout. Fields are joined with the ASCII Unit
+/// Separator (`%x1f`) so a stash message containing spaces, tabs, or colons is
+/// parsed unambiguously. `%gd` is the stash selector (`stash@{N}`), `%ct` the
+/// committer timestamp, `%gs` the reflog subject (the stash message). Records
+/// are newline-delimited (one stash per line).
+const STASH_LIST_FORMAT: &str = "%gd%x1f%ct%x1f%gs";
+
+fn parse_stash_list(output: &str) -> Vec<GitStashEntry> {
+    output
+        .lines()
+        .filter_map(parse_stash_list_record)
+        .collect()
+}
+
+fn parse_stash_list_record(line: &str) -> Option<GitStashEntry> {
+    let mut fields = line.split('\u{1f}');
+    let index = parse_stash_selector_index(fields.next()?)?;
+    let timestamp = fields.next()?.trim().parse::<i64>().ok()?;
+    let raw_message = fields.next().unwrap_or_default();
+    let (branch, message) = split_stash_branch_and_message(raw_message);
+
+    Some(GitStashEntry {
+        branch,
+        index,
+        message: message.to_string(),
+        timestamp,
+    })
+}
+
+/// Extracts the numeric index from a `stash@{N}` selector. Any other shape is
+/// rejected so a malformed reflog line is skipped instead of mis-indexed.
+fn parse_stash_selector_index(selector: &str) -> Option<u32> {
+    let inner = selector.strip_prefix("stash@{")?.strip_suffix('}')?;
+
+    inner.parse::<u32>().ok()
+}
+
+/// Splits the reflog subject (e.g. `WIP on main: 1a2b3c4 ...` or
+/// `On feature/x: ...`) into its branch (when present) and the full message.
+/// The message is preserved verbatim so colons inside it are never lost.
+fn split_stash_branch_and_message(raw_message: &str) -> (Option<String>, &str) {
+    let after_prefix = raw_message
+        .strip_prefix("WIP on ")
+        .or_else(|| raw_message.strip_prefix("On "));
+
+    let Some(after_prefix) = after_prefix else {
+        return (None, raw_message);
+    };
+
+    let Some((branch, _)) = after_prefix.split_once(':') else {
+        return (None, raw_message);
+    };
+
+    (Some(branch.to_string()), raw_message)
+}
+
+/// Builds the `stash@{N}` selector from a validated numeric index. The index is
+/// a `u32`, so it can never inject a git option or escape the selector braces
+/// (no path/SHA-style sanitization is needed at this layer).
+fn stash_reference(index: u32) -> String {
+    format!("stash@{{{index}}}")
+}
+
+/// Validates a stash index string supplied by the front end. Only ASCII digits
+/// are accepted (parsed into a `u32`), so a crafted argument can neither inject
+/// a git option nor escape the `stash@{...}` selector into another revision.
+pub fn safe_stash_index(index: &str) -> io::Result<u32> {
+    let trimmed = index.trim();
+
+    if trimmed.is_empty() || !trimmed.chars().all(|byte| byte.is_ascii_digit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git stash index is invalid.",
+        ));
+    }
+
+    trimmed.parse::<u32>().map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "Git stash index is invalid.")
     })
 }
 
@@ -978,9 +1184,9 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_blame_porcelain, parse_file_history, parse_porcelain_status, safe_commit_sha,
-        safe_relative_path, CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile,
-        GitRepositoryGateway,
+        parse_blame_porcelain, parse_file_history, parse_porcelain_status, parse_stash_list,
+        safe_commit_sha, safe_relative_path, safe_stash_index, CommandGitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -1379,6 +1585,168 @@ mod tests {
 
         assert!(!repo.path().join("new.txt").exists());
         assert_eq!(repo.git_output(["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn parses_stash_list_into_entries() {
+        // Layout is `%gd%x1f%ct%x1f%gs`: selector, timestamp, reflog subject.
+        let output = concat!(
+            "stash@{0}\u{1f}1700000000\u{1f}WIP on main: 1a2b3c4 Add feature\n",
+            "stash@{1}\u{1f}1700100000\u{1f}On feature/x: tweak parser\n",
+        );
+
+        let entries = parse_stash_list(output);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].index, 0);
+        assert_eq!(entries[0].timestamp, 1700000000);
+        // The branch is derived from the reflog subject prefix.
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert_eq!(entries[0].message, "WIP on main: 1a2b3c4 Add feature");
+        assert_eq!(entries[1].index, 1);
+        assert_eq!(entries[1].branch.as_deref(), Some("feature/x"));
+        // A message containing colons survives unit-separator parsing.
+        assert_eq!(entries[1].message, "On feature/x: tweak parser");
+    }
+
+    #[test]
+    fn skips_malformed_stash_list_records() {
+        let output = concat!(
+            "not-a-stash-ref\u{1f}1700000000\u{1f}message\n",
+            "stash@{2}\u{1f}1700000000\u{1f}good one\n",
+            "\n",
+        );
+
+        let entries = parse_stash_list(output);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 2);
+        assert_eq!(entries[0].message, "good one");
+    }
+
+    #[test]
+    fn safe_stash_index_rejects_injection_and_accepts_numeric() {
+        assert!(safe_stash_index("0").is_ok());
+        assert!(safe_stash_index("12").is_ok());
+        // Anything non-numeric could escape `stash@{...}` into another revision
+        // or a git option; reject it.
+        assert!(safe_stash_index("0} --force; rm -rf /").is_err());
+        assert!(safe_stash_index("-1").is_err());
+        assert!(safe_stash_index("HEAD").is_err());
+        assert!(safe_stash_index("").is_err());
+        assert!(safe_stash_index("1.0").is_err());
+    }
+
+    #[test]
+    fn stash_save_then_list_reports_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .stash_save(repo.path(), "work in progress")
+            .expect("stash save");
+
+        // The working tree is clean after stashing.
+        assert_eq!(repo.git_output(["status", "--porcelain"]), "");
+        assert_eq!(repo.read("file.txt"), "one\n");
+
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 0);
+        assert!(entries[0].message.contains("work in progress"));
+    }
+
+    #[test]
+    fn stash_apply_restores_changes_and_keeps_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_apply(repo.path(), 0).expect("stash apply");
+
+        assert_eq!(repo.read("file.txt"), "two\n");
+        // apply keeps the stash entry.
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn stash_pop_restores_changes_and_drops_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_pop(repo.path(), 0).expect("stash pop");
+
+        assert_eq!(repo.read("file.txt"), "two\n");
+        // pop removes the stash entry.
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn stash_show_returns_a_diff_for_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "one\ntwo\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        let diff = gateway.stash_show(repo.path(), 0).expect("stash show");
+
+        assert!(diff.contains("file.txt"));
+        assert!(diff.contains("+two"));
+    }
+
+    #[test]
+    fn stash_drop_removes_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_drop(repo.path(), 0).expect("stash drop");
+
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert!(entries.is_empty());
+        // The working tree was not touched by drop (still clean from the save).
+        assert_eq!(repo.read("file.txt"), "one\n");
+    }
+
+    #[test]
+    fn stash_save_rejects_when_there_is_nothing_to_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.stash_save(repo.path(), "wip").is_err());
+    }
+
+    fn stash_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "stash@example.com"]);
+        repo.run(["config", "user.name", "Stash Author"]);
+        repo
     }
 
     fn git_changed_file(

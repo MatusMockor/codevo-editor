@@ -211,6 +211,70 @@ describe("TauriGitGateway", () => {
     });
   });
 
+  it("invokes the stash commands in Tauri", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "get_git_stash_list") {
+        return [
+          { branch: "main", index: 0, message: "WIP on main: x", timestamp: 1700000000 },
+          { branch: null, index: 1, message: "On feature: y", timestamp: 1700100000 },
+        ];
+      }
+
+      if (command === "get_git_stash_diff") {
+        return "diff --git a/file.txt b/file.txt\n+two";
+      }
+
+      return undefined;
+    });
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    await gateway.stashSave("/workspace", "work in progress");
+    const stashes = await gateway.stashList("/workspace");
+    await gateway.stashApply("/workspace", 0);
+    await gateway.stashPop("/workspace", 1);
+    const diff = await gateway.stashShow("/workspace", 0);
+    await gateway.stashDrop("/workspace", 1);
+
+    expect(invoke).toHaveBeenCalledWith("save_git_stash", {
+      message: "work in progress",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_stash_list", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_apply_git", {
+      index: "0",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_pop_git", {
+      index: "1",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_stash_diff", {
+      index: "0",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_drop_git", {
+      index: "1",
+      rootPath: "/workspace",
+    });
+    expect(stashes).toHaveLength(2);
+    expect(stashes[0].message).toBe("WIP on main: x");
+    expect(diff).toContain("+two");
+  });
+
+  it("returns no stashes and empty diff outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.stashList("/workspace")).resolves.toEqual([]);
+    await expect(gateway.stashShow("/workspace", 0)).resolves.toBe("");
+    // Safe no-ops that never invoke a command.
+    await expect(gateway.stashSave("/workspace", "x")).resolves.toBeUndefined();
+    await expect(gateway.stashApply("/workspace", 0)).resolves.toBeUndefined();
+    await expect(gateway.stashPop("/workspace", 0)).resolves.toBeUndefined();
+    await expect(gateway.stashDrop("/workspace", 0)).resolves.toBeUndefined();
+  });
+
   it("returns empty status for local Git operations outside Tauri", async () => {
     const change: GitChangedFile = {
       isStaged: false,

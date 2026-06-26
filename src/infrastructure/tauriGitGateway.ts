@@ -6,6 +6,7 @@ import {
   type GitFileDiff,
   type GitFileHistoryEntry,
   type GitGateway,
+  type GitStashEntry,
   type GitStatus,
 } from "../domain/git";
 
@@ -171,5 +172,70 @@ export class TauriGitGateway implements GitGateway {
     return this.invokeCommand("push_git_changes", {
       rootPath,
     }) as Promise<GitStatus>;
+  }
+
+  async stashSave(rootPath: string, message: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("save_git_stash", {
+      message,
+      rootPath,
+    });
+  }
+
+  async stashList(rootPath: string): Promise<GitStashEntry[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_stash_list", {
+      rootPath,
+    }) as Promise<GitStashEntry[]>;
+  }
+
+  async stashApply(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_apply_git", {
+      index: String(index),
+      rootPath,
+    });
+  }
+
+  async stashPop(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_pop_git", {
+      index: String(index),
+      rootPath,
+    });
+  }
+
+  async stashShow(rootPath: string, index: number): Promise<string> {
+    if (!this.isRuntimeAvailable()) {
+      return "";
+    }
+
+    return this.invokeCommand("get_git_stash_diff", {
+      index: String(index),
+      rootPath,
+    }) as Promise<string>;
+  }
+
+  async stashDrop(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_drop_git", {
+      index: String(index),
+      rootPath,
+    });
   }
 }

@@ -418,6 +418,191 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().fileHistoryCommits).toEqual([]);
   });
 
+  it("opens the stash panel, lists stashes, and shows a selected stash diff", async () => {
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP on main: a", timestamp: 1700000000 },
+      { branch: null, index: 1, message: "On feature: b", timestamp: 1700100000 },
+    ]);
+    const stashShow = vi.fn(async () => "diff --git a/file b/file\n+two");
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashList = stashList;
+    gitGateway.stashShow = stashShow;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    expect(getWorkbench().gitStashPanelOpen).toBe(true);
+    expect(getWorkbench().gitStashEntries).toHaveLength(2);
+    expect(stashList).toHaveBeenCalledWith("/workspace");
+
+    await act(async () => {
+      await getWorkbench().selectGitStash(1);
+    });
+
+    expect(stashShow).toHaveBeenCalledWith("/workspace", 1);
+    expect(getWorkbench().gitStashSelectedIndex).toBe(1);
+    expect(getWorkbench().gitStashDiff).toContain("+two");
+
+    await act(async () => {
+      getWorkbench().closeGitStashPanel();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().gitStashPanelOpen).toBe(false);
+    expect(getWorkbench().gitStashEntries).toEqual([]);
+    expect(getWorkbench().gitStashDiff).toBeNull();
+  });
+
+  it("saves a stash and refreshes the list", async () => {
+    const stashSave = vi.fn(async () => undefined);
+    let listCalls = 0;
+    const stashList = vi.fn(async () => {
+      listCalls += 1;
+      return listCalls < 2
+        ? []
+        : [{ branch: "main", index: 0, message: "WIP", timestamp: 1700000000 }];
+    });
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashSave = stashSave;
+    gitGateway.stashList = stashList;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().saveGitStash("  work in progress  ");
+    });
+
+    // The message is trimmed before reaching the gateway.
+    expect(stashSave).toHaveBeenCalledWith("/workspace", "work in progress");
+    expect(getWorkbench().gitStashEntries).toHaveLength(1);
+  });
+
+  it("does not drop a stash when the destructive confirmation is declined", async () => {
+    const stashDrop = vi.fn(async () => undefined);
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP", timestamp: 1700000000 },
+    ]);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashDrop = stashDrop;
+    gitGateway.stashList = stashList;
+    const confirm = vi.fn(() => false);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().dropGitStash(0);
+    });
+
+    // Declining the confirmation must leave the (destructive) drop un-run.
+    expect(confirm).toHaveBeenCalled();
+    expect(stashDrop).not.toHaveBeenCalled();
+  });
+
+  it("drops the stash only after the destructive confirmation is accepted", async () => {
+    const stashDrop = vi.fn(async () => undefined);
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP", timestamp: 1700000000 },
+    ]);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashDrop = stashDrop;
+    gitGateway.stashList = stashList;
+    const confirm = vi.fn(() => true);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().dropGitStash(0);
+    });
+
+    expect(confirm).toHaveBeenCalled();
+    expect(stashDrop).toHaveBeenCalledWith("/workspace", 0);
+  });
+
+  it("drops a stale stash list result after the panel is closed", async () => {
+    const stashListDeferred = createDeferred<
+      Array<{
+        branch: string | null;
+        index: number;
+        message: string;
+        timestamp: number;
+      }>
+    >();
+    const stashList = vi.fn(() => stashListDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashList = stashList;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<void> | null = null;
+    act(() => {
+      openPromise = getWorkbench().openGitStashPanel();
+    });
+
+    // Close the panel while the list request is still in flight.
+    await act(async () => {
+      getWorkbench().closeGitStashPanel();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      stashListDeferred.resolve([
+        { branch: "main", index: 0, message: "stale", timestamp: 1700000000 },
+      ]);
+      await openPromise;
+    });
+
+    // The stale result must not repopulate a closed panel.
+    expect(getWorkbench().gitStashPanelOpen).toBe(false);
+    expect(getWorkbench().gitStashEntries).toEqual([]);
+  });
+
   it("drops a stale file history result after switching tabs", async () => {
     const historyDeferred = createDeferred<
       Array<{
@@ -775,6 +960,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -835,6 +1026,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -901,6 +1098,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -963,6 +1166,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -1035,6 +1244,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9449,6 +9664,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9513,6 +9734,12 @@ describe("useWorkbenchController preview tabs", () => {
         rootPath,
       })),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9572,6 +9799,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9645,6 +9878,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9712,6 +9951,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9786,6 +10031,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9864,6 +10115,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9932,6 +10189,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -10008,6 +10271,12 @@ describe("useWorkbenchController preview tabs", () => {
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -51872,6 +52141,7 @@ class PostRepository
     languageServerRuntimeGateway,
     phpToolGateway,
     projectSymbols = [],
+    prompter,
     readDirectory,
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
@@ -51904,6 +52174,7 @@ class PostRepository
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
     projectSymbols?: ProjectSymbolSearchResult[];
+    prompter?: WorkbenchPrompter;
     readDirectory?: (path: string) => Promise<FileEntry[]>;
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
@@ -51946,6 +52217,7 @@ class PostRepository
       languageServerRuntimeGateway,
       phpToolGateway,
       projectSymbols,
+      prompter,
       readDirectory,
       readTextFile,
       runtimeStatus,
@@ -52276,6 +52548,7 @@ function createControllerDependencies({
   languageServerRuntimeGateway,
   phpToolGateway,
   projectSymbols,
+  prompter,
   readDirectory,
   readTextFile,
   runtimeStatus,
@@ -52308,6 +52581,7 @@ function createControllerDependencies({
   languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
   projectSymbols: ProjectSymbolSearchResult[];
+  prompter?: WorkbenchPrompter;
   readDirectory?: (path: string) => Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
@@ -52414,6 +52688,12 @@ function createControllerDependencies({
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
     },
     localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
     indexProgressGateway:
@@ -52511,7 +52791,7 @@ function createControllerDependencies({
     phpTreeGateway: {
       getPhpTree: vi.fn(async () => ({ nodes: [] })),
     },
-    prompter: {
+    prompter: prompter ?? {
       confirm: vi.fn(() => true),
       prompt: vi.fn(() => null),
     },
@@ -52920,6 +53200,12 @@ function fileHistoryGitGateway(
     revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stashSave: vi.fn(async () => undefined),
+    stashList: vi.fn(async () => []),
+    stashApply: vi.fn(async () => undefined),
+    stashPop: vi.fn(async () => undefined),
+    stashShow: vi.fn(async () => ""),
+    stashDrop: vi.fn(async () => undefined),
   };
 }
 

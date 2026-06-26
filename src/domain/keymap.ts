@@ -236,6 +236,18 @@ export const keymapCommands = [
     label: "Local History: Show History",
   },
   {
+    category: "Git",
+    defaultShortcut: "",
+    id: "git.stashChanges",
+    label: "Git: Stash Changes",
+  },
+  {
+    category: "Git",
+    defaultShortcut: "",
+    id: "git.showStashes",
+    label: "Git: Show Stashes",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

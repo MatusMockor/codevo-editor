@@ -33,8 +33,8 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff, GitFileHistoryEntry,
-    GitRepositoryGateway, GitStatus,
+    safe_stash_index, CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff,
+    GitFileHistoryEntry, GitRepositoryGateway, GitStashEntry, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1811,6 +1811,91 @@ async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway
             .push(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_git_stash(root_path: String, message: String) -> Result<(), String> {
+    // `git stash push` shells out and rewrites the working tree; keep it off the
+    // main thread, bound to the requested repository root (no cross-root leak).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stash_save(&root, &message)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_stash_list(root_path: String) -> Result<Vec<GitStashEntry>, String> {
+    // Listing stashes shells out to `git stash list`; keep it off the main
+    // thread, scoped to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stash_list(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_apply_git(root_path: String, index: String) -> Result<(), String> {
+    // Applying a stash rewrites the working tree; keep it off the main thread,
+    // bound to the requested repository root. The index is validated numerically
+    // before it reaches the `stash@{N}` selector (no option/revision injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_apply(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_pop_git(root_path: String, index: String) -> Result<(), String> {
+    // Popping a stash applies then drops it; keep it off the main thread, bound
+    // to the requested repository root. The index is validated numerically.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_pop(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_stash_diff(root_path: String, index: String) -> Result<String, String> {
+    // `git stash show -p` shells out to produce a diff; keep it off the main
+    // thread, bound to the requested repository root. The index is validated
+    // numerically before it reaches the `stash@{N}` selector.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_show(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_drop_git(root_path: String, index: String) -> Result<(), String> {
+    // Dropping a stash is destructive; keep it off the main thread, bound to the
+    // requested repository root. The index is validated numerically before it
+    // reaches the `stash@{N}` selector (no option/revision injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_drop(&root, index)
             .map_err(|error| error.to_string())
     })
     .await
@@ -4365,12 +4450,13 @@ mod tests {
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace, get_git_blame, get_git_file_commit_diff,
-        get_git_file_history, get_git_status,
+        get_git_file_history, get_git_stash_diff, get_git_stash_list, get_git_status,
         javascript_typescript_did_change_configuration_settings,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
-        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, search_files,
-        stage_git_files, write_text_file, workspace_root_for_disposal,
+        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
+        search_files, stage_git_files, stash_apply_git, stash_drop_git, stash_pop_git,
+        write_text_file, workspace_root_for_disposal,
         workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -5750,6 +5836,105 @@ mod tests {
     }
 
     #[test]
+    fn git_stash_save_list_pop_round_trip_off_thread() {
+        let root = temp_workspace("git-stash-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("file.txt"), "two\n").expect("write file");
+
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+            .expect("stash save");
+
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 0);
+
+        let diff = tauri::async_runtime::block_on(get_git_stash_diff(path_string(&root), "0".to_string()))
+            .expect("stash diff");
+        assert!(diff.contains("file.txt"));
+
+        tauri::async_runtime::block_on(stash_pop_git(path_string(&root), "0".to_string()))
+            .expect("stash pop");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).expect("read"),
+            "two\n"
+        );
+        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn git_stash_apply_keeps_entry_and_drop_removes_it_off_thread() {
+        let root = temp_workspace("git-stash-apply-drop-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("file.txt"), "two\n").expect("write file");
+
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+            .expect("stash save");
+        tauri::async_runtime::block_on(stash_apply_git(path_string(&root), "0".to_string()))
+            .expect("stash apply");
+
+        // apply keeps the entry around.
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert_eq!(entries.len(), 1);
+
+        tauri::async_runtime::block_on(stash_drop_git(path_string(&root), "0".to_string()))
+            .expect("stash drop");
+
+        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn git_stash_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-stash-iso-a");
+        let root_b = temp_workspace("git-stash-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("shared.txt"), "base a\n").expect("file a");
+        fs::write(root_b.join("shared.txt"), "base b\n").expect("file b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b"]);
+        fs::write(root_a.join("shared.txt"), "wip a\n").expect("file a");
+
+        // Only root A has a stash; root B's list must stay empty (no leakage).
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root_a), "wip a".to_string()))
+            .expect("stash save a");
+
+        let list_a = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_a)))
+            .expect("list a");
+        let list_b = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_b)))
+            .expect("list b");
+
+        assert_eq!(list_a.len(), 1);
+        assert!(list_b.is_empty(), "no cross-root stash leakage");
+    }
+
+    #[test]
+    fn git_stash_diff_rejects_non_numeric_index_off_thread() {
+        let root = temp_workspace("git-stash-bad-index");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_stash_diff(
+            path_string(&root),
+            "0} --output=/etc/passwd".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
     fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
         assert!(ensure_local_history_relative_path("src/User.php").is_ok());
         assert!(ensure_local_history_relative_path("../secret.txt").is_err());
@@ -6326,6 +6511,12 @@ pub fn run() {
             plan_javascript_typescript_language_server,
             plan_php_language_server,
             push_git_changes,
+            save_git_stash,
+            get_git_stash_list,
+            get_git_stash_diff,
+            stash_apply_git,
+            stash_pop_git,
+            stash_drop_git,
             quit_application,
             read_directory,
             read_text_file,

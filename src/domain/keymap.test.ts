@@ -6,6 +6,7 @@ import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
   eventCanMatchKeymapShortcut,
+  keymapCommands,
   matchesShortcut,
   normalizeKeymapSettings,
   normalizeShortcutInput,
@@ -44,6 +45,31 @@ describe("keymap", () => {
       "navigation.forward": "Cmd+]",
       "workbench.openAppearanceSettings": "",
     });
+  });
+
+  it("registers the git stash commands without shortcut collisions", () => {
+    const stashChanges = keymapCommands.find(
+      (command) => command.id === "git.stashChanges",
+    );
+    const showStashes = keymapCommands.find(
+      (command) => command.id === "git.showStashes",
+    );
+
+    expect(stashChanges).toMatchObject({
+      category: "Git",
+      label: "Git: Stash Changes",
+      defaultShortcut: "",
+    });
+    expect(showStashes).toMatchObject({
+      category: "Git",
+      label: "Git: Show Stashes",
+      defaultShortcut: "",
+    });
+
+    // The stash commands ship without a default shortcut, so they cannot collide
+    // with an existing binding; assert no other command claims the same id.
+    const ids = keymapCommands.map((command) => command.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("defaults Go to Super Method to Cmd+U on mac and Ctrl+U elsewhere (PhpStorm parity)", () => {
