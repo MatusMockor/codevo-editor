@@ -15,6 +15,7 @@ import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
   useWorkbenchController,
+  type PhpCodeActionDescriptor,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
 import type {
@@ -49451,6 +49452,278 @@ $greeting = 'Hello world';
     ).toBe(false);
   });
 
+  it("offers an extract-method code action for a whole-statement selection", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(int $seed): void
+    {
+        $base = $seed * 2;
+        $total = $base + 10;
+        echo $total;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const start =
+      classSource.lastIndexOf("\n", classSource.indexOf("$total = $base")) + 1;
+    const end =
+      classSource.indexOf("\n", classSource.indexOf("echo $total;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    const extract = actions.find((action) => action.title === "Extract method");
+    expect(extract).toBeDefined();
+    expect(extract?.kind).toBe("refactor.extract");
+    expect(extract?.edits).toHaveLength(2);
+
+    const applied = applyPhpDescriptorEdits(classSource, extract!);
+    expect(applied).toContain("$this->extracted($base);");
+    expect(applied).toContain("private function extracted($base): void");
+    expect(applied).toContain("$total = $base + 10;");
+    expectBalancedPhp(applied);
+  });
+
+  it("offers no extract-method action when the selection is empty", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $a = 1;
+        echo $a;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("$a = 1;");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-method action outside a class (free function)", async () => {
+    const classPath = "/workspace/app/helpers.php";
+    const classSource = `<?php
+
+function run(): void
+{
+    $a = 1;
+    echo $a;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "helpers.php"));
+    });
+
+    const start = classSource.indexOf("    $a = 1;");
+    const end = classSource.indexOf("\n", classSource.indexOf("echo $a;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-method action when more than one variable must be returned", async () => {
+    const classPath = "/workspace/app/Services/Calculator.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Calculator
+{
+    public function run(): int
+    {
+        $a = 1;
+        $b = 2;
+        return $a + $b;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Calculator.php"));
+    });
+
+    const start = classSource.lastIndexOf("\n", classSource.indexOf("$a = 1;")) + 1;
+    const end = classSource.indexOf("\n", classSource.indexOf("$b = 2;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "selection cutting an if/else boundary",
+      from: "echo 'positive';",
+      to: "} else {",
+      source: `<?php
+
+class Greeter
+{
+    public function run(int $x): void
+    {
+        if ($x > 0) {
+            echo 'positive';
+        } else {
+            echo 'other';
+        }
+    }
+}
+`,
+    },
+    {
+      name: "selection containing a break inside a loop",
+      from: "$double = $item * 2;",
+      to: "break;",
+      source: `<?php
+
+class Greeter
+{
+    public function run(array $items): void
+    {
+        foreach ($items as $item) {
+            $double = $item * 2;
+            break;
+        }
+    }
+}
+`,
+    },
+    {
+      name: "selection containing a closure with use()",
+      from: "$fn = function",
+      to: "};",
+      source: `<?php
+
+class Greeter
+{
+    public function run(): void
+    {
+        $factor = 2;
+        $fn = function ($x) use ($factor) {
+            return $x * $factor;
+        };
+        echo $fn(3);
+    }
+}
+`,
+    },
+  ])(
+    "extract-method adversarial sweep never corrupts: $name",
+    async ({ source, from, to }) => {
+      const classPath = "/workspace/app/Services/Edge.php";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) =>
+          path === classPath ? source : `<?php\n// ${path}\n`,
+        ),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(classPath, "Edge.php"));
+      });
+
+      const start = source.lastIndexOf("\n", source.indexOf(from)) + 1;
+      const toEnd = source.indexOf(to) + to.length;
+      const end = source.indexOf("\n", toEnd);
+      const actions = await getWorkbench().providePhpCodeActions(source, {
+        end: end < 0 ? source.length : end,
+        start,
+      });
+
+      const extract = actions.find(
+        (action) => action.title === "Extract method",
+      );
+
+      // Either the action is withheld (conservative no-op) or, if offered, the
+      // applied edits keep the file syntactically balanced - never corruption.
+      if (!extract) {
+        return;
+      }
+
+      const applied = applyPhpDescriptorEdits(source, extract);
+      expectBalancedPhp(applied);
+    },
+  );
+
   it("drops stale introduce-constant code actions after switching project tabs", async () => {
     const classPath = "/workspace-a/app/Services/Greeter.php";
     const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
@@ -52686,4 +52959,101 @@ function positionAfter(source: string, needle: string): EditorPosition {
 
 function lineNumberOf(source: string, needle: string): number {
   return positionAfter(source, needle).lineNumber;
+}
+
+/**
+ * Converts a 1-based Monaco (line, column) position into a 0-based character
+ * offset into `source`, mirroring how the editor adapter maps a code-action
+ * edit range back onto the document.
+ */
+function monacoPositionToOffset(
+  source: string,
+  lineNumber: number,
+  column: number,
+): number {
+  const lines = source.split("\n");
+  let offset = 0;
+
+  for (let index = 0; index < lineNumber - 1; index += 1) {
+    offset += (lines[index] ?? "").length + 1;
+  }
+
+  return offset + (column - 1);
+}
+
+/**
+ * Applies a PHP code-action descriptor's edits to `source` so tests can assert
+ * on the resulting document. Edits are non-overlapping and applied highest
+ * offset first, the standard strategy an editor adapter uses.
+ */
+function applyPhpDescriptorEdits(
+  source: string,
+  descriptor: PhpCodeActionDescriptor,
+): string {
+  const edits = descriptor.edits
+    .map((edit) => ({
+      start: monacoPositionToOffset(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      ),
+      end: monacoPositionToOffset(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      text: edit.text,
+    }))
+    .sort((left, right) => right.start - left.start);
+
+  return edits.reduce(
+    (current, edit) =>
+      current.slice(0, edit.start) + edit.text + current.slice(edit.end),
+    source,
+  );
+}
+
+/**
+ * Asserts that brackets/braces/parens in `source` are balanced (ignoring those
+ * inside single/double-quoted strings). A cheap structural corruption tripwire
+ * for the extract-method adversarial sweep.
+ */
+function expectBalancedPhp(source: string): void {
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  const opens = new Set(["(", "[", "{"]);
+  const stack: string[] = [];
+  let quote: string | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+      if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (opens.has(character)) {
+      stack.push(character);
+      continue;
+    }
+
+    const expected = pairs[character];
+
+    if (expected) {
+      expect(stack.pop()).toBe(expected);
+    }
+  }
+
+  expect(stack).toHaveLength(0);
 }
