@@ -1008,6 +1008,13 @@ function EditorSurfaceComponent({
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
+        id: "mockor.gotoLine",
+        label: "Go to Line/Column",
+        keybindings: keybinding("editor.gotoLine"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.gotoLine"),
+      }),
+      editorApi.addAction({
         id: "mockor.toggleGitBlame",
         label: "Annotate with Git Blame",
         keybindings: keybinding("editor.toggleGitBlame"),

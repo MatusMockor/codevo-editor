@@ -67,6 +67,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+L",
+    id: "editor.gotoLine",
+    label: "Go to Line/Column",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+T",
     id: "editor.goToSymbol",
     label: "Go to Symbol in Workspace",

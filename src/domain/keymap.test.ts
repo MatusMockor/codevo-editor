@@ -161,6 +161,12 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults go to line to Cmd+L on mac and Ctrl+L elsewhere", () => {
+    expect(defaultShortcutForCommand("editor.gotoLine", "mac")).toBe("Cmd+L");
+    expect(defaultShortcutForCommand("editor.gotoLine", "linux")).toBe("Ctrl+L");
+    expect(defaultKeymapSettings("mac")["editor.gotoLine"]).toBe("Cmd+L");
+  });
+
   it("leaves Go to Test unbound to avoid the Cmd+Shift+T TODO panel collision", () => {
     expect(defaultShortcutForCommand("php.goToTest", "mac")).toBe("");
     expect(defaultShortcutForCommand("php.goToTest", "linux")).toBe("");
