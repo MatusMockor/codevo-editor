@@ -39,6 +39,7 @@ import {
 } from "../domain/languageServerDocumentSync";
 import type {
   EditorPosition,
+  LanguageServerCodeAction,
   LanguageServerFeaturesGateway,
   LanguageServerRange,
   LanguageServerTextEdit,
@@ -7518,6 +7519,361 @@ describe("useWorkbenchController preview tabs", () => {
       expect(
         dependencies.workspaceGateways.files.writeTextFile,
       ).toHaveBeenCalledWith(path, phpWithOptimizedImport);
+    });
+
+    describe("JavaScript/TypeScript via LSP organizeImports", () => {
+      const runningJavaScriptTypeScriptOrganizeStatus =
+        (): LanguageServerRuntimeStatus => ({
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            codeAction: true,
+          },
+          kind: "running",
+          rootPath: "/workspace",
+          sessionId: 940,
+        });
+
+      const tsWithUnsortedImports = [
+        "import { b } from './b';",
+        "import { a } from './a';",
+        "",
+        "a();",
+        "b();",
+        "",
+      ].join("\n");
+
+      const tsWithOrganizedImports = [
+        "import { a } from './a';",
+        "import { b } from './b';",
+        "",
+        "a();",
+        "b();",
+        "",
+      ].join("\n");
+
+      const organizeImportsAction = (
+        path: string,
+        original: string,
+        organized: string,
+      ): LanguageServerCodeAction => {
+        const lines = original.split("\n");
+
+        return {
+          command: null,
+          data: null,
+          edit: {
+            changes: {
+              [fileUriFromPath(path)]: [
+                {
+                  newText: organized,
+                  range: {
+                    end: {
+                      character: lines[lines.length - 1]?.length ?? 0,
+                      line: lines.length - 1,
+                    },
+                    start: { character: 0, line: 0 },
+                  },
+                },
+              ],
+            },
+          },
+          isPreferred: false,
+          kind: "source.organizeImports",
+          title: "Organize Imports",
+        };
+      };
+
+      it("organizes JS/TS imports through the LSP before writing when optimizeImportsOnSave is enabled", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          organizeImportsAction(
+            path,
+            tsWithUnsortedImports,
+            tsWithOrganizedImports,
+          ),
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.organizeImports"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithOrganizedImports);
+        expect(getWorkbench().activeDocument?.content).toBe(
+          tsWithOrganizedImports,
+        );
+      });
+
+      it("does not organize JS/TS imports on save when optimizeImportsOnSave is disabled", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: false,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("still saves the JS/TS document when the organizeImports request throws", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockRejectedValue(
+          new Error("code action crashed"),
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("saves without organizing when the JS/TS server lacks code action support", async () => {
+        const path = "/workspace/src/App.ts";
+        const noCodeActionStatus: LanguageServerRuntimeStatus = {
+          capabilities: emptyLanguageServerCapabilities(),
+          kind: "running",
+          rootPath: "/workspace",
+          sessionId: 941,
+        };
+        const featuresGatewayInstance = featuresGateway();
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus: noCodeActionStatus,
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus: noCodeActionStatus,
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("does not apply or write organize-imports edits after switching project tabs while the request is pending", async () => {
+        const path = "/workspace-a/src/App.ts";
+        const runningStatus: LanguageServerRuntimeStatus = {
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            codeAction: true,
+          },
+          kind: "running",
+          sessionId: 942,
+        };
+        const codeActionResult = createDeferred<LanguageServerCodeAction[]>();
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async () => codeActionResult.promise,
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace-a",
+            workspaceTabs: ["/workspace-a", "/workspace-b"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus: runningStatus,
+          readTextFile: vi.fn(async (requestedPath: string) =>
+            requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+          ),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        let savePromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          savePromise = getWorkbench().saveActiveDocument();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => {
+          // The organize request must target the root the save started in, not
+          // whatever becomes active later.
+          expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+            "/workspace-a",
+            path,
+            expect.anything(),
+            expect.objectContaining({ only: ["source.organizeImports"] }),
+          );
+        });
+
+        let switchPromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+        });
+        await vi.waitFor(() => {
+          expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        });
+
+        act(() => {
+          codeActionResult.resolve([
+            organizeImportsAction(
+              path,
+              tsWithUnsortedImports,
+              tsWithOrganizedImports,
+            ),
+          ]);
+        });
+        await act(async () => {
+          await Promise.all([savePromise, switchPromise]);
+        });
+        await flushAsyncTurns(24);
+
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).not.toHaveBeenCalledWith(path, tsWithOrganizedImports);
+      });
     });
   });
 

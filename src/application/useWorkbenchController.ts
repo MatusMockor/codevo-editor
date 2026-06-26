@@ -124,6 +124,12 @@ import {
   planFormatOnSave,
   type FormatOnSavePlan,
 } from "../domain/formatOnSave";
+import {
+  fullDocumentRange,
+  organizeImportsCodeActionContext,
+  organizeImportsTextEditsForPath,
+  planOrganizeImportsOnSave,
+} from "../domain/organizeImportsOnSave";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
   FilePrefetchCache,
@@ -7615,6 +7621,82 @@ export function useWorkbenchController(
     [workspaceDescriptor?.php],
   );
 
+  // Organize-imports-on-save for JavaScript/TypeScript: unlike the synchronous
+  // PHP path, this asks the JS/TS language server for its `source.organizeImports`
+  // code action and applies the resulting edits to the (already formatted)
+  // content before it is written. It is async (one LSP round-trip), so the
+  // session is re-checked after the await and the caller re-checks the workspace
+  // root before writing. Any failure (server down, request throws, no usable
+  // edit) is a no-op that returns the input content, so it can never block a save.
+  const organizedImportsContentForSave = useCallback(
+    async (
+      document: EditorDocument,
+      content: string,
+      requestedRoot: string,
+    ): Promise<string> => {
+      if (!workspaceSettingsRef.current.optimizeImportsOnSave) {
+        return content;
+      }
+
+      const plan = planOrganizeImportsOnSave({
+        document,
+        javaScriptTypeScript: {
+          status: javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
+          statusRoot:
+            javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        },
+        workspaceRoot: requestedRoot,
+      });
+
+      if (!plan) {
+        return content;
+      }
+
+      const isRequestedSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          plan.sessionId,
+        );
+
+      try {
+        // Flush any debounced change so the server organizes the current content
+        // rather than the stale snapshot it last received.
+        await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
+
+        if (!isRequestedSessionActive()) {
+          return content;
+        }
+
+        const actions =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
+            requestedRoot,
+            document.path,
+            fullDocumentRange(content),
+            organizeImportsCodeActionContext(),
+          );
+
+        if (!isRequestedSessionActive()) {
+          return content;
+        }
+
+        const edits = organizeImportsTextEditsForPath(actions, document.path);
+
+        if (!edits || edits.length === 0) {
+          return content;
+        }
+
+        return applyLanguageServerTextEdits(content, edits);
+      } catch {
+        return content;
+      }
+    },
+    [
+      flushPendingJavaScriptTypeScriptDocumentChange,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+    ],
+  );
+
   // Records a Local History snapshot for a saved document, scoped to the
   // workspace root captured by the caller. Best-effort: a snapshot failure must
   // never surface as a save error, so it is swallowed (logged) rather than
@@ -7668,11 +7750,27 @@ export function useWorkbenchController(
 
       // Optimize imports AFTER formatting and AFTER the root re-check, on the
       // formatted content, so the two save-time fixers compose (format then
-      // organize imports) and never act on a stale or cross-tab document.
-      const contentToSave = optimizedImportsContentForSave(
+      // organize imports) and never act on a stale or cross-tab document. PHP
+      // uses a synchronous reorganizer; this is a no-op for any other language.
+      const phpOptimizedContent = optimizedImportsContentForSave(
         documentToFormat,
         formattedContent,
       );
+
+      // JavaScript/TypeScript organize-imports goes through the language server
+      // (`source.organizeImports`). It is async, so it is given the upfront
+      // requested root (which it uses for every LSP call and re-checks after its
+      // await), and the workspace root is re-checked again here before writing.
+      // It is a no-op for non-JS/TS documents.
+      const contentToSave = await organizedImportsContentForSave(
+        documentToFormat,
+        phpOptimizedContent,
+        requestedRoot,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
 
       const documentToSave: EditorDocument = {
         ...documentToFormat,
@@ -7727,6 +7825,7 @@ export function useWorkbenchController(
     captureLocalHistorySnapshot,
     formattedContentForSave,
     optimizedImportsContentForSave,
+    organizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
