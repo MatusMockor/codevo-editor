@@ -14,6 +14,10 @@ import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import {
+  gitDiffModifiedModelPath,
+  gitDiffOriginalModelPath,
+} from "./gitDiffModelPaths";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -264,8 +268,14 @@ export function GitDiffPreview({
           height="100%"
           language={diff.language}
           loading={<GitDiffLoadingPlaceholder />}
-          modified={diff.modifiedContent}
-          original={diff.originalContent}
+          modified={diff.modifiedContent ?? ""}
+          // Distinct, stable per-change Uris keep each file's original/modified
+          // diff models isolated. Without explicit paths both sides resolve to
+          // Uri.parse("") and reuse a stale model from the previously viewed
+          // diff when switching files.
+          modifiedModelPath={gitDiffModifiedModelPath(diff)}
+          original={diff.originalContent ?? ""}
+          originalModelPath={gitDiffOriginalModelPath(diff)}
           options={{
             automaticLayout: true,
             fontFamily: editorFontFamily,

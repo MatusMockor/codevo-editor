@@ -524,6 +524,107 @@ describe("GitDiffPreview", () => {
 
     expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
   });
+
+  it("passes distinct original and modified model paths so the diff sides never share a Uri", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const props = gitDiffPreviewMocks.props as
+      | (Record<string, unknown> & {
+          originalModelPath?: string;
+          modifiedModelPath?: string;
+        })
+      | null;
+    expect(props?.originalModelPath).toBeTruthy();
+    expect(props?.modifiedModelPath).toBeTruthy();
+    expect(props?.originalModelPath).not.toEqual(props?.modifiedModelPath);
+  });
+
+  it("renders a README-style markdown diff without crashing", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={{
+            change: {
+              isStaged: false,
+              isUnversioned: false,
+              oldPath: null,
+              oldRelativePath: null,
+              path: "/workspace/README.md",
+              relativePath: "README.md",
+              status: "modified",
+            },
+            language: "markdown",
+            modifiedContent: "# Project\n\nUpdated docs\n",
+            originalContent: "# Project\n",
+          }}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
+    const props = gitDiffPreviewMocks.props as
+      | (Record<string, unknown> & { language?: string })
+      | null;
+    expect(props?.language).toBe("markdown");
+  });
+
+  it("coerces null diff content to empty strings so the editor never receives null", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={{
+            change: {
+              isStaged: false,
+              isUnversioned: false,
+              oldPath: null,
+              oldRelativePath: null,
+              path: "/workspace/README.md",
+              relativePath: "README.md",
+              status: "added",
+            },
+            language: "markdown",
+            // Backend types these as string, but guard against a malformed
+            // payload reaching Monaco as null and crashing the renderer.
+            modifiedContent: null as unknown as string,
+            originalContent: null as unknown as string,
+          }}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const props = gitDiffPreviewMocks.props as
+      | (Record<string, unknown> & {
+          original?: unknown;
+          modified?: unknown;
+        })
+      | null;
+    expect(props?.original).toBe("");
+    expect(props?.modified).toBe("");
+  });
 });
 
 function hunkCheckboxes(): HTMLInputElement[] {

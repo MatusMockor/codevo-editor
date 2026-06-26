@@ -29,6 +29,7 @@ import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitChangesPanel } from "./components/GitChangesPanel";
 import { GitDiffPreview } from "./components/GitDiffPreview";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { NoticeToastHost } from "./components/NoticeToastHost";
@@ -912,20 +913,29 @@ function App() {
           previewPath={workbench.previewPath}
         />
         {workbench.selectedGitChange || workbench.gitDiffLoading ? (
-          <GitDiffPreview
-            diff={workbench.gitDiffPreview}
-            isLoading={workbench.gitDiffLoading}
-            monacoTheme={monacoTheme}
-            editorFontFamily={workbench.appSettings.editorFontFamily}
-            editorFontLigatures={workbench.appSettings.editorFontLigatures}
-            editorFontSize={workbench.appSettings.editorFontSize}
-            gitOperationLoading={workbench.gitOperationLoading}
-            onClose={workbench.closeGitDiffPreview}
-            onRevertFile={(change) => workbench.revertGitChanges([change])}
-            loadFileHunks={workbench.loadGitFileHunks}
-            onStageHunk={workbench.stageGitHunk}
-            onUnstageHunk={workbench.unstageGitHunk}
-          />
+          <ErrorBoundary
+            title="Could not render this diff"
+            onReset={workbench.closeGitDiffPreview}
+            resetKeys={[
+              workbench.selectedGitChange?.relativePath ?? null,
+              workbench.selectedGitChange?.isStaged ?? false,
+            ]}
+          >
+            <GitDiffPreview
+              diff={workbench.gitDiffPreview}
+              isLoading={workbench.gitDiffLoading}
+              monacoTheme={monacoTheme}
+              editorFontFamily={workbench.appSettings.editorFontFamily}
+              editorFontLigatures={workbench.appSettings.editorFontLigatures}
+              editorFontSize={workbench.appSettings.editorFontSize}
+              gitOperationLoading={workbench.gitOperationLoading}
+              onClose={workbench.closeGitDiffPreview}
+              onRevertFile={(change) => workbench.revertGitChanges([change])}
+              loadFileHunks={workbench.loadGitFileHunks}
+              onStageHunk={workbench.stageGitHunk}
+              onUnstageHunk={workbench.unstageGitHunk}
+            />
+          </ErrorBoundary>
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}

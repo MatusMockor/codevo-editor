@@ -7,6 +7,7 @@ import {
   buildShikiTheme,
   configureShikiLanguageFeatures,
   createAppHighlighter,
+  createEncodedShikiProvider as createEncodedShikiProviderForTest,
   setupShikiTokenization,
 } from "./shikiHighlighter";
 import { calmDark } from "../components/themePalettes";
@@ -421,6 +422,59 @@ describe("setupShikiTokenization", () => {
     );
     expect(result.tokens).toBeInstanceOf(Uint32Array);
     expect(result.tokens.length).toBeGreaterThan(0);
+  });
+
+  it("produces encoded tokens for Markdown (README diff) without throwing", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const markdown = providers.get("markdown");
+    expect(markdown).toBeDefined();
+    const lines = [
+      "# Project",
+      "",
+      "Some **bold** text and `inline code`.",
+      "```js",
+      "const a = 1;",
+      "```",
+      "```unknown-lang-not-loaded",
+      "x",
+      "```",
+    ];
+    let state = markdown!.getInitialState();
+    expect(() => {
+      for (const line of lines) {
+        const result = markdown!.tokenizeEncoded(line, state);
+        expect(result.tokens).toBeInstanceOf(Uint32Array);
+        state = result.endState;
+      }
+    }).not.toThrow();
+  });
+
+  it("falls back to a plain token instead of throwing when the grammar is unavailable", () => {
+    // Monaco can call the registered tokenizer for a language whose Shiki
+    // grammar resolves to undefined (load race / version skew). The encoded
+    // provider must degrade to a plain token instead of throwing, otherwise the
+    // exception unmounts the whole renderer (blank screen).
+    const highlighterStub = {
+      getLanguage: () => undefined,
+    } as unknown as Parameters<typeof createEncodedShikiProviderForTest>[0];
+    const provider = createEncodedShikiProviderForTest(
+      highlighterStub,
+      "markdown",
+    );
+
+    expect(() => {
+      const result = provider.tokenizeEncoded(
+        "# Heading",
+        provider.getInitialState(),
+      );
+      expect(result.tokens).toBeInstanceOf(Uint32Array);
+    }).not.toThrow();
   });
 
   it("carries grammar state across lines so multiline constructs stay highlighted", async () => {

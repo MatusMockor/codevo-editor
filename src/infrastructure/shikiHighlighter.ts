@@ -619,7 +619,7 @@ const SHIKI_TOKENIZE_MAX_LINE_LENGTH = 2000;
  * Colors stay identical because the encoded foreground ids index the Shiki
  * color map installed via `monaco.editor.setColorMap`.
  */
-function createEncodedShikiProvider(
+export function createEncodedShikiProvider(
   highlighter: HighlighterCore,
   languageId: string,
 ): MonacoEncodedTokensProvider {
@@ -636,13 +636,40 @@ function createEncodedShikiProvider(
         // so the lines after a skipped long line still tokenize correctly.
         return { tokens: new Uint32Array([0, 0]), endState: state };
       }
-      const result = highlighter
-        .getLanguage(languageId)
-        .tokenizeLine2(line, state.ruleStack, SHIKI_TOKENIZE_TIME_LIMIT);
-      return {
-        tokens: result.tokens,
-        endState: new ShikiTokenizerState(result.ruleStack),
-      };
+      // Monaco calls this synchronously while painting the viewport. If the
+      // Shiki grammar for this language is somehow unavailable (load race,
+      // version skew, an embedded grammar that failed to resolve), `getLanguage`
+      // returns undefined and `tokenizeLine2` would throw. An exception here
+      // propagates out of Monaco's render and unmounts the whole React tree
+      // (blank screen), so degrade to a single plain token instead of throwing.
+      const grammar = highlighter.getLanguage(languageId) as
+        | {
+            tokenizeLine2(
+              line: string,
+              ruleStack: StateStack,
+              timeLimit: number,
+            ): { tokens: Uint32Array; ruleStack: StateStack };
+          }
+        | undefined;
+      if (!grammar) {
+        return { tokens: new Uint32Array([0, 0]), endState: state };
+      }
+      try {
+        const result = grammar.tokenizeLine2(
+          line,
+          state.ruleStack,
+          SHIKI_TOKENIZE_TIME_LIMIT,
+        );
+        return {
+          tokens: result.tokens,
+          endState: new ShikiTokenizerState(result.ruleStack),
+        };
+      } catch (error) {
+        // A grammar that throws mid-tokenization must not take the renderer down
+        // with it; fall back to an uncolored line and keep the prior state.
+        console.error("Shiki tokenize failed", languageId, error);
+        return { tokens: new Uint32Array([0, 0]), endState: state };
+      }
     },
   };
 }
