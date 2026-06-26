@@ -102,28 +102,7 @@ impl WorkspaceIgnoreMatcher for GitignoreWorkspaceIgnoreMatcher {
 
 impl GitignoreWorkspaceIgnoreMatcher {
     fn is_gitignored(&self, path: &Path, is_directory: bool) -> bool {
-        let mut is_ignored = false;
-
-        for scope in &self.scopes {
-            if !path.starts_with(&scope.root) {
-                continue;
-            }
-
-            match scope
-                .gitignore
-                .matched_path_or_any_parents(path, is_directory)
-            {
-                Match::Ignore(_) => {
-                    is_ignored = true;
-                }
-                Match::Whitelist(_) => {
-                    is_ignored = false;
-                }
-                Match::None => {}
-            }
-        }
-
-        is_ignored
+        matches_gitignore_scopes(&self.scopes, path, is_directory)
     }
 }
 
@@ -169,10 +148,56 @@ fn add_gitignore_scopes(
             continue;
         }
 
-        add_gitignore_scopes(&entry.path(), options, scopes)?;
+        let child = entry.path();
+
+        // Prune ignored subtrees from the scope-discovery walk. A directory that
+        // a parent .gitignore already ignores is excluded from the workspace
+        // wholesale, so (1) recursing into it just to collect deeper .gitignore
+        // files is wasted work - on large repos the eager walk descended into
+        // every storage/cache/build directory and cost ~150ms on a single
+        // search_files call - and (2) any .gitignore inside an ignored directory
+        // has no authority: git never lets a nested negation resurrect a file
+        // whose ancestor directory is excluded. Skipping these subtrees keeps
+        // matcher construction instant AND matches git's semantics. We test
+        // against the scopes gathered so far, which are exactly the ancestor
+        // scopes for this child (parents are always visited before children).
+        if matches_gitignore_scopes(scopes, &child, true) {
+            continue;
+        }
+
+        add_gitignore_scopes(&child, options, scopes)?;
     }
 
     Ok(())
+}
+
+fn matches_gitignore_scopes(
+    scopes: &[GitignoreScope],
+    path: &Path,
+    is_directory: bool,
+) -> bool {
+    let mut is_ignored = false;
+
+    for scope in scopes {
+        if !path.starts_with(&scope.root) {
+            continue;
+        }
+
+        match scope
+            .gitignore
+            .matched_path_or_any_parents(path, is_directory)
+        {
+            Match::Ignore(_) => {
+                is_ignored = true;
+            }
+            Match::Whitelist(_) => {
+                is_ignored = false;
+            }
+            Match::None => {}
+        }
+    }
+
+    is_ignored
 }
 
 fn absolute_candidate(root: &Path, path: &Path) -> PathBuf {
@@ -270,6 +295,50 @@ mod tests {
         assert!(matcher.is_ignored(&root.join("vendor"), true));
         assert!(matcher.is_ignored(&root.join("vendor/package/Class.php"), false));
         assert!(!matcher.is_ignored(&root.join("src/Class.php"), false));
+    }
+
+    #[test]
+    fn nested_gitignore_inside_an_ignored_directory_does_not_resurrect_children() {
+        // Performance + correctness guard for the pruned scope discovery: the
+        // scope walk must not descend into directories that a parent .gitignore
+        // already ignores. A nested .gitignore (even one that negates a child)
+        // living inside an ignored directory has no authority - the whole
+        // subtree is ignored - so its rules must never flip a child back to
+        // visible. This pins both the behaviour and the pruning that keeps
+        // matcher load instant on large repos.
+        let root = temp_workspace("ignored-subtree-nested-gitignore");
+        fs::write(root.join(".gitignore"), "ignored/\n").expect("root gitignore");
+        fs::create_dir_all(root.join("ignored/deep")).expect("ignored subtree");
+        fs::write(
+            root.join("ignored/.gitignore"),
+            "!deep/Keep.php\n",
+        )
+        .expect("nested negation gitignore");
+        fs::write(root.join("ignored/deep/Keep.php"), "<?php").expect("nested file");
+
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root).expect("matcher");
+
+        // The directory and everything under it stays ignored regardless of the
+        // nested negation, and the nested .gitignore is never consulted.
+        assert!(matcher.is_ignored(&root.join("ignored"), true));
+        assert!(matcher.is_ignored(&root.join("ignored/deep/Keep.php"), false));
+    }
+
+    #[test]
+    fn nested_gitignore_in_a_visible_directory_still_applies() {
+        // Counterpart to the pruning guard: a nested .gitignore in a directory
+        // that is NOT ignored must still be discovered and applied. Pruning may
+        // only skip ignored subtrees.
+        let root = temp_workspace("visible-nested-gitignore");
+        fs::create_dir_all(root.join("src/sub")).expect("src subtree");
+        fs::write(root.join("src/.gitignore"), "sub/Generated.php\n").expect("nested gitignore");
+        fs::write(root.join("src/sub/Generated.php"), "<?php").expect("generated file");
+        fs::write(root.join("src/sub/Kept.php"), "<?php").expect("kept file");
+
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root).expect("matcher");
+
+        assert!(matcher.is_ignored(&root.join("src/sub/Generated.php"), false));
+        assert!(!matcher.is_ignored(&root.join("src/sub/Kept.php"), false));
     }
 
     #[test]
