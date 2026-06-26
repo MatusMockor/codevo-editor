@@ -108,6 +108,7 @@ import {
   registerLanguageServerMonacoProviders,
   type BladeCompletion,
   type PhpCodeActionDescriptor,
+  type PhpCodeActionNewFile,
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
@@ -136,6 +137,7 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
   ): Promise<void>;
+  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<void>;
   applyPhpLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
@@ -227,6 +229,7 @@ function EditorSurfaceComponent({
   editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
+  applyPhpCodeActionNewFile = async () => undefined,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,
@@ -394,6 +397,7 @@ function EditorSurfaceComponent({
     WeakSet<Monaco.editor.ITextModel>
   >(new WeakSet());
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
   const bladeCompletionsRef = useRef(provideBladeCompletions);
   const bladeDefinitionRef = useRef(provideBladeDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
@@ -521,6 +525,10 @@ function EditorSurfaceComponent({
   }, [providePhpCodeActions]);
 
   useEffect(() => {
+    applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
+  }, [applyPhpCodeActionNewFile]);
+
+  useEffect(() => {
     bladeCompletionsRef.current = provideBladeCompletions;
   }, [provideBladeCompletions]);
 
@@ -640,6 +648,8 @@ function EditorSurfaceComponent({
     }
 
     const disposable = registerLanguageServerMonacoProviders(monacoApi, {
+      applyPhpCodeActionNewFile: (newFile) =>
+        applyPhpCodeActionNewFileRef.current(newFile),
       applyWorkspaceEdit: (edit, editContext) =>
         applyPhpWorkspaceEditRef.current(edit, editContext),
       featuresGateway: languageServerFeaturesGateway,

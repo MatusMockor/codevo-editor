@@ -172,8 +172,21 @@ interface ExecuteCommandPayload {
   sessionId: number;
 }
 
+interface ApplyPhpCodeActionNewFilePayload {
+  newFile: PhpCodeActionNewFile;
+}
+
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
+/**
+ * Monaco command fired by a synthesized PHP code action that creates a new file
+ * (currently "Extract interface"). Monaco runs a code action's `command` AFTER
+ * applying its in-document `edit`, so by the time this runs the `implements`
+ * clause is already in the open class model; the command then persists the new
+ * interface file to disk and opens it in a tab through the controller callback.
+ */
+const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID =
+  "mockor.php.applyCodeActionNewFile";
 /**
  * Upper bound (ms) for an interactive hover / navigation request before the
  * provider gives up and resolves to "no result". A cold phpactor (mid-index or
@@ -257,6 +270,18 @@ export interface BladeCompletion {
 }
 
 export interface LanguageServerMonacoProviderContext {
+  /**
+   * Persists a PHP code action's new file (e.g. "Extract interface" writes a
+   * sibling `<Class>Interface.php`) to DISK and opens it in a tab. When wired,
+   * the code-action mapper routes the new file through this controller callback
+   * (a monaco command fired AFTER the in-document edit is applied) instead of
+   * monaco's in-memory file-create bulk edit, so the interface is a real `.php`
+   * file that survives reopening the workspace. The controller owns the gateway
+   * write, the file-tree refresh, the tab open AND the per-project isolation
+   * (requested-root capture + re-check after each await). Omitted callers fall
+   * back to the legacy in-memory monaco file-create edit.
+   */
+  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<void>;
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
@@ -526,6 +551,27 @@ export function registerLanguageServerMonacoProviders(
       }
     },
   });
+  const applyNewFileCommand = monaco.editor.addCommand({
+    id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
+    run: async (
+      _accessor,
+      payload: ApplyPhpCodeActionNewFilePayload | undefined,
+    ) => {
+      if (!payload?.newFile || !context.applyPhpCodeActionNewFile) {
+        return;
+      }
+
+      try {
+        // The controller callback owns the gateway disk write, the file-tree
+        // refresh, the tab open AND the per-project isolation (requested-root
+        // capture + re-check after each await), so a tab switch mid-write drops
+        // the stale result. We only forward errors it surfaces.
+        await context.applyPhpCodeActionNewFile(payload.newFile);
+      } catch (error) {
+        context.reportError(error);
+      }
+    },
+  });
   const hover = monaco.languages.registerHoverProvider("php", {
     provideHover: (model, position, token) =>
       provideHover(monaco, context, model, position, token),
@@ -746,6 +792,7 @@ export function registerLanguageServerMonacoProviders(
       inlayHintRefreshEmitter.dispose();
       semanticTokensRefreshEmitter.dispose();
       command.dispose();
+      applyNewFileCommand.dispose();
       hover.dispose();
       completion.dispose();
       signature.dispose();
@@ -2254,7 +2301,7 @@ async function providePhpSourceCodeActions(
     }
 
     return descriptors.map((descriptor) =>
-      toPhpCodeAction(monaco, model, descriptor),
+      toPhpCodeAction(monaco, context, model, descriptor),
     );
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
@@ -2304,6 +2351,7 @@ function phpCodeActionOffsetRange(
 
 function toPhpCodeAction(
   monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
@@ -2324,12 +2372,43 @@ function toPhpCodeAction(
     versionId,
   }));
 
+  // When the host wires the disk-persisting callback, a new-file action (e.g.
+  // "Extract interface") keeps ONLY its in-document edits in the monaco bulk
+  // edit and persists the new file to disk via a command fired AFTER that edit
+  // applies. This makes the interface a real `.php` file (survives reopening)
+  // instead of monaco's in-memory-only file-create model. Hosts that omit the
+  // callback fall back to the legacy in-memory file-create bulk edit.
+  if (descriptor.newFile && context.applyPhpCodeActionNewFile) {
+    return {
+      command: applyPhpCodeActionNewFileCommand(descriptor.newFile),
+      edit: { edits: documentEdits },
+      kind: descriptor.kind ?? "quickfix",
+      title: descriptor.title,
+    };
+  }
+
   return {
     edit: {
       edits: [...newFileEdits(monaco, descriptor.newFile), ...documentEdits],
     },
     kind: descriptor.kind ?? "quickfix",
     title: descriptor.title,
+  };
+}
+
+/**
+ * Builds the monaco command that persists a PHP code action's new file to disk.
+ * Monaco runs a code action's `command` AFTER applying its `edit`, so the
+ * in-document edit (e.g. the `implements` clause) is already in the open model
+ * when the controller callback writes the sibling file and opens its tab.
+ */
+function applyPhpCodeActionNewFileCommand(
+  newFile: PhpCodeActionNewFile,
+): Monaco.languages.Command {
+  return {
+    arguments: [{ newFile } satisfies ApplyPhpCodeActionNewFilePayload],
+    id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
+    title: "Create file",
   };
 }
 

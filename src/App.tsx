@@ -943,6 +943,7 @@ function App() {
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
             }
+            applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
             applyPhpLanguageServerWorkspaceEdit={
               workbench.applyPhpLanguageServerWorkspaceEdit
             }

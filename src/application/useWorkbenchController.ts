@@ -8520,6 +8520,99 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  // Persists a synthesized PHP code action's NEW file (currently "Extract
+  // interface", which writes a sibling `<Class>Interface.php`) to DISK and opens
+  // it in a tab. Monaco runs a code action's `command` AFTER applying its
+  // in-document `edit`, so the `implements` clause is already in the open class
+  // model when this runs; here we make the interface a real file rather than
+  // monaco's in-memory-only file-create model, so it survives reopening the
+  // workspace. Conservative: an already-present sibling is opened, never
+  // overwritten (matches the planner's `ignoreIfExists`). Per the per-workspace
+  // isolation rule the requested root is captured up front and re-checked after
+  // every await so a tab switch mid-write drops the (now stale) creation.
+  const applyPhpCodeActionNewFile = useCallback(
+    async (newFile: PhpCodeActionNewFile): Promise<void> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      const targetPath = newFile.path;
+
+      try {
+        const existing = await readTestFileIfExists(targetPath);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        if (existing !== null) {
+          await openFile({
+            kind: "file",
+            name: getFileName(targetPath),
+            path: targetPath,
+          });
+          return;
+        }
+
+        const parentPath = getParentPath(targetPath);
+        await workspaceFiles.createDirectory(parentPath);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        await workspaceFiles.writeTextFile(targetPath, newFile.content);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        await notifyJavaScriptTypeScriptWatchedFilesChanged([
+          {
+            changeType: "created",
+            path: targetPath,
+          },
+        ]);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        setExpandedDirectories((current) => new Set(current).add(parentPath));
+        await refreshDirectory(parentPath);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        await openFile({
+          kind: "file",
+          name: getFileName(targetPath),
+          path: targetPath,
+        });
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Extract Interface",
+          error,
+        );
+      }
+    },
+    [
+      notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile,
+      readTestFileIfExists,
+      refreshDirectory,
+      reportErrorForActiveWorkspaceRoot,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
+
   // PhpStorm-style "Go to Test / Test Subject": from the active PHP file, decide
   // (via PSR-4) whether it is a TEST or a production SUBJECT and jump to its
   // partner. From a source class, both Unit and Feature suites are probed and the
@@ -27197,6 +27290,7 @@ export function useWorkbenchController(
     cancelFilePrefetch,
     previewFile,
     previewPath,
+    applyPhpCodeActionNewFile,
     provideBladeCompletions,
     provideBladeDefinition,
     providePhpCodeActions,

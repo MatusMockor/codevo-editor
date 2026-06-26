@@ -48280,6 +48280,216 @@ class Greeter
     );
   });
 
+  it("persists an extract-interface new file to disk and opens it in a tab", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const diskContents = new Map<string, string>();
+    const writeTextFile = vi.fn(async (path: string, content: string) => {
+      diskContents.set(path, content);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        const written = diskContents.get(path);
+
+        if (written !== undefined) {
+          return written;
+        }
+
+        // The interface does not exist yet, so the existence probe must reject
+        // (mirrors the gateway rejecting a missing path) and the write path runs.
+        if (path === interfacePath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFiles: { writeTextFile },
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+    expect(extractInterface?.newFile).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().applyPhpCodeActionNewFile(extractInterface!.newFile!);
+    });
+    await flushAsyncTurns();
+
+    // The interface is a REAL file on disk (written via the gateway), not an
+    // in-memory monaco model that would vanish on reopen.
+    expect(writeTextFile).toHaveBeenCalledWith(
+      interfacePath,
+      expect.stringContaining("interface GreeterInterface"),
+    );
+    // And it is opened in a tab (PhpStorm parity).
+    expect(getWorkbench().activePath).toBe(interfacePath);
+  });
+
+  it("opens an existing sibling interface without overwriting it on extract interface", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The sibling interface already exists: the existence probe resolves, so
+        // the action must open it and never overwrite the user's file.
+        if (path === interfacePath) {
+          return "<?php\n\ninterface GreeterInterface\n{\n    // hand-edited\n}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+
+    await act(async () => {
+      await getWorkbench().applyPhpCodeActionNewFile(extractInterface!.newFile!);
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
+    expect(getWorkbench().activePath).toBe(interfacePath);
+  });
+
+  it("drops a stale extract-interface disk write after switching workspace tabs", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const existenceProbe = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // Block the existence probe so we can switch workspaces mid-flight.
+        if (path === interfacePath) {
+          return existenceProbe.promise;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+
+    let applyPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      applyPromise = getWorkbench().applyPhpCodeActionNewFile(
+        extractInterface!.newFile!,
+      );
+    });
+
+    // Switch to another workspace before the existence probe resolves.
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    await act(async () => {
+      existenceProbe.reject(new Error("ENOENT"));
+      await applyPromise;
+    });
+    await flushAsyncTurns();
+
+    // The stale creation must not write into the now-inactive workspace.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
+  });
+
   it("offers no extract-interface code action for an abstract class", async () => {
     const classPath = "/workspace/app/Services/Base.php";
     const classSource = `<?php

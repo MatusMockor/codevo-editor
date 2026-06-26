@@ -5687,6 +5687,83 @@ function store($request): void
     );
   });
 
+  it("routes a PHP code action's newFile through the disk-persisting callback (command) instead of an in-memory file-create edit when wired", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const newFile = {
+      content:
+        "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+      path: "/project/src/GreeterInterface.php",
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile,
+        title: "Extract interface",
+      },
+    ]);
+    const applyPhpCodeActionNewFile = vi.fn(async () => undefined);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Greeter\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    const edits = extractInterface?.edit?.edits ?? [];
+    // The new file is NOT created in-memory: the only bulk edit is the
+    // in-document implements clause on the active model.
+    expect(edits).toHaveLength(1);
+    expect(edits[0]).toEqual(
+      expect.objectContaining({
+        textEdit: expect.objectContaining({
+          text: " implements GreeterInterface",
+        }),
+      }),
+    );
+    expect(
+      edits.some(
+        (edit: { newResource?: unknown }) => edit.newResource !== undefined,
+      ),
+    ).toBe(false);
+    // The action carries a command that, when monaco runs it after applying the
+    // edit, persists the interface to disk via the controller callback.
+    expect(extractInterface?.command?.id).toBe(
+      "mockor.php.applyCodeActionNewFile",
+    );
+
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    expect(run).toBeDefined();
+    await run(null, extractInterface?.command?.arguments?.[0]);
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalledWith(newFile);
+  });
+
   it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -9364,6 +9441,10 @@ function createRegisteredProviders() {
     codeLensProvider: any;
     commandDispose: ReturnType<typeof vi.fn>;
     commandRun: ((accessor: unknown, payload?: unknown) => unknown) | null;
+    commandRunsById: Record<
+      string,
+      (accessor: unknown, payload?: unknown) => unknown
+    >;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -9446,6 +9527,7 @@ function createRegisteredProviders() {
     codeLensProvider: null,
     commandDispose,
     commandRun: null,
+    commandRunsById: {},
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -9534,7 +9616,13 @@ function createRegisteredProviders() {
     },
     editor: {
       addCommand: vi.fn((command) => {
-        registered.commandRun = command.run;
+        registered.commandRunsById[command.id] = command.run;
+        // Keep `commandRun` pointing at the LSP execute-command run so the
+        // existing execute-command tests stay valid even though a second command
+        // (the new-file disk-write command) is now registered too.
+        if (command.id === "mockor.php.executeLanguageServerCommand") {
+          registered.commandRun = command.run;
+        }
         return { dispose: commandDispose };
       }),
       getModel: vi.fn(() => null),
@@ -9759,6 +9847,9 @@ function completionLabels(
 function providerContext(
   overrides: Partial<{
     activeDocument: EditorDocument | null;
+    applyPhpCodeActionNewFile: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyPhpCodeActionNewFile"]
+    >;
     applyWorkspaceEdit: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyWorkspaceEdit"]
     >;
@@ -9801,6 +9892,7 @@ function providerContext(
   const runtimeStatus = overrides.runtimeStatus ?? runningStatus();
 
   return {
+    applyPhpCodeActionNewFile: overrides.applyPhpCodeActionNewFile,
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
