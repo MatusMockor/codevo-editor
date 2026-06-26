@@ -25,6 +25,7 @@ interface FakeModel {
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
+  setValue?: ReturnType<typeof vi.fn>;
   isDisposed?: ReturnType<typeof vi.fn>;
   tokenization?: {
     forceTokenization: ReturnType<typeof vi.fn>;
@@ -7745,6 +7746,45 @@ class InvoiceServiceTest
     expect(editorSurfaceMocks.renderCount).toBe(rendersAfterMount);
   });
 
+  it("force-syncs the editor model when its value diverges from the active document content so a freshly opened file never renders blank", async () => {
+    // Reproduces the Quick Open empty-tab race: @monaco-editor/react keys its
+    // value-apply effect on the `value` prop identity, and its model swap on the
+    // `path` prop. When a file's model already exists (kept alive for Back/Forward
+    // navigation) and the path swaps to it while the value effect does not re-run,
+    // Monaco shows the model's stale/empty buffer and the freshly read content is
+    // never applied until some later unrelated edit nudges the value effect. The
+    // surface must converge the model deterministically on open.
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass CommentController {}\n",
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/Http/Controllers/CommentController.php",
+      savedContent: "<?php\nclass CommentController {}\n",
+    };
+    let modelValue = ""; // The model exists but its buffer is stale/empty.
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      setValue: vi.fn((next: string) => {
+        modelValue = next;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    } as FakeModel & {
+      getValue: ReturnType<typeof vi.fn>;
+      setValue: ReturnType<typeof vi.fn>;
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // The model's buffer must end up matching the opened document content rather
+    // than the stale empty buffer that left the editor visually blank.
+    expect(modelValue).toBe(activeDocument.content);
+  });
+
   it("re-renders the Monaco surface when the active document content changes", async () => {
     const initialDocument: EditorDocument = {
       content: "const value = 1;\n",
@@ -7817,6 +7857,59 @@ class InvoiceServiceTest
     });
 
     expect(onEditorFocused).toHaveBeenCalled();
+  });
+
+  it("hides any open hover widget when a reveal target lands so a stuck 'Loading…' hover cannot linger after navigation", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    // Mount with no reveal target: a hover widget could be open here.
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorRevealTarget: null,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // Navigate back / reveal to a position in the same document. This is the
+    // exact gesture that left the Monaco hover widget stuck showing "Loading…".
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorRevealTarget: {
+            path: activeDocument.path,
+            position: { lineNumber: 2, column: 1 },
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const triggeredHideHover = editor.trigger.mock.calls.some(
+      (call) => call[1] === "editor.action.hideHover",
+    );
+
+    expect(triggeredHideHover).toBe(true);
+    // The reveal itself must still happen.
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      lineNumber: 2,
+      column: 1,
+    });
   });
 
   it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
@@ -8640,6 +8733,20 @@ function captureIdleCallbacks() {
 }
 
 function createEditor(model: FakeModel): FakeEditor {
+  // A real Monaco ITextModel always exposes getValue/setValue. Backfill them on
+  // any fake model that omits them so the surface's deterministic content sync
+  // can read and reconcile the buffer just as it does in production.
+  if (!model.getValue || !model.setValue) {
+    const existingGetValue = model.getValue as (() => string) | undefined;
+    let buffer = existingGetValue ? existingGetValue() : "";
+    model.getValue = model.getValue ?? vi.fn(() => buffer);
+    model.setValue =
+      model.setValue ??
+      vi.fn((next: string) => {
+        buffer = next;
+      });
+  }
+
   let selection: {
     endColumn: number;
     endLineNumber: number;

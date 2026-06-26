@@ -1799,11 +1799,53 @@ function EditorSurfaceComponent({
       return;
     }
 
+    // A reveal is a programmatic jump (Back/Forward, go-to-definition, breadcrumb,
+    // etc). Monaco's content hover widget is mouse/keyboard driven and is NOT
+    // dismissed by setPosition/reveal, so a hover that was still resolving when the
+    // jump fired (e.g. the 700ms "Loading…" placeholder over a method) would stay
+    // pinned to the old spot and never update - looking permanently stuck. Hide it
+    // before the jump so navigation always lands on a clean surface.
+    editorApi.trigger("navigation", "editor.action.hideHover", {});
     editorApi.setPosition(editorRevealTarget.position);
     editorApi.revealPositionInCenter(editorRevealTarget.position);
     editorApi.focus();
     onRevealTargetHandled();
   }, [activeDocument, editorApi, editorRevealTarget, onRevealTargetHandled]);
+
+  // Deterministic content sync: guarantee the live model buffer matches the
+  // active document's content after every open / content change.
+  //
+  // @monaco-editor/react applies the `value` prop in an effect keyed on the
+  // value identity, and swaps the model in a separate effect keyed on the `path`
+  // identity. When a file's model already exists (we keep models alive for
+  // Back/Forward navigation) and the path swaps to it without the value effect
+  // re-running for this commit, Monaco shows that model's stale/empty buffer and
+  // the freshly read content is never applied - the editor renders blank until an
+  // unrelated edit nudges the value effect (the Quick Open "empty tab" race the
+  // user hit). Reconcile here so content is shown the moment a file opens, with
+  // no dependency on @monaco-editor/react's effect ordering.
+  //
+  // Isolation: only the model that currently belongs to the active document is
+  // touched (path match), so a stale async commit can never write one file's
+  // content into another's buffer. Idempotent: typing keeps content equal to the
+  // model value, so this never re-applies during editing or fights live input.
+  useEffect(() => {
+    if (!editorApi || !activeDocument) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    if (model.getValue() === activeDocument.content) {
+      return;
+    }
+
+    model.setValue(activeDocument.content);
+  }, [activeDocument, editorApi]);
 
   useEffect(() => {
     if (!monacoApi) {
