@@ -275,6 +275,61 @@ describe("TauriGitGateway", () => {
     await expect(gateway.stashDrop("/workspace", 0)).resolves.toBeUndefined();
   });
 
+  it("invokes the branch commands in Tauri", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_git_branches") {
+        return [
+          { isCurrent: true, name: "main" },
+          { isCurrent: false, name: "feature/login" },
+        ];
+      }
+
+      if (command === "get_git_current_branch") {
+        return "main";
+      }
+
+      return undefined;
+    });
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const branches = await gateway.branchList("/workspace");
+    const current = await gateway.currentBranch("/workspace");
+    await gateway.createBranch("/workspace", "feature/new");
+    await gateway.switchBranch("/workspace", "feature/login");
+
+    expect(invoke).toHaveBeenCalledWith("list_git_branches", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_current_branch", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("create_git_branch", {
+      name: "feature/new",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("switch_git_branch", {
+      name: "feature/login",
+      rootPath: "/workspace",
+    });
+    expect(branches).toHaveLength(2);
+    expect(branches[0]).toEqual({ isCurrent: true, name: "main" });
+    expect(current).toBe("main");
+  });
+
+  it("returns no branches and null current outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.branchList("/workspace")).resolves.toEqual([]);
+    await expect(gateway.currentBranch("/workspace")).resolves.toBeNull();
+    // Safe no-ops that never invoke a command.
+    await expect(
+      gateway.createBranch("/workspace", "x"),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.switchBranch("/workspace", "x"),
+    ).resolves.toBeUndefined();
+  });
+
   it("returns empty status for local Git operations outside Tauri", async () => {
     const change: GitChangedFile = {
       isStaged: false,

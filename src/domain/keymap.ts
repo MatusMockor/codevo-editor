@@ -248,6 +248,18 @@ export const keymapCommands = [
     label: "Git: Show Stashes",
   },
   {
+    category: "Git",
+    defaultShortcut: "",
+    id: "git.switchBranch",
+    label: "Git: Switch Branch",
+  },
+  {
+    category: "Git",
+    defaultShortcut: "",
+    id: "git.newBranch",
+    label: "Git: New Branch",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

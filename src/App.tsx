@@ -22,6 +22,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
+import { GitBranchPanel } from "./components/GitBranchPanel";
 import { GitStashPanel } from "./components/GitStashPanel";
 import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { FileTree } from "./components/FileTree";
@@ -1258,6 +1259,15 @@ function App() {
         onSelect={(index) => void workbench.selectGitStash(index)}
         selectedIndex={workbench.gitStashSelectedIndex}
         stashes={workbench.gitStashEntries}
+      />
+
+      <GitBranchPanel
+        branches={workbench.gitBranchEntries}
+        isLoading={workbench.gitBranchLoading}
+        isOpen={workbench.gitBranchPanelOpen}
+        onClose={workbench.closeGitBranchPanel}
+        onCreate={() => void workbench.createGitBranch()}
+        onSwitch={(name) => void workbench.switchGitBranch(name)}
       />
 
       <LanguageServerSetup

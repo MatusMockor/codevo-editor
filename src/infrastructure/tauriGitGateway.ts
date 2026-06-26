@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyGitStatus,
   type GitBlameLine,
+  type GitBranch,
   type GitChangedFile,
   type GitFileDiff,
   type GitFileHistoryEntry,
@@ -235,6 +236,48 @@ export class TauriGitGateway implements GitGateway {
 
     await this.invokeCommand("stash_drop_git", {
       index: String(index),
+      rootPath,
+    });
+  }
+
+  async branchList(rootPath: string): Promise<GitBranch[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("list_git_branches", {
+      rootPath,
+    }) as Promise<GitBranch[]>;
+  }
+
+  async currentBranch(rootPath: string): Promise<string | null> {
+    if (!this.isRuntimeAvailable()) {
+      return null;
+    }
+
+    return this.invokeCommand("get_git_current_branch", {
+      rootPath,
+    }) as Promise<string | null>;
+  }
+
+  async createBranch(rootPath: string, name: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("create_git_branch", {
+      name,
+      rootPath,
+    });
+  }
+
+  async switchBranch(rootPath: string, name: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("switch_git_branch", {
+      name,
       rootPath,
     });
   }

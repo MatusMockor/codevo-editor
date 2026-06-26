@@ -72,6 +72,31 @@ describe("keymap", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("registers the git branch commands without shortcut collisions", () => {
+    const switchBranch = keymapCommands.find(
+      (command) => command.id === "git.switchBranch",
+    );
+    const newBranch = keymapCommands.find(
+      (command) => command.id === "git.newBranch",
+    );
+
+    expect(switchBranch).toMatchObject({
+      category: "Git",
+      label: "Git: Switch Branch",
+      defaultShortcut: "",
+    });
+    expect(newBranch).toMatchObject({
+      category: "Git",
+      label: "Git: New Branch",
+      defaultShortcut: "",
+    });
+
+    // The branch commands ship without a default shortcut, so they cannot collide
+    // with an existing binding; assert every command id stays unique.
+    const ids = keymapCommands.map((command) => command.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("defaults Go to Super Method to Cmd+U on mac and Ctrl+U elsewhere (PhpStorm parity)", () => {
     expect(defaultShortcutForCommand("editor.goToSuperMethod", "mac")).toBe(
       "Cmd+U",

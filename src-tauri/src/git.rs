@@ -74,6 +74,13 @@ pub struct GitStashEntry {
     pub timestamp: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub is_current: bool,
+    pub name: String,
+}
+
 pub trait GitRepositoryGateway {
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
     fn file_commit_diff(
@@ -105,6 +112,10 @@ pub trait GitRepositoryGateway {
     fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()>;
     fn stash_show(&self, root: &Path, index: u32) -> io::Result<String>;
     fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>>;
+    fn current_branch(&self, root: &Path) -> io::Result<Option<String>>;
+    fn create_branch(&self, root: &Path, name: &str) -> io::Result<()>;
+    fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()>;
 }
 
 pub struct CommandGitRepositoryGateway;
@@ -442,6 +453,57 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
         run_git(&root, ["stash", "drop", reference.as_str()])
     }
+
+    fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>> {
+        let root = root.canonicalize()?;
+
+        // `for-each-ref` over `refs/heads/` lists only LOCAL branches (no remote
+        // tracking refs leak in). `%(HEAD)` is `*` for the checked-out branch and
+        // a space otherwise; fields are joined with the ASCII Unit Separator so a
+        // branch name can never be confused with the current-flag column.
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("for-each-ref")
+            .arg(format!("--format={BRANCH_LIST_FORMAT}"))
+            .arg("refs/heads/")
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_branch_list(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn current_branch(&self, root: &Path) -> io::Result<Option<String>> {
+        let root = root.canonicalize()?;
+
+        current_branch(&root)
+    }
+
+    fn create_branch(&self, root: &Path, name: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let name = safe_branch_name(name)?;
+
+        // `git branch <name>` creates the branch WITHOUT switching to it, so the
+        // working tree is never touched. `--` terminates option parsing so a name
+        // can never be read as a flag (defence in depth atop `safe_branch_name`).
+        run_git(&root, ["branch", "--", name.as_str()])
+    }
+
+    fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let name = safe_branch_name(name)?;
+
+        // `git switch <name>` (no `-f`/`--discard`) refuses when local changes
+        // would be overwritten, surfacing git's "commit or stash" error verbatim.
+        // Work is never discarded; the front end turns the failure into a notice.
+        run_git(&root, ["switch", "--", name.as_str()])
+    }
 }
 
 pub fn empty_git_status(root: &Path) -> GitStatus {
@@ -743,6 +805,98 @@ fn split_stash_branch_and_message(raw_message: &str) -> (Option<String>, &str) {
 /// (no path/SHA-style sanitization is needed at this layer).
 fn stash_reference(index: u32) -> String {
     format!("stash@{{{index}}}")
+}
+
+/// `git for-each-ref` record layout for the local branch list. `%(HEAD)` is a
+/// single column: `*` for the checked-out branch, a space otherwise, immediately
+/// followed by the short ref name (`for-each-ref` does NOT expand `%x1f`/`%x09`
+/// the way `git log` does, so a fixed one-char prefix is the unambiguous join).
+/// Records are newline-delimited (one branch per line).
+const BRANCH_LIST_FORMAT: &str = "%(HEAD)%(refname:short)";
+
+fn parse_branch_list(output: &str) -> Vec<GitBranch> {
+    let mut branches: Vec<GitBranch> = output.lines().filter_map(parse_branch_record).collect();
+
+    // Pin the current branch to the top (PhpStorm parity); the remaining branches
+    // keep git's alphabetical `for-each-ref` order. A stable sort preserves that
+    // relative order among the non-current entries.
+    branches.sort_by_key(|branch| !branch.is_current);
+    branches
+}
+
+fn parse_branch_record(line: &str) -> Option<GitBranch> {
+    let mut chars = line.chars();
+    let head_flag = chars.next()?;
+
+    // The first column is always `*` (current) or a space (other). Anything else
+    // is a malformed record and is skipped rather than mis-parsed.
+    if head_flag != '*' && head_flag != ' ' {
+        return None;
+    }
+
+    let name = chars.as_str().trim();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(GitBranch {
+        is_current: head_flag == '*',
+        name: name.to_string(),
+    })
+}
+
+/// Validates a branch name supplied by the front end before it reaches a `git`
+/// subprocess. Delegates to `git check-ref-format --branch`, the authoritative
+/// rule set git itself applies (rejects names with spaces, `..`, control chars,
+/// leading `-`, `~^:?*[\`, trailing `.lock`, etc.). This blocks both invalid
+/// refs and option/shell injection without re-implementing git's grammar.
+fn safe_branch_name(name: &str) -> io::Result<String> {
+    let trimmed = name.trim();
+
+    if trimmed.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is required.",
+        ));
+    }
+
+    // A leading `-` would still be read as an option by `check-ref-format` itself,
+    // so reject it up front; valid branch names never start with a dash.
+    if trimmed.starts_with('-') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    // `check-ref-format --branch` expands the `@{...}` "branch shortcut" syntax
+    // (e.g. `@{-1}` = previous branch) against the current repo, so it would both
+    // accept a repo-relative reference and depend on repo state. Reject any name
+    // containing it: a real branch name never needs `@{`.
+    if trimmed.contains("@{") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    let valid = Command::new("git")
+        .arg("check-ref-format")
+        .arg("--branch")
+        .arg(trimmed)
+        .output()?
+        .status
+        .success();
+
+    if !valid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    Ok(trimmed.to_string())
 }
 
 /// Validates a stash index string supplied by the front end. Only ASCII digits
@@ -1184,9 +1338,9 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_blame_porcelain, parse_file_history, parse_porcelain_status, parse_stash_list,
-        safe_commit_sha, safe_relative_path, safe_stash_index, CommandGitRepositoryGateway,
-        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
+        parse_blame_porcelain, parse_branch_list, parse_file_history, parse_porcelain_status,
+        parse_stash_list, safe_branch_name, safe_commit_sha, safe_relative_path, safe_stash_index,
+        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -1740,6 +1894,203 @@ mod tests {
         let gateway = CommandGitRepositoryGateway;
 
         assert!(gateway.stash_save(repo.path(), "wip").is_err());
+    }
+
+    #[test]
+    fn parses_branch_list_marking_the_current_branch() {
+        // Layout is `%(HEAD)%(refname:short)`: a one-char flag (`*` for current,
+        // a space otherwise) immediately followed by the short name.
+        let output = concat!("*main\n", " feature/login\n", " release-1.0\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches.len(), 3);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].is_current);
+        assert_eq!(branches[1].name, "feature/login");
+        assert!(!branches[1].is_current);
+        assert_eq!(branches[2].name, "release-1.0");
+        assert!(!branches[2].is_current);
+    }
+
+    #[test]
+    fn branch_list_pins_the_current_branch_first_keeping_other_order() {
+        // git lists refs alphabetically, so the current branch can appear in the
+        // middle; the switcher pins it to the top, leaving the rest in order.
+        let output = concat!(" alpha\n", "*middle\n", " omega\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches[0].name, "middle");
+        assert!(branches[0].is_current);
+        assert_eq!(branches[1].name, "alpha");
+        assert_eq!(branches[2].name, "omega");
+    }
+
+    #[test]
+    fn skips_malformed_branch_records() {
+        // Blank lines and records whose first column is neither `*` nor space are
+        // skipped (defensive against unexpected `for-each-ref` output).
+        let output = concat!("\n", "*main\n", "Xbad-flag\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].is_current);
+    }
+
+    #[test]
+    fn safe_branch_name_rejects_injection_and_accepts_valid() {
+        assert!(safe_branch_name("feature/login").is_ok());
+        assert!(safe_branch_name("release-1.0").is_ok());
+        assert!(safe_branch_name("fix_bug").is_ok());
+        // Empty / whitespace-only is rejected.
+        assert!(safe_branch_name("").is_err());
+        assert!(safe_branch_name("   ").is_err());
+        // Option/shell injection and invalid ref shapes are rejected.
+        assert!(safe_branch_name("--force").is_err());
+        assert!(safe_branch_name("-D main").is_err());
+        assert!(safe_branch_name("foo; rm -rf /").is_err());
+        assert!(safe_branch_name("foo bar").is_err());
+        assert!(safe_branch_name("foo..bar").is_err());
+        assert!(safe_branch_name("foo~1").is_err());
+        assert!(safe_branch_name("foo^").is_err());
+        assert!(safe_branch_name("foo:bar").is_err());
+        assert!(safe_branch_name("foo?").is_err());
+        assert!(safe_branch_name("foo*").is_err());
+        assert!(safe_branch_name("foo\\bar").is_err());
+        assert!(safe_branch_name("@{-1}").is_err());
+    }
+
+    #[test]
+    fn branch_list_reports_local_branches_with_current_flag() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["branch", "feature"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let branches = gateway.branch_list(repo.path()).expect("branch list");
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+
+        assert!(names.contains(&"feature"));
+        let current = branches.iter().find(|branch| branch.is_current).expect("current");
+        // The initial checkout is the default branch (the only one with content).
+        assert!(!current.name.is_empty());
+        // Exactly one branch is flagged current.
+        assert_eq!(branches.iter().filter(|branch| branch.is_current).count(), 1);
+    }
+
+    #[test]
+    fn current_branch_returns_the_checked_out_branch() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["checkout", "-b", "work"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+
+        assert_eq!(current.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn create_branch_adds_a_branch_without_switching() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        let before = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.create_branch(repo.path(), "feature/new").expect("create branch");
+
+        // The branch now exists.
+        let branches = gateway.branch_list(repo.path()).expect("branch list");
+        assert!(branches.iter().any(|branch| branch.name == "feature/new"));
+        // HEAD did not move: create must never switch.
+        let after = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn create_branch_rejects_invalid_name() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.create_branch(repo.path(), "--force").is_err());
+        assert!(gateway.create_branch(repo.path(), "bad name").is_err());
+    }
+
+    #[test]
+    fn switch_branch_moves_head_when_the_working_tree_is_clean() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["branch", "feature"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.switch_branch(repo.path(), "feature").expect("switch branch");
+
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+        assert_eq!(current.as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn switch_branch_refuses_when_local_changes_would_be_overwritten() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("file.txt", "feature\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "feature change"]);
+        repo.run(["checkout", "main"]);
+        // A dirty local change that conflicts with the feature branch content.
+        repo.write("file.txt", "dirty local\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let result = gateway.switch_branch(repo.path(), "feature");
+
+        // Switch must FAIL (no `-f`/`--discard`); work is never lost.
+        assert!(result.is_err());
+        // The working tree change survives the rejected switch.
+        assert_eq!(repo.read("file.txt"), "dirty local\n");
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+        assert_eq!(current.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn switch_branch_rejects_invalid_name() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.switch_branch(repo.path(), "--orphan").is_err());
+        assert!(gateway.switch_branch(repo.path(), "no/such/branch nope").is_err());
+    }
+
+    fn branch_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "branch@example.com"]);
+        repo.run(["config", "user.name", "Branch Author"]);
+        // Pin the initial (still unborn) branch name to `main` so tests do not
+        // depend on the host's `init.defaultBranch` (could be `master`).
+        // `symbolic-ref` is idempotent whether or not `main` is already current.
+        repo.run(["symbolic-ref", "HEAD", "refs/heads/main"]);
+        repo
     }
 
     fn stash_repo() -> TestGitRepo {

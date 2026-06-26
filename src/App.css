@@ -3321,6 +3321,95 @@ button.problem-row:focus-visible {
   text-align: center;
 }
 
+/* Git branch switcher: a single-column popup (no diff pane), sized like a
+   command popup rather than the wide file-history layout. */
+.git-branch-panel {
+  width: min(460px, calc(100vw - 36px));
+  height: min(520px, calc(100vh - 96px));
+}
+
+.git-branch-panel .file-history-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.git-branch-panel .file-history-commits {
+  border-right: 0;
+}
+
+.git-branch-actions-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+}
+
+.git-branch-new-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.git-branch-new-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.git-branch-new-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.git-branch-row {
+  display: grid;
+  width: 100%;
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.git-branch-row:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.git-branch-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+  cursor: default;
+}
+
+.git-branch-icon {
+  color: var(--color-text-muted);
+}
+
+.git-branch-name {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-branch-current {
+  color: var(--color-accent);
+}
+
 .local-history-diff-toolbar {
   display: flex;
   flex: 0 0 auto;

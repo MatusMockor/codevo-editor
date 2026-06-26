@@ -57,6 +57,11 @@ export interface GitStashEntry {
   timestamp: number;
 }
 
+export interface GitBranch {
+  isCurrent: boolean;
+  name: string;
+}
+
 export interface GitGateway {
   blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
@@ -85,6 +90,10 @@ export interface GitGateway {
   stashPop(rootPath: string, index: number): Promise<void>;
   stashShow(rootPath: string, index: number): Promise<string>;
   stashDrop(rootPath: string, index: number): Promise<void>;
+  branchList(rootPath: string): Promise<GitBranch[]>;
+  currentBranch(rootPath: string): Promise<string | null>;
+  createBranch(rootPath: string, name: string): Promise<void>;
+  switchBranch(rootPath: string, name: string): Promise<void>;
 }
 
 export function gitChangeKey(change: GitChangedFile): string {

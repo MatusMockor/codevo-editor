@@ -33,8 +33,8 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    safe_stash_index, CommandGitRepositoryGateway, GitBlameLine, GitChangedFile, GitFileDiff,
-    GitFileHistoryEntry, GitRepositoryGateway, GitStashEntry, GitStatus,
+    safe_stash_index, CommandGitRepositoryGateway, GitBlameLine, GitBranch, GitChangedFile,
+    GitFileDiff, GitFileHistoryEntry, GitRepositoryGateway, GitStashEntry, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1896,6 +1896,62 @@ async fn stash_drop_git(root_path: String, index: String) -> Result<(), String> 
         let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
         CommandGitRepositoryGateway
             .stash_drop(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_git_branches(root_path: String) -> Result<Vec<GitBranch>, String> {
+    // Listing branches shells out to `git for-each-ref`; keep it off the main
+    // thread, scoped to the requested repository root (no cross-root leak).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .branch_list(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_current_branch(root_path: String) -> Result<Option<String>, String> {
+    // Resolving the current branch shells out to git; keep it off the main
+    // thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .current_branch(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_git_branch(root_path: String, name: String) -> Result<(), String> {
+    // `git branch <name>` creates a branch WITHOUT switching (the working tree is
+    // never touched). Keep it off the main thread, bound to the requested root.
+    // The name is validated against git's own ref grammar before it reaches the
+    // subprocess (no option/shell injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .create_branch(&root, &name)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn switch_git_branch(root_path: String, name: String) -> Result<(), String> {
+    // `git switch <name>` (no `-f`/`--discard`) rewrites the working tree but
+    // refuses when local changes would be overwritten, so no work is ever lost.
+    // Keep it off the main thread, bound to the requested repository root. The
+    // name is validated against git's ref grammar (no option/shell injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .switch_branch(&root, &name)
             .map_err(|error| error.to_string())
     })
     .await
@@ -4449,15 +4505,15 @@ mod tests {
         filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, get_git_blame, get_git_file_commit_diff,
-        get_git_file_history, get_git_stash_diff, get_git_stash_list, get_git_status,
-        javascript_typescript_did_change_configuration_settings,
-        lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
-        parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
-        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
-        search_files, stage_git_files, stash_apply_git, stash_drop_git, stash_pop_git,
-        write_text_file, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        filter_lsp_workspace_symbols_to_workspace, create_git_branch, get_git_blame,
+        get_git_current_branch, get_git_file_commit_diff, get_git_file_history, get_git_stash_diff,
+        get_git_stash_list, get_git_status, javascript_typescript_did_change_configuration_settings,
+        list_git_branches, lsp_status_supports_code_action_resolve, normalize_path,
+        parse_definition_result, parse_javascript_typescript_navigation_locations_result,
+        parse_php_file_outline, parse_php_syntax, path_from_file_uri, read_directory,
+        read_text_file, save_git_stash, search_files, stage_git_files, stash_apply_git,
+        stash_drop_git, stash_pop_git, switch_git_branch, write_text_file,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -5935,6 +5991,129 @@ mod tests {
     }
 
     #[test]
+    fn git_branch_create_list_switch_round_trip_off_thread() {
+        let root = temp_workspace("git-branch-off-thread");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root),
+            "feature/login".to_string(),
+        ))
+        .expect("create branch");
+
+        let branches =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root))).expect("list");
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+        assert!(names.contains(&"feature/login"));
+        assert!(names.contains(&"main"));
+        // create must NOT switch: HEAD is still on main.
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("main"));
+
+        tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "feature/login".to_string(),
+        ))
+        .expect("switch branch");
+
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("feature/login"));
+    }
+
+    #[test]
+    fn git_branch_switch_refuses_to_discard_uncommitted_changes_off_thread() {
+        let root = temp_workspace("git-branch-switch-safety");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        run_test_git(&root, &["checkout", "-b", "feature"]);
+        fs::write(root.join("file.txt"), "feature\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "feature"]);
+        run_test_git(&root, &["checkout", "main"]);
+        // Dirty local change that conflicts with the feature branch content.
+        fs::write(root.join("file.txt"), "dirty\n").expect("write file");
+
+        let result = tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "feature".to_string(),
+        ));
+
+        // The switch must FAIL rather than discard the uncommitted change.
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).expect("read"),
+            "dirty\n"
+        );
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn git_branch_create_rejects_injection_off_thread() {
+        let root = temp_workspace("git-branch-bad-name");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        assert!(tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root),
+            "--force".to_string(),
+        ))
+        .is_err());
+        assert!(tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "foo; rm -rf /".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn git_branches_stay_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-branch-iso-a");
+        let root_b = temp_workspace("git-branch-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        run_test_git(&root_a, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        run_test_git(&root_b, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root_a.join("a.txt"), "a\n").expect("file a");
+        fs::write(root_b.join("b.txt"), "b\n").expect("file b");
+        run_test_git(&root_a, &["add", "a.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a"]);
+        run_test_git(&root_b, &["add", "b.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b"]);
+
+        // A branch created in root A must never appear in root B's list.
+        tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root_a),
+            "only-in-a".to_string(),
+        ))
+        .expect("create in a");
+
+        let list_a =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root_a))).expect("list a");
+        let list_b =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root_b))).expect("list b");
+
+        assert!(list_a.iter().any(|branch| branch.name == "only-in-a"));
+        assert!(
+            !list_b.iter().any(|branch| branch.name == "only-in-a"),
+            "no cross-root branch leakage"
+        );
+    }
+
+    #[test]
     fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
         assert!(ensure_local_history_relative_path("src/User.php").is_ok());
         assert!(ensure_local_history_relative_path("../secret.txt").is_err());
@@ -6517,6 +6696,10 @@ pub fn run() {
             stash_apply_git,
             stash_pop_git,
             stash_drop_git,
+            list_git_branches,
+            get_git_current_branch,
+            create_git_branch,
+            switch_git_branch,
             quit_application,
             read_directory,
             read_text_file,

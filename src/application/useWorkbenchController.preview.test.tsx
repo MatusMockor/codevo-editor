@@ -966,6 +966,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -1032,6 +1036,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -1104,6 +1112,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -1172,6 +1184,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -1250,6 +1266,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9670,6 +9690,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9740,6 +9764,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9805,6 +9833,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9884,6 +9916,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -9957,6 +9993,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -10037,6 +10077,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -10121,6 +10165,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -10195,6 +10243,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -10277,6 +10329,10 @@ describe("useWorkbenchController preview tabs", () => {
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -52694,6 +52750,10 @@ function createControllerDependencies({
       stashPop: vi.fn(async () => undefined),
       stashShow: vi.fn(async () => ""),
       stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     },
     localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
     indexProgressGateway:
@@ -53206,6 +53266,10 @@ function fileHistoryGitGateway(
     stashPop: vi.fn(async () => undefined),
     stashShow: vi.fn(async () => ""),
     stashDrop: vi.fn(async () => undefined),
+    branchList: vi.fn(async () => []),
+    currentBranch: vi.fn(async () => null),
+    createBranch: vi.fn(async () => undefined),
+    switchBranch: vi.fn(async () => undefined),
   };
 }
 
