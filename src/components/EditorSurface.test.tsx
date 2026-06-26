@@ -75,6 +75,8 @@ interface FakeEditor {
 
 interface FakeMouseDownEvent {
   event: {
+    ctrlKey?: boolean;
+    metaKey?: boolean;
     preventDefault: ReturnType<typeof vi.fn>;
     stopPropagation: ReturnType<typeof vi.fn>;
   };
@@ -1615,6 +1617,342 @@ class InvoiceServiceTest extends TestCase
 
     expect(preventDefault).toHaveBeenCalled();
     expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(3);
+  });
+
+  it("routes a Cmd+click on code text through go-to-definition on macOS", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const position = { column: 13, lineNumber: 2 };
+    // The controller reads the active-editor position ref (kept in sync via
+    // onCursorPositionChange) when it resolves a definition. Track the latest
+    // reported caret and snapshot it at the moment onGoToDefinition runs so the
+    // test asserts the caret already points at the clicked symbol by then.
+    let lastReportedPosition: EditorPosition | null = null;
+    let positionAtNavigation: EditorPosition | null = null;
+    const onCursorPositionChange = vi.fn((next: EditorPosition) => {
+      lastReportedPosition = next;
+    });
+    const onGoToDefinition = vi.fn(() => {
+      positionAtNavigation = lastReportedPosition;
+    });
+    // Mirror real Monaco: setPosition synchronously emits onDidChangeCursorPosition
+    // so the active-editor-position consumer observes the new caret before the
+    // call returns (and thus before onGoToDefinition reads it).
+    editor.setPosition.mockImplementation((next: EditorPosition) => {
+      editor.cursorPositionHandler?.({ position: next });
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={onCursorPositionChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith(position);
+    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    // The caret must have settled on the clicked symbol before navigation ran:
+    // a stale (or null) snapshot here would mean setPosition did not propagate
+    // before onGoToDefinition read the position.
+    expect(positionAtNavigation).toEqual(position);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("routes a Ctrl+click on code text through go-to-definition on Linux", async () => {
+    stubNavigatorPlatform("Linux x86_64");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    const position = { column: 13, lineNumber: 2 };
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith(position);
+    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("does not navigate on a plain click on code text without the definition modifier", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "console.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 1 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("leaves the bookmark gutter handler intact for a Cmd+click on the lines-decoration margin", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "constants.ts",
+      path: "/workspace/src/constants.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    const onToggleBookmarkAtLine = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onToggleBookmarkAtLine={onToggleBookmarkAtLine}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 1, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(2);
   });
 
   it("reopens PHP suggestions when IDE readiness changes in member access context", async () => {
@@ -8215,7 +8553,11 @@ function createMonaco(model: FakeModel) {
       getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
       GlyphMarginLane: { Center: 2, Left: 1, Right: 3 },
-      MouseTargetType: { GUTTER_GLYPH_MARGIN: 4, GUTTER_LINE_DECORATIONS: 3 },
+      MouseTargetType: {
+        CONTENT_TEXT: 6,
+        GUTTER_GLYPH_MARGIN: 4,
+        GUTTER_LINE_DECORATIONS: 3,
+      },
       OverviewRulerLane: { Left: 1, Right: 4 },
       setModelMarkers: vi.fn(),
       TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },

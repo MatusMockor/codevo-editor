@@ -1307,8 +1307,34 @@ function EditorSurfaceComponent({
       return;
     }
 
+    const mouseDownPlatform = detectKeymapPlatform();
+
     const disposable = editorApi.onMouseDown((event) => {
       const targetType = event.target.type;
+
+      // Cmd+click (macOS) / Ctrl+click (Windows/Linux) on code text mirrors the
+      // Cmd+B go-to-definition command instead of Monaco's built-in gesture,
+      // which has no cross-file opener wired and skips the Laravel/PHP
+      // contextual definition cascade. We set the caret first (onMouseDown fires
+      // before the selection settles, and the controller reads the active
+      // editor position), then run the same callback as the keyboard shortcut
+      // and suppress the native gesture so navigation does not fire twice.
+      const isContentText =
+        targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
+      const definitionModifierPressed =
+        mouseDownPlatform === "mac"
+          ? event.event.metaKey === true
+          : event.event.ctrlKey === true;
+      const contentPosition = event.target.position;
+
+      if (isContentText && definitionModifierPressed && contentPosition) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        editorApi.setPosition(contentPosition);
+        onGoToDefinition();
+        return;
+      }
+
       const isGlyphMargin =
         targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
       const isLineDecorations =
@@ -1379,6 +1405,7 @@ function EditorSurfaceComponent({
   }, [
     editorApi,
     monacoApi,
+    onGoToDefinition,
     onGoToImplementationAt,
     onRunTestAt,
     onToggleBookmarkAtLine,
