@@ -4545,6 +4545,214 @@ class Foo
     );
   });
 
+  it("registers F2 rename that triggers Monaco's cross-file rename action", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = value;\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const renameAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.rename");
+
+    expect(renameAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyCode.F2],
+        label: "Rename Symbol",
+      }),
+    );
+
+    renameAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.rename",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+
+    renameAction.run();
+
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
+  it("registers fold/unfold actions that trigger Monaco's folding commands", async () => {
+    const activeDocument: EditorDocument = {
+      content: "function outer() {\n  return 1;\n}\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actionById = (id: string) =>
+      editor.addAction.mock.calls
+        .map(([action]) => action)
+        .find((action) => action.id === id);
+
+    const foldAll = actionById("mockor.foldAll");
+    const unfoldAll = actionById("mockor.unfoldAll");
+    const foldRecursively = actionById("mockor.foldRecursively");
+    const unfoldRecursively = actionById("mockor.unfoldRecursively");
+
+    expect(foldAll).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Minus,
+        ],
+        label: "Fold All",
+      }),
+    );
+    expect(unfoldAll).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Equal,
+        ],
+        label: "Unfold All",
+      }),
+    );
+    // Recursively variants are palette-only (no default keybinding).
+    expect(foldRecursively).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Fold Recursively",
+      }),
+    );
+    expect(unfoldRecursively).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Unfold Recursively",
+      }),
+    );
+
+    foldAll.run();
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.foldAll", {});
+
+    editor.trigger.mockClear();
+    unfoldAll.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.unfoldAll",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    foldRecursively.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.foldRecursively",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    unfoldRecursively.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.unfoldRecursively",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+    foldAll.run();
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
   describe("cyclic expand word (hippie completion)", () => {
     interface HippieHarness {
       editor: FakeEditor;
@@ -8943,6 +9151,8 @@ function createMonaco(model: FakeModel) {
       BracketRight: 6,
       DownArrow: 11,
       Enter: 8,
+      Equal: 86,
+      F2: 60,
       KeyB: 1,
       KeyD: 12,
       KeyF: 10,
@@ -8956,6 +9166,7 @@ function createMonaco(model: FakeModel) {
       KeyT: 14,
       KeyU: 18,
       KeyW: 7,
+      Minus: 88,
       Slash: 90,
       UpArrow: 9,
     },

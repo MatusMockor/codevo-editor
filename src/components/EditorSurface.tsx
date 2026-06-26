@@ -1027,6 +1027,12 @@ function EditorSurfaceComponent({
           triggerEditorAction(editorApi, "editor.action.gotoLine"),
       }),
       editorApi.addAction({
+        id: "mockor.rename",
+        label: "Rename Symbol",
+        keybindings: keybinding("editor.rename"),
+        run: () => triggerEditorAction(editorApi, "editor.action.rename"),
+      }),
+      editorApi.addAction({
         id: "mockor.toggleGitBlame",
         label: "Annotate with Git Blame",
         keybindings: keybinding("editor.toggleGitBlame"),
@@ -1211,6 +1217,30 @@ function EditorSurfaceComponent({
         label: "Join Lines",
         keybindings: keybinding("editor.joinLines"),
         run: () => triggerEditorAction(editorApi, "editor.action.joinLines"),
+      }),
+      editorApi.addAction({
+        id: "mockor.foldAll",
+        label: "Fold All",
+        keybindings: keybinding("editor.foldAll"),
+        run: () => triggerEditorAction(editorApi, "editor.foldAll"),
+      }),
+      editorApi.addAction({
+        id: "mockor.unfoldAll",
+        label: "Unfold All",
+        keybindings: keybinding("editor.unfoldAll"),
+        run: () => triggerEditorAction(editorApi, "editor.unfoldAll"),
+      }),
+      editorApi.addAction({
+        id: "mockor.foldRecursively",
+        label: "Fold Recursively",
+        keybindings: keybinding("editor.foldRecursively"),
+        run: () => triggerEditorAction(editorApi, "editor.foldRecursively"),
+      }),
+      editorApi.addAction({
+        id: "mockor.unfoldRecursively",
+        label: "Unfold Recursively",
+        keybindings: keybinding("editor.unfoldRecursively"),
+        run: () => triggerEditorAction(editorApi, "editor.unfoldRecursively"),
       }),
       editorApi.addAction({
         id: "mockor.sortLinesAscending",
@@ -3737,7 +3767,9 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
 
   const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
     ",": "Comma",
+    "-": "Minus",
     "/": "Slash",
+    "=": "Equal",
     "`": "Backquote",
     "[": "BracketLeft",
     "]": "BracketRight",
@@ -3747,6 +3779,7 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
     arrowup: "UpArrow",
     enter: "Enter",
     escape: "Escape",
+    f2: "F2",
   };
   const keyCodeName = specialKeyCodes[key];
 

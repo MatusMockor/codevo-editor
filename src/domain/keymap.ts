@@ -61,6 +61,15 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // VS Code's F2 rename. Drives Monaco's built-in rename action, which routes
+    // through the language server's provideRenameEdits and applies the resulting
+    // WorkspaceEdit across every open file (cross-file rename).
+    defaultShortcut: "F2",
+    id: "editor.rename",
+    label: "Rename Symbol",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+R",
     id: "editor.fileStructure",
     label: "File Structure",
@@ -236,6 +245,34 @@ export const keymapCommands = [
     defaultShortcut: "",
     id: "editor.transformToLowercase",
     label: "Transform to Lowercase",
+  },
+  {
+    category: "Editor",
+    // Cmd+Shift+- collapses every folding region. Distinct from font zoom out
+    // (Cmd+-) by the Shift modifier, so the two never collide.
+    defaultShortcut: "Cmd+Shift+-",
+    id: "editor.foldAll",
+    label: "Fold All",
+  },
+  {
+    category: "Editor",
+    // Cmd+Shift+= expands every folding region. Distinct from font zoom in
+    // (Cmd+=) by the Shift modifier.
+    defaultShortcut: "Cmd+Shift+=",
+    id: "editor.unfoldAll",
+    label: "Unfold All",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.foldRecursively",
+    label: "Fold Recursively",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.unfoldRecursively",
+    label: "Unfold Recursively",
   },
   {
     category: "Editor",

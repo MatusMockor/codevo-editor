@@ -231,6 +231,141 @@ describe("keymap", () => {
     expect(matchesShortcut(keyEvent({ key: "/" }), "Alt+/")).toBe(false);
   });
 
+  it("defaults rename symbol to F2 on every platform (VS Code parity)", () => {
+    expect(defaultShortcutForCommand("editor.rename", "mac")).toBe("F2");
+    expect(defaultShortcutForCommand("editor.rename", "linux")).toBe("F2");
+    expect(defaultShortcutForCommand("editor.rename", "windows")).toBe("F2");
+    expect(defaultKeymapSettings("mac")["editor.rename"]).toBe("F2");
+  });
+
+  it("registers the rename symbol command in the Editor category", () => {
+    const rename = keymapCommands.find(
+      (command) => command.id === "editor.rename",
+    );
+
+    expect(rename).toMatchObject({
+      category: "Editor",
+      label: "Rename Symbol",
+      defaultShortcut: "F2",
+    });
+  });
+
+  it("does not collide the rename symbol shortcut with any other command", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const owners = Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === "F2",
+      );
+
+      expect(owners).toEqual([["editor.rename", "F2"]]);
+    }
+  });
+
+  it("defaults fold all / unfold all to Cmd+Shift+- / Cmd+Shift+= on mac", () => {
+    expect(defaultShortcutForCommand("editor.foldAll", "mac")).toBe(
+      "Cmd+Shift+-",
+    );
+    expect(defaultShortcutForCommand("editor.foldAll", "linux")).toBe(
+      "Ctrl+Shift+-",
+    );
+    expect(defaultShortcutForCommand("editor.unfoldAll", "mac")).toBe(
+      "Cmd+Shift+=",
+    );
+    expect(defaultShortcutForCommand("editor.unfoldAll", "linux")).toBe(
+      "Ctrl+Shift+=",
+    );
+    expect(defaultKeymapSettings("mac")["editor.foldAll"]).toBe("Cmd+Shift+-");
+    expect(defaultKeymapSettings("mac")["editor.unfoldAll"]).toBe("Cmd+Shift+=");
+  });
+
+  it("registers the fold commands in the Editor category", () => {
+    const foldAll = keymapCommands.find(
+      (command) => command.id === "editor.foldAll",
+    );
+    const unfoldAll = keymapCommands.find(
+      (command) => command.id === "editor.unfoldAll",
+    );
+
+    expect(foldAll).toMatchObject({
+      category: "Editor",
+      label: "Fold All",
+      defaultShortcut: "Cmd+Shift+-",
+    });
+    expect(unfoldAll).toMatchObject({
+      category: "Editor",
+      label: "Unfold All",
+      defaultShortcut: "Cmd+Shift+=",
+    });
+  });
+
+  it("leaves fold/unfold recursively unbound by default (palette only)", () => {
+    expect(defaultShortcutForCommand("editor.foldRecursively", "mac")).toBe("");
+    expect(defaultShortcutForCommand("editor.unfoldRecursively", "mac")).toBe(
+      "",
+    );
+    expect(defaultKeymapSettings("mac")["editor.foldRecursively"]).toBe("");
+    expect(defaultKeymapSettings("mac")["editor.unfoldRecursively"]).toBe("");
+
+    const foldRecursively = keymapCommands.find(
+      (command) => command.id === "editor.foldRecursively",
+    );
+    const unfoldRecursively = keymapCommands.find(
+      (command) => command.id === "editor.unfoldRecursively",
+    );
+
+    expect(foldRecursively).toMatchObject({
+      category: "Editor",
+      label: "Fold Recursively",
+      defaultShortcut: "",
+    });
+    expect(unfoldRecursively).toMatchObject({
+      category: "Editor",
+      label: "Unfold Recursively",
+      defaultShortcut: "",
+    });
+  });
+
+  it("does not collide the fold all / unfold all shortcuts with font zoom", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const foldAll = defaults["editor.foldAll"];
+      const unfoldAll = defaults["editor.unfoldAll"];
+
+      expect(
+        Object.entries(defaults).filter(([, shortcut]) => shortcut === foldAll),
+      ).toEqual([["editor.foldAll", foldAll]]);
+      expect(
+        Object.entries(defaults).filter(
+          ([, shortcut]) => shortcut === unfoldAll,
+        ),
+      ).toEqual([["editor.unfoldAll", unfoldAll]]);
+    }
+  });
+
+  it("matches the fold all / unfold all shortcuts distinctly from font zoom", () => {
+    expect(
+      matchesShortcut(
+        keyEvent({ key: "-", metaKey: true, shiftKey: true }),
+        "Cmd+Shift+-",
+        "mac",
+      ),
+    ).toBe(true);
+    // Font zoom out (Cmd+-) must NOT trigger fold all (Cmd+Shift+-).
+    expect(
+      matchesShortcut(keyEvent({ key: "-", metaKey: true }), "Cmd+Shift+-", "mac"),
+    ).toBe(false);
+    expect(
+      matchesShortcut(
+        keyEvent({ key: "=", metaKey: true, shiftKey: true }),
+        "Cmd+Shift+=",
+        "mac",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "=", metaKey: true }), "Cmd+Shift+=", "mac"),
+    ).toBe(false);
+  });
+
   it("defaults toggle bookmark to F11 on every platform (PhpStorm parity)", () => {
     expect(defaultShortcutForCommand("bookmark.toggle", "mac")).toBe("F11");
     expect(defaultShortcutForCommand("bookmark.toggle", "linux")).toBe("F11");
