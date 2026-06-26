@@ -998,6 +998,49 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("surfaces a recoverable notice (never an unhandled crash) when get_git_diff rejects for a README change", async () => {
+    const change = gitChangedFile("README.md", false);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [change],
+      isRepository: true,
+      rootPath,
+    }));
+    // Reproduce the real failure: clicking the changed README triggers the
+    // async `get_git_diff` command, and that command rejects. The controller
+    // must catch it, clear the in-flight diff, and report a notice instead of
+    // letting the rejection escape as an unhandled crash that blanks the app.
+    gitGateway.getDiff = vi.fn(async () => {
+      throw new Error("get_git_diff failed for README.md");
+    });
+
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    await flushAsyncTurns();
+
+    // No diff is left dangling, loading is reset, and the user sees a notice.
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Git Diff" &&
+          notice.message.includes("get_git_diff failed for README.md"),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps an existing Git diff preview open when the same change is previewed again", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
