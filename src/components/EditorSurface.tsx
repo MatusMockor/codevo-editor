@@ -80,6 +80,8 @@ import type {
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
+import type { PhpInspectionDiagnostic } from "../domain/phpInspections";
+import { phpInspectionDiagnostics } from "../domain/phpInspections";
 import { useDebouncedPhpEditTick } from "./useDebouncedPhpEditTick";
 import type {
   PhpMethodCompletion,
@@ -2103,17 +2105,25 @@ function EditorSurfaceComponent({
           phpEditTick.content,
         );
         const allDiagnostics = [...diagnostics, ...localDiagnostics];
+        // Lightweight inspections (unused import / unused private method) are
+        // text/AST-only, so they run in light AND IDE mode. They carry their own
+        // warning severity + "Unnecessary" tag and share the `php-syntax` marker
+        // owner so the existing clear/coalesce logic disposes them too.
+        const inspectionDiagnostics = phpInspectionDiagnostics(
+          phpEditTick.content,
+        );
         setSyntaxDiagnosticsByPath((current) => ({
           ...current,
           [phpEditTick.path]: allDiagnostics,
         }));
-        monacoApi.editor.setModelMarkers(
-          model,
-          "php-syntax",
-          allDiagnostics.map((diagnostic) =>
+        monacoApi.editor.setModelMarkers(model, "php-syntax", [
+          ...allDiagnostics.map((diagnostic) =>
             toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
           ),
-        );
+          ...inspectionDiagnostics.map((diagnostic) =>
+            toMonacoInspectionMarker(monacoApi, diagnostic),
+          ),
+        ]);
       })
       .catch((error) => errorReporterRef.current(error));
 
@@ -3514,10 +3524,7 @@ function isFixableQuickFixMarkerAt(
   marker: Monaco.editor.IMarkerData,
   position: EditorPosition,
 ): boolean {
-  if (
-    marker.source !== "PHP Syntax" ||
-    !/^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
-  ) {
+  if (!isFixableQuickFixMarker(marker)) {
     return false;
   }
 
@@ -3525,6 +3532,18 @@ function isFixableQuickFixMarkerAt(
     position.lineNumber >= marker.startLineNumber &&
     position.lineNumber <= marker.endLineNumber
   );
+}
+
+function isFixableQuickFixMarker(marker: Monaco.editor.IMarkerData): boolean {
+  if (
+    marker.source === "PHP Syntax" &&
+    /^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
+  ) {
+    return true;
+  }
+
+  // Unused-import / unused-private-method inspections carry a remove quick-fix.
+  return marker.source === "PHP Inspection";
 }
 
 function diagnosticSeverity(
@@ -3586,6 +3605,34 @@ function syntaxDiagnosticEndColumn(diagnostic: PhpSyntaxDiagnostic): number {
   }
 
   return diagnostic.endCharacter + 1;
+}
+
+/**
+ * Marker for a lightweight PHP inspection (unused import / unused private
+ * method). Rendered as a Warning with Monaco's `Unnecessary` tag so the editor
+ * fades the span (PhpStorm's greyed-out "never used" look). Tagged with the
+ * `PHP Inspection` source so quick-fix discovery and code-action matching can
+ * recognise it.
+ */
+function toMonacoInspectionMarker(
+  monaco: typeof Monaco,
+  diagnostic: PhpInspectionDiagnostic,
+): Monaco.editor.IMarkerData {
+  const endColumn =
+    diagnostic.endLine === diagnostic.line
+      ? Math.max(diagnostic.endCharacter + 1, diagnostic.character + 2)
+      : diagnostic.endCharacter + 1;
+
+  return {
+    endColumn,
+    endLineNumber: diagnostic.endLine + 1,
+    message: diagnostic.message,
+    severity: monaco.MarkerSeverity.Warning,
+    source: "PHP Inspection",
+    startColumn: diagnostic.character + 1,
+    startLineNumber: diagnostic.line + 1,
+    tags: [monaco.MarkerTag.Unnecessary],
+  };
 }
 
 function pruneClosedPaths<Value>(

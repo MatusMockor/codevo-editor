@@ -498,6 +498,10 @@ import {
   organizePhpImports,
 } from "../domain/phpImportsOrganizer";
 import {
+  phpUnusedImportRemovalAt,
+  phpUnusedPrivateMethodRemovalAt,
+} from "../domain/phpInspections";
+import {
   phpCurrentNamespace,
   phpShortNameIsImported,
   planPhpAddImport,
@@ -17924,6 +17928,19 @@ export function useWorkbenchController(
 
       const actions: PhpCodeActionDescriptor[] = [];
 
+      // "Remove unused import" pairs with the unused-import inspection. It is a
+      // single-line deletion valid anywhere a top-level `use` sits (not only in
+      // a class), so it runs before the class-only guard below. Offered only
+      // when the cursor is on a conservatively-detected unused class import.
+      const removeUnusedImportAction = phpRemoveUnusedImportCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedImportAction) {
+        actions.push(removeUnusedImportAction);
+      }
+
       // "Extract variable" is a pure single-file synthesis from the current
       // selection and is valid anywhere a PHP expression sits (class body or a
       // free function), so it runs before the class-only guard below.
@@ -17967,6 +17984,18 @@ export function useWorkbenchController(
 
       if (createFromUsageAction) {
         actions.push(createFromUsageAction);
+      }
+
+      // "Remove unused method" pairs with the unused-private-method inspection.
+      // Offered only when the cursor sits on a conservatively-detected unused
+      // private method; deletes the whole method (and its decorating lines).
+      const removeUnusedMethodAction = phpRemoveUnusedMethodCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedMethodAction) {
+        actions.push(removeUnusedMethodAction);
       }
 
       // "Extract method" lifts a contiguous, whole-statement selection inside a
@@ -29905,6 +29934,73 @@ function phpImportClassCodeAction(
       },
     ],
     title: `Import ${fqn}`,
+  };
+}
+
+/**
+ * Offers "Remove unused import" when the cursor sits on a conservatively
+ * detected unused class import (pairs with the unused-import inspection). The
+ * edit deletes the whole `use ...;` statement and its trailing newline.
+ * Conservative: only single, non-grouped class imports are ever offered (see
+ * `phpUnusedImportRemovalAt` / `phpUnusedClassImports`).
+ */
+function phpRemoveUnusedImportCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedImportRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused import ${removal.label}`,
+  };
+}
+
+/**
+ * Offers "Remove unused method" when the cursor sits on a conservatively
+ * detected unused private method (pairs with the unused-private-method
+ * inspection). The edit deletes the whole method declaration (decorating lines
+ * through the body's closing brace). Conservative: suppressed for any class
+ * with dynamic dispatch and skipped when the body brace cannot be matched.
+ */
+function phpRemoveUnusedMethodCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedPrivateMethodRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused method '${removal.label}'`,
+  };
+}
+
+/** Maps a character-offset removal span to a single empty-text Monaco edit. */
+function removalEdit(
+  source: string,
+  removal: { end: number; start: number },
+): PhpCodeActionTextEdit {
+  const startPosition = offsetToPosition(source, removal.start);
+  const endPosition = offsetToPosition(source, removal.end);
+
+  return {
+    range: {
+      endColumn: endPosition.column + 1,
+      endLineNumber: endPosition.line + 1,
+      startColumn: startPosition.column + 1,
+      startLineNumber: startPosition.line + 1,
+    },
+    text: "",
   };
 }
 

@@ -48280,6 +48280,146 @@ class Greeter
     );
   });
 
+  it("offers a remove-unused-import quick-fix on an unused use line", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Used;
+use App\\Models\\Unused;
+
+class Greeter
+{
+    public function greet(Used $used): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("App\\Models\\Unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeImport = actions.find((action) =>
+      action.title.startsWith("Remove unused import"),
+    );
+    expect(removeImport?.title).toBe(
+      "Remove unused import App\\Models\\Unused",
+    );
+
+    const edit = removeImport?.edits[0];
+    expect(edit?.text).toBe("");
+    expect(edit?.range).toEqual({
+      startColumn: 1,
+      startLineNumber: 6,
+      endColumn: 1,
+      endLineNumber: 7,
+    });
+  });
+
+  it("offers no remove-unused-import quick-fix when the cursor sits on a used import", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Used;
+
+class Greeter
+{
+    public function greet(Used $used): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("App\\Models\\Used");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Remove unused import")),
+    ).toBe(false);
+  });
+
+  it("offers a remove-unused-method quick-fix on an unused private method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): void
+    {
+    }
+
+    private function helper(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("function helper") + "function ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeMethod = actions.find((action) =>
+      action.title.startsWith("Remove unused method"),
+    );
+    expect(removeMethod?.title).toBe("Remove unused method 'helper'");
+    expect(removeMethod?.edits[0]?.text).toBe("");
+  });
+
   it("persists an extract-interface new file to disk and opens it in a tab", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const interfacePath = "/workspace/app/Services/GreeterInterface.php";

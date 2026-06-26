@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   optimizePhpImportsSource,
   organizePhpImports,
+  phpUnusedClassImports,
 } from "./phpImportsOrganizer";
 
 describe("organizePhpImports", () => {
@@ -226,6 +227,95 @@ class Foo
 `;
 
     expect(organizePhpImports(source)?.removed).toEqual([]);
+  });
+
+  it("keeps an import referenced only in an @extends generic type", () => {
+    const source = `<?php
+
+namespace App;
+
+use Illuminate\\Support\\Collection;
+
+/**
+ * @extends Collection<int, User>
+ */
+class UserCollection extends Collection
+{
+}
+`;
+
+    expect(organizePhpImports(source)?.removed).toEqual([]);
+  });
+
+  it("keeps imports referenced only in @template / @template-covariant bounds", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Contracts\\Entity;
+use App\\Contracts\\Identifier;
+
+/**
+ * @template T of Entity
+ * @template-covariant K of Identifier
+ */
+class Repository
+{
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+  });
+
+  it("keeps imports referenced only in @implements / @use generic types", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Contracts\\Comparable;
+use App\\Concerns\\HasUuid;
+
+/**
+ * @implements Comparable<self>
+ * @use HasUuid<int>
+ */
+class Money
+{
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
+  });
+
+  it("keeps imports referenced only in @phpstan-* / @psalm-* type tags", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\ValueObjects\\Amount;
+use App\\ValueObjects\\Currency;
+use App\\ValueObjects\\Ledger;
+
+/**
+ * @phpstan-param Amount $amount
+ * @psalm-return Currency
+ * @phpstan-var Ledger
+ */
+class Account
+{
+}
+`;
+
+    const result = organizePhpImports(source);
+
+    expect(result?.removed).toEqual([]);
+    expect(result?.changed).toBe(false);
   });
 
   it("still removes an import that is only mentioned in a docblock description", () => {
@@ -532,6 +622,75 @@ class Foo
     expect(result?.removed).toEqual([]);
     expect(result?.changed).toBe(false);
     expect(result?.organizedUseBlock).toBe("use App\\A, App\\B;");
+  });
+});
+
+describe("phpUnusedClassImports", () => {
+  it("returns the unused single import with its source span and label", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Services\\UsedService;
+use App\\Services\\UnusedService;
+
+class Foo
+{
+    public function bar(UsedService $service): void
+    {
+    }
+}
+`;
+
+    const unused = phpUnusedClassImports(source);
+
+    expect(unused).toHaveLength(1);
+    expect(unused[0].label).toBe("App\\Services\\UnusedService");
+    expect(source.slice(unused[0].start, unused[0].end)).toBe(
+      "use App\\Services\\UnusedService;",
+    );
+  });
+
+  it("reports an unused aliased import with its alias label", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Models\\User as UserModel;
+
+class Foo
+{
+    public function user(): User
+    {
+    }
+}
+`;
+
+    const unused = phpUnusedClassImports(source);
+
+    expect(unused).toHaveLength(1);
+    expect(unused[0].label).toBe("App\\Models\\User as UserModel");
+    expect(source.slice(unused[0].start, unused[0].end)).toBe(
+      "use App\\Models\\User as UserModel;",
+    );
+  });
+
+  it("never reports grouped, comma-list, function or const imports (multi-symbol / out of scope)", () => {
+    const source = `<?php
+
+namespace App;
+
+use App\\Support\\{Alpha, Beta};
+use App\\A, App\\B;
+use function App\\Support\\tap;
+use const App\\Support\\VERSION;
+
+class Foo
+{
+}
+`;
+
+    expect(phpUnusedClassImports(source)).toEqual([]);
   });
 });
 
