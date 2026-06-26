@@ -19,6 +19,7 @@ import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
 import {
   shouldIndexWorkspace,
   shouldStartLanguageServer,
+  shouldUsePhpIntelligence,
   type SmartModeGateway,
 } from "../domain/intelligence";
 import {
@@ -20863,8 +20864,10 @@ export function useWorkbenchController(
       // A bare class / interface / trait / enum type reference (e.g. a
       // constructor-promoted property or parameter type-hint). Resolve it with
       // our deterministic use/namespace resolver and open the declaration line
-      // BEFORE phpactor, so type navigation works regardless of the indexed
-      // workspace gate. goToPhpClassIdentifierDefinition carries the
+      // BEFORE phpactor. This whole contextual-PHP path only runs once the
+      // goToDefinition cascade has confirmed PHP intelligence is enabled (Smart
+      // Index / IDE mode) - light mode never reaches here, so type navigation
+      // stays off in basic mode. goToPhpClassIdentifierDefinition carries the
       // per-workspace isolation guards (requested-root capture + re-check after
       // each await) via openPhpClassTarget, and returns false for an
       // unresolvable type so the phpactor fallback still runs.
@@ -21736,6 +21739,16 @@ export function useWorkbenchController(
       return;
     }
 
+    // Light (`basic`) mode is pure JS/TS (VS Code parity): no PHP/Laravel
+    // navigation and no indexed-symbol search. Skipping these steps keeps the
+    // workspace isolated to the JS/TS language server and avoids the
+    // project-wide file search that contextual PHP type resolution would
+    // otherwise trigger when no index exists. PHP intelligence is reserved for
+    // Smart Index / IDE mode.
+    if (!shouldUsePhpIntelligence(intelligenceMode)) {
+      return;
+    }
+
     const openedContextualPhpTarget = await goToContextualPhpDefinition();
 
     if (openedContextualPhpTarget) {
@@ -21757,6 +21770,7 @@ export function useWorkbenchController(
     goToIndexedSymbolDefinition,
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
+    intelligenceMode,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {
