@@ -134,6 +134,46 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults cyclic expand word to Alt+/ on every platform (PhpStorm parity)", () => {
+    expect(defaultShortcutForCommand("editor.cyclicExpandWord", "mac")).toBe(
+      "Alt+/",
+    );
+    expect(defaultShortcutForCommand("editor.cyclicExpandWord", "linux")).toBe(
+      "Alt+/",
+    );
+    expect(defaultShortcutForCommand("editor.cyclicExpandWord", "windows")).toBe(
+      "Alt+/",
+    );
+    expect(defaultKeymapSettings("mac")["editor.cyclicExpandWord"]).toBe(
+      "Alt+/",
+    );
+  });
+
+  it("does not collide the cyclic expand word shortcut with any other command", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const owners = Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === "Alt+/",
+      );
+
+      expect(owners).toEqual([["editor.cyclicExpandWord", "Alt+/"]]);
+    }
+  });
+
+  it("parses and matches the Alt+/ cyclic expand word shortcut", () => {
+    expect(parseShortcut("Alt+/")).toEqual({
+      alt: true,
+      ctrl: false,
+      key: "/",
+      meta: false,
+      shift: false,
+    });
+    expect(
+      matchesShortcut(keyEvent({ key: "/", altKey: true }), "Alt+/"),
+    ).toBe(true);
+    expect(matchesShortcut(keyEvent({ key: "/" }), "Alt+/")).toBe(false);
+  });
+
   it("defaults toggle bookmark to F11 on every platform (PhpStorm parity)", () => {
     expect(defaultShortcutForCommand("bookmark.toggle", "mac")).toBe("F11");
     expect(defaultShortcutForCommand("bookmark.toggle", "linux")).toBe("F11");

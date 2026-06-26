@@ -3863,6 +3863,277 @@ class InvoiceServiceTest
     );
   });
 
+  describe("cyclic expand word (hippie completion)", () => {
+    interface HippieHarness {
+      editor: FakeEditor;
+      monaco: ReturnType<typeof createMonaco>;
+      rerender(document: EditorDocument): Promise<void>;
+      run(): void;
+      setBuffer(value: string, cursorOffset: number): void;
+    }
+
+    function offsetToPosition(value: string, offset: number) {
+      const before = value.slice(0, offset);
+      const lines = before.split("\n");
+
+      return {
+        column: lines[lines.length - 1].length + 1,
+        lineNumber: lines.length,
+      };
+    }
+
+    async function renderHippie(
+      initialValue: string,
+      initialOffset: number,
+    ): Promise<HippieHarness> {
+      let modelValue = initialValue;
+      let cursorOffset = initialOffset;
+      const activeDocument: EditorDocument = {
+        content: initialValue,
+        language: "typescript",
+        name: "main.ts",
+        path: "/workspace/main.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        dispose: vi.fn(),
+        getLineMaxColumn: vi.fn((lineNumber: number) => {
+          const lines = modelValue.split("\n");
+          return (lines[lineNumber - 1]?.length ?? 0) + 1;
+        }),
+        getValue: vi.fn(() => modelValue),
+        isDisposed: vi.fn(() => false),
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const extendedModel = model as FakeModel & {
+        getOffsetAt: ReturnType<typeof vi.fn>;
+        getPositionAt: ReturnType<typeof vi.fn>;
+      };
+      extendedModel.getOffsetAt = vi.fn(
+        (position: { column: number; lineNumber: number }) => {
+          const lines = modelValue.split("\n");
+          let offset = 0;
+          for (let index = 0; index < position.lineNumber - 1; index += 1) {
+            offset += lines[index].length + 1;
+          }
+          return offset + position.column - 1;
+        },
+      );
+      extendedModel.getPositionAt = vi.fn((offset: number) =>
+        offsetToPosition(modelValue, offset),
+      );
+      const editor = createEditor(model);
+      const monaco = createMonaco(model);
+      editor.getPosition.mockImplementation(() =>
+        offsetToPosition(modelValue, cursorOffset),
+      );
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
+
+      const renderDocument = async (document: EditorDocument) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={document}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              languageServerDiagnosticsByPath={{}}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      await renderDocument(activeDocument);
+
+      const action = editor.addAction.mock.calls
+        .map(([entry]) => entry)
+        .find((entry) => entry.id === "mockor.cyclicExpandWord");
+
+      if (!action) {
+        throw new Error("Cyclic expand word action was not registered.");
+      }
+
+      return {
+        editor,
+        monaco,
+        rerender: renderDocument,
+        run: () => action.run(),
+        setBuffer: (value: string, nextOffset: number) => {
+          modelValue = value;
+          cursorOffset = nextOffset;
+        },
+      };
+    }
+
+    it("registers the action with the Alt+/ keybinding", async () => {
+      const harness = await renderHippie("calculateTotal\ncalc", "".length);
+      const action = harness.editor.addAction.mock.calls
+        .map(([entry]) => entry)
+        .find((entry) => entry.id === "mockor.cyclicExpandWord");
+
+      expect(action).toEqual(
+        expect.objectContaining({
+          keybindings: [harness.monaco.KeyMod.Alt | harness.monaco.KeyCode.Slash],
+          label: "Cyclic Expand Word",
+        }),
+      );
+    });
+
+    it("expands the prefix to the nearest matching word from the buffer", async () => {
+      const value = "calculateTotal\ncalc";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+
+      // Replaces just the "calc" prefix with the remaining "ulateTotal".
+      expect(harness.editor.executeEdits).toHaveBeenCalledWith(
+        "mockor.cyclicExpandWord",
+        [
+          expect.objectContaining({
+            text: "calculateTotal",
+            range: expect.objectContaining({
+              startLineNumber: 2,
+              startColumn: 1,
+              endLineNumber: 2,
+              endColumn: 5,
+            }),
+          }),
+        ],
+      );
+    });
+
+    it("does nothing when no buffer word matches the prefix", async () => {
+      const value = "alpha beta zz";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+
+      expect(harness.editor.executeEdits).not.toHaveBeenCalled();
+    });
+
+    it("cycles to the next candidate on a back-to-back press, then wraps to the prefix", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      // First Alt+/ -> nearest backward candidate "fooTwo".
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // Reflect the inserted edit + caret at the end of the inserted word, then
+      // press Alt+/ again immediately: it must cycle to "fooOne".
+      harness.setBuffer("fooOne\nfooTwo\nfooTwo", "fooOne\nfooTwo\nfooTwo".length);
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooOne" })],
+      );
+
+      // After the last candidate it wraps back to the originally typed prefix.
+      harness.setBuffer("fooOne\nfooTwo\nfooOne", "fooOne\nfooTwo\nfooOne".length);
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        3,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "foo" })],
+      );
+    });
+
+    it("drops the active session when the document changes (no cross-file cycle)", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // A document switch hands EditorSurface a new activeDocument object. The
+      // hippie session anchor/candidates belong to the previous file, so the
+      // switch must drop the session. We re-render with a new document object so
+      // the reset effect fires, then point the buffer at fresh content.
+      await harness.rerender({
+        content: "fooOne\nfooTwo\nfooTwo",
+        language: "typescript",
+        name: "main.ts",
+        path: "/workspace/main.ts",
+        savedContent: "",
+      });
+
+      // The buffer now shows "fooTwo" at the caret. A stale session would cycle
+      // to its old candidate "fooOne"; a correctly reset session re-expands from
+      // the prefix under the caret. We give the buffer a distinct prefix so the
+      // two outcomes differ: a fresh expansion from "alp" yields "alphaBeta".
+      harness.setBuffer("alphaBeta\nalp", "alphaBeta\nalp".length);
+      harness.run();
+
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "alphaBeta" })],
+      );
+    });
+
+    it("starts a fresh expansion (not a cycle) when the caret moves between presses", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // The buffer now shows the expansion, but the caret is somewhere else
+      // entirely (user clicked away). The next press must NOT cycle "fooTwo" ->
+      // "fooOne"; it must re-expand from whatever new prefix is under the caret.
+      const moved = "fooOne\nfooTwo\nfooTwo\nfo";
+      harness.setBuffer(moved, moved.length);
+      harness.run();
+
+      // Fresh expansion from prefix "fo": nearest backward word is "fooTwo".
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+    });
+  });
+
   it("extends selection from identifier to full member call with Option+Up", async () => {
     const line =
       "$comment = $this->commentRepository->findOrFail($request->getCommentId());";
@@ -7676,6 +7947,7 @@ function createMonaco(model: FakeModel) {
       KeyR: 4,
       KeyT: 14,
       KeyW: 7,
+      Slash: 90,
       UpArrow: 9,
     },
     KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },

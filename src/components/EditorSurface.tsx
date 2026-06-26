@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MutableRefObject,
 } from "react";
 import type * as Monaco from "monaco-editor";
 import type {
@@ -59,6 +60,11 @@ import {
   type SurroundWithTemplateId,
 } from "../domain/surroundWith";
 import { completePhpStatement } from "../domain/phpCompleteStatement";
+import {
+  advanceHippieSession,
+  startHippieSession,
+  type HippieSession,
+} from "../domain/hippieCompletion";
 import {
   phpMoveStatement,
   type MoveStatementDirection,
@@ -319,6 +325,10 @@ function EditorSurfaceComponent({
   // flips it. Per-editor state (one EditorSurface instance per tab), so it never
   // leaks between open project tabs.
   const columnSelectionEnabledRef = useRef(false);
+  // Active cyclic-expand-word (hippie) session. Per-editor state (one
+  // EditorSurface per tab) so completion candidates never leak between project
+  // tabs. Reset whenever the caret/buffer no longer matches the last expansion.
+  const hippieSessionRef = useRef<HippieSession | null>(null);
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   // The path whose glyphs currently occupy implementationGutterDecorationIdsRef.
@@ -416,9 +426,11 @@ function EditorSurfaceComponent({
 
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
-  // changes.
+  // changes. The cyclic-expand-word (hippie) session is dropped for the same
+  // reason: its anchor offset and candidate list belong to the previous file.
   useEffect(() => {
     setSurroundWithRequest(null);
+    hippieSessionRef.current = null;
   }, [activeDocument]);
 
   useEffect(() => {
@@ -1192,6 +1204,14 @@ function EditorSurfaceComponent({
           }
 
           applyCompleteStatement(monacoApi, editorApi);
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.cyclicExpandWord",
+        label: "Cyclic Expand Word",
+        keybindings: keybinding("editor.cyclicExpandWord"),
+        run: () => {
+          applyCyclicExpandWord(monacoApi, editorApi, hippieSessionRef);
         },
       }),
       editorApi.addAction({
@@ -2357,6 +2377,122 @@ function precedingLinesSource(
   return `${lines.join("\n")}\n`;
 }
 
+// Word characters for the hippie prefix under the caret. Mirrors the domain
+// module's WORD_CHAR set (PHP `$user`, JS `foo_bar2`) so the prefix we slice and
+// the candidates we match agree.
+const HIPPIE_WORD_CHAR = /[A-Za-z0-9_$]/;
+
+// Cyclic Expand Word (PhpStorm "Cyclic Expand Word" / Emacs hippie, Alt+/).
+// Expands the word prefix before the caret to the nearest matching buffer word;
+// pressing again immediately cycles through the remaining candidates and wraps
+// back to the typed prefix. Pure text from the live buffer only - no LSP/disk.
+function applyCyclicExpandWord(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  sessionRef: MutableRefObject<HippieSession | null>,
+): void {
+  const model = editor.getModel();
+  const position = editor.getPosition();
+
+  if (!model || !position) {
+    sessionRef.current = null;
+    return;
+  }
+
+  const documentText = model.getValue();
+  const cursorOffset = model.getOffsetAt(position);
+  const session = continueOrStartHippieSession(
+    sessionRef.current,
+    documentText,
+    cursorOffset,
+  );
+
+  if (!session) {
+    sessionRef.current = null;
+    return;
+  }
+
+  const replaceEndOffset = currentHippieEndOffset(sessionRef.current, session);
+  const startPosition = model.getPositionAt(session.anchorOffset);
+  const endPosition = model.getPositionAt(replaceEndOffset);
+
+  editor.executeEdits("mockor.cyclicExpandWord", [
+    {
+      forceMoveMarkers: true,
+      range: new monaco.Range(
+        startPosition.lineNumber,
+        startPosition.column,
+        endPosition.lineNumber,
+        endPosition.column,
+      ),
+      text: session.word,
+    },
+  ]);
+
+  const caretPosition = model.getPositionAt(
+    session.anchorOffset + session.word.length,
+  );
+  editor.setPosition(caretPosition);
+  sessionRef.current = session;
+}
+
+// Decides whether the previous expansion is still live (same anchor, and the
+// buffer at the anchor still holds exactly the last inserted word ending at the
+// caret). If so we cycle to the next candidate; otherwise we start a fresh
+// expansion from the prefix currently under the caret.
+function continueOrStartHippieSession(
+  previous: HippieSession | null,
+  documentText: string,
+  cursorOffset: number,
+): HippieSession | null {
+  if (previous && isLiveHippieSession(previous, documentText, cursorOffset)) {
+    return advanceHippieSession(previous);
+  }
+
+  const prefix = hippiePrefixBefore(documentText, cursorOffset);
+  return startHippieSession(documentText, prefix, cursorOffset);
+}
+
+function isLiveHippieSession(
+  session: HippieSession,
+  documentText: string,
+  cursorOffset: number,
+): boolean {
+  const expectedEnd = session.anchorOffset + session.word.length;
+
+  if (cursorOffset !== expectedEnd) {
+    return false;
+  }
+
+  return (
+    documentText.slice(session.anchorOffset, expectedEnd) === session.word
+  );
+}
+
+// The offset where the text being replaced ends. On a fresh expansion the caret
+// sits at the end of the typed prefix (anchor + prefix length); when cycling we
+// replace the previously inserted word (anchor + previous word length).
+function currentHippieEndOffset(
+  previous: HippieSession | null,
+  session: HippieSession,
+): number {
+  if (previous && previous.anchorOffset === session.anchorOffset) {
+    return previous.anchorOffset + previous.word.length;
+  }
+
+  return session.anchorOffset + session.prefix.length;
+}
+
+function hippiePrefixBefore(documentText: string, cursorOffset: number): string {
+  let start = cursorOffset;
+
+  while (start > 0 && HIPPIE_WORD_CHAR.test(documentText[start - 1])) {
+    start -= 1;
+  }
+
+  return documentText.slice(start, cursorOffset);
+}
+
 // Moves the whole statement (or brace block) under the caret up or down past its
 // adjacent statement (PhpStorm Cmd+Shift+Up / Down). The pure analyser computes a
 // balanced line range swap; when it declines (ambiguous, file edge, multi-line
@@ -3416,6 +3552,7 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
 
   const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
     ",": "Comma",
+    "/": "Slash",
     "`": "Backquote",
     "[": "BracketLeft",
     "]": "BracketRight",

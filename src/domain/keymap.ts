@@ -187,6 +187,14 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // Alt+/ on every platform (PhpStorm "Cyclic Expand Word" / Emacs hippie).
+    // Not a Cmd-based shortcut, so it stays Alt+/ on Windows/Linux too.
+    defaultShortcut: "Alt+/",
+    id: "editor.cyclicExpandWord",
+    label: "Cyclic Expand Word",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",
