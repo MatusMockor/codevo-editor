@@ -919,8 +919,12 @@ function App() {
             editorFontFamily={workbench.appSettings.editorFontFamily}
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
+            gitOperationLoading={workbench.gitOperationLoading}
             onClose={workbench.closeGitDiffPreview}
             onRevertFile={(change) => workbench.revertGitChanges([change])}
+            loadFileHunks={workbench.loadGitFileHunks}
+            onStageHunk={workbench.stageGitHunk}
+            onUnstageHunk={workbench.unstageGitHunk}
           />
         ) : (
           <EditorSurface

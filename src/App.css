@@ -1348,6 +1348,68 @@ button {
   gap: 4px;
 }
 
+.git-diff-hunks {
+  display: flex;
+  flex: 0 0 auto;
+  max-height: 30%;
+  flex-direction: column;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+}
+
+.git-diff-hunk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  font-size: 12px;
+}
+
+.git-diff-hunk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.git-diff-hunk-toggle input:disabled {
+  cursor: default;
+}
+
+.git-diff-hunk-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+
+.git-diff-hunk-header {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+}
+
+.git-diff-hunk-summary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-diff-hunk-added {
+  color: #7ddc9f;
+}
+
+.git-diff-hunk-removed {
+  color: #ef7373;
+}
+
 .tree-chevron {
   opacity: 1;
   transition: transform 0.12s ease;

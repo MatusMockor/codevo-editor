@@ -47,6 +47,20 @@ pub struct GitFileDiff {
     pub original_content: String,
 }
 
+/// A single hunk from `git diff` (or `git diff --cached`) for one file. The
+/// `index` is the hunk's position within that file's diff and is the stable
+/// identifier the front-end sends back to stage/unstage exactly that hunk. The
+/// `header`/`lines` mirror the unified-diff text verbatim so the preview can
+/// render the change without re-deriving it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffHunk {
+    pub header: String,
+    pub index: u32,
+    pub lines: Vec<String>,
+    pub is_staged: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBlameLine {
@@ -106,6 +120,24 @@ pub trait GitRepositoryGateway {
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
     fn unstage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
+    fn file_hunks(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        staged: bool,
+    ) -> io::Result<Vec<GitDiffHunk>>;
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus>;
+    fn unstage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus>;
     fn stash_save(&self, root: &Path, message: &str) -> io::Result<()>;
     fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>>;
     fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()>;
@@ -119,6 +151,48 @@ pub trait GitRepositoryGateway {
 }
 
 pub struct CommandGitRepositoryGateway;
+
+impl CommandGitRepositoryGateway {
+    /// Stages (`reverse == false`) or unstages (`reverse == true`) exactly one
+    /// hunk by re-running `git diff` for the file, slicing out the hunk at
+    /// `hunk_index`, and feeding that minimal patch to `git apply --cached`.
+    ///
+    /// The patch is assembled from `git`'s own diff output (never hand-built
+    /// from line numbers), so EOL style, "no newline at EOF" markers, and
+    /// context all stay byte-exact. `git apply --cached` is atomic: a stale or
+    /// non-applicable patch exits non-zero and leaves the index untouched, so a
+    /// failure is a safe no-op rather than index corruption.
+    fn apply_single_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+        reverse: bool,
+    ) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        // Unstaging reads the staged diff; staging reads the worktree diff. The
+        // patch must come from the same view we will apply against.
+        let raw = file_diff_text(&root, &relative, reverse)?;
+        let patch = single_hunk_patch(&raw, hunk_index).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "Requested hunk no longer matches the file diff.",
+            )
+        })?;
+
+        let mut args = vec!["apply", "--cached", "--unidiff-zero", "--recount"];
+
+        if reverse {
+            args.push("--reverse");
+        }
+
+        run_git_with_stdin(&root, &args, patch.as_bytes())?;
+        self.status(&root)
+    }
+}
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>> {
@@ -342,6 +416,38 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         self.status(&root)
+    }
+
+    fn file_hunks(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        staged: bool,
+    ) -> io::Result<Vec<GitDiffHunk>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let raw = file_diff_text(&root, &relative, staged)?;
+        Ok(parse_diff_hunks(&raw, staged))
+    }
+
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus> {
+        self.apply_single_hunk(root, relative_path, hunk_index, false)
+    }
+
+    fn unstage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus> {
+        self.apply_single_hunk(root, relative_path, hunk_index, true)
     }
 
     fn stash_save(&self, root: &Path, message: &str) -> io::Result<()> {
@@ -1051,6 +1157,134 @@ fn run_git_vec_with_env(root: &Path, args: Vec<&str>, index_file: Option<&Path>)
     git_output_vec_with_env(root, args, index_file).map(|_| ())
 }
 
+/// Runs `git <args>` with `stdin` piped in (used for `git apply --cached`).
+/// A non-zero exit becomes an error so callers can treat a rejected patch as a
+/// safe no-op; `git apply` does not mutate the index when it fails.
+fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("Failed to open git stdin."))?
+        .write_all(stdin)?;
+
+    let output = child.wait_with_output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(io::Error::other(
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
+}
+
+/// Returns the raw `git diff` text for a single file. `staged` selects the
+/// index-vs-HEAD diff (used when unstaging); otherwise the worktree-vs-index
+/// diff (used when staging). `-U0` keeps each logical change in its own hunk so
+/// the front-end can target a single hunk; the `--` guard scopes the diff to
+/// one path so the patch only ever touches that file.
+fn file_diff_text(root: &Path, relative_path: &str, staged: bool) -> io::Result<String> {
+    let mut args = vec!["diff", "-U0", "--no-color"];
+
+    if staged {
+        args.push("--cached");
+    }
+
+    args.push("--");
+    args.push(relative_path);
+
+    git_output_vec(root, args)
+}
+
+/// Splits a single-file `git diff` into its preamble (everything up to and
+/// including the `+++` line) and the per-hunk blocks (each `@@ ... @@` and the
+/// `-`/`+`/` `/`\` lines that follow it).
+fn split_diff(raw: &str) -> Option<(Vec<&str>, Vec<Vec<&str>>)> {
+    let lines: Vec<&str> = raw.split('\n').collect();
+    let first_hunk = lines.iter().position(|line| line.starts_with("@@"))?;
+    let preamble = lines[..first_hunk].to_vec();
+
+    let mut hunks: Vec<Vec<&str>> = Vec::new();
+
+    for line in &lines[first_hunk..] {
+        if line.starts_with("@@") {
+            hunks.push(vec![*line]);
+            continue;
+        }
+
+        // Trailing empty element from the final newline is not part of a hunk.
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(current) = hunks.last_mut() {
+            current.push(*line);
+        }
+    }
+
+    Some((preamble, hunks))
+}
+
+/// Parses a single-file `git diff` into structured hunks for the front-end. The
+/// `header` is the `@@ ... @@` line; `lines` are the body lines (with their
+/// leading `-`/`+`/` ` markers preserved) so the preview renders without
+/// re-deriving the change.
+fn parse_diff_hunks(raw: &str, is_staged: bool) -> Vec<GitDiffHunk> {
+    let Some((_, hunks)) = split_diff(raw) else {
+        return Vec::new();
+    };
+
+    hunks
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let (header, body) = block.split_first()?;
+            Some(GitDiffHunk {
+                header: (*header).to_string(),
+                index: index as u32,
+                lines: body.iter().map(|line| (*line).to_string()).collect(),
+                is_staged,
+            })
+        })
+        .collect()
+}
+
+/// Builds a minimal, valid unified-diff patch containing only the hunk at
+/// `hunk_index`, reusing `git`'s own preamble and hunk text verbatim so the
+/// result stays byte-exact (EOL, "no newline at EOF", binary detection are all
+/// inherited from git). Returns `None` when the index is out of range, in which
+/// case the caller treats the request as a stale no-op.
+fn single_hunk_patch(raw: &str, hunk_index: u32) -> Option<String> {
+    let (preamble, hunks) = split_diff(raw)?;
+    let hunk = hunks.get(hunk_index as usize)?;
+
+    let mut patch = String::new();
+
+    for line in preamble {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+
+    for line in hunk {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+
+    Some(patch)
+}
+
 fn commit_selected_staged_changes(
     root: &Path,
     message: &str,
@@ -1338,9 +1572,10 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_blame_porcelain, parse_branch_list, parse_file_history, parse_porcelain_status,
-        parse_stash_list, safe_branch_name, safe_commit_sha, safe_relative_path, safe_stash_index,
-        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitRepositoryGateway,
+        parse_blame_porcelain, parse_branch_list, parse_diff_hunks, parse_file_history,
+        parse_porcelain_status, parse_stash_list, safe_branch_name, safe_commit_sha,
+        safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -1739,6 +1974,255 @@ mod tests {
 
         assert!(!repo.path().join("new.txt").exists());
         assert_eq!(repo.git_output(["status", "--porcelain"]), "");
+    }
+
+    fn hunk_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "hunk@example.com"]);
+        repo.run(["config", "user.name", "Hunk Author"]);
+        repo
+    }
+
+    // --- patch generation (corruption-prone; assert on git's own output) ---
+
+    #[test]
+    fn splits_two_change_diff_into_separate_hunks_with_zero_context() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 9405325..084d8dd 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+            "@@ -5 +5 @@ d\n",
+            "-e\n",
+            "+E\n",
+        );
+
+        let hunks = parse_diff_hunks(raw, false);
+
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].index, 0);
+        assert_eq!(hunks[0].header, "@@ -1 +1 @@");
+        assert_eq!(hunks[0].lines, vec!["-a", "+A"]);
+        assert_eq!(hunks[1].index, 1);
+        assert_eq!(hunks[1].header, "@@ -5 +5 @@ d");
+        assert_eq!(hunks[1].lines, vec!["-e", "+E"]);
+    }
+
+    #[test]
+    fn single_hunk_patch_keeps_preamble_and_only_the_selected_hunk() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 9405325..084d8dd 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+            "@@ -5 +5 @@ d\n",
+            "-e\n",
+            "+E\n",
+        );
+
+        let first = single_hunk_patch(raw, 0).expect("first hunk patch");
+        assert_eq!(
+            first,
+            concat!(
+                "diff --git a/f.txt b/f.txt\n",
+                "index 9405325..084d8dd 100644\n",
+                "--- a/f.txt\n",
+                "+++ b/f.txt\n",
+                "@@ -1 +1 @@\n",
+                "-a\n",
+                "+A\n",
+            )
+        );
+
+        let second = single_hunk_patch(raw, 1).expect("second hunk patch");
+        assert!(second.contains("@@ -5 +5 @@ d\n-e\n+E\n"));
+        assert!(!second.contains("+A"));
+    }
+
+    #[test]
+    fn single_hunk_patch_preserves_no_newline_marker() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 54d55bf..a9beb14 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -3 +3 @@ two\n",
+            "-three\n",
+            "\\ No newline at end of file\n",
+            "+THREE\n",
+            "\\ No newline at end of file\n",
+        );
+
+        let patch = single_hunk_patch(raw, 0).expect("patch");
+
+        assert!(patch.contains("\\ No newline at end of file"));
+        assert!(patch.contains("-three"));
+        assert!(patch.contains("+THREE"));
+    }
+
+    #[test]
+    fn single_hunk_patch_rejects_out_of_range_index() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+        );
+
+        assert!(single_hunk_patch(raw, 5).is_none());
+    }
+
+    // --- stage_hunk / unstage_hunk round trips through real git ---
+
+    #[test]
+    fn stage_hunk_stages_only_the_selected_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\nc\nd\nE\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let hunks = gateway.file_hunks(repo.path(), "f.txt", false).expect("hunks");
+        assert_eq!(hunks.len(), 2, "expected one hunk per change, got {hunks:?}");
+
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage hunk");
+
+        // The first line is staged; the last line is still only in the worktree.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "A\nb\nc\nd\ne\n");
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+    }
+
+    #[test]
+    fn unstage_hunk_unstages_only_the_selected_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\nc\nd\nE\n");
+        // Stage everything, then unstage just the first hunk.
+        repo.run(["add", "f.txt"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let staged = gateway.file_hunks(repo.path(), "f.txt", true).expect("staged hunks");
+        assert_eq!(staged.len(), 2, "expected two staged hunks, got {staged:?}");
+        assert!(staged.iter().all(|hunk| hunk.is_staged));
+
+        gateway.unstage_hunk(repo.path(), "f.txt", 0).expect("unstage hunk");
+
+        // First line reverts to HEAD in the index; last line stays staged.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\nd\nE\n");
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_pure_addition_at_end_of_file() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nb\nc\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage addition");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_pure_deletion() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nc\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage deletion");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nc\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_missing_newline_at_end_of_file() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "one\ntwo\nthree");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "one\nTWO\nthree");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage no-eol hunk");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "one\nTWO\nthree");
+    }
+
+    #[test]
+    fn stage_hunk_handles_crlf_line_endings() {
+        let repo = hunk_repo();
+        // Pin EOL handling so the test does not depend on the host's global
+        // `core.autocrlf`; this keeps the CRLF bytes intact in the blob.
+        repo.run(["config", "core.autocrlf", "false"]);
+        repo.write("f.txt", "a\r\nb\r\nc\r\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\r\nB\r\nc\r\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage crlf hunk");
+
+        // Staging one CRLF hunk via git's own diff is byte-exact: the staged
+        // blob carries the changed line and the surrounding CRLF endings.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\r\nB\r\nc\r\n");
+        // The whole change was staged, so nothing is left for the worktree diff.
+        assert_eq!(repo.git_output(["diff", "--name-only"]), "");
+    }
+
+    #[test]
+    fn stage_hunk_handles_first_line_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "first\nsecond\nthird\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "FIRST\nsecond\nthird\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage first line");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "FIRST\nsecond\nthird\n");
+    }
+
+    #[test]
+    fn stage_hunk_out_of_range_index_is_safe_no_op() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let result = gateway.stage_hunk(repo.path(), "f.txt", 9);
+
+        assert!(result.is_err(), "stale hunk index must error");
+        // Index untouched: nothing staged.
+        assert_eq!(repo.git_output(["diff", "--cached", "--name-only"]), "");
+    }
+
+    #[test]
+    fn stage_hunk_rejects_paths_outside_workspace() {
+        let repo = hunk_repo();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.stage_hunk(repo.path(), "../escape.txt", 0).is_err());
+        assert!(gateway.unstage_hunk(repo.path(), "/etc/passwd", 0).is_err());
     }
 
     #[test]

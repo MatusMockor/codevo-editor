@@ -1,5 +1,5 @@
 import { DiffEditor } from "@monaco-editor/react";
-import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import {
@@ -9,7 +9,7 @@ import {
   monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
-import type { GitChangedFile, GitFileDiff } from "../domain/git";
+import type { GitChangedFile, GitDiffHunk, GitFileDiff } from "../domain/git";
 import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
@@ -22,8 +22,14 @@ interface GitDiffPreviewProps {
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
+  /** True while a stage/unstage operation is running; disables hunk actions. */
+  gitOperationLoading?: boolean;
   onClose(): void;
   onRevertFile?(change: GitChangedFile): void;
+  /** Loads the file's hunks (staged or worktree) for per-hunk staging. */
+  loadFileHunks?(relativePath: string, staged: boolean): Promise<GitDiffHunk[]>;
+  onStageHunk?(relativePath: string, hunkIndex: number): void;
+  onUnstageHunk?(relativePath: string, hunkIndex: number): void;
 }
 
 export function GitDiffPreview({
@@ -33,8 +39,12 @@ export function GitDiffPreview({
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
+  gitOperationLoading = false,
   onClose,
   onRevertFile,
+  loadFileHunks,
+  onStageHunk,
+  onUnstageHunk,
 }: GitDiffPreviewProps) {
   const [diffEditor, setDiffEditor] = useState<
     Monaco.editor.IStandaloneDiffEditor | null
@@ -53,6 +63,81 @@ export function GitDiffPreview({
       fontSize: editorFontSize,
     });
   }, [diffEditor, editorFontFamily, monacoFontLigatures, editorFontSize]);
+
+  const [hunks, setHunks] = useState<GitDiffHunk[]>([]);
+  const changeRelativePath = diff?.change.relativePath ?? null;
+  const changeIsStaged = diff?.change.isStaged ?? false;
+  const changeStatus = diff?.change.status ?? null;
+  // Per-hunk staging only applies to tracked text changes. Untracked files have
+  // no `git diff` hunks (they would need intent-to-add first) and conflicts are
+  // resolved through the editor, not hunk staging.
+  const supportsHunkStaging =
+    Boolean(loadFileHunks) &&
+    changeStatus !== null &&
+    changeStatus !== "untracked" &&
+    changeStatus !== "conflicted";
+  // `modifiedContent`/`originalContent` change after each stage/unstage, so
+  // including them re-loads the hunks to reflect the new index state.
+  const diffOriginalContent = diff?.originalContent ?? "";
+  const diffModifiedContent = diff?.modifiedContent ?? "";
+
+  useEffect(() => {
+    if (!loadFileHunks || !changeRelativePath || !supportsHunkStaging) {
+      setHunks([]);
+      return;
+    }
+
+    let cancelled = false;
+    const relativePath = changeRelativePath;
+    const staged = changeIsStaged;
+
+    void loadFileHunks(relativePath, staged).then((loaded) => {
+      // Guard against an out-of-order resolve after the selected change moved
+      // on (per-tab isolation; the latest selection wins).
+      if (
+        cancelled ||
+        relativePath !== changeRelativePath ||
+        staged !== changeIsStaged
+      ) {
+        return;
+      }
+
+      setHunks(loaded);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    changeIsStaged,
+    changeRelativePath,
+    diffModifiedContent,
+    diffOriginalContent,
+    loadFileHunks,
+    supportsHunkStaging,
+  ]);
+
+  const onToggleHunk = useCallback(
+    (hunkIndex: number) => {
+      if (!changeRelativePath || gitOperationLoading) {
+        return;
+      }
+
+      if (changeIsStaged) {
+        onUnstageHunk?.(changeRelativePath, hunkIndex);
+        return;
+      }
+
+      onStageHunk?.(changeRelativePath, hunkIndex);
+    },
+    [
+      changeIsStaged,
+      changeRelativePath,
+      gitOperationLoading,
+      onStageHunk,
+      onUnstageHunk,
+    ],
+  );
 
   const goToChange = useCallback(
     (target: DiffNavigationTarget) => {
@@ -134,6 +219,14 @@ export function GitDiffPreview({
           </button>
         </div>
       </header>
+      {supportsHunkStaging && hunks.length > 0 ? (
+        <GitDiffHunkList
+          disabled={gitOperationLoading}
+          hunks={hunks}
+          staged={changeIsStaged}
+          onToggleHunk={onToggleHunk}
+        />
+      ) : null}
       <div className="editor-panel">
         <DiffEditor
           onMount={(editor) => setDiffEditor(editor)}
@@ -177,6 +270,77 @@ export function GitDiffPreview({
 // diff editor never flashes white while the Monaco chunk loads.
 function GitDiffLoadingPlaceholder() {
   return <div className="editor-loading-placeholder" aria-hidden="true" />;
+}
+
+interface GitDiffHunkListProps {
+  disabled: boolean;
+  hunks: GitDiffHunk[];
+  staged: boolean;
+  onToggleHunk(hunkIndex: number): void;
+}
+
+// PhpStorm-style per-hunk staging. A checkbox per hunk stages (or, when viewing
+// the staged side, unstages) exactly that hunk; the surrounding diff editor
+// re-renders against the new index state after the operation resolves.
+function GitDiffHunkList({
+  disabled,
+  hunks,
+  staged,
+  onToggleHunk,
+}: GitDiffHunkListProps) {
+  const actionVerb = staged ? "Unstage" : "Stage";
+
+  return (
+    <ul className="git-diff-hunks" aria-label="File hunks">
+      {hunks.map((hunk) => {
+        const summary = hunkSummary(hunk);
+
+        return (
+          <li className="git-diff-hunk" key={hunk.index}>
+            <label className="git-diff-hunk-toggle">
+              <input
+                aria-label={`${actionVerb} hunk ${hunk.index + 1}`}
+                checked={staged}
+                disabled={disabled}
+                onChange={() => onToggleHunk(hunk.index)}
+                type="checkbox"
+              />
+              <span aria-hidden="true" className="git-diff-hunk-icon">
+                {staged ? <Minus size={12} /> : <Plus size={12} />}
+              </span>
+            </label>
+            <code className="git-diff-hunk-header">{hunk.header}</code>
+            <span className="git-diff-hunk-summary">
+              {summary.added > 0 ? (
+                <span className="git-diff-hunk-added">+{summary.added}</span>
+              ) : null}
+              {summary.removed > 0 ? (
+                <span className="git-diff-hunk-removed">-{summary.removed}</span>
+              ) : null}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function hunkSummary(hunk: GitDiffHunk): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+
+  for (const line of hunk.lines) {
+    if (line.startsWith("+")) {
+      added += 1;
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      removed += 1;
+    }
+  }
+
+  return { added, removed };
 }
 
 type DiffNavigationTarget = "next" | "previous";

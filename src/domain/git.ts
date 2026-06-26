@@ -36,6 +36,19 @@ export interface GitFileDiff {
   originalContent: string;
 }
 
+/**
+ * A single hunk from `git diff` (or `git diff --cached`) for one file. `index`
+ * is the hunk's position within that file's diff and is the stable id sent back
+ * to stage/unstage exactly that hunk. `header` is the `@@ ... @@` line; `lines`
+ * are the body lines with their leading `-`/`+`/` ` markers preserved.
+ */
+export interface GitDiffHunk {
+  header: string;
+  index: number;
+  lines: string[];
+  isStaged: boolean;
+}
+
 export interface GitBlameLine {
   author: string;
   lineNumber: number;
@@ -80,10 +93,25 @@ export interface GitGateway {
   ): Promise<GitFileHistoryEntry[]>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
+  getFileHunks(
+    rootPath: string,
+    relativePath: string,
+    staged: boolean,
+  ): Promise<GitDiffHunk[]>;
   push(rootPath: string): Promise<GitStatus>;
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  stageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus>;
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  unstageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus>;
   stashSave(rootPath: string, message: string): Promise<void>;
   stashList(rootPath: string): Promise<GitStashEntry[]>;
   stashApply(rootPath: string, index: number): Promise<void>;

@@ -4,6 +4,7 @@ import {
   type GitBlameLine,
   type GitBranch,
   type GitChangedFile,
+  type GitDiffHunk,
   type GitFileDiff,
   type GitFileHistoryEntry,
   type GitGateway,
@@ -105,6 +106,54 @@ export class TauriGitGateway implements GitGateway {
       change,
       rootPath,
     }) as Promise<GitFileDiff>;
+  }
+
+  async getFileHunks(
+    rootPath: string,
+    relativePath: string,
+    staged: boolean,
+  ): Promise<GitDiffHunk[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_file_hunks", {
+      relativePath,
+      rootPath,
+      staged,
+    }) as Promise<GitDiffHunk[]>;
+  }
+
+  async stageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("stage_git_hunk", {
+      hunkIndex,
+      relativePath,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async unstageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("unstage_git_hunk", {
+      hunkIndex,
+      relativePath,
+      rootPath,
+    }) as Promise<GitStatus>;
   }
 
   async stageFiles(

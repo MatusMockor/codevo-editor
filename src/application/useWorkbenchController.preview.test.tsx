@@ -958,9 +958,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -1028,9 +1031,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -1104,9 +1110,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -1176,9 +1185,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -1258,9 +1270,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10250,9 +10265,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10319,6 +10337,7 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => ({
         branch: "main",
@@ -10326,7 +10345,9 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10353,6 +10374,111 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [change]);
     expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
+  });
+
+  it("stages a single hunk through the gateway and applies the refreshed status", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    const stagedChange = { ...change, isStaged: true };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stageHunk = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [stagedChange],
+      isRepository: true,
+      rootPath,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().stageGitHunk("src/User.php", 1);
+    });
+
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 1);
+    expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
+  });
+
+  it("unstages a single hunk through the gateway and applies the refreshed status", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const unstagedChange = { ...change, isStaged: false };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.unstageHunk = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [unstagedChange],
+      isRepository: true,
+      rootPath,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().unstageGitHunk("src/User.php", 0);
+    });
+
+    expect(gitGateway.unstageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    expect(getWorkbench().gitStatus.changes).toEqual([unstagedChange]);
+  });
+
+  it("surfaces hunk-staging gateway failures without throwing (safe no-op)", async () => {
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stageHunk = vi.fn(async () => {
+      throw new Error("patch does not apply");
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().stageGitHunk("src/User.php", 0);
+    });
+
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    // A rejected patch must not leave the operation spinner stuck.
+    expect(getWorkbench().gitOperationLoading).toBe(false);
+  });
+
+  it("loads a file's hunks through the gateway for the active workspace", async () => {
+    const hunks = [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+    ];
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getFileHunks = vi.fn(async () => hunks);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    let loaded: typeof hunks = [];
+    await act(async () => {
+      loaded = await getWorkbench().loadGitFileHunks("src/User.php", false);
+    });
+
+    expect(gitGateway.getFileHunks).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      false,
+    );
+    expect(loaded).toEqual(hunks);
   });
 
   it("commits staged Git changes and clears the commit message", async () => {
@@ -10393,9 +10519,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10476,9 +10605,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10553,9 +10685,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10637,9 +10772,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10725,9 +10863,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10803,9 +10944,12 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -10889,9 +11033,12 @@ describe("useWorkbenchController preview tabs", () => {
       push: vi.fn(async () => {
         throw new Error("no upstream configured");
       }),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -53310,9 +53457,12 @@ function createControllerDependencies({
         originalContent: "",
       })),
       getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stashSave: vi.fn(async () => undefined),
       stashList: vi.fn(async () => []),
       stashApply: vi.fn(async () => undefined),
@@ -53826,9 +53976,12 @@ function fileHistoryGitGateway(
       originalContent: "",
     })),
     getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    getFileHunks: vi.fn(async () => []),
     revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     stashSave: vi.fn(async () => undefined),
     stashList: vi.fn(async () => []),
     stashApply: vi.fn(async () => undefined),

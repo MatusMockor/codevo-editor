@@ -27,6 +27,7 @@ import {
   type GitBlameLine,
   type GitBranch,
   type GitChangedFile,
+  type GitDiffHunk,
   type GitFileDiff,
   type GitFileHistoryEntry,
   type GitGateway,
@@ -6152,6 +6153,115 @@ export function useWorkbenchController(
 
         applyGitOperationStatus(status);
         setMessage(null);
+      } catch (error) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const loadGitFileHunks = useCallback(
+    async (relativePath: string, staged: boolean): Promise<GitDiffHunk[]> => {
+      if (!workspaceRoot) {
+        return [];
+      }
+
+      const requestedRoot = workspaceRoot;
+
+      try {
+        const hunks = await gitGateway.getFileHunks(
+          requestedRoot,
+          relativePath,
+          staged,
+        );
+
+        // Drop stale results: the active workspace may have changed while the
+        // diff resolved (per-tab isolation).
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return [];
+        }
+
+        return hunks;
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git", error);
+        }
+
+        return [];
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
+  );
+
+  const stageGitHunk = useCallback(
+    async (relativePath: string, hunkIndex: number) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.stageHunk(
+          requestedRoot,
+          relativePath,
+          hunkIndex,
+        );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(`Staged hunk in ${relativePath}`);
+      } catch (error) {
+        // A rejected patch (stale hunk / already staged) fails atomically on
+        // the Rust side - the index is untouched, so this is a safe no-op.
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const unstageGitHunk = useCallback(
+    async (relativePath: string, hunkIndex: number) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.unstageHunk(
+          requestedRoot,
+          relativePath,
+          hunkIndex,
+        );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(`Unstaged hunk in ${relativePath}`);
       } catch (error) {
         if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
@@ -27005,8 +27115,11 @@ export function useWorkbenchController(
     textSearchResults,
     toggleDirectory,
     toggleGitChangeIncluded,
+    loadGitFileHunks,
     stageGitChanges,
+    stageGitHunk,
     unstageGitChanges,
+    unstageGitHunk,
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,

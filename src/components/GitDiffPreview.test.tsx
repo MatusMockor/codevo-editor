@@ -318,7 +318,146 @@ describe("GitDiffPreview", () => {
 
     expect(onRevertFile).toHaveBeenCalledWith(current.change);
   });
+
+  it("renders a stage checkbox per worktree hunk and stages the clicked hunk", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const loadFileHunks = vi.fn(async () => [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      { header: "@@ -5 +5 @@", index: 1, lines: ["-e", "+E"], isStaged: false },
+    ]);
+    const onStageHunk = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={onStageHunk}
+          onUnstageHunk={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(loadFileHunks).toHaveBeenCalledWith("src/example.ts", false);
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(2);
+
+    await act(async () => {
+      checkboxes[1].click();
+    });
+
+    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 1);
+  });
+
+  it("unstages the clicked hunk when the change is staged", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const loadFileHunks = vi.fn(async () => [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: true },
+    ]);
+    const onUnstageHunk = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={{ ...diff(), change: { ...diff().change, isStaged: true } }}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={vi.fn()}
+          onUnstageHunk={onUnstageHunk}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(loadFileHunks).toHaveBeenCalledWith("src/example.ts", true);
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(1);
+
+    await act(async () => {
+      checkboxes[0].click();
+    });
+
+    expect(onUnstageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+  });
+
+  it("does not render the hunk list for untracked changes", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const loadFileHunks = vi.fn(async () => []);
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={{
+            ...diff(),
+            change: { ...diff().change, status: "untracked", isUnversioned: true },
+          }}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={vi.fn()}
+          onUnstageHunk={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(loadFileHunks).not.toHaveBeenCalled();
+    expect(hunkCheckboxes()).toHaveLength(0);
+  });
+
+  it("disables hunk checkboxes while a git operation is running", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+    const loadFileHunks = vi.fn(async () => [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+    ]);
+    const onStageHunk = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          gitOperationLoading={true}
+          onClose={vi.fn()}
+          loadFileHunks={loadFileHunks}
+          onStageHunk={onStageHunk}
+          onUnstageHunk={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(1);
+    expect(checkboxes[0].disabled).toBe(true);
+
+    await act(async () => {
+      checkboxes[0].click();
+    });
+
+    expect(onStageHunk).not.toHaveBeenCalled();
+  });
 });
+
+function hunkCheckboxes(): HTMLInputElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      '.git-diff-hunk input[type="checkbox"]',
+    ),
+  );
+}
 
 function queryButtonByTitle(title: string): HTMLButtonElement | null {
   const buttons = Array.from(

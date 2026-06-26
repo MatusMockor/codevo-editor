@@ -34,7 +34,7 @@ mod workspace_runtime;
 
 use git::{
     safe_stash_index, CommandGitRepositoryGateway, GitBlameLine, GitBranch, GitChangedFile,
-    GitFileDiff, GitFileHistoryEntry, GitRepositoryGateway, GitStashEntry, GitStatus,
+    GitDiffHunk, GitFileDiff, GitFileHistoryEntry, GitRepositoryGateway, GitStashEntry, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1763,6 +1763,59 @@ async fn unstage_git_files(
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway
             .unstage(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_file_hunks(
+    root_path: String,
+    relative_path: String,
+    staged: bool,
+) -> Result<Vec<GitDiffHunk>, String> {
+    // Reads a single file's `git diff` off the main thread, bound to the
+    // requested repository root and file (no cross-root/file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_hunks(&root, &relative_path, staged)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stage_git_hunk(
+    root_path: String,
+    relative_path: String,
+    hunk_index: u32,
+) -> Result<GitStatus, String> {
+    // Staging one hunk runs `git diff` + `git apply --cached` and re-reads
+    // status; keep the round-trip off the main thread, bound to the requested
+    // repository root. A rejected patch fails atomically (index untouched).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stage_hunk(&root, &relative_path, hunk_index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unstage_git_hunk(
+    root_path: String,
+    relative_path: String,
+    hunk_index: u32,
+) -> Result<GitStatus, String> {
+    // Unstaging one hunk runs `git diff --cached` + `git apply --cached
+    // --reverse` and re-reads status; keep it off the main thread, bound to the
+    // requested repository root. A rejected patch fails atomically.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .unstage_hunk(&root, &relative_path, hunk_index)
             .map_err(|error| error.to_string())
     })
     .await
@@ -4506,13 +4559,14 @@ mod tests {
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace, create_git_branch, get_git_blame,
-        get_git_current_branch, get_git_file_commit_diff, get_git_file_history, get_git_stash_diff,
-        get_git_stash_list, get_git_status, javascript_typescript_did_change_configuration_settings,
-        list_git_branches, lsp_status_supports_code_action_resolve, normalize_path,
-        parse_definition_result, parse_javascript_typescript_navigation_locations_result,
-        parse_php_file_outline, parse_php_syntax, path_from_file_uri, read_directory,
-        read_text_file, save_git_stash, search_files, stage_git_files, stash_apply_git,
-        stash_drop_git, stash_pop_git, switch_git_branch, write_text_file,
+        get_git_current_branch, get_git_file_commit_diff, get_git_file_history, get_git_file_hunks,
+        get_git_stash_diff, get_git_stash_list, get_git_status,
+        javascript_typescript_did_change_configuration_settings, list_git_branches,
+        lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
+        parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
+        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
+        search_files, stage_git_files, stage_git_hunk, stash_apply_git,
+        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk, write_text_file,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -5698,6 +5752,100 @@ mod tests {
     }
 
     #[test]
+    fn stage_git_hunk_off_thread_stages_only_requested_repository() {
+        let root = temp_workspace("git-stage-hunk-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("f.txt"), "a\nb\nc\nd\ne\n").expect("write");
+        run_test_git(&root, &["add", "f.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("f.txt"), "A\nb\nc\nd\nE\n").expect("modify");
+
+        let hunks = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("hunks");
+        assert_eq!(hunks.len(), 2, "expected two hunks, got {hunks:?}");
+
+        tauri::async_runtime::block_on(stage_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+        ))
+        .expect("stage hunk");
+
+        // Partial staging: exactly the first hunk moved to the index while the
+        // last hunk remains in the worktree diff. `git status --porcelain`
+        // collapses both sides into one `MM` entry, so verify the split
+        // directly through the staged/worktree hunk views.
+        let staged = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            true,
+        ))
+        .expect("staged hunks");
+        let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("worktree hunks");
+
+        assert_eq!(staged.len(), 1, "expected one staged hunk, got {staged:?}");
+        assert!(staged[0].lines.contains(&"+A".to_string()));
+        assert_eq!(
+            worktree.len(),
+            1,
+            "expected one remaining worktree hunk, got {worktree:?}"
+        );
+        assert!(worktree[0].lines.contains(&"+E".to_string()));
+    }
+
+    #[test]
+    fn unstage_git_hunk_off_thread_unstages_only_selected_hunk() {
+        let root = temp_workspace("git-unstage-hunk-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("f.txt"), "a\nb\nc\nd\ne\n").expect("write");
+        run_test_git(&root, &["add", "f.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("f.txt"), "A\nb\nc\nd\nE\n").expect("modify");
+        run_test_git(&root, &["add", "f.txt"]);
+
+        tauri::async_runtime::block_on(unstage_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+        ))
+        .expect("unstage hunk");
+
+        // Only the first staged hunk dropped back to the worktree; the other
+        // stays in the index. Verify via the staged/worktree hunk views since
+        // porcelain collapses the file into a single entry.
+        let staged = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            true,
+        ))
+        .expect("staged hunks");
+        let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("worktree hunks");
+
+        assert_eq!(staged.len(), 1, "expected one staged hunk left, got {staged:?}");
+        assert!(staged[0].lines.contains(&"+E".to_string()));
+        assert_eq!(
+            worktree.len(),
+            1,
+            "expected the unstaged hunk back in the worktree, got {worktree:?}"
+        );
+        assert!(worktree[0].lines.contains(&"+A".to_string()));
+    }
+
+    #[test]
     fn git_status_stays_isolated_per_workspace_root_off_thread() {
         let root_a = temp_workspace("git-iso-a");
         let root_b = temp_workspace("git-iso-b");
@@ -6671,6 +6819,7 @@ pub fn run() {
             get_git_diff,
             get_git_file_commit_diff,
             get_git_file_history,
+            get_git_file_hunks,
             get_git_status,
             record_local_history_snapshot,
             get_local_history_versions,
@@ -6713,6 +6862,8 @@ pub fn run() {
             set_smart_mode,
             set_workspace_trust,
             stage_git_files,
+            stage_git_hunk,
+            unstage_git_hunk,
             start_initial_metadata_scan,
             start_javascript_typescript_language_server,
             start_workspace_reindex,
