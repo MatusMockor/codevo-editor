@@ -314,6 +314,20 @@ impl InitializeRequestFactory for PhpactorInitializeRequestFactory {
                 // shorten the diagnostics grace window to reduce the publish race.
                 "initializationOptions": {
                     "language_server.diagnostic_outsource": false,
+                    // Run code actions in-process for the same reason as
+                    // diagnostics: phpactor's default `OutsourcedCodeActionProvider`
+                    // spawns a child `php <phpactor> language-server:code-action`
+                    // process. That child does NOT inherit the parent's `-c
+                    // <managed.ini>` CLI argument (CLI args are not inherited by
+                    // children), so it boots with the user's main `php.ini`. A
+                    // broken `extension=imagick.so` there prints a startup warning
+                    // onto the child's stdout *before* its JSON, the parent
+                    // `json_decode` returns null, and phpactor surfaces "Could not
+                    // decode JSON: Warning: PHP Startup... imagick" — breaking all
+                    // code actions / smart features. Running code actions in-process
+                    // keeps them inside the already-clean managed-PHP parent, so no
+                    // child PHP process and no imagick warning are ever produced.
+                    "language_server.code_action_outsource": false,
                     "language_server.diagnostic_sleep_time": 150,
                     // Keep the Laravel Idea (PhpStorm plugin) IDE-helper stubs out
                     // of the index. They re-declare real `App\Models\*` classes as
@@ -996,6 +1010,14 @@ mod tests {
             request.params["initializationOptions"]["language_server.diagnostic_outsource"],
             Value::Bool(false)
         );
+        // Code actions must also run in-process: phpactor's default outsourced
+        // provider spawns a child `php` that does not inherit our `-c
+        // <managed.ini>` and therefore boots with the user's main php.ini, whose
+        // broken imagick extension corrupts the child's JSON output.
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.code_action_outsource"],
+            Value::Bool(false)
+        );
         assert_eq!(
             request.params["initializationOptions"]["language_server.diagnostic_sleep_time"],
             json!(150)
@@ -1009,9 +1031,14 @@ mod tests {
         let root = create_temp_dir("lsp-phpactor-exclude-stubs");
         let request = PhpactorInitializeRequestFactory.create(&root);
 
-        // The diagnostics options must survive alongside the new indexer config.
+        // The diagnostics and code-action options must survive alongside the new
+        // indexer config.
         assert_eq!(
             request.params["initializationOptions"]["language_server.diagnostic_outsource"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.code_action_outsource"],
             Value::Bool(false)
         );
         assert_eq!(
