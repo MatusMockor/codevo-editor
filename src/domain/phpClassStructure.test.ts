@@ -315,6 +315,61 @@ class Foo {
     expect(method.returnType).toBe("User");
   });
 
+  it("reads a return type that wraps onto the next line", () => {
+    const source = `<?php
+      class Repo {
+        public function find(int $id): User
+          |null
+        { return null; }
+      }
+    `;
+
+    const method = methodNamed(parsePhpClassStructure(source).methods, "find");
+
+    expect(method.returnType).toBe("User|null");
+  });
+
+  it("reads a return type that starts on the line after the colon", () => {
+    const source = `<?php
+      class Repo {
+        public function a():
+          ?User
+        {}
+      }
+    `;
+
+    const method = methodNamed(parsePhpClassStructure(source).methods, "a");
+
+    expect(method.returnType).toBe("?User");
+  });
+
+  it("reads a multiline DNF return type without truncating it", () => {
+    const source = `<?php
+      class Repo {
+        public function a(): (A&B)
+          |C
+        {}
+      }
+    `;
+
+    const method = methodNamed(parsePhpClassStructure(source).methods, "a");
+
+    expect(method.returnType).toBe("(A&B)|C");
+  });
+
+  it("reads a multiline return type before an abstract method semicolon", () => {
+    const source = `<?php
+      abstract class Repo {
+        abstract public function a(): User
+          |null;
+      }
+    `;
+
+    const method = methodNamed(parsePhpClassStructure(source).methods, "a");
+
+    expect(method.returnType).toBe("User|null");
+  });
+
   it("ignores attributes before a method and between modifiers", () => {
     const source = `<?php
       class Foo {

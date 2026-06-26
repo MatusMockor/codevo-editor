@@ -48212,6 +48212,158 @@ final class InvoiceAdapter
     expect(getWorkbench().settingsInitialSection).toBe("appearance");
   });
 
+  it("offers an extract-interface code action that creates a sibling interface file and adds implements", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+
+    public function farewell(string $name): string
+    {
+        return "Bye {$name}";
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    expect(extractInterface?.newFile?.path).toBe(
+      "/workspace/app/Services/GreeterInterface.php",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "namespace App\\Services;",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "interface GreeterInterface",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "public function greet(string $name): string;",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "public function farewell(string $name): string;",
+    );
+    expect(extractInterface?.edits[0]?.text).toContain(
+      "implements GreeterInterface",
+    );
+  });
+
+  it("offers no extract-interface code action for an abstract class", async () => {
+    const classPath = "/workspace/app/Services/Base.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+abstract class Base
+{
+    public function run(): void {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Base.php"));
+    });
+
+    const cursor = classSource.indexOf("class Base");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract interface"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-interface code action when the class has no public instance methods", async () => {
+    const classPath = "/workspace/app/Services/OnlyPrivate.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class OnlyPrivate
+{
+    private function secret(): void {}
+
+    public function __construct() {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "OnlyPrivate.php"));
+    });
+
+    const cursor = classSource.indexOf("class OnlyPrivate");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract interface"),
+    ).toBe(false);
+  });
+
   it("offers an implement-methods code action for an unimplemented interface", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const interfacePath = "/workspace/app/Contracts/GreeterContract.php";

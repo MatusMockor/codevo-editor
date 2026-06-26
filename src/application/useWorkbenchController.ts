@@ -485,6 +485,7 @@ import {
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
 import { planAddParameter } from "../domain/phpAddParameter";
+import { planExtractInterface } from "../domain/phpExtractInterface";
 import { planExtractMethod } from "../domain/phpExtractMethod";
 import { planExtractVariable } from "../domain/phpExtractVariable";
 import { planInlineVariable } from "../domain/phpInlineVariable";
@@ -683,9 +684,23 @@ interface PhpCodeActionTextEdit {
   text: string;
 }
 
+/**
+ * A brand-new file a code action creates as part of its workspace edit (e.g.
+ * "Extract interface" writes a sibling `<Class>Interface.php`). Carried
+ * alongside the in-document `edits` so the monaco mapper can emit a file-create
+ * resource edit plus the content insertion. The path is an absolute filesystem
+ * path; the action is only ever offered with a path inside the active root, so
+ * applying it stays within per-workspace isolation.
+ */
+export interface PhpCodeActionNewFile {
+  content: string;
+  path: string;
+}
+
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
   kind?: string;
+  newFile?: PhpCodeActionNewFile;
   title: string;
 }
 
@@ -17871,6 +17886,22 @@ export function useWorkbenchController(
         actions.push(extractMethodAction);
       }
 
+      // "Extract interface" (PhpStorm) synthesises a sibling
+      // `<Class>Interface.php` from the class's public instance methods and adds
+      // an `implements` clause to the class. It needs the active document's
+      // path to place the new file (PSR-4 sibling), so it is keyed off
+      // `activeDocument`. The conservative planner returns null for anything but
+      // a plain class with public instance methods.
+      const extractInterfaceAction = phpExtractInterfaceCodeAction(
+        source,
+        range,
+        activeDocument?.path ?? null,
+      );
+
+      if (extractInterfaceAction) {
+        actions.push(extractInterfaceAction);
+      }
+
       // "Introduce constant / field" are pure single-file syntheses keyed off the
       // cursor offset on a scalar literal (or a local variable for the field).
       // Both insert at the top of the class body and replace the original token.
@@ -17995,6 +18026,7 @@ export function useWorkbenchController(
       return actions;
     },
     [
+      activeDocument?.path,
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
       intelligenceMode,
@@ -29464,6 +29496,57 @@ function phpExtractMethodCodeAction(
     ],
     kind: "refactor.extract",
     title: "Extract method",
+  };
+}
+
+/**
+ * Offers "Extract interface" (PhpStorm) when the cursor sits on a concrete
+ * `class` declaration that exposes at least one public instance method. The
+ * `planExtractInterface` planner synthesises a sibling `<Class>Interface.php`
+ * (carrying the public-instance-method signatures) and the in-place edit that
+ * adds `implements <Class>Interface` to the class header. The resulting action
+ * therefore CREATES a file (the new interface) and EDITS the current document
+ * (the implements clause). Returns `null` for any shape the conservative
+ * planner rejects (abstract class / interface / trait / enum, no public
+ * instance methods, parse failure, cursor outside a class) so the action is
+ * never offered where it could create an empty or malformed interface.
+ *
+ * `sourcePath` is the active document's absolute path; without it the sibling
+ * interface path cannot be derived, so the action is not offered.
+ */
+function phpExtractInterfaceCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+  sourcePath: string | null,
+): PhpCodeActionDescriptor | null {
+  if (!sourcePath) {
+    return null;
+  }
+
+  const plan = planExtractInterface(source, range.start, sourcePath);
+
+  if (!plan) {
+    return null;
+  }
+
+  const implementsPosition = offsetToPosition(
+    source,
+    plan.implementsEdit.offset,
+  );
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(implementsPosition),
+        text: plan.implementsEdit.text,
+      },
+    ],
+    kind: "refactor.extract",
+    newFile: {
+      content: plan.interfaceText,
+      path: plan.interfaceFilePath,
+    },
+    title: "Extract interface",
   };
 }
 

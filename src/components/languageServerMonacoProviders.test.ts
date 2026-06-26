@@ -5606,6 +5606,87 @@ function store($request): void
     ]);
   });
 
+  it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content:
+            "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Greeter\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    const edits = extractInterface?.edit?.edits ?? [];
+    // First: the file-create resource edit (newResource, no oldResource).
+    expect(edits[0]).toEqual({
+      newResource: {
+        fsPath: "/project/src/GreeterInterface.php",
+        path: "/project/src/GreeterInterface.php",
+      },
+      options: { ignoreIfExists: true },
+    });
+    // Second: the content insertion into the new file's model.
+    expect(edits[1]).toEqual({
+      resource: {
+        fsPath: "/project/src/GreeterInterface.php",
+        path: "/project/src/GreeterInterface.php",
+      },
+      textEdit: {
+        range: expect.objectContaining({
+          endColumn: 1,
+          endLineNumber: 1,
+          startColumn: 1,
+          startLineNumber: 1,
+        }),
+        text: "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+      },
+      versionId: undefined,
+    });
+    // Last: the in-document implements edit on the active model.
+    expect(edits[2]).toEqual(
+      expect.objectContaining({
+        textEdit: expect.objectContaining({
+          text: " implements GreeterInterface",
+        }),
+      }),
+    );
+  });
+
   it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();

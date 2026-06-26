@@ -102,9 +102,21 @@ export interface PhpCodeActionTextEdit {
   text: string;
 }
 
+/**
+ * A brand-new file a PHP code action creates as part of its edit (e.g. "Extract
+ * interface" writes a sibling `<Class>Interface.php`). `path` is an absolute
+ * filesystem path inside the active root. The monaco mapper turns it into a
+ * file-create resource edit plus a content insertion into the new model.
+ */
+export interface PhpCodeActionNewFile {
+  content: string;
+  path: string;
+}
+
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
   kind?: string;
+  newFile?: PhpCodeActionNewFile;
   title: string;
 }
 
@@ -2296,26 +2308,64 @@ function toPhpCodeAction(
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
   const versionId = model.getVersionId();
+  const documentEdits: Array<
+    Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
+  > = descriptor.edits.map((edit) => ({
+    resource: model.uri,
+    textEdit: {
+      range: new monaco.Range(
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      text: edit.text,
+    },
+    versionId,
+  }));
 
   return {
     edit: {
-      edits: descriptor.edits.map((edit) => ({
-        resource: model.uri,
-        textEdit: {
-          range: new monaco.Range(
-            edit.range.startLineNumber,
-            edit.range.startColumn,
-            edit.range.endLineNumber,
-            edit.range.endColumn,
-          ),
-          text: edit.text,
-        },
-        versionId,
-      })),
+      edits: [...newFileEdits(monaco, descriptor.newFile), ...documentEdits],
     },
     kind: descriptor.kind ?? "quickfix",
     title: descriptor.title,
   };
+}
+
+/**
+ * Maps a code action's optional new-file payload to a monaco file-create
+ * resource edit followed by a content insertion into the new model. The create
+ * edit uses `ignoreIfExists` so re-applying (or an already-present sibling)
+ * never clobbers an existing file; the content is inserted at the start of the
+ * (empty) new model. Returns an empty list when the action creates no file.
+ */
+function newFileEdits(
+  monaco: MonacoApi,
+  newFile: PhpCodeActionNewFile | undefined,
+): Array<
+  Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
+> {
+  if (!newFile) {
+    return [];
+  }
+
+  const resource = monaco.Uri.file(newFile.path);
+
+  return [
+    {
+      newResource: resource,
+      options: { ignoreIfExists: true },
+    },
+    {
+      resource,
+      textEdit: {
+        range: new monaco.Range(1, 1, 1, 1),
+        text: newFile.content,
+      },
+      versionId: undefined,
+    },
+  ];
 }
 
 async function resolveCodeAction(

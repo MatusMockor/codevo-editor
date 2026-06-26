@@ -495,11 +495,33 @@ function parseReturnType(
   return normalizeType(returnType);
 }
 
+// Finds where a return type ends, starting just after the `:`. A return type may
+// legally wrap across multiple lines (long DNF/union types, or the type placed on
+// the line after the colon), so a bare newline must NOT terminate it. The type
+// ends only at a real terminator at bracket depth 0: `{` (the method body) or `;`
+// (an abstract / interface method). Parentheses are balanced so a `{` / `;` nested
+// inside a DNF `(A&B)` group does not end the type prematurely. `<`/`>` are NOT
+// treated as brackets: native PHP return types have no generics, so honouring them
+// would buy nothing yet let a stray `<` swallow the method body. Runs against the
+// masked source, so `{` / `;` inside a string or comment is already blanked and
+// cannot terminate the type.
 function findReturnTypeStop(masked: string, start: number): number {
+  let depth = 0;
+
   for (let index = start; index < masked.length; index += 1) {
     const character = masked[index] || "";
 
-    if (character === "{" || character === ";" || character === "\n") {
+    if (character === "(" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth === 0 && (character === "{" || character === ";")) {
       return index;
     }
   }
