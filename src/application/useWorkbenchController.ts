@@ -475,6 +475,7 @@ import {
   renderCreateMethodStub,
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
+import { planExtractMethod } from "../domain/phpExtractMethod";
 import { planExtractVariable } from "../domain/phpExtractVariable";
 import { planInlineVariable } from "../domain/phpInlineVariable";
 import {
@@ -16938,6 +16939,16 @@ export function useWorkbenchController(
         actions.push(createFromUsageAction);
       }
 
+      // "Extract method" lifts a contiguous, whole-statement selection inside a
+      // class method into a new private method and replaces it with a call. It
+      // is a pure single-file synthesis from the selection; the conservative
+      // planner returns null whenever the extraction could change behaviour.
+      const extractMethodAction = phpExtractMethodCodeAction(source, range);
+
+      if (extractMethodAction) {
+        actions.push(extractMethodAction);
+      }
+
       // "Introduce constant / field" are pure single-file syntheses keyed off the
       // cursor offset on a scalar literal (or a local variable for the field).
       // Both insert at the top of the class body and replace the original token.
@@ -28412,6 +28423,56 @@ function phpExtractVariableCodeAction(
     ],
     kind: "refactor.extract",
     title: "Extract variable",
+  };
+}
+
+/**
+ * Offers "Extract method" when the request carries a non-empty selection of one
+ * or more whole statements inside a class method that `planExtractMethod`
+ * confirms is safe to lift. The plan yields two non-overlapping edits against
+ * the original document: the selected statements are replaced by a call to a new
+ * private method (`$this->extracted(...)`, optionally assigned to the single
+ * returned variable), and the method definition is inserted immediately after
+ * the enclosing method. Returns `null` for an empty selection or any selection
+ * the conservative planner rejects (cross-boundary, partial block, multiple
+ * outputs, control-flow escape, heredoc, ...).
+ */
+function phpExtractMethodCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  if (range.start >= range.end) {
+    return null;
+  }
+
+  const plan = planExtractMethod(source, range.start, range.end);
+
+  if (!plan) {
+    return null;
+  }
+
+  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
+  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
+  const insertionPosition = offsetToPosition(source, plan.methodInsertionOffset);
+
+  return {
+    edits: [
+      {
+        range: {
+          endColumn: replaceEndPosition.column + 1,
+          endLineNumber: replaceEndPosition.line + 1,
+          startColumn: replaceStartPosition.column + 1,
+          startLineNumber: replaceStartPosition.line + 1,
+        },
+        text: plan.replacementText,
+      },
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.methodText,
+      },
+    ],
+    kind: "refactor.extract",
+    title: "Extract method",
   };
 }
 
