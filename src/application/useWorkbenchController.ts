@@ -532,6 +532,13 @@ import {
   type RecentFileEntry,
 } from "../domain/recentFiles";
 import {
+  buildRecentLocation,
+  pushRecentLocation,
+  removeRecentLocationsForPath,
+  renameRecentLocationsPath,
+  type RecentLocation,
+} from "../domain/recentLocations";
+import {
   nextBookmark,
   previousBookmark,
   removeBookmarksForPath,
@@ -773,6 +780,7 @@ interface CachedWorkspaceWorkbenchState {
   openPaths: string[];
   previewPath: string | null;
   recentFiles: RecentFileEntry[];
+  recentLocations: RecentLocation[];
   sidebarView: SidebarView;
 }
 
@@ -1071,6 +1079,12 @@ export function useWorkbenchController(
   // into another project's switcher.
   const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
   const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] = useState(false);
+  // Recent EDIT / navigation LOCATIONS (file + line + line snippet), newest
+  // first. Like recentFiles this is part of the per-tab workbench state so one
+  // project's visited positions can never leak into another project's panel.
+  const [recentLocations, setRecentLocations] = useState<RecentLocation[]>([]);
+  const [recentLocationsPanelOpen, setRecentLocationsPanelOpen] =
+    useState(false);
   // Per-workspace bookmarks (PhpStorm parity). Cached/restored alongside the
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
@@ -1702,6 +1716,7 @@ export function useWorkbenchController(
         openPaths,
         previewPath,
         recentFiles,
+        recentLocations,
         sidebarView,
       };
     },
@@ -1718,6 +1733,7 @@ export function useWorkbenchController(
       openPaths,
       previewPath,
       recentFiles,
+      recentLocations,
       sidebarView,
     ],
   );
@@ -1734,6 +1750,7 @@ export function useWorkbenchController(
       setActivePath(cached.activePath);
       setPreviewPath(cached.previewPath);
       setRecentFiles(cached.recentFiles);
+      setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
       setNavigationHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
@@ -1769,7 +1786,35 @@ export function useWorkbenchController(
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
     setWorkspaceSymbolsOpen(false);
+    setRecentLocationsPanelOpen(false);
     setRecentFilesSwitcherOpen(true);
+  }, []);
+
+  const forgetRecentLocationsForPath = useCallback((path: string) => {
+    setRecentLocations((current) =>
+      removeRecentLocationsForPath(current, path),
+    );
+  }, []);
+
+  const remapRecentLocations = useCallback(
+    (oldPath: string, next: { name: string; path: string; relativePath: string }) => {
+      setRecentLocations((current) =>
+        renameRecentLocationsPath(current, oldPath, next),
+      );
+    },
+    [],
+  );
+
+  const openRecentLocationsPanel = useCallback(() => {
+    if (!currentWorkspaceRootRef.current) {
+      return;
+    }
+
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(true);
   }, []);
 
   const currentNavigationLocation =
@@ -1795,9 +1840,46 @@ export function useWorkbenchController(
     );
   }, []);
 
+  // Records a visited/edited POSITION in the per-workspace Recent Locations
+  // history. Reads documents + workspace root from refs (so it stays stable on
+  // the navigation hot path) and delegates snippet/relative-path extraction to
+  // the pure domain helper. Targets outside the workspace yield a null location
+  // and are dropped. Isolation: the requested root is captured by the ref read,
+  // so a navigation in the active tab never appends to another tab's history.
+  const recordRecentLocationSnapshot = useCallback(
+    (location: NavigationLocation | null) => {
+      const root = currentWorkspaceRootRef.current;
+
+      if (!location || !root) {
+        return;
+      }
+
+      const document = documentsRef.current[location.path];
+      const built = buildRecentLocation({
+        content: document?.content ?? null,
+        name: document?.name ?? null,
+        navigation: location,
+        relativePath: workspaceRelativePath(root, location.path),
+      });
+
+      if (!built) {
+        return;
+      }
+
+      setRecentLocations((current) => pushRecentLocation(current, built));
+    },
+    [],
+  );
+
   const recordCurrentNavigationLocation = useCallback(() => {
-    recordNavigationLocationSnapshot(currentNavigationLocation());
-  }, [currentNavigationLocation, recordNavigationLocationSnapshot]);
+    const location = currentNavigationLocation();
+    recordNavigationLocationSnapshot(location);
+    recordRecentLocationSnapshot(location);
+  }, [
+    currentNavigationLocation,
+    recordNavigationLocationSnapshot,
+    recordRecentLocationSnapshot,
+  ]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -3440,6 +3522,7 @@ export function useWorkbenchController(
     setActivePath(null);
     setPreviewPath(null);
     setRecentFiles([]);
+    setRecentLocations([]);
     setBookmarks([]);
     setBookmarksPanelOpen(false);
     setGitBlameEnabledPaths(new Set());
@@ -3486,6 +3569,7 @@ export function useWorkbenchController(
     setQuickOpenLoading(false);
     setQuickOpenResults([]);
     setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
     setTextSearchQuery("");
     setTextSearchLoading(false);
@@ -4613,6 +4697,7 @@ export function useWorkbenchController(
         setActivePath(null);
         setPreviewPath(null);
         setRecentFiles([]);
+        setRecentLocations([]);
         setBookmarks([]);
         setGitBlameEnabledPaths(new Set());
         setNavigationHistory(createNavigationHistory());
@@ -4630,6 +4715,10 @@ export function useWorkbenchController(
       // The recent files switcher is a transient overlay too; close it on a
       // switch so it never shows another tab's MRU list mid-transition.
       setRecentFilesSwitcherOpen(false);
+      // The recent locations panel is a transient overlay too; close it on a
+      // switch so it never shows another tab's positions mid-transition. The
+      // location list itself is cached/restored per tab above.
+      setRecentLocationsPanelOpen(false);
       // The bookmarks panel is a transient overlay; close it on a switch so it
       // never shows another tab's bookmarks mid-transition. The bookmark list
       // itself is cached/restored per tab above.
@@ -21579,6 +21668,56 @@ export function useWorkbenchController(
     await applyNavigationLocation(next.target);
   }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
 
+  // Jumps to a recent location from the panel. Mirrors the navigation flow:
+  // snapshot where we were (so Back works and the spot stays in history), then
+  // reveal the target. Isolation: the requested root is captured up front and
+  // re-checked after the await, so a workspace switch mid-jump drops the stale
+  // result (no reveal, no panel mutation) for another tab.
+  const openRecentLocation = useCallback(
+    async (location: RecentLocation) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      recordCurrentNavigationLocation();
+
+      const target: NavigationLocation = {
+        path: location.path,
+        position: { column: location.column, lineNumber: location.line },
+      };
+      const opened = await openPathForNavigation(target.path, {
+        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+          requestedRoot,
+          target.path,
+        ),
+      });
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      if (!opened) {
+        // The file vanished out from under the panel (deleted/moved outside the
+        // editor). Drop every dead position so it stops being offered.
+        forgetRecentLocationsForPath(location.path);
+        setRecentLocationsPanelOpen(false);
+        return;
+      }
+
+      setEditorRevealTarget(target);
+      setRecentLocationsPanelOpen(false);
+    },
+    [
+      forgetRecentLocationsForPath,
+      openPathForNavigation,
+      recordCurrentNavigationLocation,
+    ],
+  );
+
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -21694,6 +21833,12 @@ export function useWorkbenchController(
       );
       setActivePath(nextPath);
       remapRecentFile(oldPath, { name: nextName, path: nextPath });
+      remapRecentLocations(oldPath, {
+        name: nextName,
+        path: nextPath,
+        relativePath:
+          workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
+      });
       setBookmarks((current) =>
         renameBookmarksForPath(current, oldPath, nextPath),
       );
@@ -21715,6 +21860,7 @@ export function useWorkbenchController(
     prompter,
     refreshDirectory,
     remapRecentFile,
+    remapRecentLocations,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -21762,6 +21908,7 @@ export function useWorkbenchController(
 
       closeDocument(deletedPath);
       forgetRecentFile(deletedPath);
+      forgetRecentLocationsForPath(deletedPath);
       setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
       clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
       await refreshDirectory(parentPath);
@@ -21778,6 +21925,7 @@ export function useWorkbenchController(
     closeActiveSurface,
     closeDocument,
     forgetRecentFile,
+    forgetRecentLocationsForPath,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
@@ -22722,6 +22870,11 @@ export function useWorkbenchController(
       return true;
     }
 
+    if (recentLocationsPanelOpen) {
+      setRecentLocationsPanelOpen(false);
+      return true;
+    }
+
     if (paletteOpen) {
       setPaletteOpen(false);
       return true;
@@ -22745,6 +22898,7 @@ export function useWorkbenchController(
     quickOpenOpen,
     searchEverywhereOpen,
     recentFilesSwitcherOpen,
+    recentLocationsPanelOpen,
     referencesView,
     selectedGitChange,
     settingsOpen,
@@ -22780,6 +22934,7 @@ export function useWorkbenchController(
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
     setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
     setWorkspaceSymbolsOpen(true);
   }, []);
@@ -22795,6 +22950,7 @@ export function useWorkbenchController(
     setClassOpenOpen(false);
     setWorkspaceSymbolsOpen(false);
     setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
     setSearchEverywhereQuery("");
     setSearchEverywhereFiles([]);
@@ -22953,6 +23109,15 @@ export function useWorkbenchController(
       shortcut: shortcut("editor.recentFiles"),
       isEnabled: (context) => context.hasWorkspace,
       run: openRecentFilesSwitcher,
+    });
+
+    registry.register({
+      id: "editor.recentLocations",
+      title: "Recent Locations",
+      category: "File",
+      shortcut: shortcut("editor.recentLocations"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: openRecentLocationsPanel,
     });
 
     registry.register({
@@ -23711,6 +23876,7 @@ export function useWorkbenchController(
     openFileStructure,
     openReferencesPanel,
     openRecentFilesSwitcher,
+    openRecentLocationsPanel,
     openTypeHierarchy,
     openSettingsPanel,
     openWorkspaceSymbols,
@@ -24628,6 +24794,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.recentLocations")) {
+        event.preventDefault();
+        openRecentLocationsPanel();
+        return;
+      }
+
       if (matches("search.text")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -24663,6 +24835,7 @@ export function useWorkbenchController(
     openAppearanceSettingsPanel,
     openFileStructure,
     openRecentFilesSwitcher,
+    openRecentLocationsPanel,
     openReferencesPanel,
     openSettingsPanel,
     openWorkspaceSymbols,
@@ -26039,6 +26212,11 @@ export function useWorkbenchController(
     openRecentFile,
     openRecentFilesSwitcher,
     setRecentFilesSwitcherOpen,
+    recentLocations,
+    recentLocationsPanelOpen,
+    openRecentLocation,
+    openRecentLocationsPanel,
+    setRecentLocationsPanelOpen,
     bookmarks,
     sortedBookmarks: sortBookmarks(bookmarks),
     bookmarksPanelOpen,

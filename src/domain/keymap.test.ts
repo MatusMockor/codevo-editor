@@ -76,6 +76,28 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["editor.recentFiles"]).toBe("Cmd+E");
   });
 
+  it("defaults the recent locations panel to Cmd+Shift+E on mac and Ctrl+Shift+E elsewhere", () => {
+    expect(defaultShortcutForCommand("editor.recentLocations", "mac")).toBe(
+      "Cmd+Shift+E",
+    );
+    expect(defaultShortcutForCommand("editor.recentLocations", "linux")).toBe(
+      "Ctrl+Shift+E",
+    );
+    expect(defaultKeymapSettings("mac")["editor.recentLocations"]).toBe(
+      "Cmd+Shift+E",
+    );
+  });
+
+  it("does not collide the recent locations shortcut with any other command", () => {
+    const defaults = defaultKeymapSettings("mac");
+    const recentLocations = defaults["editor.recentLocations"];
+    const owners = Object.entries(defaults).filter(
+      ([, shortcut]) => shortcut === recentLocations,
+    );
+
+    expect(owners).toEqual([["editor.recentLocations", "Cmd+Shift+E"]]);
+  });
+
   it("defaults the TODO panel toggle to the platform primary modifier", () => {
     expect(defaultShortcutForCommand("panel.toggleTodo", "mac")).toBe(
       "Cmd+Shift+T",

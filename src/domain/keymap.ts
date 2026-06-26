@@ -240,6 +240,12 @@ export const keymapCommands = [
     label: "Recent Files",
   },
   {
+    category: "File",
+    defaultShortcut: "Cmd+Shift+E",
+    id: "editor.recentLocations",
+    label: "Recent Locations",
+  },
+  {
     category: "PHP",
     defaultShortcut: "Cmd+O",
     id: "class.quickOpen",

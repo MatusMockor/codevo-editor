@@ -34,6 +34,7 @@ import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
+import { RecentLocationsPanel } from "./components/RecentLocationsPanel";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
@@ -1085,6 +1086,13 @@ function App() {
         isOpen={workbench.recentFilesSwitcherOpen}
         onClose={() => workbench.setRecentFilesSwitcherOpen(false)}
         onOpen={workbench.openRecentFile}
+      />
+
+      <RecentLocationsPanel
+        isOpen={workbench.recentLocationsPanelOpen}
+        locations={workbench.recentLocations}
+        onClose={() => workbench.setRecentLocationsPanelOpen(false)}
+        onOpen={workbench.openRecentLocation}
       />
 
       <ClassOpen

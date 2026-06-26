@@ -51321,6 +51321,161 @@ class PostRepository
     ]);
   });
 
+  describe("recent locations", () => {
+    it("records the position the user navigated away from, newest first", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(
+          async (path: string) => `<?php\n// ${path}\nclass Demo {}\n`,
+        ),
+      });
+      await flushAsyncTurns();
+
+      // Opening A with no prior active document records nothing; opening B then
+      // C snapshots the position we left A, then B, at - newest first.
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/A.php", "A.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/B.php", "B.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/C.php", "C.php"),
+        );
+      });
+
+      const locations = getWorkbench().recentLocations;
+      expect(locations.map((entry) => entry.path)).toEqual([
+        "/workspace/B.php",
+        "/workspace/A.php",
+      ]);
+      expect(locations[0]).toMatchObject({
+        line: 1,
+        name: "B.php",
+        relativePath: "B.php",
+        snippet: "<?php",
+      });
+    });
+
+    it("opens the recent locations panel and jumps to the chosen position, closing the panel", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/A.php", "A.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/B.php", "B.php"),
+        );
+      });
+
+      act(() => {
+        getWorkbench().openRecentLocationsPanel();
+      });
+
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(true);
+
+      const target = getWorkbench().recentLocations[0];
+      expect(target?.path).toBe("/workspace/A.php");
+
+      await act(async () => {
+        await getWorkbench().openRecentLocation(target);
+      });
+
+      expect(getWorkbench().activePath).toBe("/workspace/A.php");
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+    });
+
+    it("does not open the panel when no workspace is active", async () => {
+      const { getWorkbench } = renderController();
+      await flushAsyncTurns();
+
+      act(() => {
+        getWorkbench().openRecentLocationsPanel();
+      });
+
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+    });
+
+    it("isolates recent locations per workspace tab without leaking", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/a1.php", "a1.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/a2.php", "a2.php"),
+        );
+      });
+
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-a/a1.php"]);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().recentLocations).toEqual([]);
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/b1.php", "b1.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/b2.php", "b2.php"),
+        );
+      });
+
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-b/b1.php"]);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-a");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-a/a1.php"]);
+    });
+  });
+
   describe("find in path", () => {
     it("forwards the active filters to the text search gateway", async () => {
       const searchText = vi.fn(async () => []);
