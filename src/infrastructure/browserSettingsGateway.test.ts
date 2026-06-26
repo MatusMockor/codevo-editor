@@ -15,6 +15,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
@@ -71,6 +72,14 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call helper",
+          languages: ["php"],
+        },
+      ],
       workspaceTabs: ["/project", "/another-project"],
     });
     await gateway.saveWorkspaceSettings("/project", {
@@ -122,6 +131,14 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call helper",
+          languages: ["php"],
+        },
+      ],
       workspaceTabs: ["/project", "/another-project"],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
@@ -178,6 +195,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({

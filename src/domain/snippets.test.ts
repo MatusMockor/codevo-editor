@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   snippetsForLanguage,
   matchingSnippetsForLanguage,
+  normalizeUserSnippets,
   snippetCompletionSuggestions,
   type Snippet,
+  type UserSnippet,
 } from "./snippets";
 
 const JS_TS_LANGUAGES = [
@@ -293,5 +295,152 @@ describe("snippetCompletionSuggestions", () => {
     );
 
     expect(suggestions.map((item) => item.label)).toContain("@foreach");
+  });
+});
+
+describe("user snippets merged with built-ins", () => {
+  const phpUserSnippet: UserSnippet = {
+    prefix: "myhelper",
+    body: "helper($0);",
+    description: "Call my helper",
+    languages: ["php"],
+  };
+
+  it("includes user snippets for the matching language in snippetsForLanguage", () => {
+    const snippets = snippetsForLanguage("php", [phpUserSnippet]);
+    const prefixes = snippets.map((snippet) => snippet.prefix);
+
+    expect(prefixes).toContain("myhelper");
+    expect(prefixes).toContain("nclass");
+  });
+
+  it("scopes user snippets to their declared languages", () => {
+    const inPhp = snippetsForLanguage("php", [phpUserSnippet]).map(
+      (snippet) => snippet.prefix,
+    );
+    const inJs = snippetsForLanguage("javascript", [phpUserSnippet]).map(
+      (snippet) => snippet.prefix,
+    );
+
+    expect(inPhp).toContain("myhelper");
+    expect(inJs).not.toContain("myhelper");
+  });
+
+  it("matches user snippets by typed prefix", () => {
+    const matches = matchingSnippetsForLanguage("php", "myh", [phpUserSnippet]);
+
+    expect(matches.map((snippet) => snippet.prefix)).toContain("myhelper");
+  });
+
+  it("offers user snippets as completion items in the 2_ bucket", () => {
+    const suggestions = snippetCompletionSuggestions(
+      monacoStub,
+      "php",
+      "myh",
+      range,
+      [phpUserSnippet],
+    );
+    const item = suggestions.find((entry) => entry.label === "myhelper");
+
+    expect(item).toEqual(
+      expect.objectContaining({
+        insertText: "helper($0);",
+        insertTextRules:
+          monacoStub.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        kind: monacoStub.languages.CompletionItemKind.Snippet,
+        label: "myhelper",
+        range,
+      }),
+    );
+    expect(item?.sortText?.startsWith("2_")).toBe(true);
+  });
+
+  it("lets a user snippet override a built-in with the same prefix and language", () => {
+    const override: UserSnippet = {
+      prefix: "dd",
+      body: "dump_die($0);",
+      description: "My dd override",
+      languages: ["php"],
+    };
+    const matches = matchingSnippetsForLanguage("php", "dd", [override]);
+    const dd = matches.filter((snippet) => snippet.prefix === "dd");
+
+    expect(dd).toHaveLength(1);
+    expect(dd[0].body).toBe("dump_die($0);");
+    expect(dd[0].description).toBe("My dd override");
+  });
+
+  it("does not override a built-in when the override targets a different language", () => {
+    const override: UserSnippet = {
+      prefix: "dd",
+      body: "dump_die($0);",
+      description: "JS dd",
+      languages: ["javascript"],
+    };
+    const dd = matchingSnippetsForLanguage("php", "dd", [override]).find(
+      (snippet) => snippet.prefix === "dd",
+    );
+
+    expect(dd?.body).toBe("dd($0);");
+  });
+
+  it("keeps built-in behaviour unchanged when no user snippets are passed", () => {
+    expect(snippetsForLanguage("php")).toEqual(snippetsForLanguage("php", []));
+    expect(matchingSnippetsForLanguage("php", "dd")).toEqual(
+      matchingSnippetsForLanguage("php", "dd", []),
+    );
+  });
+});
+
+describe("normalizeUserSnippets", () => {
+  it("returns an empty array for non-array input", () => {
+    expect(normalizeUserSnippets(undefined)).toEqual([]);
+    expect(normalizeUserSnippets(null)).toEqual([]);
+    expect(normalizeUserSnippets("nope")).toEqual([]);
+    expect(normalizeUserSnippets({})).toEqual([]);
+  });
+
+  it("keeps well-formed snippets and trims string fields", () => {
+    const normalized = normalizeUserSnippets([
+      {
+        prefix: "  myhelper  ",
+        body: "helper($0);",
+        description: "  Call helper  ",
+        languages: ["php", "blade"],
+      },
+    ]);
+
+    expect(normalized).toEqual([
+      {
+        prefix: "myhelper",
+        body: "helper($0);",
+        description: "Call helper",
+        languages: ["php", "blade"],
+      },
+    ]);
+  });
+
+  it("drops snippets without a prefix, body, or any language", () => {
+    const normalized = normalizeUserSnippets([
+      { prefix: "", body: "x", description: "", languages: ["php"] },
+      { prefix: "ok", body: "", description: "", languages: ["php"] },
+      { prefix: "nolang", body: "x", description: "", languages: [] },
+      { prefix: "good", body: "y", description: "", languages: ["php"] },
+    ]);
+
+    expect(normalized.map((snippet) => snippet.prefix)).toEqual(["good"]);
+  });
+
+  it("dedupes language ids and ignores non-string languages", () => {
+    const normalized = normalizeUserSnippets([
+      {
+        prefix: "p",
+        body: "b",
+        description: "",
+        languages: ["php", "php", 5, "blade"],
+      },
+    ]);
+
+    expect(normalized[0].languages).toEqual(["php", "blade"]);
   });
 });

@@ -41,7 +41,11 @@ import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
 } from "../domain/phpPostfixCompletions";
-import { snippetCompletionSuggestions } from "../domain/snippets";
+import {
+  normalizeUserSnippets,
+  snippetCompletionSuggestions,
+  type UserSnippet,
+} from "../domain/snippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -246,6 +250,12 @@ export interface LanguageServerMonacoProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  /**
+   * Returns the GLOBAL (app-level) user-authored live templates so they can be
+   * merged with the built-in snippet registry at completion time. Omitted when
+   * the host wires no user snippets; the provider then offers built-ins only.
+   */
+  getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
   /**
    * Reports whether `path` has already been opened on the language server (its
@@ -812,6 +822,7 @@ async function provideBladeCompletionItems(
   const fallbackRange = bladeCompletionFallbackRange(position, word);
   const snippetSuggestions = bladeSnippetSuggestions(
     monaco,
+    context,
     model,
     position,
     word,
@@ -915,6 +926,7 @@ function bladeCompletionFallbackRange(
  */
 function bladeSnippetSuggestions(
   monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
   word: { endColumn: number; startColumn: number; word?: string },
@@ -938,6 +950,7 @@ function bladeSnippetSuggestions(
     "blade",
     typed,
     range,
+    contextUserSnippets(context),
   ) as Monaco.languages.CompletionItem[];
 }
 
@@ -3531,6 +3544,7 @@ async function provideCompletionItems(
       ? []
       : phpSnippetSuggestions(
           monaco,
+          context,
           documentContext.activeDocument.language,
           word,
           range,
@@ -3709,6 +3723,7 @@ function phpPostfixCompletionSuggestions(
  */
 function phpSnippetSuggestions(
   monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
   language: string,
   word: { word?: string },
   range: ReturnType<typeof completionRange>,
@@ -3720,7 +3735,21 @@ function phpSnippetSuggestions(
     language,
     typed,
     range,
+    contextUserSnippets(context),
   ) as Monaco.languages.CompletionItem[];
+}
+
+/**
+ * Reads the GLOBAL user snippets from the provider context, tolerating a host
+ * that wires no `getUserSnippets` callback (returns an empty list so only the
+ * built-in registry is offered). The list is normalized here so a half-edited
+ * or malformed in-session snippet (empty body, untrimmed prefix, no language)
+ * never reaches completion, matching the persisted/reload path.
+ */
+function contextUserSnippets(
+  context: LanguageServerMonacoProviderContext,
+): readonly UserSnippet[] {
+  return normalizeUserSnippets(context.getUserSnippets?.() ?? []);
 }
 
 async function phpMethodSuggestions(

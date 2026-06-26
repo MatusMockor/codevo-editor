@@ -6,10 +6,10 @@
  * completion item with `InsertAsSnippet`, Monaco expands the tab-stops and
  * placeholders natively.
  *
- * Snippets are GLOBAL built-ins (not workspace state), so there is no
- * per-project isolation concern in this module: the same registry is shared by
- * every open project tab. Isolation is preserved entirely by the completion
- * wiring that consumes this registry.
+ * Both the built-in registry and the user-authored snippets merged into it are
+ * GLOBAL (app-level, not workspace state), so there is no per-project isolation
+ * concern in this module: the same set is shared by every open project tab.
+ * Isolation is preserved entirely by the completion wiring that consumes it.
  */
 
 export type SnippetLanguage = string;
@@ -23,6 +23,69 @@ export interface Snippet {
   readonly description: string;
   /** Languages this snippet is offered in (e.g. `php`, `blade`). */
   readonly languages: readonly SnippetLanguage[];
+}
+
+/**
+ * User-authored live template (PhpStorm/VS Code user snippet). Stored GLOBALLY
+ * in app settings (not per-workspace), so the same set is shared by every open
+ * project tab. Fields are mutable plain data because the Settings UI edits them
+ * in place; the completion layer treats them like read-only {@link Snippet}s.
+ */
+export interface UserSnippet {
+  prefix: string;
+  body: string;
+  description: string;
+  languages: string[];
+}
+
+/**
+ * Sanitises persisted/user-entered snippets into a well-formed list: trims the
+ * string fields, drops entries missing a prefix, body, or any language, and
+ * dedupes language ids (ignoring non-string ones). Shared by the settings
+ * normaliser so malformed storage never reaches the completion layer.
+ */
+export function normalizeUserSnippets(value: unknown): UserSnippet[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    const normalized = normalizeUserSnippet(entry);
+
+    return normalized ? [normalized] : [];
+  });
+}
+
+function normalizeUserSnippet(value: unknown): UserSnippet | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const prefix = typeof record.prefix === "string" ? record.prefix.trim() : "";
+  const body = typeof record.body === "string" ? record.body : "";
+  const description =
+    typeof record.description === "string" ? record.description.trim() : "";
+  const languages = normalizeSnippetLanguages(record.languages);
+
+  if (!prefix || !body || languages.length === 0) {
+    return null;
+  }
+
+  return { prefix, body, description, languages };
+}
+
+function normalizeSnippetLanguages(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const languages = value
+    .filter((language): language is string => typeof language === "string")
+    .map((language) => language.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(languages));
 }
 
 const PHP = ["php"] as const;
@@ -231,13 +294,42 @@ const BUILT_IN_SNIPPETS: readonly Snippet[] = [
 ];
 
 /**
- * Returns the built-in snippets offered for `language`. Language-scoped so PHP
- * snippets never appear in JS, etc.
+ * Returns the snippets offered for `language`, language-scoped so PHP snippets
+ * never appear in JS, etc. When `userSnippets` are supplied they are merged with
+ * the built-ins for the same language: a user snippet whose prefix matches a
+ * built-in (case-insensitive, same language) OVERRIDES the built-in, so a user
+ * can replace an existing live template without producing a duplicate. Built-ins
+ * keep their original order; user overrides take the built-in's slot, and new
+ * user snippets are appended after the built-ins.
  */
-export function snippetsForLanguage(language: SnippetLanguage): Snippet[] {
-  return BUILT_IN_SNIPPETS.filter((snippet) =>
+export function snippetsForLanguage(
+  language: SnippetLanguage,
+  userSnippets: readonly UserSnippet[] = [],
+): Snippet[] {
+  const builtInForLanguage = BUILT_IN_SNIPPETS.filter((snippet) =>
     snippet.languages.includes(language),
   );
+  const userForLanguage = userSnippets.filter((snippet) =>
+    snippet.languages.includes(language),
+  );
+  const overrideByPrefix = new Map(
+    userForLanguage.map((snippet) => [snippet.prefix.toLowerCase(), snippet]),
+  );
+  const builtInPrefixes = new Set(
+    builtInForLanguage.map((snippet) => snippet.prefix.toLowerCase()),
+  );
+
+  const merged = builtInForLanguage.map(
+    (snippet) => overrideByPrefix.get(snippet.prefix.toLowerCase()) ?? snippet,
+  );
+  // User snippets without a built-in counterpart are appended. A duplicate
+  // user prefix collapses to the last entry (the override map already holds it)
+  // so the same prefix never appears twice.
+  const additionalUserSnippets = Array.from(overrideByPrefix.values()).filter(
+    (snippet) => !builtInPrefixes.has(snippet.prefix.toLowerCase()),
+  );
+
+  return [...merged, ...additionalUserSnippets];
 }
 
 /**
@@ -249,10 +341,11 @@ export function snippetsForLanguage(language: SnippetLanguage): Snippet[] {
 export function matchingSnippetsForLanguage(
   language: SnippetLanguage,
   word: string,
+  userSnippets: readonly UserSnippet[] = [],
 ): Snippet[] {
   const normalized = word.toLowerCase();
 
-  return snippetsForLanguage(language).filter((snippet) =>
+  return snippetsForLanguage(language, userSnippets).filter((snippet) =>
     snippet.prefix.toLowerCase().startsWith(normalized),
   );
 }
@@ -298,12 +391,13 @@ export function snippetCompletionSuggestions(
   language: SnippetLanguage,
   word: string,
   range: unknown,
+  userSnippets: readonly UserSnippet[] = [],
 ): SnippetCompletionItem[] {
   if (word.length === 0) {
     return [];
   }
 
-  return matchingSnippetsForLanguage(language, word).map((snippet, index) => ({
+  return matchingSnippetsForLanguage(language, word, userSnippets).map((snippet, index) => ({
     detail: snippet.description,
     insertText: snippet.body,
     insertTextRules:

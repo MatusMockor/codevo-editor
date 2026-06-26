@@ -31,6 +31,7 @@ describe("settings defaults", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     expect(defaultWorkspaceSettings()).toEqual({
@@ -90,6 +91,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: ["/project"],
     });
     expect(
@@ -114,6 +116,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "suspendOnBackground",
       theme: "light",
+      userSnippets: [],
       workspaceTabs: ["/project-a", "/project-b"],
     });
     expect(
@@ -130,6 +133,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [],
       workspaceTabs: [],
     });
   });
@@ -167,6 +171,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     expect(
@@ -214,6 +219,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: "/project/api",
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
     });
   });
@@ -223,6 +229,36 @@ describe("normalizeAppSettings", () => {
       defaultAppSettings(),
     );
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
+  });
+
+  it("persists and normalizes user snippets", () => {
+    const normalized = normalizeAppSettings({
+      userSnippets: [
+        {
+          prefix: "  myhelper ",
+          body: "helper($0);",
+          description: " Call helper ",
+          languages: ["php", "php", "blade"],
+        },
+        { prefix: "", body: "x", description: "", languages: ["php"] },
+      ],
+    });
+
+    expect(normalized.userSnippets).toEqual([
+      {
+        prefix: "myhelper",
+        body: "helper($0);",
+        description: "Call helper",
+        languages: ["php", "blade"],
+      },
+    ]);
+  });
+
+  it("defaults user snippets to an empty array when absent or invalid", () => {
+    expect(normalizeAppSettings({}).userSnippets).toEqual([]);
+    expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual(
+      [],
+    );
   });
 });
 

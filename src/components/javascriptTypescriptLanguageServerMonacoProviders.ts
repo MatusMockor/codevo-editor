@@ -43,7 +43,11 @@ import {
 } from "../domain/documentHighlightRequestTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { snippetCompletionSuggestions } from "../domain/snippets";
+import {
+  normalizeUserSnippets,
+  snippetCompletionSuggestions,
+  type UserSnippet,
+} from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -224,6 +228,12 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  /**
+   * Returns the GLOBAL (app-level) user-authored live templates merged with the
+   * built-in JS/TS snippet registry at completion time. Omitted when the host
+   * wires no user snippets; the provider then offers built-ins only.
+   */
+  getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
   refreshGateway?: LanguageServerRefreshGateway;
@@ -831,6 +841,7 @@ async function provideCompletionItems(
     );
     const snippetSuggestions = javaScriptTypeScriptSnippetSuggestions(
       monaco,
+      context,
       model,
       position,
       word,
@@ -861,6 +872,7 @@ async function provideCompletionItems(
  */
 function javaScriptTypeScriptSnippetSuggestions(
   monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
   word: { startColumn: number; word?: string },
@@ -882,6 +894,9 @@ function javaScriptTypeScriptSnippetSuggestions(
     language,
     typed,
     range,
+    // Normalize so a half-edited in-session snippet never reaches completion,
+    // matching the persisted/reload path.
+    normalizeUserSnippets(context.getUserSnippets?.() ?? []),
   ) as Monaco.languages.CompletionItem[];
 }
 

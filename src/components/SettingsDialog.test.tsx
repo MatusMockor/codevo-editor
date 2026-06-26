@@ -746,6 +746,170 @@ describe("SettingsDialog", () => {
     expect(restartJavaScriptTypeScriptServiceButton().disabled).toBe(true);
   });
 
+  it("adds a user snippet from the Snippets section", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Snippets").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      addSnippetButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | { appSettings: { userSnippets: unknown[] } }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets).toHaveLength(1);
+  });
+
+  it("edits and persists an existing user snippet", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            userSnippets: [
+              {
+                prefix: "myhelper",
+                body: "helper($0);",
+                description: "Call helper",
+                languages: ["php"],
+              },
+            ],
+          }}
+          initialSection="snippets"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const prefixInput = snippetPrefixInputs()[0];
+    expect(prefixInput.value).toBe("myhelper");
+
+    await act(async () => {
+      changeInputValue(prefixInput, "newprefix");
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | {
+          appSettings: { userSnippets: Array<{ prefix: string }> };
+        }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets[0].prefix).toBe("newprefix");
+  });
+
+  it("deletes a user snippet", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            userSnippets: [
+              {
+                prefix: "myhelper",
+                body: "helper($0);",
+                description: "Call helper",
+                languages: ["php"],
+              },
+            ],
+          }}
+          initialSection="snippets"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      deleteSnippetButtons()[0].dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | { appSettings: { userSnippets: unknown[] } }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets).toEqual([]);
+  });
+
+  function addSnippetButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Add snippet"),
+    );
+
+    if (!button) {
+      throw new Error("Add snippet button was not rendered.");
+    }
+
+    return button;
+  }
+
+  function snippetPrefixInputs(): HTMLInputElement[] {
+    return Array.from(
+      host.querySelectorAll<HTMLInputElement>(
+        "input[data-snippet-field='prefix']",
+      ),
+    );
+  }
+
+  function deleteSnippetButtons(): HTMLButtonElement[] {
+    return Array.from(host.querySelectorAll("button")).filter((item) =>
+      item.textContent?.includes("Delete snippet"),
+    );
+  }
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>

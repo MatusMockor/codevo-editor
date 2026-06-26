@@ -86,6 +86,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
+import type { UserSnippet } from "../domain/snippets";
 import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
@@ -159,6 +160,7 @@ interface EditorSurfaceProps {
   phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+  userSnippets?: readonly UserSnippet[];
   workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
@@ -245,6 +247,7 @@ function EditorSurfaceComponent({
   phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
+  userSnippets = EMPTY_USER_SNIPPETS,
   workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
@@ -388,6 +391,7 @@ function EditorSurfaceComponent({
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
   const phpInlayHintsEnabledRef = useRef(phpInlayHintsEnabled);
+  const userSnippetsRef = useRef<readonly UserSnippet[]>(userSnippets);
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
@@ -533,6 +537,10 @@ function EditorSurfaceComponent({
   }, [phpInlayHintsEnabled]);
 
   useEffect(() => {
+    userSnippetsRef.current = userSnippets;
+  }, [userSnippets]);
+
+  useEffect(() => {
     provideGitBlameRef.current = provideGitBlame;
   }, [provideGitBlame]);
 
@@ -626,6 +634,7 @@ function EditorSurfaceComponent({
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
+      getUserSnippets: () => userSnippetsRef.current,
       getWorkspaceRoot: () => workspaceRoot,
       isDocumentSynced: (rootPath, path) =>
         workspaceRootKeysEqual(rootPath, workspaceRoot) &&
@@ -675,6 +684,7 @@ function EditorSurfaceComponent({
           flushPendingJavaScriptTypeScriptRef.current(path),
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
+        getUserSnippets: () => userSnippetsRef.current,
         getWorkspaceRoot: () => workspaceRoot,
         limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -2671,6 +2681,7 @@ function currentEditorTextRange(
 // caller actually changes the path set.
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
+const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 // Stable empty identities so an absent breadcrumb symbol set / path does not
 // produce a fresh array each render and break the breadcrumb path memo.
 const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];

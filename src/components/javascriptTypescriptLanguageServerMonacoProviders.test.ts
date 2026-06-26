@@ -3479,6 +3479,44 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(clg.insertText).toContain("$");
   });
 
+  it("offers a user-defined JS/TS snippet from the context", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: featuresGateway({
+          completion: { isIncomplete: false, items: [] },
+        }),
+        getUserSnippets: () => [
+          {
+            prefix: "mylog",
+            body: "myLogger($0);",
+            description: "Log via my logger",
+            languages: ["typescript"],
+          },
+        ],
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("myl"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const snippet = result.suggestions.find(
+      (item: any) => item.label === "mylog",
+    );
+
+    expect(snippet).toBeDefined();
+    expect(snippet.insertText).toBe("myLogger($0);");
+    expect(snippet.insertTextRules).toBe(
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    );
+  });
+
   it("does not offer PHP snippets inside a TypeScript document", async () => {
     const monaco = createMonaco();
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
@@ -5154,6 +5192,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: overrides.getActiveDocument ?? (() => document()),
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runningStatus()),
+    getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,

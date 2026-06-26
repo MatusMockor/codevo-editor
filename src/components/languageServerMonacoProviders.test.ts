@@ -27,6 +27,7 @@ import type {
   PhpMethodCompletion,
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
@@ -2052,6 +2053,62 @@ function store($request): void
     expect(snippet?.insertTextRules).toBe(4);
     expect(snippet?.kind).toBe(27);
     expect(snippet?.insertText).toContain("class ${1:ClassName}");
+  });
+
+  it("offers a user-defined PHP snippet from the context", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nmyh\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      getUserSnippets: () => [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call my helper",
+          languages: ["php"],
+        },
+      ],
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "myh",
+        word: {
+          endColumn: 4,
+          startColumn: 1,
+          word: "myh",
+        },
+      }),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+    );
+
+    const snippet = (
+      result.suggestions as Array<{
+        insertText: string;
+        insertTextRules?: number;
+        label: unknown;
+      }>
+    ).find((item) => item.label === "myhelper");
+
+    expect(snippet).toBeDefined();
+    expect(snippet?.insertText).toBe("helper($0);");
+    expect(snippet?.insertTextRules).toBe(4);
   });
 
   it("sorts PHP snippet completions after LSP suggestions", async () => {
@@ -9628,6 +9685,7 @@ function providerContext(
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+    getUserSnippets(): UserSnippet[];
     isDocumentSynced(rootPath: string, path: string): boolean;
     isPhpInlayHintsEnabled(): boolean;
     limitNavigationResultsToOpenModels: boolean;
@@ -9668,6 +9726,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
+    getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     isDocumentSynced: overrides.isDocumentSynced,
     isPhpInlayHintsEnabled: overrides.isPhpInlayHintsEnabled,

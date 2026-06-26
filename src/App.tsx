@@ -1007,6 +1007,7 @@ function App() {
             providePhpParameterInlayHints={
               workbench.providePhpParameterInlayHints
             }
+            userSnippets={workbench.appSettings.userSnippets}
             workspaceRoot={workbench.workspaceRoot}
           />
         )}

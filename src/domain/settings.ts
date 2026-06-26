@@ -4,6 +4,7 @@ import {
   normalizeKeymapSettings,
   type KeymapSettings,
 } from "./keymap";
+import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export const appThemeOptions = [
@@ -46,6 +47,7 @@ export type SettingsSection =
   | "keymap"
   | "php"
   | "index"
+  | "snippets"
   | "appearance";
 
 export const defaultEditorFontFamily =
@@ -99,6 +101,11 @@ export interface AppSettings {
   recentWorkspacePath: string | null;
   runtimePolicy: BackgroundRuntimePolicy;
   theme: AppTheme;
+  /**
+   * User-authored live templates, GLOBAL (app-level, not per-workspace) like
+   * PhpStorm's snippets. Merged with the built-in registry at completion time.
+   */
+  userSnippets: UserSnippet[];
   workspaceTabs: string[];
 }
 
@@ -163,6 +170,7 @@ export function defaultAppSettings(): AppSettings {
     recentWorkspacePath: null,
     runtimePolicy: "keepAlive",
     theme: "dark",
+    userSnippets: [],
     workspaceTabs: [],
   };
 }
@@ -286,6 +294,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     ? value.runtimePolicy
     : defaults.runtimePolicy;
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
+  const userSnippets = normalizeUserSnippets(value.userSnippets);
   const workspaceTabs = normalizeWorkspaceTabs(
     value.workspaceTabs,
     recentWorkspacePath,
@@ -299,6 +308,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     recentWorkspacePath,
     runtimePolicy,
     theme,
+    userSnippets,
     workspaceTabs,
   };
 }
