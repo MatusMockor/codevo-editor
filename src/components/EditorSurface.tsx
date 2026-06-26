@@ -1195,6 +1195,40 @@ function EditorSurfaceComponent({
           triggerEditorAction(editorApi, "editor.action.deleteLines"),
       }),
       editorApi.addAction({
+        id: "mockor.joinLines",
+        label: "Join Lines",
+        keybindings: keybinding("editor.joinLines"),
+        run: () => triggerEditorAction(editorApi, "editor.action.joinLines"),
+      }),
+      editorApi.addAction({
+        id: "mockor.sortLinesAscending",
+        label: "Sort Lines Ascending",
+        keybindings: keybinding("editor.sortLinesAscending"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.sortLinesAscending"),
+      }),
+      editorApi.addAction({
+        id: "mockor.sortLinesDescending",
+        label: "Sort Lines Descending",
+        keybindings: keybinding("editor.sortLinesDescending"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.sortLinesDescending"),
+      }),
+      editorApi.addAction({
+        id: "mockor.toggleCase",
+        label: "Toggle Case",
+        keybindings: keybinding("editor.toggleCase"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.transformToUppercase"),
+      }),
+      editorApi.addAction({
+        id: "mockor.transformToLowercase",
+        label: "Transform to Lowercase",
+        keybindings: keybinding("editor.transformToLowercase"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.transformToLowercase"),
+      }),
+      editorApi.addAction({
         id: "mockor.surroundWith",
         label: "Surround With",
         keybindings: keybinding("editor.surroundWith"),

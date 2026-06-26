@@ -5609,6 +5609,138 @@ class InvoiceServiceTest
     );
   });
 
+  it("wires the line/case utility actions to their Monaco commands and keybindings", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "utilities.ts",
+      path: "/workspace/src/utilities.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
+
+    const joinLines = actionById("mockor.joinLines");
+    const sortLinesAscending = actionById("mockor.sortLinesAscending");
+    const sortLinesDescending = actionById("mockor.sortLinesDescending");
+    const toggleCase = actionById("mockor.toggleCase");
+    const transformToLowercase = actionById("mockor.transformToLowercase");
+
+    expect(joinLines).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
+        ],
+        label: "Join Lines",
+      }),
+    );
+    expect(toggleCase).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
+        ],
+        label: "Toggle Case",
+      }),
+    );
+    expect(sortLinesAscending).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Sort Lines Ascending",
+      }),
+    );
+    expect(sortLinesDescending).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Sort Lines Descending",
+      }),
+    );
+    expect(transformToLowercase).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Transform to Lowercase",
+      }),
+    );
+
+    joinLines?.run();
+    sortLinesAscending?.run();
+    sortLinesDescending?.run();
+    toggleCase?.run();
+    transformToLowercase?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.joinLines",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.sortLinesAscending",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.sortLinesDescending",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.transformToUppercase",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.transformToLowercase",
+      {},
+    );
+  });
+
   it("wires multi-cursor and selection-resize actions to their Monaco commands and keybindings", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
@@ -8097,12 +8229,14 @@ function createMonaco(model: FakeModel) {
       KeyD: 12,
       KeyF: 10,
       KeyI: 15,
+      KeyJ: 17,
       KeyK: 13,
       KeyL: 16,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,
       KeyT: 14,
+      KeyU: 18,
       KeyW: 7,
       Slash: 90,
       UpArrow: 9,

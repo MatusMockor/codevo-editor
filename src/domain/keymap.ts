@@ -207,6 +207,38 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+Shift+J",
+    id: "editor.joinLines",
+    label: "Join Lines",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.sortLinesAscending",
+    label: "Sort Lines Ascending",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.sortLinesDescending",
+    label: "Sort Lines Descending",
+  },
+  {
+    category: "Editor",
+    // PhpStorm's "Toggle Case" key. Monaco has no toggle action, so this drives
+    // its Transform to Uppercase command; Transform to Lowercase ships unbound.
+    defaultShortcut: "Cmd+Shift+U",
+    id: "editor.toggleCase",
+    label: "Toggle Case",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.transformToLowercase",
+    label: "Transform to Lowercase",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",

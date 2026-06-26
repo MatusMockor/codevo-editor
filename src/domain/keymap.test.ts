@@ -391,6 +391,30 @@ describe("keymap", () => {
     ).toBe("");
   });
 
+  it("defaults the line/case utility shortcuts to their PhpStorm/VS Code keys", () => {
+    expect(defaultShortcutForCommand("editor.joinLines", "mac")).toBe(
+      "Cmd+Shift+J",
+    );
+    expect(defaultShortcutForCommand("editor.joinLines", "linux")).toBe(
+      "Ctrl+Shift+J",
+    );
+    expect(defaultShortcutForCommand("editor.toggleCase", "mac")).toBe(
+      "Cmd+Shift+U",
+    );
+    expect(defaultShortcutForCommand("editor.toggleCase", "windows")).toBe(
+      "Ctrl+Shift+U",
+    );
+    expect(defaultShortcutForCommand("editor.sortLinesAscending", "mac")).toBe(
+      "",
+    );
+    expect(defaultShortcutForCommand("editor.sortLinesDescending", "mac")).toBe(
+      "",
+    );
+    expect(defaultShortcutForCommand("editor.transformToLowercase", "mac")).toBe(
+      "",
+    );
+  });
+
   it("assigns every default shortcut to at most one command per platform", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
       const defaults = defaultKeymapSettings(platform);
