@@ -2794,6 +2794,25 @@ button.problem-row:focus-visible {
   padding: 3px 9px;
 }
 
+/*
+ * Active structure row. The shared `.quick-open-result.active` rule fills the
+ * row edge-to-edge, which reads as a square full-width bar inside the palette.
+ * Inset it from the palette edges and round it so the soft-accent fill floats
+ * like the other widgets (JetBrains-classic). Theme-aware via our tokens.
+ */
+.file-structure .quick-open-result.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+  border-radius: var(--radius-sm);
+  margin-inline: 4px;
+}
+
+/* Keep the left accent bar tucked inside the now-inset, rounded fill. */
+.file-structure .quick-open-result.active::before {
+  left: 4px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
 .file-structure .symbol-label {
   padding-left: var(--structure-indent, 0);
   display: grid;
@@ -5122,6 +5141,13 @@ kbd {
   --vscode-menu-selectionForeground: var(--color-text-strong);
   --vscode-menu-separatorBackground: var(--color-border);
   --vscode-menu-border: var(--color-border-strong);
+  /* Cmd+. code-action list (Monaco's newer `.action-widget`) reads these.
+     Bundled Shiki themes ship none of them, so pin to our chrome tokens too;
+     focusBackground in particular replaces Monaco's default blue selection. */
+  --vscode-editorActionList-background: var(--color-modal);
+  --vscode-editorActionList-foreground: var(--color-text);
+  --vscode-editorActionList-focusBackground: var(--color-accent-soft);
+  --vscode-editorActionList-focusForeground: var(--color-text-strong);
 }
 
 /*
@@ -5187,6 +5213,39 @@ kbd {
   .action-item.focused
   .action-menu-item {
   background: var(--color-accent-soft);
+}
+
+/*
+ * Cmd+. code-action lightbulb list. Unlike the right-click context menu (which
+ * Monaco paints as `.monaco-menu .monaco-action-bar`), the code-action list is
+ * Monaco's newer `.action-widget` (actionWidget.css) - a separate DOM that
+ * defaults to a 5px radius and a blue --vscode-editorActionList-focusBackground
+ * selection. We give it the same JetBrains-classic chrome as the other popups:
+ * rounded card, soft surface, and a soft-accent focused row (theme-aware via our
+ * CSS variables, surface vars pinned in the block above for the Shiki themes).
+ */
+.monaco-editor .action-widget,
+.action-widget {
+  border-radius: var(--radius-lg);
+  background-color: var(--color-modal);
+  border: 1px solid var(--color-border-strong) !important;
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+}
+
+/* Group headers ("Quick Fix...", "Extract...") read as subtle section labels. */
+.monaco-editor .action-widget .monaco-list-row.group-header,
+.action-widget .monaco-list-row.group-header {
+  color: var(--color-text-subtle) !important;
+}
+
+/* Selected / focused action row: soft accent tint, not Monaco's default blue. */
+.monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled),
+.action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) {
+  background-color: var(--color-accent-soft) !important;
+  color: var(--color-text-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
 }
 
 /*

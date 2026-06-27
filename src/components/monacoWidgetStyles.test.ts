@@ -41,12 +41,49 @@ describe("Monaco widget chrome (JetBrains classic)", () => {
     expect(body).toContain("border-radius");
   });
 
+  it("rounds and shadows the code-action widget (Cmd+.) like the popups", () => {
+    // The lightbulb / Cmd+. list is Monaco's newer `.action-widget`, a DIFFERENT
+    // DOM from `.monaco-menu` (it ships its own actionWidget.css with a 5px radius
+    // and a blue --vscode-editorActionList-focusBackground selection). Without an
+    // override it falls back to Monaco's default chrome, so pin our JetBrains look.
+    const body = ruleBody(appCss, ".monaco-editor .action-widget,");
+    expect(body).toContain("border-radius");
+    expect(body).toContain("box-shadow");
+    expect(body).toContain("var(--color-modal)");
+    expect(body).toContain("var(--color-border-strong)");
+  });
+
+  it("tints the focused code-action row with accent-soft, not Monaco blue", () => {
+    // Monaco focuses the row via `.monaco-list-row.action.focused` using its blue
+    // --vscode-editorActionList-focusBackground; recolor it to our soft accent so
+    // the selected Quick Fix / Extract row matches the suggest rows on every theme.
+    const body = ruleBody(
+      appCss,
+      ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused",
+    );
+    expect(body).toContain("var(--color-accent-soft)");
+    expect(body).toContain("var(--color-text-strong)");
+  });
+
   it("tints the selected suggest row with the shared accent-soft token", () => {
     const body = ruleBody(
       appCss,
       ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
     );
     expect(body).toContain("var(--color-accent-soft)");
+  });
+
+  it("gives the FileStructure active row a rounded, inset accent fill", () => {
+    // The Cmd+R structure palette uses `.quick-open-result active`. The shared
+    // command-palette rule fills the row edge-to-edge, which reads as an ugly
+    // square full-width bar inside the structure popup. Scope a JetBrains-classic
+    // active row here: soft accent fill, rounded corners and a small horizontal
+    // inset so it floats off the palette edges like the other widgets.
+    const body = ruleBody(appCss, ".file-structure .quick-open-result.active");
+    expect(body).toContain("var(--color-accent-soft)");
+    expect(body).toContain("border-radius");
+    // Inset from the palette edges so the fill is not full-width.
+    expect(body).toMatch(/margin(-inline|-left|-right|-inline-start)?:/);
   });
 
   it("pins Monaco widget surface variables to theme-aware chrome tokens", () => {
