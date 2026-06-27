@@ -93,10 +93,14 @@ use lsp_session::{
     PhpLanguageServerRegistry, RefreshSink, RestartController, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
-    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
+    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineParameter,
+    PhpFileOutlineSymbolRecord, PhpSymbolVisibility as OutlineSymbolVisibility,
 };
 use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
-use php_symbols::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor};
+use php_symbols::{
+    PhpParameter, PhpSymbolExtractor, PhpSymbolKind, PhpSymbolVisibility,
+    TreeSitterPhpSymbolExtractor,
+};
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{
@@ -405,11 +409,19 @@ fn parse_php_file_outline_blocking(path: &str, source: &str) -> Result<PhpFileOu
             container_kind: None,
             container_name: symbol.container_name,
             fully_qualified_name: symbol.fully_qualified_name,
+            is_static: symbol.is_static,
             kind: php_file_outline_node_kind_from_symbol(symbol.kind),
             line_number: symbol.range.start_line as i64,
             name: symbol.name,
+            parameters: symbol
+                .parameters
+                .into_iter()
+                .map(outline_parameter_from_symbol)
+                .collect(),
             path: path.to_string(),
             relative_path: relative_path.clone(),
+            return_type: symbol.return_type,
+            visibility: symbol.visibility.map(outline_visibility_from_symbol),
         })
         .collect();
 
@@ -1230,6 +1242,21 @@ fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutline
         PhpSymbolKind::Method => PhpFileOutlineNodeKind::Method,
         PhpSymbolKind::Property => PhpFileOutlineNodeKind::Property,
         PhpSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
+    }
+}
+
+fn outline_visibility_from_symbol(visibility: PhpSymbolVisibility) -> OutlineSymbolVisibility {
+    match visibility {
+        PhpSymbolVisibility::Public => OutlineSymbolVisibility::Public,
+        PhpSymbolVisibility::Protected => OutlineSymbolVisibility::Protected,
+        PhpSymbolVisibility::Private => OutlineSymbolVisibility::Private,
+    }
+}
+
+fn outline_parameter_from_symbol(parameter: PhpParameter) -> PhpFileOutlineParameter {
+    PhpFileOutlineParameter {
+        name: parameter.name,
+        type_name: parameter.type_name,
     }
 }
 
@@ -6677,6 +6704,40 @@ mod tests {
         assert!(
             class.children.iter().any(|child| child.label == "name"),
             "expected method node under the class"
+        );
+    }
+
+    #[test]
+    fn parse_php_file_outline_surfaces_signature_metadata_off_thread() {
+        let outline = tauri::async_runtime::block_on(parse_php_file_outline(
+            "/workspace/src/User.php".to_string(),
+            concat!(
+                "<?php\n\nnamespace App;\n\nclass User\n{\n",
+                "    protected static function find(string $id, $fallback): ?User\n",
+                "    {\n        return null;\n    }\n}\n",
+            )
+            .to_string(),
+        ))
+        .expect("outline result");
+
+        let method = outline
+            .nodes
+            .iter()
+            .find(|node| node.label == "User")
+            .and_then(|class| class.children.iter().find(|child| child.label == "find"))
+            .expect("method node");
+
+        let value = serde_json::to_value(method).expect("serialize node");
+        assert_eq!(value["visibility"], "protected");
+        assert_eq!(value["isStatic"], true);
+        assert_eq!(value["returnType"], "?User");
+        assert_eq!(value["parameters"][0]["name"], "$id");
+        assert_eq!(value["parameters"][0]["type"], "string");
+        assert_eq!(value["parameters"][1]["name"], "$fallback");
+        assert!(
+            value["parameters"][1].get("type").is_none(),
+            "untyped parameter should omit the type key, got {:?}",
+            value["parameters"][1]
         );
     }
 

@@ -20,9 +20,26 @@ impl PhpSymbolExtractor for TreeSitterPhpSymbolExtractor {
 pub struct PhpSymbol {
     pub container_name: Option<String>,
     pub fully_qualified_name: String,
+    pub is_static: bool,
     pub kind: PhpSymbolKind,
     pub name: String,
+    pub parameters: Vec<PhpParameter>,
     pub range: PhpSymbolRange,
+    pub return_type: Option<String>,
+    pub visibility: Option<PhpSymbolVisibility>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PhpSymbolVisibility {
+    Public,
+    Protected,
+    Private,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PhpParameter {
+    pub name: String,
+    pub type_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -167,9 +184,13 @@ fn extract_named_type(
     symbols.push(PhpSymbol {
         container_name: None,
         fully_qualified_name: fully_qualified_name.clone(),
+        is_static: false,
         kind,
         name,
+        parameters: Vec::new(),
         range: symbol_range(node),
+        return_type: None,
+        visibility: None,
     });
 
     if let Some(body) = node.child_by_field_name("body") {
@@ -192,9 +213,13 @@ fn extract_function(
     symbols.push(PhpSymbol {
         container_name: None,
         fully_qualified_name: qualified_name(context.namespace.as_deref(), &name),
+        is_static: false,
         kind: PhpSymbolKind::Function,
         name,
+        parameters: parameter_list(node, source),
         range: symbol_range(node),
+        return_type: return_type_text(node, source),
+        visibility: None,
     });
 }
 
@@ -217,9 +242,13 @@ fn extract_method(
     symbols.push(PhpSymbol {
         container_name,
         fully_qualified_name,
+        is_static: has_modifier(node, source, "static"),
         kind: PhpSymbolKind::Method,
         name,
+        parameters: parameter_list(node, source),
         range: symbol_range(node),
+        return_type: return_type_text(node, source),
+        visibility: Some(visibility_or_default(node, source)),
     });
     extract_promoted_properties(node, source, context, symbols);
 }
@@ -237,7 +266,7 @@ fn extract_properties(
             continue;
         }
 
-        extract_property(child, source, context, symbols);
+        extract_property(child, node, source, context, symbols);
     }
 }
 
@@ -251,7 +280,7 @@ fn extract_promoted_properties(
 
     for child in node.named_children(&mut cursor) {
         if child.kind() == "property_promotion_parameter" {
-            extract_property(child, source, context, symbols);
+            extract_property(child, child, source, context, symbols);
             continue;
         }
 
@@ -261,6 +290,7 @@ fn extract_promoted_properties(
 
 fn extract_property(
     node: Node<'_>,
+    modifiers_node: Node<'_>,
     source: &str,
     context: &PhpSymbolContext,
     symbols: &mut Vec<PhpSymbol>,
@@ -278,9 +308,13 @@ fn extract_property(
     symbols.push(PhpSymbol {
         container_name: Some(container_name),
         fully_qualified_name,
+        is_static: has_modifier(modifiers_node, source, "static"),
         kind: PhpSymbolKind::Property,
         name,
+        parameters: Vec::new(),
         range: symbol_range(node),
+        return_type: None,
+        visibility: visibility_modifier(modifiers_node, source),
     });
 }
 
@@ -310,9 +344,13 @@ fn extract_constants(
         symbols.push(PhpSymbol {
             container_name,
             fully_qualified_name,
+            is_static: false,
             kind: PhpSymbolKind::Constant,
             name,
+            parameters: Vec::new(),
             range: symbol_range(child),
+            return_type: None,
+            visibility: None,
         });
     }
 }
@@ -367,6 +405,101 @@ fn member_name(container: &str, name: &str) -> String {
     format!("{container}::{name}")
 }
 
+fn visibility_or_default(node: Node<'_>, source: &str) -> PhpSymbolVisibility {
+    visibility_modifier(node, source).unwrap_or(PhpSymbolVisibility::Public)
+}
+
+fn visibility_modifier(node: Node<'_>, source: &str) -> Option<PhpSymbolVisibility> {
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        if child.kind() != "visibility_modifier" {
+            continue;
+        }
+
+        return match node_text(child, source)?.trim() {
+            "private" => Some(PhpSymbolVisibility::Private),
+            "protected" => Some(PhpSymbolVisibility::Protected),
+            "public" => Some(PhpSymbolVisibility::Public),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+fn has_modifier(node: Node<'_>, source: &str, keyword: &str) -> bool {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|child| {
+        node_text(child, source)
+            .map(|text| text.trim() == keyword)
+            .unwrap_or(false)
+    });
+
+    found
+}
+
+fn return_type_text(node: Node<'_>, source: &str) -> Option<String> {
+    let return_type = node.child_by_field_name("return_type")?;
+    let text = node_text(return_type, source)?;
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn parameter_list(node: Node<'_>, source: &str) -> Vec<PhpParameter> {
+    let parameters = match node.child_by_field_name("parameters") {
+        Some(parameters) => parameters,
+        None => return Vec::new(),
+    };
+    let mut cursor = parameters.walk();
+    let mut result = Vec::new();
+
+    for child in parameters.named_children(&mut cursor) {
+        if let Some(parameter) = parameter_from_node(child, source) {
+            result.push(parameter);
+        }
+    }
+
+    result
+}
+
+fn parameter_from_node(node: Node<'_>, source: &str) -> Option<PhpParameter> {
+    let is_parameter = matches!(
+        node.kind(),
+        "simple_parameter" | "variadic_parameter" | "property_promotion_parameter"
+    );
+
+    if !is_parameter {
+        return None;
+    }
+
+    let name = parameter_name(node, source)?;
+    let type_name = node
+        .child_by_field_name("type")
+        .and_then(|type_node| node_text(type_node, source))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    Some(PhpParameter { name, type_name })
+}
+
+fn parameter_name(node: Node<'_>, source: &str) -> Option<String> {
+    let name = field_text(node, "name", source)
+        .or_else(|| first_named_child_text(node, "variable_name", source))?;
+    let trimmed = name.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
 fn symbol_range(node: Node<'_>) -> PhpSymbolRange {
     let start = node.start_position();
     let end = node.end_position();
@@ -383,7 +516,10 @@ fn symbol_range(node: Node<'_>) -> PhpSymbolRange {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor};
+    use super::{
+        PhpParameter, PhpSymbolExtractor, PhpSymbolKind, PhpSymbolVisibility,
+        TreeSitterPhpSymbolExtractor,
+    };
     use crate::php_parser::{PhpSyntaxParser, TreeSitterPhpParser};
 
     #[test]
@@ -453,6 +589,103 @@ mod tests {
             .expect("class symbol");
 
         assert_eq!(class.container_name, None);
+    }
+
+    #[test]
+    fn extracts_method_visibility_parameters_and_return_type() {
+        let symbols = extract_symbols(signature_fixture());
+        let store = find_symbol(&symbols, "App\\Http\\Controller::store");
+
+        assert_eq!(store.visibility, Some(PhpSymbolVisibility::Protected));
+        assert_eq!(store.is_static, false);
+        assert_eq!(store.return_type.as_deref(), Some("?User"));
+        assert_eq!(
+            store.parameters,
+            vec![
+                PhpParameter {
+                    name: "$request".to_string(),
+                    type_name: Some("Request".to_string()),
+                },
+                PhpParameter {
+                    name: "$id".to_string(),
+                    type_name: None,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn defaults_method_visibility_to_public_when_absent() {
+        let symbols = extract_symbols(signature_fixture());
+        let handle = find_symbol(&symbols, "App\\Http\\Controller::handle");
+
+        assert_eq!(handle.visibility, Some(PhpSymbolVisibility::Public));
+        assert_eq!(handle.return_type.as_deref(), Some("void"));
+        assert!(handle.parameters.is_empty());
+    }
+
+    #[test]
+    fn detects_static_private_methods() {
+        let symbols = extract_symbols(signature_fixture());
+        let make = find_symbol(&symbols, "App\\Http\\Controller::make");
+
+        assert_eq!(make.visibility, Some(PhpSymbolVisibility::Private));
+        assert_eq!(make.is_static, true);
+        assert_eq!(make.return_type.as_deref(), Some("self"));
+    }
+
+    #[test]
+    fn records_property_visibility() {
+        let symbols = extract_symbols(signature_fixture());
+        let counter = find_symbol(&symbols, "App\\Http\\Controller::$counter");
+
+        assert_eq!(counter.visibility, Some(PhpSymbolVisibility::Private));
+    }
+
+    #[test]
+    fn leaves_signature_metadata_unset_for_functions_without_types() {
+        let symbols = extract_symbols(signature_fixture());
+        let helper = find_symbol(&symbols, "App\\Http\\noop");
+
+        assert_eq!(helper.visibility, None);
+        assert_eq!(helper.return_type, None);
+        assert!(helper.parameters.is_empty());
+    }
+
+    fn find_symbol<'a>(
+        symbols: &'a [super::PhpSymbol],
+        fully_qualified_name: &str,
+    ) -> &'a super::PhpSymbol {
+        symbols
+            .iter()
+            .find(|symbol| symbol.fully_qualified_name == fully_qualified_name)
+            .unwrap_or_else(|| panic!("symbol {fully_qualified_name} not found"))
+    }
+
+    fn signature_fixture() -> &'static str {
+        r#"<?php
+
+namespace App\Http;
+
+final class Controller
+{
+    private int $counter = 0;
+
+    protected function store(Request $request, $id): ?User
+    {
+        return null;
+    }
+
+    public function handle(): void {}
+
+    private static function make(): self
+    {
+        return new self();
+    }
+}
+
+function noop() {}
+"#
     }
 
     #[test]
