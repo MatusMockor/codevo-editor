@@ -13,6 +13,7 @@ import {
 } from "../domain/languageServerRuntime";
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorSurface } from "./EditorSurface";
@@ -2689,6 +2690,176 @@ class InvoiceServiceTest extends TestCase
     await renderWith({ ...activeDocument, content: "const value = 12;\n" });
 
     expect(languageServerMarkerCalls()).toHaveLength(0);
+  });
+
+  it("hides a stale content hover when the active document's diagnostics are cleared", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnosticsWith = (
+      messages: string[],
+    ): Record<string, LanguageServerDiagnostic[]> => ({
+      [activeDocument.path]: messages.map((message, index) => ({
+        character: 6,
+        endCharacter: 11,
+        endLine: 0,
+        line: index,
+        message,
+        severity: "warning" as const,
+        source: "typescript",
+      })),
+    });
+
+    const renderWith = async (
+      diagnostics: Record<string, LanguageServerDiagnostic[]>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    // A warning is present and the user is hovering it (Monaco's content hover
+    // widget is showing the diagnostic message).
+    await renderWith(diagnosticsWith(["unused variable"]));
+
+    const hideHoverCalls = () =>
+      editor.trigger.mock.calls.filter(
+        ([, actionId]) => actionId === "editor.action.hideHover",
+      );
+
+    editor.trigger.mockClear();
+
+    // The diagnostic is fixed / re-validated away: markers are cleared. The
+    // content hover widget is mouse-driven and survives a marker clear, so the
+    // surface must dismiss it or it stays pinned showing the now-invalid message.
+    await renderWith({ [activeDocument.path]: [] });
+
+    expect(hideHoverCalls().length).toBeGreaterThan(0);
+  });
+
+  it("does not hide the hover on a keystroke when the active document's diagnostics are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnostics: Record<string, LanguageServerDiagnostic[]> = {
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused variable",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(activeDocument);
+
+    editor.trigger.mockClear();
+
+    // A keystroke hands a fresh activeDocument object (same path, mutated content)
+    // while the diagnostics map keeps its identity. No diagnostic changed, so the
+    // open hover must NOT be dismissed mid-read.
+    await renderWith({ ...activeDocument, content: "const value = 12;\n" });
+
+    const hideHoverCalls = editor.trigger.mock.calls.filter(
+      ([, actionId]) => actionId === "editor.action.hideHover",
+    );
+    expect(hideHoverCalls).toHaveLength(0);
   });
 
   it("does not reopen PHP suggestions per keystroke when readiness is unchanged", async () => {

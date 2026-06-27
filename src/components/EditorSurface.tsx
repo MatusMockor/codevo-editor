@@ -420,6 +420,13 @@ function EditorSurfaceComponent({
   const markedLanguageServerModelsRef = useRef<
     WeakSet<Monaco.editor.ITextModel>
   >(new WeakSet());
+  // Tracks the active document's path + total diagnostic count from the previous
+  // diagnostics-decoration run, so a stale content hover can be dismissed when
+  // that count drops (markers removed/cleared) for the same document.
+  const previousActiveDiagnosticCountRef = useRef<{
+    count: number;
+    path: string;
+  } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
   const bladeCompletionsRef = useRef(provideBladeCompletions);
@@ -2174,6 +2181,35 @@ function EditorSurfaceComponent({
       activeDocument.language === "php"
         ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
         : [];
+
+    // Monaco's content hover widget is mouse-driven and is NOT dismissed when its
+    // markers are removed, so a hover left open over a diagnostic (error/warning
+    // message) stays pinned showing now-invalid text after the file is fixed or
+    // re-validated and the diagnostic disappears. When the active document's total
+    // diagnostic count drops for the *same* path, dismiss the open hover so it can
+    // never linger as stale info; the next mouse hover re-opens it with fresh
+    // content. Comparison is keyed on path (not a switch to another file) and on a
+    // real count *decrease* (not a no-op keystroke), so the hover is never hidden
+    // gratuitously. Isolation: only the model that belongs to the active document
+    // is touched (the path match above), so a stale tab can never dismiss the
+    // active editor's hover.
+    const activeDiagnosticCount =
+      languageServerDiagnostics.length + syntaxDiagnostics.length;
+    const previousActiveDiagnostics = previousActiveDiagnosticCountRef.current;
+    const diagnosticsClearedForActivePath =
+      previousActiveDiagnostics !== null &&
+      previousActiveDiagnostics.path === activeDocument.path &&
+      activeDiagnosticCount < previousActiveDiagnostics.count;
+
+    if (diagnosticsClearedForActivePath) {
+      editorApi.trigger("diagnostics", "editor.action.hideHover", {});
+    }
+
+    previousActiveDiagnosticCountRef.current = {
+      count: activeDiagnosticCount,
+      path: activeDocument.path,
+    };
+
     diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
       diagnosticOverviewDecorationIdsRef.current,
       [
