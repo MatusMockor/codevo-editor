@@ -9879,6 +9879,17 @@ export function useWorkbenchController(
     [gitGateway, workspaceRoot],
   );
 
+  // Reads an arbitrary file's text from disk by absolute path. Used to load
+  // local JSON Schemas referenced by a document's `$schema` (e.g.
+  // `.phpactor.json`) so Monaco can validate inline instead of trying to fetch
+  // the schema (which has no request service and would error). The path may sit
+  // outside the workspace root (the phpactor schema lives in the app tools dir),
+  // so this intentionally does not constrain the path to the root.
+  const readWorkspaceFile = useCallback(
+    (path: string): Promise<string> => workspaceFiles.readTextFile(path),
+    [workspaceFiles],
+  );
+
   // Closes the file history panel and invalidates any in-flight history/diff
   // requests so their results are dropped instead of repopulating a closed
   // panel (or a different tab's panel after a fast reopen).
@@ -27831,6 +27842,7 @@ export function useWorkbenchController(
       : false,
     toggleGitBlame,
     provideGitBlame,
+    readWorkspaceFile,
     toggleBookmarkAtCursor,
     toggleBookmarkAtLine,
     goToNextBookmark,

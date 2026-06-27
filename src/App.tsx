@@ -1004,6 +1004,7 @@ function App() {
             onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
             onToggleGitBlame={workbench.toggleGitBlame}
             provideGitBlame={workbench.provideGitBlame}
+            readWorkspaceFile={workbench.readWorkspaceFile}
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}

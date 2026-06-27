@@ -125,6 +125,7 @@ import {
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
 import { setupEmmet } from "../infrastructure/emmetSetup";
+import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
@@ -196,6 +197,13 @@ interface EditorSurfaceProps {
   onToggleBookmarkAtLine?(lineNumber: number): void;
   onToggleGitBlame?(): void;
   provideGitBlame?(path: string): Promise<GitBlameLine[]>;
+  /**
+   * Reads a file's text from disk by absolute path. Used to load a local JSON
+   * Schema referenced by an open JSON document's `$schema` so Monaco validates
+   * it inline. Defaults to a no-op so callers that do not need JSON schema
+   * loading (e.g. tests) can omit it; without it JSON simply goes unvalidated.
+   */
+  readWorkspaceFile?(path: string): Promise<string>;
   isActiveDocumentPhpTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
@@ -285,6 +293,7 @@ function EditorSurfaceComponent({
   onToggleBookmarkAtLine,
   onToggleGitBlame,
   provideGitBlame,
+  readWorkspaceFile,
   onEditorFocused,
   onOpenClass,
   onOpenFile,
@@ -504,6 +513,46 @@ function EditorSurfaceComponent({
     monacoApi,
     workspaceRoot,
   ]);
+
+  // Registers the local JSON Schema declared by the active document's `$schema`
+  // (e.g. `.phpactor.json`) with Monaco so it validates inline. Without this,
+  // Monaco's JSON worker tries to fetch the schema, finds no request service,
+  // and reports a 768 "No schema request service available" error on the
+  // `$schema` line. The schema content is read off-disk via the Tauri gateway.
+  //
+  // Per-workspace isolation: the requested document path is captured up front;
+  // the loader re-checks `isStale()` after the async schema read and drops the
+  // result when the active document has since changed. Switching project tabs
+  // also switches the active document, so this single check covers a mid-read
+  // tab switch - one project's schema can never be registered while the user is
+  // already looking at another.
+  useEffect(() => {
+    if (
+      !monacoApi ||
+      !activeDocument ||
+      activeDocument.language !== "json" ||
+      !readWorkspaceFile
+    ) {
+      return;
+    }
+
+    const requestedPath = activeDocument.path;
+    const readTextFile = readWorkspaceFile;
+    const document = {
+      path: activeDocument.path,
+      content: activeDocument.content,
+      language: activeDocument.language,
+    };
+
+    void loadJsonSchemaForDocument(monacoApi, document, {
+      readTextFile,
+      isStale: () => activeDocumentRef.current?.path !== requestedPath,
+    }).catch(() => {
+      // Loading a JSON schema is best-effort: a failure must never break JSON
+      // editing or surface an overlay. The loader already swallows expected
+      // failures; this guard covers anything unexpected.
+    });
+  }, [activeDocument, monacoApi, readWorkspaceFile]);
 
   useEffect(() => {
     flushPendingRef.current = flushPendingLanguageServerDocument;
