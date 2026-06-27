@@ -5,6 +5,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
+  shouldApplyClassEditAfterWrite,
+  writeExtractedInterfaceFile,
+} from "./phpExtractInterfaceWrite";
+import {
   capDiagnosticNotices,
   capWorkbenchNotices,
   createWorkbenchNotice,
@@ -526,8 +530,10 @@ import {
   renderUseImports,
 } from "../domain/phpCodeGen";
 import {
+  detectClassMemberIndent,
   findClassBodyInsertionOffset,
   findUseImportInsertionOffset,
+  indentLines,
   offsetToPosition,
 } from "../domain/phpInsertionPoint";
 import type {
@@ -8712,85 +8718,97 @@ export function useWorkbenchController(
 
   // Persists a synthesized PHP code action's NEW file (currently "Extract
   // interface", which writes a sibling `<Class>Interface.php`) to DISK and opens
-  // it in a tab. Monaco runs a code action's `command` AFTER applying its
-  // in-document `edit`, so the `implements` clause is already in the open class
-  // model when this runs; here we make the interface a real file rather than
-  // monaco's in-memory-only file-create model, so it survives reopening the
-  // workspace. Conservative: an already-present sibling is opened, never
-  // overwritten (matches the planner's `ignoreIfExists`). Per the per-workspace
-  // isolation rule the requested root is captured up front and re-checked after
-  // every await so a tab switch mid-write drops the (now stale) creation.
+  // it in a tab. Extract Interface is atomic from the user's perspective: this
+  // resolves `true` ONLY when the interface file was freshly written, and the
+  // Monaco command applies the paired in-document `implements` edit only then -
+  // so a pre-existing target or a failed write leaves the class untouched (no
+  // class implementing an interface that was never created). The interface is
+  // always a sibling of the already-open class, so its directory exists and no
+  // `createDirectory` is attempted (a non-idempotent create on the existing
+  // sibling directory was the `File exists (os error 17)` that previously failed
+  // the write yet still applied the class edit). Conservative: an already-present
+  // sibling is NEVER overwritten - the class is left unchanged and a recoverable
+  // message is shown. Per the per-workspace isolation rule the requested root is
+  // captured up front and re-checked before each post-write UI mutation so a tab
+  // switch mid-write drops the (now stale) refresh while still completing the
+  // file + class edit.
   const applyPhpCodeActionNewFile = useCallback(
-    async (newFile: PhpCodeActionNewFile): Promise<void> => {
+    async (newFile: PhpCodeActionNewFile): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (!requestedRoot) {
-        return;
+        return false;
       }
 
       const targetPath = newFile.path;
+      const result = await writeExtractedInterfaceFile(
+        targetPath,
+        newFile.content,
+        {
+          fileExists: async (path) =>
+            (await readTestFileIfExists(path)) !== null,
+          writeFile: (path, content) =>
+            workspaceFiles.writeTextFile(path, content),
+        },
+      );
 
-      try {
-        const existing = await readTestFileIfExists(targetPath);
+      if (result.status === "target-exists") {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Extract Interface",
+          new Error(
+            `${getFileName(targetPath)} already exists - the class was left unchanged.`,
+          ),
+        );
 
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        if (existing !== null) {
+        if (isRequestedRootActive()) {
           await openFile({
             kind: "file",
             name: getFileName(targetPath),
             path: targetPath,
           });
-          return;
         }
 
-        const parentPath = getParentPath(targetPath);
-        await workspaceFiles.createDirectory(parentPath);
+        return false;
+      }
 
-        if (!isRequestedRootActive()) {
-          return;
-        }
+      if (result.status === "write-failed") {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Extract Interface",
+          result.error,
+        );
 
-        await workspaceFiles.writeTextFile(targetPath, newFile.content);
+        return false;
+      }
 
-        if (!isRequestedRootActive()) {
-          return;
-        }
+      const parentPath = getParentPath(targetPath);
 
+      if (isRequestedRootActive()) {
         await notifyJavaScriptTypeScriptWatchedFilesChanged([
           {
             changeType: "created",
             path: targetPath,
           },
         ]);
+      }
 
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
+      if (isRequestedRootActive()) {
         setExpandedDirectories((current) => new Set(current).add(parentPath));
         await refreshDirectory(parentPath);
+      }
 
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
+      if (isRequestedRootActive()) {
         await openFile({
           kind: "file",
           name: getFileName(targetPath),
           path: targetPath,
         });
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(
-          requestedRoot,
-          "Extract Interface",
-          error,
-        );
       }
+
+      return shouldApplyClassEditAfterWrite(result);
     },
     [
       notifyJavaScriptTypeScriptWatchedFilesChanged,
@@ -18452,8 +18470,18 @@ export function useWorkbenchController(
         activeDocument?.path ?? null,
       );
 
-      if (extractInterfaceAction) {
-        actions.push(extractInterfaceAction);
+      if (extractInterfaceAction?.newFile) {
+        const existingInterface = await readTestFileIfExists(
+          extractInterfaceAction.newFile.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (existingInterface === null) {
+          actions.push(extractInterfaceAction);
+        }
       }
 
       // "Introduce constant / field" are pure single-file syntheses keyed off the
@@ -18585,6 +18613,7 @@ export function useWorkbenchController(
       collectPhpOverridableParentMethods,
       intelligenceMode,
       projectSymbolSearch,
+      readTestFileIfExists,
       workspaceRoot,
     ],
   );
@@ -29913,13 +29942,22 @@ function phpClassBodyInsertionAction(
   source: string,
   block: string,
   title: string,
+  className?: string,
 ): PhpCodeActionDescriptor | null {
-  const insertionPoint = findClassBodyInsertionOffset(source);
+  const insertionPoint = findClassBodyInsertionOffset(source, className);
 
   if (!insertionPoint) {
     return null;
   }
 
+  // The renderers emit column-0 member text; indent it to the class's own
+  // member level (detected from the existing members, falling back to four
+  // spaces) so generated methods line up like PhpStorm's, instead of landing at
+  // column 1 in front of the closing brace.
+  const indentedBlock = indentLines(
+    block,
+    detectClassMemberIndent(source, className),
+  );
   const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
   const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
   const insertionPosition = offsetToPosition(source, insertionPoint.offset);
@@ -29928,7 +29966,7 @@ function phpClassBodyInsertionAction(
     edits: [
       {
         range: zeroLengthPhpEditRange(insertionPosition),
-        text: `${leadingBlankLine}${block}\n${trailingBlankLine}`,
+        text: `${leadingBlankLine}${indentedBlock}\n${trailingBlankLine}`,
       },
     ],
     title,
@@ -29957,14 +29995,16 @@ function phpCreateFromUsageCodeAction(
   if (member.kind === "method") {
     return phpClassBodyInsertionAction(
       source,
-      renderCreateMethodStub(member.name, member.argTypes ?? []),
+      renderCreateMethodStub(member.name, member.argTypes ?? [], {
+        indent: "",
+      }),
       `Create method '${member.name}'`,
     );
   }
 
   return phpClassBodyInsertionAction(
     source,
-    renderCreatePropertyStub(member.name),
+    renderCreatePropertyStub(member.name, { indent: "" }),
     `Create property '${member.name}'`,
   );
 }

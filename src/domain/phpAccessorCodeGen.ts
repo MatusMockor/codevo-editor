@@ -122,19 +122,19 @@ function renderMethod(
   bodyLines: string[],
   indent: string,
 ): string {
-  const body = bodyLines.map(indentBodyLine);
+  const body = bodyLines.map((line) => indentBodyLine(line, indent));
 
   return [`${indent}${signature}`, `${indent}{`, ...body, `${indent}}`].join(
     "\n",
   );
 }
 
-function indentBodyLine(line: string): string {
+function indentBodyLine(line: string, indent: string): string {
   if (line.length === 0) {
     return "";
   }
 
-  return `${BODY_INDENT}${line}`;
+  return `${indent}${BODY_INDENT}${line}`;
 }
 
 function getterType(property: PhpPropertyMember): string | null {

@@ -91,6 +91,79 @@ export function findUseImportInsertionOffset(
   return { needsLeadingNewline: true, offset: openTagEnd };
 }
 
+/**
+ * PhpStorm indents generated class members to the class's own member level. We
+ * fall back to four spaces (the PSR-12 default) only when the class has no
+ * member to learn the style from - generators that splice members (getters /
+ * setters, constructors, create-from-usage) always run on a class that already
+ * has at least one property/method, so the detected style normally wins.
+ */
+const DEFAULT_MEMBER_INDENT = "    ";
+
+/**
+ * Returns the leading whitespace (spaces or tabs) of the FIRST member line in
+ * the class body - i.e. the indentation a freshly generated member should adopt
+ * so it lines up with the existing ones. Comments / docblocks above the first
+ * real member are skipped (they are blanked in the masked copy), so a class that
+ * opens with a `/** @var *\/` docblock still reports the property's own indent.
+ * Returns {@link DEFAULT_MEMBER_INDENT} when the class cannot be located or has
+ * no members.
+ */
+export function detectClassMemberIndent(
+  source: string,
+  className?: string,
+): string {
+  const masked = maskPhpStringsAndComments(source);
+  const body = locateClassBody(masked, className);
+
+  if (!body) {
+    return DEFAULT_MEMBER_INDENT;
+  }
+
+  return firstMemberIndent(source, masked, body) ?? DEFAULT_MEMBER_INDENT;
+}
+
+/**
+ * Prefixes `indent` to every NON-EMPTY line of `block`, preserving blank
+ * separator lines as-is (so a column-0 rendered member block is shifted to the
+ * class member indentation level without dragging trailing whitespace onto the
+ * blank lines between members). An empty `indent` returns the block unchanged.
+ */
+export function indentLines(block: string, indent: string): string {
+  if (indent.length === 0) {
+    return block;
+  }
+
+  return block
+    .split("\n")
+    .map((line) => (line.length === 0 ? line : `${indent}${line}`))
+    .join("\n");
+}
+
+function firstMemberIndent(
+  source: string,
+  masked: string,
+  body: ClassBody,
+): string | null {
+  let lineStart = body.bodyStart + 1;
+
+  for (let index = body.bodyStart + 1; index <= body.bodyEnd; index += 1) {
+    if (index !== body.bodyEnd && masked[index] !== "\n") {
+      continue;
+    }
+
+    if (masked.slice(lineStart, index).trim().length > 0) {
+      const leading = /^[ \t]*/.exec(source.slice(lineStart, index));
+
+      return leading?.[0] ?? "";
+    }
+
+    lineStart = index + 1;
+  }
+
+  return null;
+}
+
 export function offsetToPosition(
   source: string,
   offset: number,

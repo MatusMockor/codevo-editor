@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
+import { renderAccessors } from "./phpAccessorCodeGen";
+import type { PhpPropertyMember } from "./phpClassStructure";
 import {
+  detectClassMemberIndent,
   findClassBodyInsertionOffset,
   findUseImportInsertionOffset,
+  indentLines,
   offsetToPosition,
 } from "./phpInsertionPoint";
+
+function property(
+  overrides: Partial<PhpPropertyMember> = {},
+): PhpPropertyMember {
+  return {
+    defaultValue: null,
+    isReadonly: false,
+    isStatic: false,
+    name: "name",
+    phpDoc: null,
+    type: "string",
+    visibility: "private",
+    ...overrides,
+  };
+}
 
 function charAt(source: string, offset: number): string {
   return source.charAt(offset);
@@ -308,6 +327,154 @@ describe("findUseImportInsertionOffset", () => {
 
   it("returns null when the source has no PHP open tag", () => {
     expect(findUseImportInsertionOffset("class A {}")).toBeNull();
+  });
+});
+
+describe("detectClassMemberIndent", () => {
+  it("detects a 4-space member indent from the first class member", () => {
+    const source = [
+      "<?php",
+      "class A",
+      "{",
+      "    private string $name;",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(detectClassMemberIndent(source)).toBe("    ");
+  });
+
+  it("detects a tab member indent", () => {
+    const source = ["<?php", "class A", "{", "\tprivate string $name;", "}", ""].join(
+      "\n",
+    );
+
+    expect(detectClassMemberIndent(source)).toBe("\t");
+  });
+
+  it("skips a leading docblock and detects the member's own indent", () => {
+    const source = [
+      "<?php",
+      "class A",
+      "{",
+      "    /** @var list<string> */",
+      "    private array $tags = [];",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(detectClassMemberIndent(source)).toBe("    ");
+  });
+
+  it("falls back to four spaces for an empty class body", () => {
+    expect(detectClassMemberIndent("<?php\nclass A\n{\n}\n")).toBe("    ");
+  });
+
+  it("falls back to four spaces when there is no class at all", () => {
+    expect(detectClassMemberIndent("<?php $x = 1;")).toBe("    ");
+  });
+
+  it("detects the indent of a specific class by name", () => {
+    const source = [
+      "<?php",
+      "class A",
+      "{",
+      "  private int $a = 1;",
+      "}",
+      "",
+      "class B",
+      "{",
+      "        private int $b = 2;",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(detectClassMemberIndent(source, "B")).toBe("        ");
+  });
+});
+
+describe("indentLines", () => {
+  it("prefixes the indent to every non-empty line", () => {
+    const block = ["public function getName(): string", "{", "    return $this->name;", "}"].join(
+      "\n",
+    );
+
+    expect(indentLines(block, "    ")).toBe(
+      [
+        "    public function getName(): string",
+        "    {",
+        "        return $this->name;",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("leaves blank separator lines untouched", () => {
+    const block = ["public function a(): void", "{", "}", "", "public function b(): void", "{", "}"].join(
+      "\n",
+    );
+
+    expect(indentLines(block, "    ")).toBe(
+      [
+        "    public function a(): void",
+        "    {",
+        "    }",
+        "",
+        "    public function b(): void",
+        "    {",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("returns the block unchanged for an empty indent", () => {
+    const block = "public function a(): void\n{\n}";
+
+    expect(indentLines(block, "")).toBe(block);
+  });
+
+  it("indents an accessor block to the detected 4-space class member level", () => {
+    const source = [
+      "<?php",
+      "class CodevoQaNight",
+      "{",
+      "    private string $name;",
+      "}",
+      "",
+    ].join("\n");
+    const block = renderAccessors([property({ name: "name", type: "string" })]);
+
+    expect(indentLines(block, detectClassMemberIndent(source))).toBe(
+      [
+        "    public function getName(): string",
+        "    {",
+        "        return $this->name;",
+        "    }",
+        "",
+        "    public function setName(string $name): void",
+        "    {",
+        "        $this->name = $name;",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("indents an accessor block under tab-indented class members", () => {
+    const source = ["<?php", "class A", "{", "\tprivate string $name;", "}", ""].join(
+      "\n",
+    );
+    const block = renderAccessors([property({ name: "name", type: "string" })], {
+      mode: "get",
+    });
+    const indented = indentLines(block, detectClassMemberIndent(source));
+
+    for (const line of indented.split("\n")) {
+      if (line.length === 0) {
+        continue;
+      }
+
+      expect(line.startsWith("\t")).toBe(true);
+    }
   });
 });
 

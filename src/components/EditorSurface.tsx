@@ -151,7 +151,7 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
   ): Promise<void>;
-  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<void>;
+  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyPhpLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
@@ -244,7 +244,7 @@ function EditorSurfaceComponent({
   editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
-  applyPhpCodeActionNewFile = async () => undefined,
+  applyPhpCodeActionNewFile = async () => false,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,

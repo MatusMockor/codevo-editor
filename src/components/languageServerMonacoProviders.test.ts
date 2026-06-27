@@ -5687,9 +5687,15 @@ function store($request): void
     );
   });
 
-  it("routes a PHP code action's newFile through the disk-persisting callback (command) instead of an in-memory file-create edit when wired", async () => {
+  it("routes a PHP code action's newFile through an atomic disk-persisting command when wired", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
     const newFile = {
       content:
         "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
@@ -5713,7 +5719,12 @@ function store($request): void
         title: "Extract interface",
       },
     ]);
-    const applyPhpCodeActionNewFile = vi.fn(async () => undefined);
+    // Resolves `true`: the interface file was freshly written, so the command
+    // applies the paired `implements` edit.
+    const applyPhpCodeActionNewFile = vi.fn(async () => true);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
       featuresGateway: gateway,
@@ -5722,7 +5733,7 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const actions = await registered.codeActionProvider.provideCodeActions(
-      model({ content: "<?php\nclass Greeter\n{\n}\n" }),
+      sourceModel,
       new registered.monaco.Range(2, 1, 2, 1),
       {
         markers: [],
@@ -5736,23 +5747,9 @@ function store($request): void
     );
     expect(extractInterface).toBeDefined();
     const edits = extractInterface?.edit?.edits ?? [];
-    // The new file is NOT created in-memory: the only bulk edit is the
-    // in-document implements clause on the active model.
-    expect(edits).toHaveLength(1);
-    expect(edits[0]).toEqual(
-      expect.objectContaining({
-        textEdit: expect.objectContaining({
-          text: " implements GreeterInterface",
-        }),
-      }),
-    );
-    expect(
-      edits.some(
-        (edit: { newResource?: unknown }) => edit.newResource !== undefined,
-      ),
-    ).toBe(false);
-    // The action carries a command that, when monaco runs it after applying the
-    // edit, persists the interface to disk via the controller callback.
+    // The action carries no eager document edit. Its command writes the file
+    // first, then applies the implements edit to the original model.
+    expect(edits).toEqual([]);
     expect(extractInterface?.command?.id).toBe(
       "mockor.php.applyCodeActionNewFile",
     );
@@ -5762,6 +5759,157 @@ function store($request): void
     expect(run).toBeDefined();
     await run(null, extractInterface?.command?.arguments?.[0]);
     expect(applyPhpCodeActionNewFile).toHaveBeenCalledWith(newFile);
+    expect(sourceModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 17,
+            endLineNumber: 2,
+            startColumn: 17,
+            startLineNumber: 2,
+          }),
+          text: " implements GreeterInterface",
+        },
+      ],
+      expect.any(Function),
+    );
+  });
+
+  it("does not apply a PHP newFile action's document edits when disk persistence fails", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content: "<?php\n\ninterface GreeterInterface\n{\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    const failure = new Error("EACCES");
+    const applyPhpCodeActionNewFile = vi.fn(async () => {
+      throw failure;
+    });
+    const reportError = vi.fn();
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+
+    await run(null, extractInterface?.command?.arguments?.[0]);
+
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
+    expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(reportError).toHaveBeenCalledWith(failure);
+  });
+
+  it("does not apply a PHP newFile action's document edits when the callback declines the write", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content: "<?php\n\ninterface GreeterInterface\n{\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    // Resolves `false`: the target already exists (or the write failed and the
+    // controller already surfaced it), so the command must NOT apply the
+    // `implements` edit - the class stays untouched and no error is re-reported.
+    const applyPhpCodeActionNewFile = vi.fn(async () => false);
+    const reportError = vi.fn();
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+
+    await run(null, extractInterface?.command?.arguments?.[0]);
+
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
+    expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
   });
 
   it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
