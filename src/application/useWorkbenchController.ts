@@ -513,6 +513,7 @@ import {
 import {
   phpUnusedImportRemovalAt,
   phpUnusedPrivateMethodRemovalAt,
+  phpUnusedVariableRemovalAt,
 } from "../domain/phpInspections";
 import {
   phpCurrentNamespace,
@@ -18339,6 +18340,19 @@ export function useWorkbenchController(
         actions.push(removeUnusedImportAction);
       }
 
+      // "Remove unused variable" pairs with the unused-variable inspection. A
+      // local assignment can sit in a class method OR a free function, and the
+      // action is offered only for a side-effect-free assignment, so it runs
+      // before the class-only guard below.
+      const removeUnusedVariableAction = phpRemoveUnusedVariableCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedVariableAction) {
+        actions.push(removeUnusedVariableAction);
+      }
+
       // "Extract variable" is a pure single-file synthesis from the current
       // selection and is valid anywhere a PHP expression sits (class body or a
       // free function), so it runs before the class-only guard below.
@@ -30481,6 +30495,31 @@ function phpRemoveUnusedMethodCodeAction(
     edits: [removalEdit(source, removal)],
     kind: "quickfix",
     title: `Remove unused method '${removal.label}'`,
+  };
+}
+
+/**
+ * Offers "Remove unused variable" when the cursor sits on a conservatively
+ * detected unused local whose assignment is side-effect-free (pairs with the
+ * unused-variable inspection). The edit deletes the whole assignment statement
+ * line. Conservative: returns null for an assignment with any potential side
+ * effect (call / member access / non-trivial RHS) - those are warned but never
+ * auto-removed, because deleting them would drop the side-effecting call.
+ */
+function phpRemoveUnusedVariableCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedVariableRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused variable ${removal.label}`,
   };
 }
 

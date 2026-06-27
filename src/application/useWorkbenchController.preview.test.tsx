@@ -48422,6 +48422,97 @@ class Greeter
     expect(removeMethod?.edits[0]?.text).toBe("");
   });
 
+  it("offers a remove-unused-variable quick-fix on a side-effect-free unused local", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): int
+    {
+        $unused = 5;
+        return 1;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("$unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeVariable = actions.find((action) =>
+      action.title.startsWith("Remove unused variable"),
+    );
+    expect(removeVariable?.title).toBe("Remove unused variable $unused");
+    expect(removeVariable?.edits[0]?.text).toBe("");
+  });
+
+  it("does not offer a remove-unused-variable quick-fix for a side-effecting assignment", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): int
+    {
+        $unused = $this->compute();
+        return 1;
+    }
+
+    private function compute(): int
+    {
+        return 5;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("$unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) =>
+        action.title.startsWith("Remove unused variable"),
+      ),
+    ).toBe(false);
+  });
+
   it("persists an extract-interface new file to disk and opens it in a tab", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const interfacePath = "/workspace/app/Services/GreeterInterface.php";

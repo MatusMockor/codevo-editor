@@ -3,7 +3,14 @@ import {
   phpInspectionDiagnostics,
   phpUnusedImportRemovalAt,
   phpUnusedPrivateMethodRemovalAt,
+  phpUnusedVariableRemovalAt,
 } from "./phpInspections";
+
+function unusedVariableMessages(source: string): string[] {
+  return phpInspectionDiagnostics(source)
+    .filter((diagnostic) => diagnostic.kind === "unused-variable")
+    .map((diagnostic) => diagnostic.message);
+}
 
 function offsetOf(source: string, needle: string): number {
   const index = source.indexOf(needle);
@@ -105,13 +112,18 @@ class Foo
     public function go($e)
     {
         $w = new Widget();
+        $w->save();
         Helper::run();
         return $e instanceof DomainException;
     }
 }
 `;
 
-    expect(phpInspectionDiagnostics(source)).toEqual([]);
+    expect(
+      phpInspectionDiagnostics(source).filter(
+        (diagnostic) => diagnostic.kind === "unused-import",
+      ),
+    ).toEqual([]);
   });
 
   it("does not flag an import referenced only in a PHPDoc @return tag", () => {
@@ -221,11 +233,16 @@ class Foo
         $sql = <<<SQL
             Helper is mentioned in this heredoc string
         SQL;
+        echo $sql;
     }
 }
 `;
 
-    expect(phpInspectionDiagnostics(source)).toEqual([]);
+    expect(
+      phpInspectionDiagnostics(source).filter(
+        (diagnostic) => diagnostic.kind === "unused-import",
+      ),
+    ).toEqual([]);
   });
 
   it("does not flag function or const imports (out of scope, conservative)", () => {
@@ -873,6 +890,608 @@ namespace App;
 
 class Foo
 {
+}
+`);
+  });
+});
+
+describe("phpInspectionDiagnostics - unused variable", () => {
+  it("flags a local variable assigned but never used in a free function", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    return 1;
+}
+`;
+
+    const diagnostics = phpInspectionDiagnostics(source).filter(
+      (diagnostic) => diagnostic.kind === "unused-variable",
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      kind: "unused-variable",
+      message: 'Unused variable "$x".',
+      severity: "warning",
+      unnecessary: true,
+    });
+    const start = offsetOf(source, "$x");
+    const offsetToLineCharacter = (offset: number) => {
+      let line = 0;
+      let lineStart = 0;
+      for (let index = 0; index < offset; index += 1) {
+        if (source[index] === "\n") {
+          line += 1;
+          lineStart = index + 1;
+        }
+      }
+      return { character: offset - lineStart, line };
+    };
+    const { line, character } = offsetToLineCharacter(start);
+    expect(diagnostics[0].line).toBe(line);
+    expect(diagnostics[0].character).toBe(character);
+    expect(diagnostics[0].endCharacter).toBe(character + "$x".length);
+  });
+
+  it("flags a local variable assigned but never used in a class method", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function bar(): int
+    {
+        $unused = 'value';
+        return 7;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$unused".',
+    ]);
+  });
+
+  it("does not flag a variable that is read after assignment", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    return $x;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a variable read into another assignment", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    $y = $x + 1;
+    return $y;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: string interpolation ---
+
+  it("does not flag a variable used in double-quoted interpolation", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return "hello $name";
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a variable used in curly interpolation {\$x}", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return "hello {$name}!";
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a variable used in a heredoc body", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return <<<TXT
+        hello $name
+        TXT;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: closures / arrow fns ---
+
+  it("does not flag a variable captured by a closure use clause", () => {
+    const source = `<?php
+
+function f()
+{
+    $captured = 5;
+    return function () use ($captured) {
+        return $captured;
+    };
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a variable captured by reference in a closure use clause", () => {
+    const source = `<?php
+
+function f()
+{
+    $acc = 0;
+    $add = function ($n) use (&$acc) {
+        $acc += $n;
+    };
+    return $add;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a variable used by an arrow function auto-capture", () => {
+    const source = `<?php
+
+function f()
+{
+    $base = 10;
+    return fn ($n) => $base + $n;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: compact / extract ---
+
+  it("does not flag a variable passed to compact()", () => {
+    const source = `<?php
+
+function f()
+{
+    $first = 'a';
+    $second = 'b';
+    return compact('first', 'second');
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("suppresses the whole scope when extract() is present", () => {
+    const source = `<?php
+
+function f($data)
+{
+    extract($data);
+    $reallyUnused = 5;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: variable variables ---
+
+  it("suppresses the whole scope when a variable variable \$\$x is present", () => {
+    const source = `<?php
+
+function f($key)
+{
+    $$key = 5;
+    $reallyUnused = 1;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("suppresses the whole scope for \${\$x} dynamic variable", () => {
+    const source = `<?php
+
+function f($key)
+{
+    \${$key} = 5;
+    $reallyUnused = 1;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: by-reference ---
+
+  it("does not flag a by-reference parameter", () => {
+    const source = `<?php
+
+function f(&$out)
+{
+    $out = 5;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a foreach by-reference value", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as &$item) {
+        $item = 0;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a reference alias assignment \$ref = &\$x", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    $ref = &$x;
+    return $x;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: superglobals / this / global / static ---
+
+  it("does not flag \$this", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function bar(): void
+    {
+        $this->run();
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag superglobals", () => {
+    const source = `<?php
+
+function f()
+{
+    $_GET = [];
+    $_POST = [];
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a global-declared variable", () => {
+    const source = `<?php
+
+function f()
+{
+    global $config;
+    $config = 5;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a static variable", () => {
+    const source = `<?php
+
+function f()
+{
+    static $count = 0;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: destructuring / foreach key-value ---
+
+  it("does not flag list()/[] destructuring assignment targets", () => {
+    const source = `<?php
+
+function f($pair)
+{
+    [$a, $b] = $pair;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag list(...) destructuring targets", () => {
+    const source = `<?php
+
+function f($pair)
+{
+    list($a, $b) = $pair;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag an unused foreach value (may be intentional)", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $key => $value) {
+        echo $key;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  // --- false-positive guards: side-effect assignment still warned, but no remove ---
+
+  it("flags a variable assigned from a function call (warning, no auto-remove)", () => {
+    const source = `<?php
+
+function f()
+{
+    $result = compute();
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$result".',
+    ]);
+  });
+
+  // --- isolation between scopes ---
+
+  it("does not let a usage in another function keep an unused variable", () => {
+    const source = `<?php
+
+function a()
+{
+    $x = 5;
+}
+
+function b()
+{
+    return $x;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual(['Unused variable "$x".']);
+  });
+
+  it("flags only the genuinely unused variable when names share a prefix", () => {
+    const source = `<?php
+
+function f()
+{
+    $count = 1;
+    $countTotal = 2;
+    return $countTotal;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$count".',
+    ]);
+  });
+
+  it("does not flag a reassigned-then-used variable", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 1;
+    $x = 2;
+    return $x;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("returns no unused-variable diagnostics for a non-PHP-ish empty source", () => {
+    expect(unusedVariableMessages("<?php\n\necho 'hi';\n")).toEqual([]);
+  });
+});
+
+describe("phpUnusedVariableRemovalAt", () => {
+  it("offers a remove for a side-effect-free literal assignment", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    return 1;
+}
+`;
+    const cursor = offsetOf(source, "$x");
+    const removal = phpUnusedVariableRemovalAt(source, cursor);
+
+    expect(removal).not.toBeNull();
+    expect(removal?.label).toBe("$x");
+
+    const rewritten =
+      source.slice(0, removal!.start) + source.slice(removal!.end);
+
+    expect(rewritten).toBe(`<?php
+
+function f()
+{
+    return 1;
+}
+`);
+  });
+
+  it("does NOT offer a remove for a side-effect assignment (function call)", () => {
+    const source = `<?php
+
+function f()
+{
+    $result = compute();
+    return 1;
+}
+`;
+    const cursor = offsetOf(source, "$result");
+
+    expect(phpUnusedVariableRemovalAt(source, cursor)).toBeNull();
+  });
+
+  it("does NOT offer a remove for a method-call assignment", () => {
+    const source = `<?php
+
+function f($obj)
+{
+    $value = $obj->method();
+    return 1;
+}
+`;
+    const cursor = offsetOf(source, "$value");
+
+    expect(phpUnusedVariableRemovalAt(source, cursor)).toBeNull();
+  });
+
+  it("offers a remove for an empty-array literal assignment", () => {
+    const source = `<?php
+
+function f()
+{
+    $items = [];
+    return 1;
+}
+`;
+    const cursor = offsetOf(source, "$items");
+    const removal = phpUnusedVariableRemovalAt(source, cursor);
+
+    expect(removal).not.toBeNull();
+
+    const rewritten =
+      source.slice(0, removal!.start) + source.slice(removal!.end);
+
+    expect(rewritten).toBe(`<?php
+
+function f()
+{
+    return 1;
+}
+`);
+  });
+
+  it("returns null when the cursor is not on an unused variable", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    return $x;
+}
+`;
+    const cursor = offsetOf(source, "$x");
+
+    expect(phpUnusedVariableRemovalAt(source, cursor)).toBeNull();
+  });
+
+  it("does not delete a preceding statement sharing the unused variable's line", () => {
+    // CRITICAL: `$a = 1;` is USED (returned). Removing `$x` must NOT swallow the
+    // earlier statement on the same physical line - that would delete live code.
+    const source = `<?php
+
+function f()
+{
+    $a = 1; $x = 5;
+    return $a;
+}
+`;
+    const cursor = offsetOf(source, "$x");
+    const removal = phpUnusedVariableRemovalAt(source, cursor);
+
+    expect(removal).not.toBeNull();
+
+    const rewritten =
+      source.slice(0, removal!.start) + source.slice(removal!.end);
+
+    // `$a = 1;` survives; only `$x = 5;` (and the space before it) is removed.
+    expect(rewritten).toBe(`<?php
+
+function f()
+{
+    $a = 1;
+    return $a;
+}
+`);
+  });
+
+  it("preserves a trailing statement's indentation when removing a leading unused variable", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5; return 1;
+}
+`;
+    const cursor = offsetOf(source, "$x");
+    const removal = phpUnusedVariableRemovalAt(source, cursor);
+
+    expect(removal).not.toBeNull();
+
+    const rewritten =
+      source.slice(0, removal!.start) + source.slice(removal!.end);
+
+    expect(rewritten).toBe(`<?php
+
+function f()
+{
+    return 1;
 }
 `);
   });

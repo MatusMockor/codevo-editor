@@ -3039,6 +3039,92 @@ class Foo
     expect(inspectionMarker.startLineNumber).toBe(6);
   });
 
+  it("renders unused-variable inspections as warning markers tagged Unnecessary", async () => {
+    const content = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function bar(): int
+    {
+        $unused = 5;
+        return 1;
+    }
+}
+`;
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "Foo.php",
+      path: "/workspace/app/Foo.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.resolve();
+    });
+
+    const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner]) => owner === "php-syntax",
+    );
+    const lastCall = syntaxMarkerCalls[syntaxMarkerCalls.length - 1];
+    const markers = lastCall?.[2] as any[] | undefined;
+    const inspectionMarker = markers?.find(
+      (marker) =>
+        marker.source === "PHP Inspection" &&
+        marker.message === 'Unused variable "$unused".',
+    );
+
+    expect(inspectionMarker).toBeDefined();
+    expect(inspectionMarker.severity).toBe(monaco.MarkerSeverity.Warning);
+    expect(inspectionMarker.tags).toEqual([monaco.MarkerTag.Unnecessary]);
+    // The marker sits on line 9 (1-based), the `$unused = 5;` statement line.
+    expect(inspectionMarker.startLineNumber).toBe(9);
+  });
+
   it("does not re-map diagnostic overview decorations per keystroke when diagnostics are unchanged", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
