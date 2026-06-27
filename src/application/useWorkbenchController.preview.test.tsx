@@ -16694,6 +16694,98 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
   });
 
+  it("uses live-parse signature metadata for PHP file structure even when the index is non-empty", async () => {
+    const path = "/workspace/app/UserService.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(
+        async () => "<?php\nclass UserService { public function handle() {} }\n",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+
+    dependencies.phpFileOutlineGateway.getPhpFileOutline = vi.fn(async () => ({
+      nodes: [
+        {
+          children: [
+            {
+              children: [],
+              column: 5,
+              fullyQualifiedName: "UserService::handle",
+              id: "indexed-handle",
+              kind: "method" as const,
+              label: "handle",
+              lineNumber: 2,
+              path,
+              relativePath: "app/UserService.php",
+            },
+          ],
+          column: 1,
+          fullyQualifiedName: "UserService",
+          id: "indexed-class",
+          kind: "class" as const,
+          label: "UserService",
+          lineNumber: 1,
+          path,
+          relativePath: "app/UserService.php",
+        },
+      ],
+    }));
+    dependencies.phpFileOutlineGateway.parsePhpFileOutline = vi.fn(async () => ({
+      nodes: [
+        {
+          children: [
+            {
+              children: [],
+              column: 5,
+              fullyQualifiedName: "UserService::handle",
+              id: "live-handle",
+              kind: "method" as const,
+              label: "handle",
+              lineNumber: 2,
+              parameters: [{ name: "$request", type: "Request" }],
+              path,
+              relativePath: "app/UserService.php",
+              returnType: "void",
+              visibility: "public" as const,
+            },
+          ],
+          column: 1,
+          fullyQualifiedName: "UserService",
+          id: "live-class",
+          kind: "class" as const,
+          label: "UserService",
+          lineNumber: 1,
+          path,
+          relativePath: "app/UserService.php",
+        },
+      ],
+    }));
+
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.phpFileOutlineGateway.parsePhpFileOutline).toHaveBeenCalledWith(
+      path,
+      expect.stringContaining("UserService"),
+    );
+
+    const method = getWorkbench().fileStructureOutline?.nodes[0]?.children[0];
+    expect(method?.visibility).toBe("public");
+    expect(method?.returnType).toBe("void");
+    expect(method?.parameters).toEqual([{ name: "$request", type: "Request" }]);
+  });
+
   it("stops reading stale inherited PHP file structure candidates after switching project tabs", async () => {
     const childPath = "/workspace-a/app/Child.php";
     const primaryParentPath = "/workspace-a/app/ParentClass.php";

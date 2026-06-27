@@ -36,6 +36,18 @@
   --change-modified: #e7c66c;
   --change-modified-soft: rgba(231, 198, 108, 0.14);
   --change-modified-strong: #f6dc86;
+  --symbol-method: #b48ead;
+  --symbol-property: #d08770;
+  --symbol-const: #5e9cd0;
+  --symbol-class: #a3be8c;
+  --symbol-interface: #5fb3b3;
+  --symbol-enum: #ebcb8b;
+  --symbol-function: #b48ead;
+  --symbol-trait: #6cb6c9;
+  --symbol-variable: #8b94a3;
+  --vis-public: #8fbf7f;
+  --vis-private: #d07f7f;
+  --vis-protected: #d8b977;
   --radius-sm: 6px;
   --radius-md: 9px;
   --radius-lg: 12px;
@@ -98,6 +110,18 @@
   --change-modified: #bd8525;
   --change-modified-soft: rgba(189, 133, 37, 0.14);
   --change-modified-strong: #81570d;
+  --symbol-method: #8250c4;
+  --symbol-property: #c25a3a;
+  --symbol-const: #2f6fb0;
+  --symbol-class: #3f7a3f;
+  --symbol-interface: #1d7a86;
+  --symbol-enum: #b07d18;
+  --symbol-function: #8250c4;
+  --symbol-trait: #2a7d6f;
+  --symbol-variable: #6b727d;
+  --vis-public: #3f8a3f;
+  --vis-private: #c2484a;
+  --vis-protected: #b07d18;
   color-scheme: light;
 }
 
@@ -139,6 +163,18 @@
   --change-modified: #ffcc66;
   --change-modified-soft: rgba(255, 204, 102, 0.15);
   --change-modified-strong: #ffd580;
+  --symbol-method: #d4bfff;
+  --symbol-property: #ffa759;
+  --symbol-const: #73d0ff;
+  --symbol-class: #bae67e;
+  --symbol-interface: #5ccfe6;
+  --symbol-enum: #ffd580;
+  --symbol-function: #d4bfff;
+  --symbol-trait: #5ccfe6;
+  --symbol-variable: #9aa3b4;
+  --vis-public: #87d96c;
+  --vis-private: #f28779;
+  --vis-protected: #ffcc66;
   color-scheme: dark;
 }
 
@@ -180,6 +216,18 @@
   --change-modified: #ffcb6b;
   --change-modified-soft: rgba(255, 203, 107, 0.15);
   --change-modified-strong: #ffd98a;
+  --symbol-method: #c792ea;
+  --symbol-property: #f78c6c;
+  --symbol-const: #82aaff;
+  --symbol-class: #c3e88d;
+  --symbol-interface: #89ddff;
+  --symbol-enum: #ffcb6b;
+  --symbol-function: #c792ea;
+  --symbol-trait: #89ddff;
+  --symbol-variable: #8a90b5;
+  --vis-public: #c3e88d;
+  --vis-private: #f07178;
+  --vis-protected: #ffcb6b;
   color-scheme: dark;
 }
 
@@ -221,6 +269,18 @@
   --change-modified: #e5c07b;
   --change-modified-soft: rgba(229, 192, 123, 0.16);
   --change-modified-strong: #f0d29a;
+  --symbol-method: #c678dd;
+  --symbol-property: #e06c75;
+  --symbol-const: #56b6c2;
+  --symbol-class: #98c379;
+  --symbol-interface: #56b6c2;
+  --symbol-enum: #e5c07b;
+  --symbol-function: #c678dd;
+  --symbol-trait: #56b6c2;
+  --symbol-variable: #868e9c;
+  --vis-public: #98c379;
+  --vis-private: #e06c75;
+  --vis-protected: #e5c07b;
   color-scheme: dark;
 }
 
@@ -262,6 +322,18 @@
   --change-modified: #ffb86c;
   --change-modified-soft: rgba(255, 184, 108, 0.16);
   --change-modified-strong: #ffce95;
+  --symbol-method: #bd93f9;
+  --symbol-property: #ff79c6;
+  --symbol-const: #8be9fd;
+  --symbol-class: #50fa7b;
+  --symbol-interface: #8be9fd;
+  --symbol-enum: #f1fa8c;
+  --symbol-function: #bd93f9;
+  --symbol-trait: #8be9fd;
+  --symbol-variable: #9aa3c4;
+  --vis-public: #50fa7b;
+  --vis-private: #ff5555;
+  --vis-protected: #ffb86c;
   color-scheme: dark;
 }
 
@@ -303,6 +375,18 @@
   --change-modified: #f9e2af;
   --change-modified-soft: rgba(249, 226, 175, 0.16);
   --change-modified-strong: #fceec6;
+  --symbol-method: #cba6f7;
+  --symbol-property: #fab387;
+  --symbol-const: #74c7ec;
+  --symbol-class: #a6e3a1;
+  --symbol-interface: #89dceb;
+  --symbol-enum: #f9e2af;
+  --symbol-function: #cba6f7;
+  --symbol-trait: #94e2d5;
+  --symbol-variable: #a6adc8;
+  --vis-public: #a6e3a1;
+  --vis-private: #f38ba8;
+  --vis-protected: #f9e2af;
   color-scheme: dark;
 }
 
@@ -344,6 +428,18 @@
   --change-modified: #e2c08d;
   --change-modified-soft: rgba(226, 192, 141, 0.16);
   --change-modified-strong: #efd6ad;
+  --symbol-method: #c586c0;
+  --symbol-property: #ce9178;
+  --symbol-const: #4fc1ff;
+  --symbol-class: #4ec9b0;
+  --symbol-interface: #4ec9b0;
+  --symbol-enum: #dcdcaa;
+  --symbol-function: #c586c0;
+  --symbol-trait: #4ec9b0;
+  --symbol-variable: #9d9d9d;
+  --vis-public: #89d185;
+  --vis-private: #f48771;
+  --vis-protected: #cca700;
   color-scheme: dark;
 }
 
@@ -385,6 +481,18 @@
   --change-modified: #b07407;
   --change-modified-soft: rgba(223, 142, 29, 0.16);
   --change-modified-strong: #8a5a05;
+  --symbol-method: #8839ef;
+  --symbol-property: #fe640b;
+  --symbol-const: #1e66f5;
+  --symbol-class: #40a02b;
+  --symbol-interface: #209fb5;
+  --symbol-enum: #df8e1d;
+  --symbol-function: #8839ef;
+  --symbol-trait: #179299;
+  --symbol-variable: #6c6f85;
+  --vis-public: #40a02b;
+  --vis-private: #d20f39;
+  --vis-protected: #df8e1d;
   color-scheme: light;
 }
 
@@ -426,6 +534,18 @@
   --change-modified: #9a6801;
   --change-modified-soft: rgba(193, 132, 1, 0.16);
   --change-modified-strong: #7a5201;
+  --symbol-method: #a626a4;
+  --symbol-property: #d75f00;
+  --symbol-const: #0184bc;
+  --symbol-class: #50a14f;
+  --symbol-interface: #0997b3;
+  --symbol-enum: #c18401;
+  --symbol-function: #a626a4;
+  --symbol-trait: #0997b3;
+  --symbol-variable: #696c77;
+  --vis-public: #3f8c3e;
+  --vis-private: #d83b2c;
+  --vis-protected: #9a6801;
   color-scheme: light;
 }
 
@@ -468,6 +588,18 @@
     --change-modified: #bd8525;
     --change-modified-soft: rgba(189, 133, 37, 0.14);
     --change-modified-strong: #81570d;
+    --symbol-method: #8250c4;
+    --symbol-property: #c25a3a;
+    --symbol-const: #2f6fb0;
+    --symbol-class: #3f7a3f;
+    --symbol-interface: #1d7a86;
+    --symbol-enum: #b07d18;
+    --symbol-function: #8250c4;
+    --symbol-trait: #2a7d6f;
+    --symbol-variable: #5d6b7a;
+    --vis-public: #3f8a3f;
+    --vis-private: #c2484a;
+    --vis-protected: #b07d18;
     color-scheme: light;
   }
 }
@@ -2631,17 +2763,129 @@ button.problem-row:focus-visible {
   overflow: hidden;
 }
 
-.file-structure .quick-open-result span {
-  padding-left: var(--structure-indent, 0);
-}
-
 .file-structure .quick-open-results {
   min-height: 0;
   max-height: none;
+  padding: 4px;
 }
 
+/* JetBrains-classic structure rows: round kind icon + visibility + signature. */
 .file-structure .quick-open-result {
-  min-height: 48px;
+  min-height: 30px;
+  grid-template-columns: 18px 11px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 9px;
+}
+
+.file-structure .symbol-label {
+  padding-left: var(--structure-indent, 0);
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.file-structure .symbol-label strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-structure .symbol-label .signature {
+  font-family:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-white);
+  background: var(--symbol-variable);
+  flex: none;
+}
+
+.symbol-icon[data-kind="method"] {
+  background: var(--symbol-method);
+}
+
+.symbol-icon[data-kind="property"] {
+  background: var(--symbol-property);
+}
+
+.symbol-icon[data-kind="constant"] {
+  background: var(--symbol-const);
+}
+
+.symbol-icon[data-kind="class"] {
+  background: var(--symbol-class);
+}
+
+.symbol-icon[data-kind="interface"] {
+  background: var(--symbol-interface);
+}
+
+.symbol-icon[data-kind="enum"] {
+  background: var(--symbol-enum);
+}
+
+.symbol-icon[data-kind="function"] {
+  background: var(--symbol-function);
+}
+
+.symbol-icon[data-kind="trait"] {
+  background: var(--symbol-trait);
+}
+
+.symbol-icon[data-kind="variable"] {
+  background: var(--symbol-variable);
+}
+
+/* Static members get a subtle ring to set them apart without an extra glyph. */
+.symbol-icon[data-static="true"] {
+  box-shadow:
+    0 0 0 1px var(--color-modal),
+    0 0 0 2px currentColor;
+}
+
+.symbol-visibility,
+.symbol-visibility-spacer {
+  width: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+.symbol-visibility[data-visibility="public"] {
+  color: var(--vis-public);
+}
+
+.symbol-visibility[data-visibility="private"] {
+  color: var(--vis-private);
+}
+
+.symbol-visibility[data-visibility="protected"] {
+  color: var(--vis-protected);
 }
 
 .file-structure-option {

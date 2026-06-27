@@ -1,4 +1,4 @@
-import { ListTree, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { KeyboardEvent } from "react";
@@ -7,8 +7,10 @@ import {
   isNavigablePhpFileOutlineNode,
   type FlatPhpFileOutlineNode,
   type PhpFileOutline,
+  type PhpFileOutlineNodeKind,
   type PhpFileStructureScope,
   type PhpFileOutlineNode,
+  type PhpSymbolVisibility,
 } from "../domain/phpFileOutline";
 
 interface FileStructureProps {
@@ -166,14 +168,35 @@ export function FileStructure({
               title={row.node.fullyQualifiedName || row.node.label}
               type="button"
             >
-              <ListTree aria-hidden="true" size={16} />
               <span
+                aria-hidden="true"
+                className="symbol-icon"
+                data-kind={row.node.kind}
+                data-static={row.node.isStatic ? "true" : undefined}
+              >
+                {symbolIconLetter(row.node.kind)}
+              </span>
+              {row.node.visibility ? (
+                <span
+                  aria-hidden="true"
+                  className="symbol-visibility"
+                  data-visibility={row.node.visibility}
+                >
+                  {visibilityGlyph(row.node.visibility)}
+                </span>
+              ) : (
+                <span aria-hidden="true" className="symbol-visibility-spacer" />
+              )}
+              <span
+                className="symbol-label"
                 style={
                   { "--structure-indent": `${row.depth * 14}px` } as CSSProperties
                 }
               >
                 <strong>{row.node.label}</strong>
-                <small>{symbolDetail(row)}</small>
+                {symbolSignature(row.node) ? (
+                  <span className="signature">{symbolSignature(row.node)}</span>
+                ) : null}
               </span>
             </button>
           ))}
@@ -288,26 +311,58 @@ function structureKindOrder(node: PhpFileOutlineNode): number {
   return order[node.kind] ?? 4;
 }
 
-function symbolDetail(row: FlatPhpFileOutlineNode): string {
-  const location = row.node.lineNumber ? `:${row.node.lineNumber}` : "";
-  const owner = symbolOwner(row.node);
+const SYMBOL_ICON_LETTERS: Record<PhpFileOutlineNodeKind, string> = {
+  class: "C",
+  constant: "c",
+  container: "·",
+  enum: "E",
+  function: "ƒ",
+  interface: "I",
+  method: "m",
+  property: "p",
+  trait: "T",
+  variable: "v",
+};
 
-  if (owner) {
-    return `${row.node.kind} · ${owner}${location}`;
-  }
+const VISIBILITY_GLYPHS: Record<PhpSymbolVisibility, string> = {
+  private: "−",
+  protected: "#",
+  public: "+",
+};
 
-  return `${row.node.kind}${location}`;
+function symbolIconLetter(kind: PhpFileOutlineNodeKind): string {
+  return SYMBOL_ICON_LETTERS[kind] ?? "·";
 }
 
-function symbolOwner(node: PhpFileOutlineNode): string | null {
-  const container = node.fullyQualifiedName?.split("::")[0];
+function visibilityGlyph(visibility: PhpSymbolVisibility): string {
+  return VISIBILITY_GLYPHS[visibility];
+}
 
-  if (!container || container === node.fullyQualifiedName) {
-    return null;
+function symbolSignature(node: PhpFileOutlineNode): string {
+  if (node.kind === "method" || node.kind === "function") {
+    return methodSignature(node);
   }
 
-  const parts = container.split("\\");
-  return parts[parts.length - 1] || container;
+  if (node.returnType) {
+    return `: ${node.returnType}`;
+  }
+
+  return "";
+}
+
+function methodSignature(node: PhpFileOutlineNode): string {
+  if (!node.parameters) {
+    return node.returnType ? `: ${node.returnType}` : "";
+  }
+
+  const params = node.parameters
+    .map((parameter) =>
+      parameter.type ? `${parameter.type} ${parameter.name}` : parameter.name,
+    )
+    .join(", ");
+  const returnSuffix = node.returnType ? `: ${node.returnType}` : "";
+
+  return `(${params})${returnSuffix}`;
 }
 
 function structurePlaceholder(

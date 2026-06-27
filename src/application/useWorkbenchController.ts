@@ -6662,6 +6662,28 @@ export function useWorkbenchController(
     [documents, workspaceFiles],
   );
 
+  // Always live-parse the single active PHP file (instant tree-sitter parse) so
+  // the structure carries fresh signature metadata (visibility, parameters,
+  // return type) that the SQLite project index does not store. The index only
+  // serves non-PHP paths defensively. The caller re-checks the active root
+  // after this resolves, so no shared state is mutated for a stale workspace.
+  const loadActivePhpFileOutline = useCallback(
+    async (requestedRoot: string, path: string): Promise<PhpFileOutline> => {
+      if (isPhpPath(path)) {
+        const source = await readPhpFileOutlineSource(path);
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return emptyPhpFileOutline();
+        }
+
+        return phpFileOutlineGateway.parsePhpFileOutline(path, source);
+      }
+
+      return phpFileOutlineGateway.getPhpFileOutline(requestedRoot, path);
+    },
+    [phpFileOutlineGateway, readPhpFileOutlineSource],
+  );
+
   const loadPhpFileOutline = useCallback(
     async (path: string) => {
       if (!workspaceRoot) {
@@ -6676,21 +6698,7 @@ export function useWorkbenchController(
       setLoadingPhpFileOutlinePaths((current) => new Set(current).add(path));
 
       try {
-        const indexedOutline = await phpFileOutlineGateway.getPhpFileOutline(
-          requestedRoot,
-          path,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        let outline = indexedOutline;
-
-        if (indexedOutline.nodes.length === 0 && isPhpPath(path)) {
-          const source = await readPhpFileOutlineSource(path);
-          outline = await phpFileOutlineGateway.parsePhpFileOutline(path, source);
-        }
+        const outline = await loadActivePhpFileOutline(requestedRoot, path);
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
@@ -6723,12 +6731,7 @@ export function useWorkbenchController(
         });
       }
     },
-    [
-      phpFileOutlineGateway,
-      readPhpFileOutlineSource,
-      reportError,
-      workspaceRoot,
-    ],
+    [loadActivePhpFileOutline, reportError, workspaceRoot],
   );
 
   const loadJavaScriptTypeScriptFileOutline = useCallback(
