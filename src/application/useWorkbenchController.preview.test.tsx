@@ -50449,6 +50449,389 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers Add return type using the method's PHPDoc @return", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    /**
+     * @return Foo
+     */
+    public function make()
+    {
+        return $this->foo;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addReturnTypeAction!)).toContain(
+      "public function make(): Foo",
+    );
+  });
+
+  it("offers Add return type as void on a free function with no return value", async () => {
+    const filePath = "/workspace/app/helpers.php";
+    const fileSource = `<?php
+
+function log_message($message)
+{
+    error_log($message);
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "helpers.php"));
+    });
+
+    const offset = fileSource.indexOf("error_log");
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(fileSource, addReturnTypeAction!)).toContain(
+      "function log_message($message): void",
+    );
+  });
+
+  it("offers Add return type before the semicolon on an abstract method", async () => {
+    const classPath = "/workspace/app/Contracts/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Contracts;
+
+abstract class Maker
+{
+    /**
+     * @return Foo
+     */
+    abstract public function make();
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addReturnTypeAction!)).toContain(
+      "abstract public function make(): Foo;",
+    );
+  });
+
+  it("does not offer Add return type when the method already declares one", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    public function make(): Foo
+    {
+        return new Foo();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add return type"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add return type when returns mix types", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    public function maybe($flag)
+    {
+        if ($flag) {
+            return 'x';
+        }
+
+        return 123;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("maybe(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add return type"),
+    ).toBe(false);
+  });
+
+  it("offers Add type hint using the parameter's PHPDoc @param", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    /**
+     * @param Foo $foo
+     */
+    public function set($foo)
+    {
+        $this->foo = $foo;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo)");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addTypeHintAction = actions.find(
+      (action) => action.title === "Add type hint",
+    );
+    expect(addTypeHintAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addTypeHintAction!)).toContain(
+      "public function set(Foo $foo)",
+    );
+  });
+
+  it("offers Add type hint as array from an empty-array default", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set($items = [])
+    {
+        $this->items = $items;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$items");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addTypeHintAction = actions.find(
+      (action) => action.title === "Add type hint",
+    );
+    expect(addTypeHintAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addTypeHintAction!)).toContain(
+      "public function set(array $items = [])",
+    );
+  });
+
+  it("does not offer Add type hint for a `= null` default", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set($foo = null)
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add type hint"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add type hint when the parameter already has a type", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set(Foo $foo)
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add type hint"),
+    ).toBe(false);
+  });
+
   it("offers an optimize imports action when an import is unused", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

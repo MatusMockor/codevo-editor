@@ -485,6 +485,10 @@ import {
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
 import { planAddParameter } from "../domain/phpAddParameter";
+import {
+  planAddParameterType,
+  planAddReturnType,
+} from "../domain/phpAddTypeHint";
 import { planExtractInterface } from "../domain/phpExtractInterface";
 import { planExtractMethod } from "../domain/phpExtractMethod";
 import { planExtractVariable } from "../domain/phpExtractVariable";
@@ -18198,6 +18202,26 @@ export function useWorkbenchController(
         actions.push(addParameterAction);
       }
 
+      // "Add return type" / "Add type hint" (PhpStorm Alt+Enter) conservatively
+      // infer a missing return type / parameter type and insert it. Both are
+      // pure single-file additive insertions valid on a class method OR a free
+      // function (and, for the return type, an abstract / interface
+      // declaration), so they run before the class-only guard below.
+      const addReturnTypeAction = phpAddReturnTypeCodeAction(source, range);
+
+      if (addReturnTypeAction) {
+        actions.push(addReturnTypeAction);
+      }
+
+      const addParameterTypeAction = phpAddParameterTypeCodeAction(
+        source,
+        range,
+      );
+
+      if (addParameterTypeAction) {
+        actions.push(addParameterTypeAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
         return actions;
       }
@@ -29945,6 +29969,75 @@ function phpAddParameterCodeAction(
     ],
     kind: "refactor.rewrite",
     title: "Add parameter",
+  };
+}
+
+/**
+ * Offers "Add return type" when the cursor sits on a method / function (or an
+ * abstract / interface declaration) that declares NO return type and whose type
+ * `planAddReturnType` can infer UNAMBIGUOUSLY - from a PHPDoc `@return`, or from
+ * literal-only `return` statements that all agree (`void`, a `new Foo()` class,
+ * `static`, or a scalar/array literal). The plan is a single zero-length
+ * insertion of `: Type` after the close `)`. Returns `null` for any shape the
+ * conservative planner rejects (a mixed / variable / call return, a lone
+ * `return null`, an already-typed signature, the cursor off any function) so a
+ * wrong type is never inserted.
+ */
+function phpAddReturnTypeCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddReturnType(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add return type",
+  };
+}
+
+/**
+ * Offers "Add type hint" when the cursor sits inside the parameter list, on a
+ * parameter that declares NO type and whose type `planAddParameterType` can
+ * infer UNAMBIGUOUSLY - from a PHPDoc `@param`, or from a literal default value
+ * (`[]` -> `array`, `'x'` -> `string`, `123` -> `int`, `1.5` -> `float`,
+ * `true`/`false` -> `bool`). The plan is a single zero-length insertion of
+ * `Type ` before the parameter token (after any promotion modifiers). Returns
+ * `null` for an already-typed parameter, an ambiguous `= null` default, a
+ * parameter with no usable signal, or the cursor outside the parameter list.
+ */
+function phpAddParameterTypeCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddParameterType(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add type hint",
   };
 }
 
