@@ -2763,10 +2763,10 @@ button.problem-row:focus-visible {
 }
 
 .file-structure {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(560px, calc(100vw - 32px));
   max-height: min(520px, calc(100vh - 72px));
-  grid-template-rows: 44px 36px minmax(0, 1fr);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-modal);
@@ -2774,7 +2774,13 @@ button.problem-row:focus-visible {
   overflow: hidden;
 }
 
+.file-structure .palette-search,
+.file-structure .file-structure-option {
+  flex: none;
+}
+
 .file-structure .quick-open-results {
+  flex: 1 1 auto;
   min-height: 0;
   max-height: none;
   padding: 4px;
@@ -3212,6 +3218,20 @@ button.problem-row:focus-visible {
   border-radius: var(--radius-lg);
   background: var(--color-modal);
   box-shadow: var(--shadow-pop);
+}
+
+/* Palettes are a flex column so the results scroll while the search header and
+   the JetBrains-classic footer hint stay pinned. */
+.command-palette,
+.quick-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.command-palette .palette-results,
+.quick-open .quick-open-results {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .text-search-filters {
@@ -4210,9 +4230,10 @@ button.problem-row:focus-visible {
 }
 
 .palette-command {
+  position: relative;
   display: flex;
   width: 100%;
-  min-height: 48px;
+  min-height: 38px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -4221,7 +4242,7 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 5px 10px;
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-standard);
 }
@@ -4260,9 +4281,10 @@ button.problem-row:focus-visible {
 
 .quick-open-result,
 .text-search-result {
+  position: relative;
   display: grid;
   width: 100%;
-  min-height: 52px;
+  min-height: 38px;
   grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
@@ -4271,7 +4293,7 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 4px 10px;
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
@@ -4282,10 +4304,24 @@ button.problem-row:focus-visible {
   background: var(--color-hover);
 }
 
+/* JetBrains-classic active row: accent-soft fill + a subtle left accent bar.
+   The accent bar is scoped to the command palettes (.quick-open-result) so the
+   Text Search dialog keeps its existing active treatment. */
 .quick-open-result.active,
 .text-search-result.active {
   background: var(--color-accent-soft);
   color: var(--color-text-strong);
+}
+
+.quick-open-result.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-accent-bar, var(--color-accent));
 }
 
 .quick-open-result span,
@@ -4340,6 +4376,39 @@ button.problem-row:focus-visible {
   color: var(--color-text-subtle);
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* Shared JetBrains-classic palette footer hint row. */
+.palette-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-top: 1px solid var(--color-border);
+  padding: 6px 12px;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+}
+
+.palette-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.palette-footer kbd {
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .setup-header {

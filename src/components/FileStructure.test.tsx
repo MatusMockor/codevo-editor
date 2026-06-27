@@ -31,6 +31,11 @@ describe("FileStructure", () => {
     host.remove();
   });
 
+  it("renders a footer hint row", async () => {
+    await renderFileStructure();
+    expect(host.querySelector(".palette-footer")).not.toBeNull();
+  });
+
   it("scrolls the selected symbol when navigating with arrow keys", async () => {
     await renderFileStructure();
     scrollIntoView.mockClear();

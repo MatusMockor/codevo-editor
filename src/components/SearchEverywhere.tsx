@@ -1,12 +1,13 @@
-import { Boxes, FileCode2, Search, Terminal } from "lucide-react";
+import { FileCode2, Search, Terminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   flattenSearchEverywhereItems,
   type SearchEverywhereItem,
-  type SearchEverywhereItemKind,
   type SearchEverywhereModel,
 } from "../domain/searchEverywhere";
+import { PaletteFooter } from "./PaletteFooter";
+import { SymbolKindIcon } from "./SymbolKindIcon";
 
 interface SearchEverywhereProps {
   isOpen: boolean;
@@ -18,11 +19,20 @@ interface SearchEverywhereProps {
   onActivate(item: SearchEverywhereItem): void;
 }
 
-const itemIcon: Record<SearchEverywhereItemKind, ReactNode> = {
-  file: <FileCode2 aria-hidden="true" size={16} />,
-  symbol: <Boxes aria-hidden="true" size={16} />,
-  action: <Terminal aria-hidden="true" size={16} />,
-};
+// Files and actions keep their subtle lucide glyph; symbols get the shared,
+// kind-coloured round badge so they match the File Structure / Class Open
+// palettes (theme-aware via the --symbol-* tokens).
+function itemIcon(item: SearchEverywhereItem): ReactNode {
+  if (item.kind === "symbol") {
+    return <SymbolKindIcon kind={item.symbol.kind} />;
+  }
+
+  if (item.kind === "file") {
+    return <FileCode2 aria-hidden="true" size={16} />;
+  }
+
+  return <Terminal aria-hidden="true" size={16} />;
+}
 
 // PhpStorm "Search Everywhere" (double-Shift). One dialog aggregating the
 // existing file / symbol / command searches into categorized sections. The
@@ -142,7 +152,7 @@ export function SearchEverywhere({
                     title={item.detail}
                     type="button"
                   >
-                    {itemIcon[item.kind]}
+                    {itemIcon(item)}
                     <span>
                       <strong>{item.label}</strong>
                       <small>{item.detail}</small>
@@ -156,6 +166,8 @@ export function SearchEverywhere({
             </div>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );

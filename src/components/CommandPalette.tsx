@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Command, CommandContext } from "../application/commandRegistry";
+import { PaletteFooter } from "./PaletteFooter";
 
 interface CommandPaletteProps {
   commands: Command[];
@@ -96,6 +97,8 @@ export function CommandPalette({
             );
           })}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );

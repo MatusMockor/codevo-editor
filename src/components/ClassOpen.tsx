@@ -1,6 +1,8 @@
-import { Boxes, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
+import { PaletteFooter } from "./PaletteFooter";
+import { SymbolKindIcon } from "./SymbolKindIcon";
 
 interface ClassOpenProps {
   isOpen: boolean;
@@ -101,7 +103,7 @@ export function ClassOpen({
               title={result.fullyQualifiedName}
               type="button"
             >
-              <Boxes aria-hidden="true" size={16} />
+              <SymbolKindIcon kind={result.kind} />
               <span>
                 <strong>{result.name}</strong>
                 <small>
@@ -111,6 +113,8 @@ export function ClassOpen({
             </button>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );

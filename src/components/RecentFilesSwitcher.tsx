@@ -2,6 +2,7 @@ import { FileCode2, History } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { RecentFileEntry } from "../domain/recentFiles";
+import { PaletteFooter } from "./PaletteFooter";
 
 interface RecentFilesSwitcherProps {
   entries: RecentFileEntry[];
@@ -126,6 +127,8 @@ export function RecentFilesSwitcher({
             </button>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );

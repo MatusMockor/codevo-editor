@@ -77,6 +77,11 @@ describe("RecentLocationsPanel", () => {
     expect(host.querySelector(".quick-open")).toBeNull();
   });
 
+  it("renders a footer hint row", () => {
+    render();
+    expect(host.querySelector(".palette-footer")).not.toBeNull();
+  });
+
   it("lists locations most-recent first with name, line and context snippet", () => {
     render();
 

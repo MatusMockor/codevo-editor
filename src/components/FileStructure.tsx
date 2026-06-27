@@ -12,6 +12,8 @@ import {
   type PhpFileOutlineNode,
   type PhpSymbolVisibility,
 } from "../domain/phpFileOutline";
+import { PaletteFooter } from "./PaletteFooter";
+import { symbolKindLetter } from "./SymbolKindIcon";
 
 interface FileStructureProps {
   canIncludeInheritedMembers: boolean;
@@ -201,6 +203,8 @@ export function FileStructure({
             </button>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );
@@ -311,19 +315,6 @@ function structureKindOrder(node: PhpFileOutlineNode): number {
   return order[node.kind] ?? 4;
 }
 
-const SYMBOL_ICON_LETTERS: Record<PhpFileOutlineNodeKind, string> = {
-  class: "C",
-  constant: "c",
-  container: "·",
-  enum: "E",
-  function: "ƒ",
-  interface: "I",
-  method: "m",
-  property: "p",
-  trait: "T",
-  variable: "v",
-};
-
 const VISIBILITY_GLYPHS: Record<PhpSymbolVisibility, string> = {
   private: "−",
   protected: "#",
@@ -331,7 +322,7 @@ const VISIBILITY_GLYPHS: Record<PhpSymbolVisibility, string> = {
 };
 
 function symbolIconLetter(kind: PhpFileOutlineNodeKind): string {
-  return SYMBOL_ICON_LETTERS[kind] ?? "·";
+  return symbolKindLetter(kind);
 }
 
 function visibilityGlyph(visibility: PhpSymbolVisibility): string {

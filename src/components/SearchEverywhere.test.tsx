@@ -134,6 +134,19 @@ describe("SearchEverywhere", () => {
     expect(labels).toEqual(["User.ts", "User", "Save File"]);
   });
 
+  it("colours symbol rows with a kind icon", () => {
+    render();
+    const symbolRow = host.querySelectorAll(".search-everywhere-result")[1];
+    const icon = symbolRow?.querySelector(".symbol-icon");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("data-kind")).toBe("class");
+  });
+
+  it("renders a footer hint row", () => {
+    render();
+    expect(host.querySelector(".palette-footer")).not.toBeNull();
+  });
+
   it("selects the first item by default", () => {
     render();
     const rows = host.querySelectorAll(".search-everywhere-result");

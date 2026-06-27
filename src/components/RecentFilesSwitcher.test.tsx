@@ -61,6 +61,11 @@ describe("RecentFilesSwitcher", () => {
     expect(host.querySelector(".quick-open")).toBeNull();
   });
 
+  it("renders a footer hint row", () => {
+    render({});
+    expect(host.querySelector(".palette-footer")).not.toBeNull();
+  });
+
   it("lists recent files most-recent first", () => {
     render({});
 

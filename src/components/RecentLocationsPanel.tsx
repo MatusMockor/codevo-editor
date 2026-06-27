@@ -2,6 +2,7 @@ import { History, MapPin } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { RecentLocation } from "../domain/recentLocations";
+import { PaletteFooter } from "./PaletteFooter";
 
 interface RecentLocationsPanelProps {
   isOpen: boolean;
@@ -133,6 +134,8 @@ export function RecentLocationsPanel({
             </button>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );
