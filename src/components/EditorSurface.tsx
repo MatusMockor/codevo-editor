@@ -1526,13 +1526,23 @@ function EditorSurfaceComponent({
   // Laravel/PHP contextual cascade entirely. The net effect a user feels is
   // being yanked to the definition merely by hovering a symbol with Cmd held.
   //
-  // Dispose the contribution so go-to-definition fires ONLY through the two
-  // explicit, guarded paths: the Cmd+left-click handler above and the Cmd+B
-  // keybinding (both run the controller's onGoToDefinition cascade). Cmd-hover no
-  // longer navigates; document-link providers still render their own underline.
+  // Do NOT dispose the contribution. Disposing it tears down the editor mouse /
+  // key listeners it registered while the contribution object stays in Monaco's
+  // contribution map (it is registered `BeforeFirstInteraction`, so reading it
+  // here force-instantiates it); the editor later re-enters and double-disposes
+  // it, leaving Monaco's event delivery in an inconsistent state that surfaces as
+  // a runtime crash ("undefined is not an object") on the next interaction.
+  //
+  // Instead neutralize ONLY the navigation: replace the contribution's
+  // `gotoDefinition` method (the one its onExecute path calls to reveal the
+  // target) with a no-op. Every listener stays wired, the link-hover underline
+  // decorations still render, and Monaco's event system is left fully intact.
+  // Go-to-definition then fires ONLY through the two explicit, guarded paths: the
+  // Cmd+left-click handler above and the Cmd+B keybinding (both run the
+  // controller's onGoToDefinition cascade).
   //
   // Per-tab isolation: @monaco-editor/react reuses one editor instance across
-  // document switches, so disposing once at mount covers every tab; the effect
+  // document switches, so patching once at mount covers every tab; the effect
   // re-runs if the editor instance itself changes.
   useEffect(() => {
     if (!editorApi) {
@@ -1541,9 +1551,16 @@ function EditorSurfaceComponent({
 
     const gotoDefinitionGesture = editorApi.getContribution(
       "editor.contrib.gotodefinitionatposition",
-    );
+    ) as { gotoDefinition?: (...args: unknown[]) => unknown } | null;
 
-    gotoDefinitionGesture?.dispose();
+    if (
+      !gotoDefinitionGesture ||
+      typeof gotoDefinitionGesture.gotoDefinition !== "function"
+    ) {
+      return;
+    }
+
+    gotoDefinitionGesture.gotoDefinition = () => Promise.resolve();
   }, [editorApi]);
 
   useEffect(() => {

@@ -46,6 +46,15 @@ interface FakeEditor {
   focus: ReturnType<typeof vi.fn>;
   getContribution: ReturnType<typeof vi.fn>;
   gotoDefinitionContributionDispose: ReturnType<typeof vi.fn>;
+  // The built-in gesture contribution. Its `gotoDefinition` method is the one the
+  // surface neutralizes (replaces with a no-op) so a Cmd-hover never navigates.
+  // `gotoDefinitionContributionNavigate` records the ORIGINAL navigation that the
+  // gesture would perform, letting a test assert the surface stopped it without
+  // tearing the contribution down.
+  gotoDefinitionContribution: {
+    gotoDefinition: (...args: unknown[]) => Promise<void>;
+  };
+  gotoDefinitionContributionNavigate: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
@@ -1728,15 +1737,19 @@ class InvoiceServiceTest extends TestCase
     expect(stopPropagation).toHaveBeenCalled();
   });
 
-  it("disables Monaco's built-in Cmd-hover definition gesture so only explicit Cmd+click / Cmd+B navigate", async () => {
+  it("neutralizes Monaco's built-in Cmd-hover definition navigation without disposing the contribution so only explicit Cmd+click / Cmd+B navigate", async () => {
     stubNavigatorPlatform("MacIntel");
 
     // The reported repro: cursor over a class symbol in a PHP `use` statement.
     // Monaco's built-in `gotodefinitionatposition` contribution navigates on its
     // own Cmd interactions (mouseup with Cmd held, independent of leftButton and
-    // of the surface's guarded onMouseDown). Disposing it at mount is what stops
-    // Cmd-hover from yanking to the definition; navigation must only come from
-    // the surface's explicit Cmd+click handler and the Cmd+B keybinding.
+    // of the surface's guarded onMouseDown). Disposing it at mount tore down its
+    // editor listeners while the contribution stayed registered, corrupting
+    // Monaco's event delivery and crashing on the next interaction. The surface
+    // instead neutralizes ONLY the gesture's navigation (replaces its
+    // `gotoDefinition` with a no-op) and leaves the contribution - and every
+    // listener - intact; navigation must only come from the surface's explicit
+    // Cmd+click handler and the Cmd+B keybinding.
     const activeDocument: EditorDocument = {
       content:
         "<?php\n\nuse App\\Http\\Controllers\\Page\\LinkDomainVerificationController;\n",
@@ -1794,7 +1807,19 @@ class InvoiceServiceTest extends TestCase
     expect(editor.getContribution).toHaveBeenCalledWith(
       "editor.contrib.gotodefinitionatposition",
     );
-    expect(editor.gotoDefinitionContributionDispose).toHaveBeenCalledTimes(1);
+
+    // The contribution must NOT be disposed - disposing it is what crashed
+    // Monaco's event delivery. It stays alive and registered.
+    expect(editor.gotoDefinitionContributionDispose).not.toHaveBeenCalled();
+
+    // ...but its navigation is neutralized: invoking the (now patched)
+    // gotoDefinition - exactly what the gesture's onExecute does on a Cmd-hover -
+    // must NOT run the original navigation.
+    await editor.gotoDefinitionContribution.gotoDefinition(
+      { lineNumber: 3, column: 5 },
+      false,
+    );
+    expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
   });
 
   it("routes a Ctrl+click on code text through go-to-definition on Linux", async () => {
@@ -5389,7 +5414,7 @@ class Foo
     const snippetController = { insert: vi.fn() };
     editor.getContribution.mockImplementation((id?: string) =>
       id === "editor.contrib.gotodefinitionatposition"
-        ? { dispose: editor.gotoDefinitionContributionDispose }
+        ? editor.gotoDefinitionContribution
         : snippetController,
     );
     editor.getSelection.mockReturnValue({
@@ -5512,7 +5537,7 @@ class Foo
     const snippetController = { insert: vi.fn() };
     editor.getContribution.mockImplementation((id?: string) =>
       id === "editor.contrib.gotodefinitionatposition"
-        ? { dispose: editor.gotoDefinitionContributionDispose }
+        ? editor.gotoDefinitionContribution
         : snippetController,
     );
     editor.getPosition.mockReturnValue({ column: 5, lineNumber: 1 });
@@ -5627,7 +5652,7 @@ class Foo
     const snippetController = { insert: vi.fn() };
     editor.getContribution.mockImplementation((id?: string) =>
       id === "editor.contrib.gotodefinitionatposition"
-        ? { dispose: editor.gotoDefinitionContributionDispose }
+        ? editor.gotoDefinitionContribution
         : snippetController,
     );
     editor.getSelection.mockReturnValue({
@@ -5982,7 +6007,7 @@ class Foo
     const snippetController = { insert: vi.fn() };
     editor.getContribution.mockImplementation((id?: string) =>
       id === "editor.contrib.gotodefinitionatposition"
-        ? { dispose: editor.gotoDefinitionContributionDispose }
+        ? editor.gotoDefinitionContribution
         : snippetController,
     );
 
@@ -9390,10 +9415,25 @@ function createEditor(model: FakeModel): FakeEditor {
     startLineNumber: number;
   } | null = null;
   // Monaco's built-in Cmd/Ctrl definition gesture lives in the
-  // `editor.contrib.gotodefinitionatposition` contribution; the surface disposes
-  // it at mount so only the explicit Cmd+click / Cmd+B paths navigate. Track that
-  // dispose separately from the snippet controller stub.
+  // `editor.contrib.gotodefinitionatposition` contribution. The surface does NOT
+  // dispose it (that crashes Monaco's event delivery); instead it replaces the
+  // contribution's `gotoDefinition` method with a no-op so a Cmd-hover never
+  // navigates while every listener stays wired. Model that here: the live
+  // contribution exposes a `gotoDefinition` that, by default, records a
+  // navigation via `gotoDefinitionContributionNavigate`. After the surface
+  // patches it, invoking the method must NOT record a navigation.
   const gotoDefinitionContributionDispose = vi.fn();
+  const gotoDefinitionContributionNavigate = vi.fn(
+    (..._args: unknown[]) => Promise.resolve(),
+  );
+  const gotoDefinitionContribution: {
+    dispose: typeof gotoDefinitionContributionDispose;
+    gotoDefinition: (...args: unknown[]) => Promise<void>;
+  } = {
+    dispose: gotoDefinitionContributionDispose,
+    gotoDefinition: (...args: unknown[]) =>
+      gotoDefinitionContributionNavigate(...args),
+  };
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
@@ -9403,12 +9443,14 @@ function createEditor(model: FakeModel): FakeEditor {
     focus: vi.fn(),
     getContribution: vi.fn((id?: string) => {
       if (id === "editor.contrib.gotodefinitionatposition") {
-        return { dispose: gotoDefinitionContributionDispose };
+        return gotoDefinitionContribution;
       }
 
       return { insert: vi.fn() };
     }),
+    gotoDefinitionContribution,
     gotoDefinitionContributionDispose,
+    gotoDefinitionContributionNavigate,
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
       height: 480,
