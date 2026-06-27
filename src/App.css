@@ -45,6 +45,7 @@
   --symbol-function: #b48ead;
   --symbol-trait: #6cb6c9;
   --symbol-variable: #8b94a3;
+  --symbol-keyword: #b48ead;
   --vis-public: #8fbf7f;
   --vis-private: #d07f7f;
   --vis-protected: #d8b977;
@@ -119,6 +120,7 @@
   --symbol-function: #8250c4;
   --symbol-trait: #2a7d6f;
   --symbol-variable: #6b727d;
+  --symbol-keyword: #8a5c8f;
   --vis-public: #3f8a3f;
   --vis-private: #c2484a;
   --vis-protected: #b07d18;
@@ -172,6 +174,7 @@
   --symbol-function: #d4bfff;
   --symbol-trait: #5ccfe6;
   --symbol-variable: #9aa3b4;
+  --symbol-keyword: #ffa659;
   --vis-public: #87d96c;
   --vis-private: #f28779;
   --vis-protected: #ffcc66;
@@ -225,6 +228,7 @@
   --symbol-function: #c792ea;
   --symbol-trait: #89ddff;
   --symbol-variable: #8a90b5;
+  --symbol-keyword: #c792ea;
   --vis-public: #c3e88d;
   --vis-private: #f07178;
   --vis-protected: #ffcb6b;
@@ -278,6 +282,7 @@
   --symbol-function: #c678dd;
   --symbol-trait: #56b6c2;
   --symbol-variable: #868e9c;
+  --symbol-keyword: #c678dd;
   --vis-public: #98c379;
   --vis-private: #e06c75;
   --vis-protected: #e5c07b;
@@ -331,6 +336,7 @@
   --symbol-function: #bd93f9;
   --symbol-trait: #8be9fd;
   --symbol-variable: #9aa3c4;
+  --symbol-keyword: #ff79c6;
   --vis-public: #50fa7b;
   --vis-private: #ff5555;
   --vis-protected: #ffb86c;
@@ -384,6 +390,7 @@
   --symbol-function: #cba6f7;
   --symbol-trait: #94e2d5;
   --symbol-variable: #a6adc8;
+  --symbol-keyword: #cba6f7;
   --vis-public: #a6e3a1;
   --vis-private: #f38ba8;
   --vis-protected: #f9e2af;
@@ -437,6 +444,7 @@
   --symbol-function: #c586c0;
   --symbol-trait: #4ec9b0;
   --symbol-variable: #9d9d9d;
+  --symbol-keyword: #c586c0;
   --vis-public: #89d185;
   --vis-private: #f48771;
   --vis-protected: #cca700;
@@ -490,6 +498,7 @@
   --symbol-function: #8839ef;
   --symbol-trait: #179299;
   --symbol-variable: #6c6f85;
+  --symbol-keyword: #8839ef;
   --vis-public: #40a02b;
   --vis-private: #d20f39;
   --vis-protected: #df8e1d;
@@ -543,6 +552,7 @@
   --symbol-function: #a626a4;
   --symbol-trait: #0997b3;
   --symbol-variable: #696c77;
+  --symbol-keyword: #a626a4;
   --vis-public: #3f8c3e;
   --vis-private: #d83b2c;
   --vis-protected: #9a6801;
@@ -597,6 +607,7 @@
     --symbol-function: #8250c4;
     --symbol-trait: #2a7d6f;
     --symbol-variable: #5d6b7a;
+    --symbol-keyword: #b48ead;
     --vis-public: #3f8a3f;
     --vis-private: #c2484a;
     --vis-protected: #b07d18;
@@ -5009,10 +5020,157 @@ kbd {
   background: transparent;
 }
 
-.monaco-editor .suggest-widget {
-  border-radius: var(--radius-md);
+/*
+ * Widget surface colors. Monaco reads these `--vscode-*` variables for the
+ * suggest/hover/menu backgrounds, borders and selection. Our custom palettes set
+ * the matching theme tokens, but the bundled Shiki themes (dracula, one-dark-pro,
+ * catppuccin, dark-plus, ayu-mirage, material-deep-ocean) ship none of them, so
+ * we pin the popup surfaces to our theme-aware chrome tokens here. This makes the
+ * popup background/selection consistent across ALL themes in one place instead of
+ * relying on Monaco's per-theme defaults. Scoped under `.app-shell` so it stays
+ * isolated to the editor surface and cascades to portalled menus/hovers.
+ */
+.app-shell .monaco-editor,
+.app-shell .monaco-menu,
+.app-shell .monaco-hover,
+.app-shell .context-view {
+  --vscode-editorSuggestWidget-background: var(--color-modal);
+  --vscode-editorSuggestWidget-border: var(--color-border-strong);
+  --vscode-editorSuggestWidget-foreground: var(--color-text);
+  --vscode-editorSuggestWidget-selectedBackground: var(--color-accent-soft);
+  --vscode-editorSuggestWidget-selectedForeground: var(--color-text-strong);
+  --vscode-editorSuggestWidget-highlightForeground: var(--color-accent);
+  --vscode-editorSuggestWidget-focusHighlightForeground: var(--color-accent);
+  --vscode-editorHoverWidget-background: var(--color-modal);
+  --vscode-editorHoverWidget-border: var(--color-border-strong);
+  --vscode-editorHoverWidget-foreground: var(--color-text);
+  --vscode-editorWidget-background: var(--color-modal);
+  --vscode-editorWidget-border: var(--color-border-strong);
+  --vscode-editorWidget-foreground: var(--color-text);
+  --vscode-menu-background: var(--color-modal);
+  --vscode-menu-foreground: var(--color-text);
+  --vscode-menu-selectionBackground: var(--color-accent-soft);
+  --vscode-menu-selectionForeground: var(--color-text-strong);
+  --vscode-menu-separatorBackground: var(--color-border);
+  --vscode-menu-border: var(--color-border-strong);
+}
+
+/*
+ * JetBrains-classic chrome for Monaco's built-in popups (autocomplete suggest,
+ * hover docs, right-click context menu, Cmd+. code-action list). Monaco renders
+ * these inside `.app-shell[data-theme=...]` (no fixedOverflowWidgets), so every
+ * rule below is theme-aware through our CSS variables - no hardcoded colors -
+ * and lines up with the FileStructure palette (rounded corners, soft accent
+ * selection, the same --symbol-* kind colors). Only the widget *chrome* is
+ * touched here; editor token / syntax colors stay owned by the Shiki theme.
+ */
+.monaco-editor .suggest-widget,
+.monaco-editor.rename-box {
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
   overflow: hidden;
+}
+
+/* Detail/documentation column docked to the suggest widget keeps the radius. */
+.monaco-editor .suggest-widget .suggest-details {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
+}
+
+/* Selected / focused completion row: soft accent tint, JetBrains style. */
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+/* Hover documentation tooltip mirrors the suggest popup shape + spacing. */
+.monaco-editor .monaco-hover,
+.monaco-hover {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
+}
+
+.monaco-editor .monaco-hover .monaco-hover-content,
+.monaco-hover .monaco-hover-content {
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+
+/*
+ * Context menu + the Cmd+. code-action lightbulb list. Monaco paints both with
+ * `.monaco-menu .monaco-action-bar`; round and pad it to match the popups and
+ * give the active item the same soft-accent treatment as the suggest rows.
+ */
+.monaco-menu .monaco-action-bar.vertical {
+  border-radius: var(--radius-lg);
+  padding: 4px;
+}
+
+.monaco-menu .monaco-action-bar.vertical .action-item .action-menu-item {
+  border-radius: var(--radius-sm);
+}
+
+.monaco-menu
+  .monaco-action-bar.vertical
+  .action-item.focused
+  .action-menu-item {
+  background: var(--color-accent-soft);
+}
+
+/*
+ * Completion kind icons. Monaco's own rule colors these codicons from the
+ * symbolIcon.* theme tokens; we override the same icons under the suggest widget
+ * so they read with the FileStructure --symbol-* roles exactly (theme-aware) on
+ * every theme, including the bundled Shiki themes whose baked-in icon colors we
+ * would otherwise inherit.
+ */
+.monaco-editor .suggest-widget .codicon-symbol-method::before,
+.monaco-editor .suggest-widget .codicon-symbol-constructor::before {
+  color: var(--symbol-method);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-function::before {
+  color: var(--symbol-function);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-property::before {
+  color: var(--symbol-property);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-field::before {
+  color: var(--symbol-property);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-constant::before {
+  color: var(--symbol-const);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-enum-member::before {
+  color: var(--symbol-const);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-class::before,
+.monaco-editor .suggest-widget .codicon-symbol-struct::before {
+  color: var(--symbol-class);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-interface::before {
+  color: var(--symbol-interface);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-enum::before {
+  color: var(--symbol-enum);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-variable::before {
+  color: var(--symbol-variable);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-keyword::before {
+  color: var(--symbol-keyword);
 }
 
 :focus-visible {

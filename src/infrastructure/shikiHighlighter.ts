@@ -68,6 +68,35 @@ function buildSemanticTokenColors(p: ThemePalette): Record<string, string> {
   };
 }
 
+/**
+ * Maps Monaco's `symbolIcon.*Foreground` theme tokens (the colors it paints the
+ * suggest-widget completion-kind codicons with) onto the same palette roles the
+ * FileStructure palette uses for its `--symbol-*` chips. Method/function take the
+ * function color, class/interface/enum/struct the type color, constant/enum
+ * member the constant color, property/field the property color, so autocomplete
+ * and the structure outline read with one consistent kind-color language.
+ */
+function buildSymbolIconColors(p: ThemePalette): Record<string, string> {
+  return {
+    "symbolIcon.methodForeground": p.func,
+    "symbolIcon.functionForeground": p.func,
+    "symbolIcon.constructorForeground": p.func,
+    "symbolIcon.propertyForeground": p.property,
+    "symbolIcon.fieldForeground": p.property,
+    "symbolIcon.variableForeground": p.variable,
+    "symbolIcon.constantForeground": p.constant,
+    "symbolIcon.enumeratorMemberForeground": p.constant,
+    "symbolIcon.classForeground": p.type,
+    "symbolIcon.interfaceForeground": p.type,
+    "symbolIcon.enumeratorForeground": p.type,
+    "symbolIcon.structForeground": p.type,
+    "symbolIcon.typeParameterForeground": p.type,
+    "symbolIcon.keywordForeground": p.keyword,
+    "symbolIcon.namespaceForeground": p.namespace,
+    "symbolIcon.snippetForeground": p.accent,
+  };
+}
+
 export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
   const tok = (scope: string[], foreground: string, italic = false) => ({
     scope,
@@ -109,13 +138,29 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
       "editorSuggestWidget.focusHighlightForeground": p.accent,
       "editorWidget.background": p.widgetBg,
       "editorWidget.border": p.border,
+      "editorWidget.foreground": p.fg,
       "editorHoverWidget.background": p.widgetBg,
       "editorHoverWidget.border": p.border,
+      "editorHoverWidget.foreground": p.fg,
+      // Context menu + the Cmd+. code-action lightbulb list share Monaco's
+      // `menu.*` chrome; tint them with the same widget palette so every popup
+      // reads as one family with the FileStructure palette.
+      "menu.background": p.widgetBg,
+      "menu.foreground": p.fg,
+      "menu.selectionBackground": p.selectedBg,
+      "menu.selectionForeground": p.selectedFg,
+      "menu.separatorBackground": p.border,
+      "menu.border": p.border,
       "input.background": p.inputBg,
       "input.border": p.border,
       focusBorder: p.accent,
       "diffEditor.insertedTextBackground": p.diffInserted,
       "diffEditor.removedTextBackground": p.diffRemoved,
+      // Completion kind icons. Monaco paints the suggest-widget codicons from
+      // these tokens; mapping them onto the same palette roles the FileStructure
+      // --symbol-* CSS uses keeps the autocomplete icons and the structure
+      // palette telling the same color story (method = func, class = type, ...).
+      ...buildSymbolIconColors(p),
     },
     tokenColors: [
       tok(

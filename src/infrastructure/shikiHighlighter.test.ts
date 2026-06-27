@@ -153,6 +153,65 @@ describe("buildShikiTheme", () => {
     expect(scopeColor("parameter")).toBe(calmDark.parameter);
     expect(scopeColor("type")).toBe(calmDark.type);
   });
+
+  it("themes the suggest, hover and editor widget chrome from the palette", () => {
+    const theme = buildShikiTheme(calmDark);
+    const colors = theme.colors;
+    // Suggest widget chrome (autocomplete dropdown).
+    expect(colors["editorSuggestWidget.background"]).toBe(calmDark.widgetBg);
+    expect(colors["editorSuggestWidget.border"]).toBe(calmDark.border);
+    expect(colors["editorSuggestWidget.foreground"]).toBe(calmDark.fg);
+    expect(colors["editorSuggestWidget.selectedBackground"]).toBe(
+      calmDark.selectedBg,
+    );
+    expect(colors["editorSuggestWidget.selectedForeground"]).toBe(
+      calmDark.selectedFg,
+    );
+    expect(colors["editorSuggestWidget.highlightForeground"]).toBe(
+      calmDark.accent,
+    );
+    expect(colors["editorSuggestWidget.focusHighlightForeground"]).toBe(
+      calmDark.accent,
+    );
+    // Hover + generic editor widget chrome.
+    expect(colors["editorHoverWidget.background"]).toBe(calmDark.widgetBg);
+    expect(colors["editorHoverWidget.border"]).toBe(calmDark.border);
+    expect(colors["editorHoverWidget.foreground"]).toBe(calmDark.fg);
+    expect(colors["editorWidget.background"]).toBe(calmDark.widgetBg);
+    expect(colors["editorWidget.border"]).toBe(calmDark.border);
+  });
+
+  it("themes the context / code-action menu chrome from the palette", () => {
+    const theme = buildShikiTheme(calmDark);
+    const colors = theme.colors;
+    expect(colors["menu.background"]).toBe(calmDark.widgetBg);
+    expect(colors["menu.foreground"]).toBe(calmDark.fg);
+    expect(colors["menu.selectionBackground"]).toBe(calmDark.selectedBg);
+    expect(colors["menu.selectionForeground"]).toBe(calmDark.selectedFg);
+    expect(colors["menu.border"]).toBe(calmDark.border);
+  });
+
+  it("colors the suggest-widget kind icons to match the FileStructure palette", () => {
+    const theme = buildShikiTheme(calmDark);
+    const colors = theme.colors;
+    // The suggest widget renders codicons whose color Monaco reads from these
+    // symbolIcon.* theme tokens. They must line up with the FileStructure
+    // --symbol-* roles so completion and the structure palette read alike.
+    expect(colors["symbolIcon.methodForeground"]).toBe(calmDark.func);
+    expect(colors["symbolIcon.functionForeground"]).toBe(calmDark.func);
+    expect(colors["symbolIcon.propertyForeground"]).toBe(calmDark.property);
+    expect(colors["symbolIcon.fieldForeground"]).toBe(calmDark.property);
+    expect(colors["symbolIcon.constantForeground"]).toBe(calmDark.constant);
+    expect(colors["symbolIcon.enumeratorMemberForeground"]).toBe(
+      calmDark.constant,
+    );
+    expect(colors["symbolIcon.classForeground"]).toBe(calmDark.type);
+    expect(colors["symbolIcon.interfaceForeground"]).toBe(calmDark.type);
+    expect(colors["symbolIcon.enumeratorForeground"]).toBe(calmDark.type);
+    expect(colors["symbolIcon.structForeground"]).toBe(calmDark.type);
+    expect(colors["symbolIcon.variableForeground"]).toBe(calmDark.variable);
+    expect(colors["symbolIcon.keywordForeground"]).toBe(calmDark.keyword);
+  });
 });
 
 describe("applyImmediateFallbackTheme", () => {
