@@ -173,6 +173,13 @@ interface ExecuteCommandPayload {
   sessionId: number;
 }
 
+interface ResolveAndApplyCodeActionPayload {
+  action: LanguageServerCodeAction;
+  editContext: WorkspaceEditContext;
+  rootPath: string;
+  sessionId: number;
+}
+
 interface ApplyPhpCodeActionNewFilePayload {
   edits: PhpCodeActionTextEdit[];
   newFile: PhpCodeActionNewFile;
@@ -182,6 +189,8 @@ interface ApplyPhpCodeActionNewFilePayload {
 
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
+const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
+  "mockor.php.resolveAndApplyCodeAction";
 /**
  * Monaco command fired by a synthesized PHP code action that creates a new file
  * (currently "Extract interface"). The command persists the new interface file
@@ -556,6 +565,99 @@ export function registerLanguageServerMonacoProviders(
       }
     },
   });
+  const resolveAndApplyCodeActionCommand = monaco.editor.addCommand({
+    id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
+    run: async (
+      _accessor,
+      payload: ResolveAndApplyCodeActionPayload | undefined,
+    ) => {
+      if (
+        !payload ||
+        payload.sessionId == null ||
+        !isStoredLanguageServerPayloadActive(
+          context,
+          payload.rootPath,
+          payload.sessionId,
+        )
+      ) {
+        return;
+      }
+
+      try {
+        if (payload.editContext.path) {
+          await context.flushPendingDocumentChange(payload.editContext.path);
+
+          if (
+            !isStoredLanguageServerPayloadActive(
+              context,
+              payload.rootPath,
+              payload.sessionId,
+            )
+          ) {
+            return;
+          }
+        }
+
+        const resolved = await context.featuresGateway.resolveCodeAction(
+          payload.rootPath,
+          payload.action,
+        );
+
+        if (
+          !isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
+          return;
+        }
+
+        if (resolved.edit) {
+          await applyWorkspaceEditWithOpenModels(
+            monaco,
+            context,
+            resolved.edit,
+            payload.rootPath,
+          );
+        }
+
+        if (resolved.command) {
+          const edit = await context.featuresGateway.executeCommand(
+            payload.rootPath,
+            resolved.command,
+          );
+
+          if (
+            edit &&
+            isStoredLanguageServerPayloadActive(
+              context,
+              payload.rootPath,
+              payload.sessionId,
+            )
+          ) {
+            await applyWorkspaceEditWithOpenModels(
+              monaco,
+              context,
+              edit,
+              payload.rootPath,
+            );
+          }
+        }
+      } catch (error) {
+        if (
+          !isUnsupportedCodeActionResolveError(error) &&
+          isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
+          context.reportError(error);
+        }
+      }
+    },
+  });
   const applyNewFileCommand = monaco.editor.addCommand({
     id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
     run: async (
@@ -806,6 +908,7 @@ export function registerLanguageServerMonacoProviders(
       inlayHintRefreshEmitter.dispose();
       semanticTokensRefreshEmitter.dispose();
       command.dispose();
+      resolveAndApplyCodeActionCommand.dispose();
       applyNewFileCommand.dispose();
       hover.dispose();
       completion.dispose();
@@ -2921,6 +3024,21 @@ function toMonacoCodeAction(
             action.title,
           ),
         }
+      : !action.edit && action.data != null && !action.disabled
+        ? {
+            command: {
+              arguments: [
+                {
+                  action,
+                  editContext,
+                  rootPath,
+                  sessionId,
+                } satisfies ResolveAndApplyCodeActionPayload,
+              ],
+              id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
+              title: action.title,
+            },
+          }
       : {}),
     ...(action.edit
       ? {

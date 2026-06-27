@@ -52898,6 +52898,137 @@ interface GreeterContract
     expect(readDirectory).not.toHaveBeenCalled();
   });
 
+  it("refreshes a clean open PHP document when it is modified externally", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const filePath = "/workspace/src/User.php";
+    const files = new Map<string, string>([
+      [filePath, "<?php\nfinal class User {}\n"],
+    ]);
+    const readTextFile = vi.fn(async (path: string) => {
+      const content = files.get(path);
+
+      if (content === undefined) {
+        throw new Error(`missing: ${path}`);
+      }
+
+      return content;
+    });
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(filePath, "User.php"));
+    });
+    expect(getWorkbench().activeDocument?.content).toContain("final class User");
+
+    files.set(filePath, "<?php\nfinal class User\n{\n    public int $id;\n}\n");
+    readTextFile.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: filePath,
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(readTextFile).toHaveBeenCalledWith(filePath);
+    expect(getWorkbench().activeDocument?.content).toContain("public int $id");
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      getWorkbench().activeDocument?.content,
+    );
+    expect(getWorkbench().dirtyCount).toBe(0);
+  });
+
+  it("does not overwrite an open PHP document edited while an external refresh is reading", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const filePath = "/workspace/src/User.php";
+    const externalRead = createDeferred<string>();
+    let externalReadPending = false;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === filePath) {
+        if (externalReadPending) {
+          externalReadPending = false;
+          return externalRead.promise;
+        }
+
+        return "<?php\nfinal class User {}\n";
+      }
+
+      return "";
+    });
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(filePath, "User.php"));
+    });
+
+    await act(async () => {
+      externalReadPending = true;
+      publishFileChange?.({
+        kind: "modified",
+        path: filePath,
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await Promise.resolve();
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// unsaved editor change\n");
+    });
+
+    await act(async () => {
+      externalRead.resolve("<?php\n// external disk change\n");
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// unsaved editor change\n",
+    );
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      "<?php\nfinal class User {}\n",
+    );
+    expect(getWorkbench().dirtyCount).toBe(1);
+  });
+
   it("closes the tab for the previous path on an external rename", async () => {
     let publishFileChange:
       | ((event: WorkspaceFileChangeEvent) => void)

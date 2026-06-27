@@ -5201,6 +5201,98 @@ function store($request): void
     );
   });
 
+  it("resolves and applies lazy PHP code actions when their menu command runs", async () => {
+    const registered = createRegisteredProviders();
+    const openPath = "/project/src/User.php";
+    const unresolvedAction = {
+      command: null,
+      data: { id: "add-import" },
+      edit: null,
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    };
+    const resolvedAction = {
+      ...unresolvedAction,
+      edit: workspaceEdit(
+        "file:///project/src/User.php",
+        "use App\\Models\\User;\n",
+      ),
+    };
+    const openModel = {
+      ...model({ path: openPath }),
+      pushEditOperations: vi.fn(),
+    };
+    const gateway = featuresGateway({
+      codeActions: [unresolvedAction],
+      resolvedCodeAction: resolvedAction,
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      openModel,
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const actionCommand = actions.actions[0].command;
+
+    expect(actionCommand).toEqual(
+      expect.objectContaining({
+        id: "mockor.php.resolveAndApplyCodeAction",
+        title: "Import User",
+      }),
+    );
+
+    const runResolveAndApply =
+      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+
+    if (!runResolveAndApply) {
+      throw new Error("PHP resolve-and-apply code action command was not registered");
+    }
+
+    await runResolveAndApply(null, actionCommand.arguments[0]);
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(openPath);
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
+      "/project",
+      unresolvedAction,
+    );
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            startLineNumber: 1,
+          }),
+          text: "use App\\Models\\User;\n",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(resolvedAction.edit, {
+      editedOpenPaths: [openPath],
+      rootPath: "/project",
+    });
+  });
+
   it("returns PHP code actions that already carry an inline edit without requesting a resolve", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();

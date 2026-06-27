@@ -1174,19 +1174,6 @@ function EditorSurfaceComponent({
             return;
           }
 
-          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
-            editorApi.trigger("keyboard", "editor.action.quickFix", {});
-            return;
-          }
-
-          const markers = monacoApi.editor.getModelMarkers({
-            resource: model.uri,
-          });
-
-          if (!markers.some((marker) => isFixableQuickFixMarkerAt(marker, position))) {
-            return;
-          }
-
           editorApi.trigger("keyboard", "editor.action.quickFix", {});
         },
       }),
@@ -3213,15 +3200,6 @@ function isJavaScriptTypeScriptRuntimeActiveForWorkspace(
   );
 }
 
-function isTypescriptJavascriptDocument(
-  document: EditorDocument | null,
-): boolean {
-  return (
-    document?.language === "typescript" ||
-    document?.language === "javascript"
-  );
-}
-
 function isSmartBlankLineIndentDocument(document: EditorDocument): boolean {
   return (
     document.language === "php" ||
@@ -3696,32 +3674,6 @@ function diagnosticOverviewColor(
   }
 
   return "#d98b8b";
-}
-
-function isFixableQuickFixMarkerAt(
-  marker: Monaco.editor.IMarkerData,
-  position: EditorPosition,
-): boolean {
-  if (!isFixableQuickFixMarker(marker)) {
-    return false;
-  }
-
-  return (
-    position.lineNumber >= marker.startLineNumber &&
-    position.lineNumber <= marker.endLineNumber
-  );
-}
-
-function isFixableQuickFixMarker(marker: Monaco.editor.IMarkerData): boolean {
-  if (
-    marker.source === "PHP Syntax" &&
-    /^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
-  ) {
-    return true;
-  }
-
-  // Unused-import / unused-private-method inspections carry a remove quick-fix.
-  return marker.source === "PHP Inspection";
 }
 
 function diagnosticSeverity(

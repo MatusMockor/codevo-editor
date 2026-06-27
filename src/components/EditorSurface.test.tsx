@@ -4565,7 +4565,7 @@ class Foo
     expect(historyModel.dispose).not.toHaveBeenCalled();
   });
 
-  it("registers guarded Option+Enter quick fix/context actions", async () => {
+  it("registers Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
       language: "php",
@@ -4629,22 +4629,6 @@ class Foo
         label: "Show Context Actions",
       }),
     );
-
-    quickFixAction.run();
-
-    expect(editor.trigger).not.toHaveBeenCalled();
-
-    monaco.editor.getModelMarkers.mockReturnValue([
-      {
-        endColumn: 12,
-        endLineNumber: 1,
-        message: 'Unexpected bare PHP identifier "bad".',
-        severity: monaco.MarkerSeverity.Error,
-        source: "PHP Syntax",
-        startColumn: 9,
-        startLineNumber: 1,
-      },
-    ]);
 
     quickFixAction.run();
 

@@ -189,10 +189,11 @@ import {
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
 import { isJavaScriptTypeScriptWatchedPath } from "../domain/javascriptTypeScriptWatchedFiles";
-import type {
-  WorkspaceFileChangeEvent,
-  WorkspaceFileChangeGateway,
-  WorkspaceFileChangeUnsubscribeFn,
+import {
+  canRefreshDocumentFromExternalFileChange,
+  type WorkspaceFileChangeEvent,
+  type WorkspaceFileChangeGateway,
+  type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
 import {
   normalizedWorkspaceRootKey,
@@ -23549,6 +23550,70 @@ export function useWorkbenchController(
     ],
   );
 
+  const refreshOpenDocumentFromExternalFileChange = useCallback(
+    async (requestedRoot: string, path: string): Promise<void> => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const openDocument = documentsRef.current[path];
+
+      if (!canRefreshDocumentFromExternalFileChange(openDocument)) {
+        return;
+      }
+
+      let refreshedContent: string;
+
+      try {
+        refreshedContent = await workspaceFiles.readTextFile(path);
+      } catch {
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const latestDocument = documentsRef.current[path];
+
+      if (!canRefreshDocumentFromExternalFileChange(latestDocument)) {
+        return;
+      }
+
+      const refreshedDocument: EditorDocument = {
+        ...latestDocument,
+        content: refreshedContent,
+        savedContent: refreshedContent,
+      };
+
+      documentsRef.current = {
+        ...documentsRef.current,
+        [path]: refreshedDocument,
+      };
+      activeDocumentRef.current =
+        activeDocumentRef.current?.path === path
+          ? refreshedDocument
+          : activeDocumentRef.current;
+      setDocuments((current) => {
+        const currentDocument = current[path];
+
+        if (!canRefreshDocumentFromExternalFileChange(currentDocument)) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [path]: {
+            ...currentDocument,
+            content: refreshedContent,
+            savedContent: refreshedContent,
+          },
+        };
+      });
+    },
+    [workspaceFiles],
+  );
+
   const handleWorkspaceFileChange = useCallback(
     (event: WorkspaceFileChangeEvent) => {
       const requestedRoot = currentWorkspaceRootRef.current;
@@ -23579,8 +23644,16 @@ export function useWorkbenchController(
       if (event.kind === "created" || event.kind === "modified") {
         queueWorkspaceDirectoryRefresh(getParentPath(event.path));
       }
+
+      if (event.kind === "modified" && event.fileKind !== "directory") {
+        void refreshOpenDocumentFromExternalFileChange(requestedRoot, event.path);
+      }
     },
-    [handleExternalRemovedPath, queueWorkspaceDirectoryRefresh],
+    [
+      handleExternalRemovedPath,
+      queueWorkspaceDirectoryRefresh,
+      refreshOpenDocumentFromExternalFileChange,
+    ],
   );
 
   const toggleSmartMode = useCallback(async () => {
