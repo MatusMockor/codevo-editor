@@ -14,11 +14,14 @@ import {
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
 import type { EditorDocument } from "../domain/workspace";
+import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
   dispose?: ReturnType<typeof vi.fn>;
   getEOL?: ReturnType<typeof vi.fn>;
+  setEOL?: ReturnType<typeof vi.fn>;
+  updateOptions?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
   getLineCount?: ReturnType<typeof vi.fn>;
   getLineMaxColumn?: ReturnType<typeof vi.fn>;
@@ -8819,6 +8822,171 @@ class Foo
         ),
     );
     expect(staleCall).toBeUndefined();
+  });
+});
+
+describe("EditorSurface .editorconfig application", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    editorSurfaceMocks.editor = null;
+    editorSurfaceMocks.monaco = null;
+    editorSurfaceMocks.renderCount = 0;
+    editorSurfaceMocks.props = null;
+    editorSurfaceMocks.registeredContext = null;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function editorConfigModel(path: string): FakeModel & {
+    updateOptions: ReturnType<typeof vi.fn>;
+    setEOL: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      updateOptions: vi.fn(),
+      setEOL: vi.fn(),
+      uri: { fsPath: path, path },
+    } as FakeModel & {
+      updateOptions: ReturnType<typeof vi.fn>;
+      setEOL: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  function monacoWithEol(model: FakeModel) {
+    const monaco = createMonaco(model) as ReturnType<typeof createMonaco> & {
+      editor: { EndOfLineSequence: { LF: number; CRLF: number } };
+    };
+    monaco.editor.EndOfLineSequence = { LF: 0, CRLF: 1 };
+    return monaco;
+  }
+
+  async function renderSurface(
+    activeDocument: EditorDocument,
+    editorConfig: ResolvedEditorConfig | undefined,
+  ): Promise<void> {
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          editorConfig={editorConfig}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+  }
+
+  const phpDocument: EditorDocument = {
+    content: "<?php\nclass Example {}\n",
+    language: "php",
+    name: "Example.php",
+    path: "/workspace/app/Example.php",
+    savedContent: "",
+  };
+
+  it("applies space indent_style/indent_size to the active model", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {
+      indentStyle: "space",
+      indentSize: 4,
+      tabWidth: 4,
+    });
+
+    expect(model.updateOptions).toHaveBeenCalledWith({
+      insertSpaces: true,
+      tabSize: 4,
+    });
+  });
+
+  it("applies tab indent_style using tab_width", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {
+      indentStyle: "tab",
+      indentSize: 4,
+      tabWidth: 4,
+    });
+
+    expect(model.updateOptions).toHaveBeenCalledWith({
+      insertSpaces: false,
+      tabSize: 4,
+    });
+  });
+
+  it("sets the model EOL from end_of_line", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    const monaco = monacoWithEol(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await renderSurface(phpDocument, { endOfLine: "crlf" });
+
+    expect(model.setEOL).toHaveBeenCalledWith(
+      monaco.editor.EndOfLineSequence.CRLF,
+    );
+  });
+
+  it("does not override indentation or EOL when editorConfig is empty", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {});
+
+    expect(model.updateOptions).not.toHaveBeenCalled();
+    expect(model.setEOL).not.toHaveBeenCalled();
+  });
+
+  it("does not override when editorConfig prop is omitted", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, undefined);
+
+    expect(model.updateOptions).not.toHaveBeenCalled();
+    expect(model.setEOL).not.toHaveBeenCalled();
   });
 });
 

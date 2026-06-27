@@ -94,6 +94,11 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  editorConfigEol,
+  editorConfigFormattingOptions,
+  type ResolvedEditorConfig,
+} from "../domain/editorConfig";
 import type { UserSnippet } from "../domain/snippets";
 import {
   defaultEditorFontFamily,
@@ -131,6 +136,13 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  /**
+   * Resolved `.editorconfig` settings for the active document. Empty `{}` (the
+   * default) means no `.editorconfig` matched, so the editor keeps its own
+   * defaults. When indent / EOL are set they override the editor defaults for
+   * the active model only.
+   */
+  editorConfig?: ResolvedEditorConfig;
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
@@ -226,6 +238,7 @@ interface EditorSurfaceProps {
 
 function EditorSurfaceComponent({
   activeDocument,
+  editorConfig,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
@@ -743,6 +756,45 @@ function EditorSurfaceComponent({
       fontSize: editorFontSize,
     });
   }, [editorApi, editorFontFamily, monacoFontLigatures, editorFontSize]);
+
+  // Apply resolved `.editorconfig` indent + EOL to the ACTIVE model only, so a
+  // file with a matching `.editorconfig` mirrors VS Code / PhpStorm. Guarded by
+  // `modelPath === activeDocument.path` (per-tab isolation): during a switch the
+  // editor may still hold the previous model for a frame, and applying then
+  // would mutate the wrong file. When EditorConfig sets no indent / EOL we leave
+  // Monaco's own detection (`detectIndentation`) and the file's existing EOL
+  // untouched, preserving the no-`.editorconfig` default behaviour.
+  useEffect(() => {
+    if (!editorApi || !monacoApi || !activeDocument) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const resolved: ResolvedEditorConfig = editorConfig ?? {};
+    const formattingOptions = editorConfigFormattingOptions(resolved);
+
+    if (formattingOptions) {
+      model.updateOptions({
+        insertSpaces: formattingOptions.insertSpaces,
+        tabSize: formattingOptions.tabSize,
+      });
+    }
+
+    const eol = editorConfigEol(resolved);
+
+    if (eol) {
+      model.setEOL(
+        eol === "\r\n"
+          ? monacoApi.editor.EndOfLineSequence.CRLF
+          : monacoApi.editor.EndOfLineSequence.LF,
+      );
+    }
+  }, [activeDocument, editorApi, editorConfig, monacoApi]);
 
   useEffect(() => {
     if (!editorApi) {

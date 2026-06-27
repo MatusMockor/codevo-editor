@@ -936,6 +936,7 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            editorConfig={workbench.activeEditorConfig}
             editorFontFamily={workbench.appSettings.editorFontFamily}
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}

@@ -133,6 +133,15 @@ import {
 } from "../domain/organizeImportsOnSave";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
+  applyEditorConfigOnSave,
+  editorConfigDirectoriesForFile,
+  editorConfigPathForDirectory,
+  parseEditorConfig,
+  resolveEditorConfigSettings,
+  type EditorConfigFile,
+  type ResolvedEditorConfig,
+} from "../domain/editorConfig";
+import {
   FilePrefetchCache,
   isPrefetchableContentSize,
   shouldPrefetchFileContent,
@@ -1245,6 +1254,12 @@ export function useWorkbenchController(
     useState<AppSettings>(defaultAppSettings);
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
+  // Resolved `.editorconfig` settings for the active document. Empty when no
+  // `.editorconfig` matches the active file (the editor then keeps its own
+  // defaults). Recomputed per active-file change, scoped to the active root.
+  const [activeEditorConfig, setActiveEditorConfig] =
+    useState<ResolvedEditorConfig>({});
+  const activeEditorConfigRef = useRef<ResolvedEditorConfig>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>("general");
@@ -1459,6 +1474,15 @@ export function useWorkbenchController(
   } | null>(null);
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
+  >({});
+  // Per-workspace `.editorconfig` cache. Keyed by workspace root, then by the
+  // absolute directory whose `.editorconfig` was read. `null` records a
+  // confirmed absence so a missing file is read at most once per session. This
+  // is scoped per root, so it is cleared exactly where the rest of the
+  // per-workspace caches are (workspace switch / tab close), preserving the
+  // per-project isolation invariant.
+  const editorConfigCacheRef = useRef<
+    Record<string, Record<string, EditorConfigFile | null>>
   >({});
   const filePrefetchCacheRef = useRef<FilePrefetchCache>(new FilePrefetchCache());
   const filePrefetchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -3576,6 +3600,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    editorConfigCacheRef.current = {};
     resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
     languageServerDiagnosticsByRootRef.current = {};
@@ -5191,6 +5216,8 @@ export function useWorkbenchController(
 
         delete workspaceStateCacheRef.current[tabPath];
         delete workspaceStateCacheRef.current[targetRootPath];
+        delete editorConfigCacheRef.current[tabPath];
+        delete editorConfigCacheRef.current[targetRootPath];
         forgetLanguageServerRuntimeStatuses(targetRootPath);
         await Promise.allSettled([
           closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -5229,6 +5256,8 @@ export function useWorkbenchController(
 
       delete workspaceStateCacheRef.current[tabPath];
       delete workspaceStateCacheRef.current[targetRootPath];
+      delete editorConfigCacheRef.current[tabPath];
+      delete editorConfigCacheRef.current[targetRootPath];
       forgetLanguageServerRuntimeStatuses(targetRootPath);
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -7771,6 +7800,124 @@ export function useWorkbenchController(
     [flushPendingDocumentChange, flushPendingJavaScriptTypeScriptDocumentChange],
   );
 
+  // Reads (and caches) the `.editorconfig` file for one directory, scoped to
+  // `requestedRoot`. Returns the parsed file, or `null` when absent. The result
+  // is dropped (returns null) if the active workspace switched mid-read, so a
+  // stale read can never feed another project's resolution.
+  const loadEditorConfigFile = useCallback(
+    async (
+      requestedRoot: string,
+      directory: string,
+    ): Promise<EditorConfigFile | null> => {
+      const cacheForRoot = (editorConfigCacheRef.current[requestedRoot] ??= {});
+
+      if (directory in cacheForRoot) {
+        return cacheForRoot[directory];
+      }
+
+      const path = editorConfigPathForDirectory(directory);
+      let content: string | null = null;
+
+      try {
+        content = await workspaceFiles.readTextFile(path);
+      } catch {
+        content = null;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return null;
+      }
+
+      const file: EditorConfigFile | null =
+        content === null
+          ? null
+          : { directory, parsed: parseEditorConfig(content) };
+      // Re-read the per-root bucket: a workspace switch + reopen could have
+      // recreated it while we awaited.
+      (editorConfigCacheRef.current[requestedRoot] ??= {})[directory] = file;
+
+      return file;
+    },
+    [workspaceFiles],
+  );
+
+  // Resolves the effective EditorConfig settings for `filePath` within
+  // `requestedRoot` by reading the applicable `.editorconfig` cascade (deepest
+  // first, stopping at the first `root = true`) and resolving glob sections.
+  // Returns empty settings when nothing matches. The active root is re-checked
+  // after every read; a cross-tab switch yields empty settings (the caller then
+  // applies no override, i.e. editor defaults).
+  const resolveEditorConfigForFile = useCallback(
+    async (
+      requestedRoot: string,
+      filePath: string,
+    ): Promise<ResolvedEditorConfig> => {
+      const directories = editorConfigDirectoriesForFile(filePath, requestedRoot);
+      const files: EditorConfigFile[] = [];
+
+      for (const directory of directories) {
+        const file = await loadEditorConfigFile(requestedRoot, directory);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return {};
+        }
+
+        if (!file) {
+          continue;
+        }
+
+        files.push(file);
+
+        if (file.parsed.root) {
+          break;
+        }
+      }
+
+      return resolveEditorConfigSettings(files, filePath, requestedRoot);
+    },
+    [loadEditorConfigFile],
+  );
+
+  // Recompute the resolved EditorConfig for the active document whenever it
+  // changes. Captures the requested root up front and re-checks the active root
+  // and active path after the async resolution before committing, so a tab or
+  // file switch mid-resolution drops the stale result (per-project isolation).
+  const activeDocumentPath = activeDocument?.path ?? null;
+  useEffect(() => {
+    if (!activeDocumentPath || !workspaceRoot) {
+      activeEditorConfigRef.current = {};
+      setActiveEditorConfig({});
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    let cancelled = false;
+
+    void (async () => {
+      const resolved = await resolveEditorConfigForFile(
+        requestedRoot,
+        activeDocumentPath,
+      );
+
+      if (
+        cancelled ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+        activeDocumentRef.current?.path !== activeDocumentPath
+      ) {
+        return;
+      }
+
+      activeEditorConfigRef.current = resolved;
+      setActiveEditorConfig(resolved);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDocumentPath, resolveEditorConfigForFile, workspaceRoot]);
+
   const formattedContentForSave = useCallback(
     async (
       document: EditorDocument,
@@ -8017,9 +8164,28 @@ export function useWorkbenchController(
         return;
       }
 
+      // EditorConfig on-save transforms (trim trailing whitespace, insert final
+      // newline, normalize EOL) run LAST so they compose over the formatted +
+      // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
+      // saved document's own path through the per-workspace cascade. A no-op when
+      // no `.editorconfig` enables any on-save behaviour.
+      const editorConfigForSave = await resolveEditorConfigForFile(
+        requestedRoot,
+        documentToFormat.path,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const editorConfiguredContent = applyEditorConfigOnSave(
+        contentToSave,
+        editorConfigForSave,
+      );
+
       const documentToSave: EditorDocument = {
         ...documentToFormat,
-        content: contentToSave,
+        content: editorConfiguredContent,
       };
 
       await workspaceFiles.writeTextFile(
@@ -8072,6 +8238,7 @@ export function useWorkbenchController(
     optimizedImportsContentForSave,
     organizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
+    resolveEditorConfigForFile,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     workspaceFiles,
@@ -27465,6 +27632,7 @@ export function useWorkbenchController(
     activeDocumentGitBaseline: activeDocument
       ? editorGitBaselinesByPath[activeDocument.path] ?? null
       : null,
+    activeEditorConfig,
     activePath,
     isOpeningFile,
     appSettings,

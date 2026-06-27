@@ -3241,7 +3241,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(documentReadCount(readTextFile)).toBe(2);
     expect(getWorkbench().activeDocument?.path).toBe(path);
     expect(getWorkbench().activeDocument?.content).toBe(source);
     expect(
@@ -3295,7 +3295,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(documentReadCount(readTextFile)).toBe(2);
     expect(getWorkbench().activeDocument?.content).toBe("");
 
     await act(async () => {
@@ -3305,7 +3305,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(3);
+    expect(documentReadCount(readTextFile)).toBe(3);
     expect(getWorkbench().activeDocument?.path).toBe(path);
     expect(getWorkbench().activeDocument?.content).toBe(source);
   });
@@ -47929,7 +47929,7 @@ final class InvoiceAdapter
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(documentReadCount(readTextFile)).toBe(1);
     expect(getWorkbench().activePath).toBe(file.path);
     expect(getWorkbench().activeDocument?.content).toContain(file.path);
   });
@@ -47976,7 +47976,7 @@ final class InvoiceAdapter
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(2);
+    expect(documentReadCount(readTextFile)).toBe(2);
     expect(getWorkbench().activePath).toBe(path);
     expect(getWorkbench().activeDocument?.content).toContain(
       "final class CommentController",
@@ -48012,7 +48012,7 @@ final class InvoiceAdapter
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(documentReadCount(readTextFile)).toBe(1);
 
     await act(async () => {
       getWorkbench().updateActiveDocument("<?php\n// edited\n");
@@ -54483,6 +54483,302 @@ class PostRepository
     });
   });
 
+  describe("EditorConfig (.editorconfig)", () => {
+    // Builds a readTextFile that serves `.editorconfig` content for any
+    // directory listed in `editorConfigs`, the document body for the file
+    // itself, and rejects (file absent) for every other `.editorconfig` lookup.
+    function editorConfigReadTextFile(
+      documents: Record<string, string>,
+      editorConfigs: Record<string, string>,
+    ) {
+      return vi.fn(async (path: string) => {
+        if (path.endsWith("/.editorconfig")) {
+          const directory = path.slice(0, -"/.editorconfig".length);
+
+          if (directory in editorConfigs) {
+            return editorConfigs[directory];
+          }
+
+          throw new Error(`No .editorconfig at ${path}`);
+        }
+
+        if (path in documents) {
+          return documents[path];
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+    }
+
+    it("resolves .editorconfig for the active document and exposes it", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {
+          "/workspace": [
+            "root = true",
+            "[*]",
+            "indent_style = space",
+            "indent_size = 4",
+            "end_of_line = lf",
+          ].join("\n"),
+        },
+      );
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "space",
+        indentSize: 4,
+        tabWidth: 4,
+        endOfLine: "lf",
+      });
+    });
+
+    it("exposes empty settings when no .editorconfig matches", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {},
+      );
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({});
+    });
+
+    it("trims trailing whitespace and inserts a final newline on save", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {
+          "/workspace": [
+            "root = true",
+            "[*]",
+            "trim_trailing_whitespace = true",
+            "insert_final_newline = true",
+          ].join("\n"),
+        },
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php   \nclass User {}   ");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php\nclass User {}\n",
+      );
+    });
+
+    it("normalizes EOL to crlf on save when configured", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        { "/workspace": ["root = true", "[*]", "end_of_line = crlf"].join("\n") },
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php\nclass User {}\n");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php\r\nclass User {}\r\n",
+      );
+    });
+
+    it("does not transform content on save when no .editorconfig matches", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {},
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php   \nclass User {}   ");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      // Trailing whitespace preserved, no final newline added: editor defaults.
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php   \nclass User {}   ",
+      );
+    });
+
+    it("isolates .editorconfig per workspace and never leaks across tabs", async () => {
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === "/workspace-a/.editorconfig") {
+          return ["root = true", "[*]", "indent_style = tab"].join("\n");
+        }
+
+        if (path === "/workspace-b/.editorconfig") {
+          return [
+            "root = true",
+            "[*]",
+            "indent_style = space",
+            "indent_size = 2",
+          ].join("\n");
+        }
+
+        if (path.endsWith("/.editorconfig")) {
+          throw new Error(`No .editorconfig at ${path}`);
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile,
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "tab",
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/app/Order.php", "Order.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      // Workspace B's file resolves B's config; A's tab indent must not bleed in.
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "space",
+        indentSize: 2,
+        tabWidth: 2,
+      });
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
@@ -55530,6 +55826,18 @@ function fileEntry(path: string, name: string): FileEntry {
     name,
     path,
   };
+}
+
+// Counts readTextFile calls for actual document content, excluding the
+// `.editorconfig` cascade probes that the EditorConfig feature performs when a
+// file is opened/saved. Document-prefetch/cache tests assert on this count so
+// they stay focused on document reads, not the orthogonal config lookups.
+function documentReadCount(
+  readTextFile: { mock: { calls: unknown[][] } },
+): number {
+  return readTextFile.mock.calls.filter(
+    ([path]) => typeof path !== "string" || !path.endsWith("/.editorconfig"),
+  ).length;
 }
 
 function directoryEntry(path: string, name: string): FileEntry {
