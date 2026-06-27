@@ -5779,6 +5779,50 @@ function store($request): void
     );
   });
 
+  it("forwards a PHP code action's isPreferred flag to Monaco", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 9,
+              startColumn: 1,
+              startLineNumber: 9,
+            },
+            text: "\n    private function doWork(): void\n    {\n    }\n",
+          },
+        ],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'doWork'",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const createMethod = actions.actions.find(
+      (action: { title: string }) => action.title === "Create method 'doWork'",
+    );
+    expect(createMethod?.isPreferred).toBe(true);
+    expect(createMethod?.kind).toBe("quickfix");
+  });
+
   it("routes a PHP code action's newFile through an atomic disk-persisting command when wired", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -6096,7 +6140,7 @@ function store($request): void
     ]);
   });
 
-  it("omits PHP code actions for an unrelated narrow `only` scope", async () => {
+  it("serves PHP organize-imports actions for a `source.organizeImports` scope", async () => {
     const registered = createRegisteredProviders();
     const providePhpCodeActions = vi.fn(async () => []);
     const context = providerContext({
@@ -6111,6 +6155,31 @@ function store($request): void
       {
         markers: [],
         only: "source.organizeImports",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    // "Optimize imports" is our `source.organizeImports` action, so a request
+    // narrowed to that family must reach the PHP provider.
+    expect(providePhpCodeActions).toHaveBeenCalled();
+  });
+
+  it("omits PHP code actions for an unrelated narrow `only` scope", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpCodeActions = vi.fn(async () => []);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        // A sibling source scope we never emit an action for is left to the LSP.
+        only: "source.fixAll",
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );

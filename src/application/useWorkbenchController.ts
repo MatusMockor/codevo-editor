@@ -725,6 +725,14 @@ export interface PhpCodeActionNewFile {
 
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
+  /**
+   * When true, marks this action as the single most-likely choice for the
+   * current cursor / selection (PhpStorm Alt+Enter "most likely first"). Monaco
+   * floats a preferred action to the top of the code-action list and surfaces it
+   * as the auto-fix. Set on a contextual quickfix (Create method/property from
+   * usage, Import class) - never on a class-level generate action.
+   */
+  isPreferred?: boolean;
   kind?: string;
   newFile?: PhpCodeActionNewFile;
   title: string;
@@ -18437,7 +18445,9 @@ export function useWorkbenchController(
       }
 
       if (phpCurrentTypeKind(source) !== "class") {
-        return actions;
+        // Free-function context: only the pre-class-guard refactors are offered.
+        // Order them like the class path so the list stays "most likely first".
+        return orderPhpCodeActions(actions);
       }
 
       const structure = parsePhpClassStructure(source);
@@ -18620,7 +18630,7 @@ export function useWorkbenchController(
         }
       }
 
-      return actions;
+      return orderPhpCodeActions(actions);
     },
     [
       activeDocument?.path,
@@ -29701,7 +29711,7 @@ async function phpImplementMethodsCodeAction(
     edits.unshift(importEdit);
   }
 
-  return { edits, title: "Implement methods" };
+  return { edits, kind: "refactor.rewrite", title: "Implement methods" };
 }
 
 type PhpOverridableParentMethodsCollector = (
@@ -29804,7 +29814,7 @@ async function phpOverrideMethodsCodeAction(
     edits.unshift(importEdit);
   }
 
-  return { edits, title: "Override methods" };
+  return { edits, kind: "refactor.rewrite", title: "Override methods" };
 }
 
 /**
@@ -29976,6 +29986,7 @@ function phpGeneratePhpDocCodeAction(
         text: `${docBlock}\n`,
       },
     ],
+    kind: "refactor.rewrite",
     title: "Generate PHPDoc",
   };
 }
@@ -30057,8 +30068,85 @@ function phpClassBodyInsertionAction(
         text: `${leadingBlankLine}${indentedBlock}\n${trailingBlankLine}`,
       },
     ],
+    // Class-body generators ("Generate constructor / accessors") read as the
+    // PhpStorm Generate family - a "refactor" in the action widget (distinct
+    // icon / group from the quickfix lightbulb). "Create method/property from
+    // usage" reuses this builder but re-stamps itself a preferred quickfix.
+    kind: "refactor.rewrite",
     title,
   };
+}
+
+/**
+ * Orders the aggregated PHP code actions so the most-likely action for the
+ * cursor / selection leads the list (PhpStorm Alt+Enter "most likely first").
+ * The order is a STABLE sort by kind family - contextual quickfixes, then
+ * `extract` refactors, then `inline`, then `rewrite` (generate family + add
+ * type), then the organize-imports source action, then anything unkinded -
+ * which preserves each family's existing relative order (e.g. the alphabetical
+ * import candidates) while floating the lightbulb fixes to the top. A single
+ * `isPreferred` quickfix (Create method/property/Import) therefore wins the
+ * first slot, matching the action Monaco offers as the lightbulb's auto-fix.
+ */
+function orderPhpCodeActions(
+  actions: PhpCodeActionDescriptor[],
+): PhpCodeActionDescriptor[] {
+  return actions
+    .map((action, index) => ({ action, index }))
+    .sort((left, right) => {
+      const byFamily =
+        phpCodeActionFamilyRank(left.action) -
+        phpCodeActionFamilyRank(right.action);
+
+      if (byFamily !== 0) {
+        return byFamily;
+      }
+
+      // Within a family a preferred action (the contextual fix) leads; ties keep
+      // their original insertion order so nothing else is reshuffled.
+      const byPreferred =
+        Number(right.action.isPreferred ?? false) -
+        Number(left.action.isPreferred ?? false);
+
+      if (byPreferred !== 0) {
+        return byPreferred;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.action);
+}
+
+/**
+ * Ranks a code action's kind family for "most likely first" ordering: contextual
+ * quickfixes (0) lead, then extract (1) / inline (2) / rewrite (3) refactors, the
+ * organize-imports source action (4), and any unkinded action (5) trails. The
+ * kind defaults to `quickfix` to mirror the Monaco mapper's fallback.
+ */
+function phpCodeActionFamilyRank(action: PhpCodeActionDescriptor): number {
+  const kind = action.kind ?? "quickfix";
+
+  if (kind.startsWith("quickfix")) {
+    return 0;
+  }
+
+  if (kind.startsWith("refactor.extract")) {
+    return 1;
+  }
+
+  if (kind.startsWith("refactor.inline")) {
+    return 2;
+  }
+
+  if (kind.startsWith("refactor")) {
+    return 3;
+  }
+
+  if (kind.startsWith("source")) {
+    return 4;
+  }
+
+  return 5;
 }
 
 /**
@@ -30080,21 +30168,43 @@ function phpCreateFromUsageCodeAction(
     return null;
   }
 
+  // "Create method/property from usage" is the contextual fix for an
+  // unresolved `$this->member`, so it reads as a preferred quickfix (the
+  // lightbulb's auto-fix and the top of the Alt+Enter list).
   if (member.kind === "method") {
-    return phpClassBodyInsertionAction(
-      source,
-      renderCreateMethodStub(member.name, member.argTypes ?? [], {
-        indent: "",
-      }),
-      `Create method '${member.name}'`,
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        renderCreateMethodStub(member.name, member.argTypes ?? [], {
+          indent: "",
+        }),
+        `Create method '${member.name}'`,
+      ),
     );
   }
 
-  return phpClassBodyInsertionAction(
-    source,
-    renderCreatePropertyStub(member.name, { indent: "" }),
-    `Create property '${member.name}'`,
+  return phpPreferredQuickfix(
+    phpClassBodyInsertionAction(
+      source,
+      renderCreatePropertyStub(member.name, { indent: "" }),
+      `Create property '${member.name}'`,
+    ),
   );
+}
+
+/**
+ * Stamps a class-body insertion action as a preferred quickfix (the contextual
+ * fix for an unresolved symbol). Passes a `null` plan through unchanged so the
+ * conservative "offer nothing" path is preserved.
+ */
+function phpPreferredQuickfix(
+  action: PhpCodeActionDescriptor | null,
+): PhpCodeActionDescriptor | null {
+  if (!action) {
+    return null;
+  }
+
+  return { ...action, isPreferred: true, kind: "quickfix" };
 }
 
 /**
@@ -30552,7 +30662,14 @@ function phpImportClassCodeActions(
     }
   }
 
-  return actions.sort((a, b) => a.title.localeCompare(b.title));
+  const sorted = actions.sort((a, b) => a.title.localeCompare(b.title));
+
+  // Monaco honours a SINGLE preferred action; with several import candidates for
+  // an ambiguous short name only the first (alphabetically) stays preferred so
+  // the others remain plain quickfix choices the user can still pick.
+  return sorted.map((action, index) =>
+    index === 0 ? action : { ...action, isPreferred: false },
+  );
 }
 
 function phpImportClassCodeAction(
@@ -30574,6 +30691,10 @@ function phpImportClassCodeAction(
         text: plan.text,
       },
     ],
+    // Importing the class is the contextual fix for an unresolved short name, so
+    // it reads as a preferred quickfix (PhpStorm Alt+Enter -> Import at the top).
+    isPreferred: true,
+    kind: "quickfix",
     title: `Import ${fqn}`,
   };
 }
@@ -30706,6 +30827,7 @@ function phpOptimizeImportsCodeAction(
         text: organized.organizedUseBlock,
       },
     ],
+    kind: "source.organizeImports",
     title: "Optimize imports",
   };
 }

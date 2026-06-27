@@ -116,6 +116,7 @@ export interface PhpCodeActionNewFile {
 
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
+  isPreferred?: boolean;
   kind?: string;
   newFile?: PhpCodeActionNewFile;
   title: string;
@@ -2430,19 +2431,42 @@ async function providePhpSourceCodeActions(
 }
 
 /**
- * The synthesized PHP code actions are class-body refactors ("Implement
- * methods", "Generate constructor/accessors", "Optimize imports", "Create
- * method/property from usage") plus the "Extract variable" refactor. Honour
- * Monaco's `only` filter: an unfiltered request and quickfix/refactor-scoped
- * requests both qualify; any other narrow scope (e.g. `source.organizeImports`)
- * is left to the language server so we never surface an off-context action.
+ * The synthesized PHP code actions span three kind families: contextual
+ * quickfixes ("Create method/property from usage", "Import class", "Remove
+ * unused ...") on the lightbulb, refactors ("Extract ...", "Add type hint",
+ * "Generate constructor/accessors", "Implement/Override methods"), and the
+ * "Optimize imports" organize-imports source action. Honour Monaco's `only`
+ * filter: an unfiltered request qualifies, and a request narrowed to a family we
+ * actually emit - `quickfix`, `refactor`, or the `source.organizeImports`
+ * group - is served. Any other narrow `source.*` scope (e.g. `source.fixAll`)
+ * has no matching action, so it is left to the language server. This keeps us
+ * from ever surfacing an off-context action.
  */
 function phpSourceCodeActionKindRequested(only: string | undefined): boolean {
   if (!only) {
     return true;
   }
 
-  return only.startsWith("quickfix") || only.startsWith("refactor");
+  return (
+    only.startsWith("quickfix") ||
+    only.startsWith("refactor") ||
+    phpOrganizeImportsKindRequested(only)
+  );
+}
+
+/**
+ * True when the `only` scope targets the organize-imports family that our
+ * "Optimize imports" action belongs to: the bare `source` group, or
+ * `source.organizeImports` (and its sub-scopes). A more specific sibling scope
+ * like `source.fixAll` returns false so we do not run for an action we never
+ * emit.
+ */
+function phpOrganizeImportsKindRequested(only: string): boolean {
+  return (
+    only === "source" ||
+    only === "source.organizeImports" ||
+    only.startsWith("source.organizeImports.")
+  );
 }
 
 /**
@@ -2503,6 +2527,7 @@ function toPhpCodeAction(
         model,
       ),
       edit: { edits: [] },
+      isPreferred: descriptor.isPreferred,
       kind: descriptor.kind ?? "quickfix",
       title: descriptor.title,
     };
@@ -2512,6 +2537,7 @@ function toPhpCodeAction(
     edit: {
       edits: [...newFileEdits(monaco, descriptor.newFile), ...documentEdits],
     },
+    isPreferred: descriptor.isPreferred,
     kind: descriptor.kind ?? "quickfix",
     title: descriptor.title,
   };

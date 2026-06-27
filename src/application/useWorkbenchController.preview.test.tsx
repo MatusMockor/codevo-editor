@@ -51999,6 +51999,299 @@ class Greeter
     ).toBe(false);
   });
 
+  it("marks Create method as the preferred quickfix on an unresolved member", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork(1, 'x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'doWork'",
+    );
+    // PhpStorm Alt+Enter: the contextual fix for the unresolved member is the
+    // single most-likely action - a "quickfix" lightbulb, flagged preferred so
+    // Monaco floats it to the top of the list.
+    expect(createMethod?.kind).toBe("quickfix");
+    expect(createMethod?.isPreferred).toBe(true);
+    // And it leads the returned list (ordering = "most likely first").
+    expect(actions[0]?.title).toBe("Create method 'doWork'");
+  });
+
+  it("tags an Import class action as a preferred quickfix", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const importAction = actions.find(
+      (action) => action.title === "Import App\\Models\\Post",
+    );
+    expect(importAction?.kind).toBe("quickfix");
+    expect(importAction?.isPreferred).toBe(true);
+  });
+
+  it("classifies Generate constructor as a generate-family refactor (not a quickfix)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    private string $name;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const constructor = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    // Generate-family actions read as "refactor" in the action widget (distinct
+    // icon/group from the quickfix lightbulb), matching PhpStorm's Generate menu.
+    expect(constructor?.kind).toBe("refactor.rewrite");
+    expect(constructor?.isPreferred).not.toBe(true);
+
+    const accessors = actions.find(
+      (action) => action.title === "Generate getters and setters",
+    );
+    expect(accessors?.kind).toBe("refactor.rewrite");
+  });
+
+  it("tags Optimize imports with the organize-imports source kind", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Unused;
+use App\\Models\\Apple;
+
+class Greeter
+{
+    public function run(Apple $apple): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const optimize = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimize?.kind).toBe("source.organizeImports");
+  });
+
+  it("orders the contextual quickfix ahead of generate-family refactors", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    // The cursor sits on an unresolved `$this->status`, so the contextual fix
+    // (Create property) must lead - ahead of the class-level generate actions
+    // (constructor / accessors) that are also offered for the same class.
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    private string $name;
+
+    public function run(): void
+    {
+        echo $this->status;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("status");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createIndex = actions.findIndex(
+      (action) => action.title === "Create property 'status'",
+    );
+    const constructorIndex = actions.findIndex(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(constructorIndex).toBeGreaterThanOrEqual(0);
+    // Quickfix before generate-family refactor (PhpStorm "most likely first").
+    expect(createIndex).toBeLessThan(constructorIndex);
+    expect(actions[createIndex]?.isPreferred).toBe(true);
+  });
+
+  it("orders free-function refactors by kind family (extract before rewrite)", async () => {
+    const classPath = "/workspace/app/helpers.php";
+    // A free function (no enclosing class) with a selected expression (so
+    // Extract variable - refactor.extract is offered) and no declared return
+    // type but a literal return (so Add return type - refactor.rewrite fires).
+    const classSource = `<?php
+
+function total()
+{
+    return 42;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "helpers.php"));
+    });
+
+    const exprStart = classSource.indexOf("42");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: exprStart + "42".length,
+      start: exprStart,
+    });
+
+    const extractIndex = actions.findIndex(
+      (action) => action.title === "Extract variable",
+    );
+    const returnTypeIndex = actions.findIndex(
+      (action) => action.title === "Add return type",
+    );
+    expect(extractIndex).toBeGreaterThanOrEqual(0);
+    expect(returnTypeIndex).toBeGreaterThanOrEqual(0);
+    // refactor.extract sorts ahead of refactor.rewrite even in a free function.
+    expect(extractIndex).toBeLessThan(returnTypeIndex);
+  });
+
   it("offers an extract-variable code action for a selected expression", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const classSource = `<?php
