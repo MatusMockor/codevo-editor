@@ -50018,6 +50018,74 @@ class Greeter
     ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
   });
 
+  it("withholds the Extract Interface class edit and surfaces a notice when the write fails", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const interfaceContent =
+      "<?php\n\nnamespace App\\Services;\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return "hi";
+    }
+}
+`;
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target interface does not exist (probe rejects), so the write is
+        // attempted - and then fails.
+        if (path === interfacePath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockRejectedValueOnce(new Error("disk full"));
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: interfaceContent,
+        path: interfacePath,
+      });
+    });
+
+    // The write was attempted and failed, so the class edit is withheld (no
+    // partial edit) and a recoverable Extract Interface notice is surfaced.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenCalledWith(interfacePath, interfaceContent);
+    expect(written).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Extract Interface" &&
+          notice.message.includes("disk full"),
+      ),
+    ).toBe(true);
+  });
+
   it("offers no generate getters and setters action when every property has accessors", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
