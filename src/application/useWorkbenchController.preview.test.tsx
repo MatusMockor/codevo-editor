@@ -48378,6 +48378,404 @@ class Greeter
     );
   });
 
+  it("offers a Create class quick fix on a `new UnknownClass()` reference", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new MailDispatcher();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target class does not exist yet on disk.
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("MailDispatcher");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createClass = actions.find(
+      (action) => action.title === "Create class MailDispatcher",
+    );
+    expect(createClass).toBeDefined();
+    expect(createClass?.isPreferred).toBe(true);
+    expect(createClass?.kind).toBe("quickfix");
+    expect(createClass?.edits).toEqual([]);
+    expect(createClass?.newFile?.path).toBe(
+      "/workspace/app/Services/MailDispatcher.php",
+    );
+    expect(createClass?.newFile?.content).toBe(
+      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+    );
+  });
+
+  it("resolves the destination through a use-import alias for Create class", async () => {
+    const classPath = "/workspace/app/Http/Controller.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Services\\Mailer as Sender;
+
+class Controller
+{
+    public function run(): void
+    {
+        $service = new Sender();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Controller.php"));
+    });
+
+    const cursor = classSource.indexOf("new Sender") + "new ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createClass = actions.find((action) =>
+      action.title.startsWith("Create class"),
+    );
+    expect(createClass?.title).toBe("Create class Mailer");
+    expect(createClass?.newFile?.path).toBe(
+      "/workspace/app/Services/Mailer.php",
+    );
+    expect(createClass?.newFile?.content).toContain(
+      "namespace App\\Services;",
+    );
+    expect(createClass?.newFile?.content).toContain("class Mailer");
+  });
+
+  it("offers Create interface on an `implements UnknownInterface` reference", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter implements Greetable
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Greetable");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createInterface = actions.find((action) =>
+      action.title.startsWith("Create interface"),
+    );
+    expect(createInterface?.title).toBe("Create interface Greetable");
+    expect(createInterface?.newFile?.path).toBe(
+      "/workspace/app/Services/Greetable.php",
+    );
+    expect(createInterface?.newFile?.content).toContain(
+      "interface Greetable",
+    );
+  });
+
+  it("offers no Create class quick fix when the referenced class already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const targetPath = "/workspace/app/Services/Mailer.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new Mailer();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The referenced class already exists at its PSR-4 path.
+        if (path === targetPath) {
+          return "<?php\n\nnamespace App\\Services;\n\nclass Mailer\n{\n}\n";
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("new Mailer") + "new ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create class")),
+    ).toBe(false);
+  });
+
+  it("offers no Create class quick fix for a PHP built-in (\\Exception)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        throw new \\Exception('boom');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : Promise.reject(new Error("ENOENT")),
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Exception");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create")),
+    ).toBe(false);
+  });
+
+  it("offers no Create class quick fix when the PSR-4 destination is unknown (vendor namespace)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $client = new \\Vendor\\Sdk\\Client();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : Promise.reject(new Error("ENOENT")),
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Vendor");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create class")),
+    ).toBe(false);
+  });
+
+  it("writes the Create class skeleton file with no in-document edit", async () => {
+    const skeletonPath = "/workspace/app/Services/MailDispatcher.php";
+    const skeletonContent =
+      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n";
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        // The skeleton target does not exist yet (existence probe rejects).
+        if (path === skeletonPath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: skeletonContent,
+        path: skeletonPath,
+      });
+    });
+
+    expect(written).toBe(true);
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenCalledWith(skeletonPath, skeletonContent);
+  });
+
+  it("drops a stale Create class offer after switching workspace tabs mid-probe", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const targetPath = "/workspace/app/Services/MailDispatcher.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new MailDispatcher();
+    }
+}
+`;
+    const existenceProbe = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // Block the existence/destination probe so we can switch tabs mid-flight.
+        if (path === targetPath) {
+          return existenceProbe.promise;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("MailDispatcher");
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: cursor,
+        start: cursor,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(targetPath);
+    });
+
+    // Switch to another workspace before the probe resolves.
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    await act(async () => {
+      existenceProbe.reject(new Error("ENOENT"));
+    });
+    await flushAsyncTurns();
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+    // The stale offer must not write into the now-inactive workspace.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(targetPath, expect.anything());
+  });
+
   it("offers a remove-unused-import quick-fix on an unused use line", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const classSource = `<?php
@@ -51773,9 +52171,12 @@ class PostController
       await Promise.resolve();
     });
     await vi.waitFor(() => {
+      // The Create-class existence probe (limit 50) and/or the Import-class
+      // lookup (limit 25) both query the symbol index for the short name; either
+      // confirms the in-flight search started before we switch tabs.
       expect(
         dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
-      ).toHaveBeenCalledWith("/workspace-a", "Post", 25);
+      ).toHaveBeenCalledWith("/workspace-a", "Post", expect.any(Number));
     });
 
     await act(async () => {

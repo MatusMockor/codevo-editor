@@ -498,6 +498,11 @@ import {
   renderCreateMethodStub,
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
+import {
+  detectUnknownClassReference,
+  phpCreateClassDestination,
+  renderPhpTypeSkeleton,
+} from "../domain/phpCreateClass";
 import { planAddParameter } from "../domain/phpAddParameter";
 import {
   planAddParameterType,
@@ -18353,6 +18358,112 @@ export function useWorkbenchController(
     [readNavigationFileContent, resolvePhpClassSourcePaths],
   );
 
+  // Builds the PhpStorm "Create class X" quick fix from a referenced-but-missing
+  // type under the cursor. Conservative: offered only when the reference is NOT
+  // already imported-and-resolvable, NOT a PHP built-in, the resolved FQN maps
+  // to a project PSR-4 destination (uncertain destination -> no offer), the
+  // resolved class does NOT already exist on disk, and the target file is not
+  // already present. Cross-file probes make it async; the requested root is
+  // re-checked after every await so a tab switch mid-flight drops the offer
+  // (per-workspace isolation). Returns an action that WRITES the skeleton file
+  // (via `newFile` -> applyPhpCodeActionNewFile) with NO in-document edit.
+  const phpCreateClassCodeAction = useCallback(
+    async (
+      source: string,
+      range: PhpCodeActionRange,
+      isRequestedRootActive: () => boolean,
+    ): Promise<PhpCodeActionDescriptor | null> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return null;
+      }
+
+      const reference = detectUnknownClassReference(source, range.start);
+
+      if (!reference) {
+        return null;
+      }
+
+      const fqn = resolvePhpClassName(source, reference.reference);
+
+      if (!fqn || isPhpBuiltinTypeName(fqn)) {
+        return null;
+      }
+
+      const destination = phpCreateClassDestination(
+        requestedRoot,
+        requestedDescriptor.php.psr4Roots,
+        VENDOR_PSR4_PREFIXES,
+        fqn,
+      );
+
+      if (!destination) {
+        return null;
+      }
+
+      // The class must not already exist. `resolvePhpClassSourcePaths` returns
+      // best-guess PSR-4 candidate paths that may NOT exist on disk, so each
+      // candidate is verified with a real read before it counts as "exists" -
+      // otherwise the deterministic guess (the destination itself) would always
+      // suppress the offer. A single existing path means the class is already
+      // defined somewhere, so nothing is created.
+      const candidatePaths = await resolvePhpClassSourcePaths(fqn);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      for (const candidatePath of candidatePaths) {
+        const existingSource = await readTestFileIfExists(candidatePath);
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        if (existingSource !== null) {
+          return null;
+        }
+      }
+
+      // The destination file itself must not already exist (a different class in
+      // the expected file, or a race) - never overwrite. (Covered by the loop
+      // above when the destination is among the candidates, but re-checked here
+      // so a non-candidate destination is still guarded.)
+      const existingTarget = await readTestFileIfExists(destination.path);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      if (existingTarget !== null) {
+        return null;
+      }
+
+      const shortName = fqn.slice(fqn.lastIndexOf("\\") + 1);
+      const skeleton = renderPhpTypeSkeleton(
+        reference.kind,
+        shortName,
+        destination.namespace,
+      );
+
+      return {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: { content: skeleton, path: destination.path },
+        title: `Create ${reference.kind} ${shortName}`,
+      };
+    },
+    [
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const providePhpCodeActions = useCallback(
     async (
       source: string,
@@ -18442,6 +18553,28 @@ export function useWorkbenchController(
 
       if (addParameterTypeAction) {
         actions.push(addParameterTypeAction);
+      }
+
+      // "Create class X" (PhpStorm Alt+Enter) when the cursor sits on a
+      // referenced-but-unresolved class/interface/trait/enum (`new X()`,
+      // `X::method()`/`X::CONST`, a type hint / return type, `extends`/
+      // `implements`, `catch (X $e)`). It WRITES a new PSR-4 file with a minimal
+      // skeleton, so it runs before the class-only guard (a reference may sit in
+      // a class header type position OR a free function). The build is async
+      // (existence probes) and re-checks the requested root after every await so
+      // a tab switch mid-flight drops a stale offer (per-workspace isolation).
+      const createClassAction = await phpCreateClassCodeAction(
+        source,
+        range,
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      if (createClassAction) {
+        actions.push(createClassAction);
       }
 
       if (phpCurrentTypeKind(source) !== "class") {
@@ -18637,6 +18770,7 @@ export function useWorkbenchController(
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
       intelligenceMode,
+      phpCreateClassCodeAction,
       projectSymbolSearch,
       readTestFileIfExists,
       workspaceRoot,
@@ -30205,6 +30339,117 @@ function phpPreferredQuickfix(
   }
 
   return { ...action, isPreferred: true, kind: "quickfix" };
+}
+
+/**
+ * Namespace prefixes "Create class" must never write into even when a project
+ * PSR-4 root happens to cover them: a `Composer\` autoload entry pointing at a
+ * vendored package, or the framework's own `Illuminate\` / `Symfony\` roots.
+ * Defensive - a normal app maps these via the `packages` list (which the
+ * destination mapper does not consult), so this only matters when a root maps
+ * one of these directly.
+ */
+const VENDOR_PSR4_PREFIXES = ["Composer\\", "Illuminate\\", "Symfony\\"];
+
+/**
+ * Conservative set of PHP built-in / SPL / common-extension type names that
+ * "Create class" must never offer to create (they already exist at runtime and
+ * have no workspace source file). Lower-cased, short-name keyed: a reference is
+ * a built-in when its FQN is global (no namespace) and its short name is in this
+ * set. Namespaced user types of the same short name (e.g. `App\Exception`) are
+ * unaffected. Not exhaustive - it covers the high-frequency names a developer
+ * is most likely to reference; anything else still falls through to the
+ * existence + PSR-4 guards.
+ */
+const PHP_BUILTIN_CLASS_NAMES = new Set(
+  [
+    "stdClass",
+    "Closure",
+    "Generator",
+    "Stringable",
+    "Iterator",
+    "IteratorAggregate",
+    "Traversable",
+    "Countable",
+    "ArrayAccess",
+    "ArrayObject",
+    "ArrayIterator",
+    "JsonSerializable",
+    "Serializable",
+    "SplStack",
+    "SplQueue",
+    "SplObjectStorage",
+    "SplFixedArray",
+    "SplDoublyLinkedList",
+    "SplPriorityQueue",
+    "SplHeap",
+    "SplMinHeap",
+    "SplMaxHeap",
+    "WeakMap",
+    "WeakReference",
+    "DateTime",
+    "DateTimeImmutable",
+    "DateTimeInterface",
+    "DateInterval",
+    "DateTimeZone",
+    "DatePeriod",
+    "Throwable",
+    "Exception",
+    "Error",
+    "TypeError",
+    "ValueError",
+    "ArgumentCountError",
+    "ArithmeticError",
+    "DivisionByZeroError",
+    "ErrorException",
+    "RuntimeException",
+    "LogicException",
+    "InvalidArgumentException",
+    "OutOfRangeException",
+    "OutOfBoundsException",
+    "LengthException",
+    "DomainException",
+    "RangeException",
+    "UnexpectedValueException",
+    "UnderflowException",
+    "OverflowException",
+    "BadFunctionCallException",
+    "BadMethodCallException",
+    "UnhandledMatchError",
+    "JsonException",
+    "ReflectionClass",
+    "ReflectionMethod",
+    "ReflectionProperty",
+    "ReflectionFunction",
+    "ReflectionParameter",
+    "ReflectionNamedType",
+    "ReflectionEnum",
+    "PDO",
+    "PDOStatement",
+    "PDOException",
+    "SimpleXMLElement",
+    "DOMDocument",
+    "DOMElement",
+    "DOMNode",
+    "UnitEnum",
+    "BackedEnum",
+  ].map((name) => name.toLowerCase()),
+);
+
+/**
+ * Whether `fqn` names a PHP built-in type. Only a GLOBAL (un-namespaced) name is
+ * treated as built-in - a namespaced `App\Exception` is a user type and remains
+ * creatable. A leading `\` (already stripped by the resolver, but tolerated
+ * here) does not make a name namespaced.
+ */
+function isPhpBuiltinTypeName(fqn: string): boolean {
+  const normalized = fqn.trim().replace(/^\\+/, "");
+
+  if (normalized.includes("\\")) {
+    return false;
+  }
+
+  return PHP_BUILTIN_CLASS_NAMES.has(normalized.toLowerCase());
 }
 
 /**
