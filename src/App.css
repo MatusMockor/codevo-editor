@@ -3019,6 +3019,84 @@ button.problem-row:focus-visible {
   border-radius: 2px;
 }
 
+.text-search-replace {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.text-search-replace-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft, var(--color-hover));
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-replace-all:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-bg, #fff);
+}
+
+.text-search-replace-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.text-search-result-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.text-search-result-row .text-search-result {
+  min-width: 0;
+}
+
+.text-search-replace-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-result-row:hover .text-search-replace-file,
+.text-search-replace-file:focus-visible {
+  opacity: 1;
+}
+
+.text-search-replace-file:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-accent);
+}
+
+.text-search-replace-file:disabled {
+  opacity: 0;
+  cursor: default;
+}
+
 .surround-with-picker {
   width: min(320px, calc(100vw - 36px));
 }

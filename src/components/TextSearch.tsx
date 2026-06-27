@@ -1,4 +1,13 @@
-import { Asterisk, CaseSensitive, FileSearch, Regex, Search, WholeWord } from "lucide-react";
+import {
+  Asterisk,
+  CaseSensitive,
+  FileSearch,
+  Regex,
+  Replace,
+  ReplaceAll,
+  Search,
+  WholeWord,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   TextSearchOptions,
@@ -11,10 +20,48 @@ interface TextSearchProps {
   query: string;
   options: TextSearchOptions;
   results: TextSearchResult[];
+  replacement: string;
+  replaceBusy: boolean;
   onChangeQuery(query: string): void;
+  onChangeReplacement(replacement: string): void;
   onChangeOptions(options: TextSearchOptions): void;
   onClose(): void;
   onOpen(result: TextSearchResult): void;
+  onReplaceAll(): void;
+  onReplaceInFile(path: string): void;
+}
+
+/**
+ * Distinct file paths in `results`, preserving first-seen order, with their
+ * match count. Drives the "Replace in file" affordance and the per-file count
+ * shown in the confirmation/preview.
+ */
+function distinctMatchedFiles(
+  results: TextSearchResult[],
+): Array<{ path: string; relativePath: string; matchCount: number }> {
+  const order: string[] = [];
+  const byPath = new Map<
+    string,
+    { path: string; relativePath: string; matchCount: number }
+  >();
+
+  for (const result of results) {
+    const existing = byPath.get(result.path);
+
+    if (!existing) {
+      order.push(result.path);
+      byPath.set(result.path, {
+        path: result.path,
+        relativePath: result.relativePath,
+        matchCount: 1,
+      });
+      continue;
+    }
+
+    existing.matchCount += 1;
+  }
+
+  return order.map((path) => byPath.get(path)!);
 }
 
 /**
@@ -56,10 +103,15 @@ export function TextSearch({
   isOpen,
   onChangeOptions,
   onChangeQuery,
+  onChangeReplacement,
   onClose,
   onOpen,
+  onReplaceAll,
+  onReplaceInFile,
   options,
   query,
+  replacement,
+  replaceBusy,
   results,
 }: TextSearchProps) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -68,8 +120,9 @@ export function TextSearch({
     if (!isOpen) {
       setActiveIndex(0);
       onChangeQuery("");
+      onChangeReplacement("");
     }
-  }, [isOpen, onChangeQuery]);
+  }, [isOpen, onChangeQuery, onChangeReplacement]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -80,6 +133,9 @@ export function TextSearch({
   }
 
   const activeResult = results[activeIndex];
+  const matchedFiles = distinctMatchedFiles(results);
+  const canReplace =
+    !replaceBusy && Boolean(query.trim()) && results.length > 0;
 
   const toggleOption = (key: "caseSensitive" | "wholeWord" | "isRegex") => {
     onChangeOptions({ ...options, [key]: !options[key] });
@@ -126,6 +182,46 @@ export function TextSearch({
             placeholder="Find in path"
             value={query}
           />
+        </div>
+
+        <div className="palette-search text-search-replace">
+          <Replace aria-hidden="true" size={17} />
+          <input
+            aria-label="Replace with"
+            onChange={(event) => onChangeReplacement(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                onClose();
+                return;
+              }
+
+              if (
+                event.key === "Enter" &&
+                (event.metaKey || event.ctrlKey) &&
+                canReplace
+              ) {
+                event.preventDefault();
+                onReplaceAll();
+              }
+            }}
+            placeholder={
+              options.isRegex
+                ? "Replace with (use $1, ${name} for capture groups)"
+                : "Replace with"
+            }
+            value={replacement}
+          />
+          <button
+            aria-label="Replace all"
+            className="text-search-replace-all"
+            disabled={!canReplace}
+            onClick={onReplaceAll}
+            title="Replace all matches in all files"
+            type="button"
+          >
+            <ReplaceAll aria-hidden="true" size={16} />
+            <span>Replace All</span>
+          </button>
         </div>
 
         <div className="text-search-filters">
@@ -197,34 +293,55 @@ export function TextSearch({
           ) : null}
           {results.map((result, index) => {
             const { before, match, after } = splitMatchHighlight(result);
+            const isFirstOfFile =
+              results.findIndex((other) => other.path === result.path) === index;
+            const fileMatchCount =
+              matchedFiles.find((file) => file.path === result.path)
+                ?.matchCount ?? 1;
 
             return (
-              <button
-                className={
-                  index === activeIndex
-                    ? "text-search-result active"
-                    : "text-search-result"
-                }
+              <div
+                className="text-search-result-row"
                 key={`${result.path}:${result.lineNumber}:${result.column}`}
-                onClick={() => onOpen(result)}
-                onMouseEnter={() => setActiveIndex(index)}
-                title={result.path}
-                type="button"
               >
-                <FileSearch aria-hidden="true" size={16} />
-                <span>
-                  <strong>
-                    {result.relativePath}:{result.lineNumber}:{result.column}
-                  </strong>
-                  <small className="text-search-preview">
-                    {before}
-                    {match ? (
-                      <mark className="text-search-match">{match}</mark>
-                    ) : null}
-                    {after}
-                  </small>
-                </span>
-              </button>
+                <button
+                  className={
+                    index === activeIndex
+                      ? "text-search-result active"
+                      : "text-search-result"
+                  }
+                  onClick={() => onOpen(result)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  title={result.path}
+                  type="button"
+                >
+                  <FileSearch aria-hidden="true" size={16} />
+                  <span>
+                    <strong>
+                      {result.relativePath}:{result.lineNumber}:{result.column}
+                    </strong>
+                    <small className="text-search-preview">
+                      {before}
+                      {match ? (
+                        <mark className="text-search-match">{match}</mark>
+                      ) : null}
+                      {after}
+                    </small>
+                  </span>
+                </button>
+                {isFirstOfFile ? (
+                  <button
+                    aria-label={`Replace ${fileMatchCount} occurrence${fileMatchCount === 1 ? "" : "s"} in ${result.relativePath}`}
+                    className="text-search-replace-file"
+                    disabled={replaceBusy || !query.trim()}
+                    onClick={() => onReplaceInFile(result.path)}
+                    title={`Replace in ${result.relativePath}`}
+                    type="button"
+                  >
+                    <Replace aria-hidden="true" size={14} />
+                  </button>
+                ) : null}
+              </div>
             );
           })}
         </div>

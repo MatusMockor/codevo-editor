@@ -140,6 +140,98 @@ describe("TextSearch", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the replace input and Replace All button", () => {
+    renderTextSearch();
+
+    expect(host.querySelector('[aria-label="Replace with"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Replace all"]')).not.toBeNull();
+  });
+
+  it("emits replacement changes through onChangeReplacement", () => {
+    const onChangeReplacement = vi.fn();
+    renderTextSearch({ onChangeReplacement });
+
+    const input = host.querySelector<HTMLInputElement>(
+      '[aria-label="Replace with"]',
+    );
+
+    if (!input) {
+      throw new Error("replace input missing");
+    }
+
+    act(() => {
+      setReactInputValue(input, "thread");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChangeReplacement).toHaveBeenCalledWith("thread");
+  });
+
+  it("disables Replace All when there are no results", () => {
+    renderTextSearch({ results: [] });
+
+    const replaceAll = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Replace all"]',
+    );
+
+    expect(replaceAll?.disabled).toBe(true);
+  });
+
+  it("triggers Replace All when there are results", () => {
+    const onReplaceAll = vi.fn();
+    renderTextSearch({
+      onReplaceAll,
+      results: [result({ relativePath: "a.php" })],
+    });
+
+    const replaceAll = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Replace all"]',
+    );
+
+    expect(replaceAll?.disabled).toBe(false);
+
+    act(() => {
+      replaceAll?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onReplaceAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a single Replace-in-file button per distinct file", () => {
+    renderTextSearch({
+      results: [
+        result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 1 }),
+        result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 5 }),
+        result({ path: "/workspace/b.php", relativePath: "b.php", lineNumber: 2 }),
+      ],
+    });
+
+    const replaceFileButtons = host.querySelectorAll(
+      ".text-search-replace-file",
+    );
+
+    // Two distinct files -> two per-file replace buttons (not one per match).
+    expect(replaceFileButtons.length).toBe(2);
+  });
+
+  it("triggers Replace-in-file with the file path", () => {
+    const onReplaceInFile = vi.fn();
+    renderTextSearch({
+      onReplaceInFile,
+      results: [
+        result({ path: "/workspace/a.php", relativePath: "a.php" }),
+      ],
+    });
+
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(".text-search-replace-file")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onReplaceInFile).toHaveBeenCalledWith("/workspace/a.php");
+  });
+
   function renderTextSearch(
     overrides: Partial<Parameters<typeof TextSearch>[0]> = {},
   ) {
@@ -150,10 +242,15 @@ describe("TextSearch", () => {
           isOpen
           onChangeOptions={vi.fn()}
           onChangeQuery={vi.fn()}
+          onChangeReplacement={vi.fn()}
           onClose={vi.fn()}
           onOpen={vi.fn()}
+          onReplaceAll={vi.fn()}
+          onReplaceInFile={vi.fn()}
           options={defaultTextSearchOptions()}
           query="query"
+          replaceBusy={false}
+          replacement=""
           results={[]}
           {...overrides}
         />,

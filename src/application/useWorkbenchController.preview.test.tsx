@@ -71,6 +71,8 @@ import {
   type FileSearchResult,
   type ManagedPhpactorInstallCompletionEvent,
   type PhpProjectDescriptor,
+  type ReplaceInPathResult,
+  type TextSearchOptions,
   type TextSearchResult,
   type WorkspaceDescriptor,
 } from "../domain/workspace";
@@ -53847,6 +53849,189 @@ class PostRepository
       });
     });
 
+    it("does not replace when the destructive confirmation is declined", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [],
+        totalReplacements: 0,
+      }));
+      const confirm = vi.fn(() => false);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm, prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceAllInPath();
+      });
+
+      expect(confirm).toHaveBeenCalled();
+      expect(replaceInPath).not.toHaveBeenCalled();
+    });
+
+    it("replaces across files after the confirmation is accepted", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [
+          { path: "/workspace/a.php", relativePath: "a.php", replacements: 2 },
+          { path: "/workspace/b.php", relativePath: "b.php", replacements: 1 },
+        ],
+        totalReplacements: 3,
+      }));
+      const confirm = vi.fn(() => true);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm, prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+          {
+            column: 1,
+            lineNumber: 2,
+            lineText: "and needle again",
+            matchEnd: 10,
+            matchStart: 4,
+            path: "/workspace/b.php",
+            relativePath: "b.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(2);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceAllInPath();
+      });
+      await flushAsyncTurns();
+
+      expect(replaceInPath).toHaveBeenCalledWith(
+        "/workspace",
+        "needle",
+        "thread",
+        expect.objectContaining({ fileMask: "" }),
+        undefined,
+      );
+      expect(getWorkbench().message).toBe(
+        "Replaced 3 occurrences in 2 files",
+      );
+    });
+
+    it("scopes a single-file replace to that exact file out-of-band", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [
+          { path: "/workspace/a.php", relativePath: "a.php", replacements: 1 },
+        ],
+        totalReplacements: 1,
+      }));
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm: vi.fn(() => true), prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle there",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/b.php",
+            relativePath: "b.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(2);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceInFile("/workspace/a.php");
+      });
+      await flushAsyncTurns();
+
+      // The single-file scope is passed as an exact path (5th arg), never as a
+      // widened file mask, so an active mask cannot escape the chosen file.
+      expect(replaceInPath).toHaveBeenCalledWith(
+        "/workspace",
+        "needle",
+        "thread",
+        expect.anything(),
+        "/workspace/a.php",
+      );
+    });
+
     it("reveals the match position when a result is opened", async () => {
       const { getWorkbench } = renderController({
         appSettings: {
@@ -53939,6 +54124,7 @@ class PostRepository
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
     searchText,
+    replaceInPath,
     settingsGateway,
     smartModeGateway,
     workspaceDetectionGateway,
@@ -53980,6 +54166,12 @@ class PostRepository
       query: string,
       limit: number,
     ) => Promise<TextSearchResult[]>;
+    replaceInPath?: (
+      root: string,
+      query: string,
+      replacement: string,
+      options?: TextSearchOptions,
+    ) => Promise<ReplaceInPathResult>;
     settingsGateway?: SettingsGateway;
     smartModeGateway?: SmartModeGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
@@ -54015,6 +54207,7 @@ class PostRepository
       runtimeStatus,
       searchFiles,
       searchText,
+      replaceInPath,
       settingsGateway,
       smartModeGateway,
       workspaceDetectionGateway,
@@ -54346,6 +54539,7 @@ function createControllerDependencies({
   runtimeStatus,
   searchFiles,
   searchText,
+  replaceInPath,
   settingsGateway,
   smartModeGateway,
   workspaceDetectionGateway,
@@ -54387,6 +54581,12 @@ function createControllerDependencies({
     query: string,
     limit: number,
   ): Promise<TextSearchResult[]>;
+  replaceInPath?(
+    root: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+  ): Promise<ReplaceInPathResult>;
   settingsGateway?: SettingsGateway;
   smartModeGateway?: SmartModeGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
@@ -54446,6 +54646,10 @@ function createControllerDependencies({
     },
     textSearch: {
       searchText: vi.fn(searchText ?? (async () => [])),
+      replaceInPath: vi.fn(
+        replaceInPath ??
+          (async () => ({ files: [], totalReplacements: 0 })),
+      ),
     },
   };
 

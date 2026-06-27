@@ -1146,10 +1146,15 @@ function App() {
         isOpen={workbench.textSearchOpen}
         onChangeOptions={workbench.setTextSearchOptions}
         onChangeQuery={workbench.setTextSearchQuery}
+        onChangeReplacement={workbench.setTextReplacement}
         onClose={() => workbench.setTextSearchOpen(false)}
         onOpen={workbench.openTextSearchResult}
+        onReplaceAll={workbench.replaceAllInPath}
+        onReplaceInFile={workbench.replaceInFile}
         options={workbench.textSearchOptions}
         query={workbench.textSearchQuery}
+        replaceBusy={workbench.textReplaceBusy}
+        replacement={workbench.textReplacement}
         results={workbench.textSearchResults}
       />
 

@@ -587,6 +587,7 @@ import {
   type TextSearchResult,
   type TextSearchOptions,
   type TextSearchGateway,
+  type ReplaceInPathResult,
   defaultTextSearchOptions,
   type WorkspaceDescriptor,
   type WorkspaceDetectionGateway,
@@ -834,6 +835,10 @@ const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 // cap trims notices, an `info` indicator carrying the truthful hidden count is
 // appended so diagnostics are never dropped silently.
 const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
+// Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
+// this to tell the user when the previewed count is a lower bound (the backend
+// replace itself is NOT capped to this; it rewrites every matching file).
+const TEXT_SEARCH_RESULT_LIMIT = 100;
 
 // Global ceiling on the total diagnostic notices retained in state. The
 // per-document cap above bounds a single file's contribution, but a large
@@ -1213,6 +1218,11 @@ export function useWorkbenchController(
   const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
     [],
   );
+  const [textReplacement, setTextReplacement] = useState("");
+  const [textReplaceBusy, setTextReplaceBusy] = useState(false);
+  // Bumped after every successful replace so the Find-in-Path search effect
+  // re-runs and the results list reflects what is now on disk.
+  const [textSearchRefreshToken, setTextSearchRefreshToken] = useState(0);
   const [implementationChooser, setImplementationChooser] = useState<{
     targets: ImplementationTarget[];
     title: string;
@@ -3646,6 +3656,8 @@ export function useWorkbenchController(
     setTextSearchLoading(false);
     setTextSearchResults([]);
     setTextSearchOptions(defaultTextSearchOptions);
+    setTextReplacement("");
+    setTextReplaceBusy(false);
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setFileStructureScope("current");
@@ -4858,6 +4870,8 @@ export function useWorkbenchController(
       setTextSearchLoading(false);
       setTextSearchResults([]);
       setTextSearchOptions(defaultTextSearchOptions);
+      setTextReplacement("");
+      setTextReplaceBusy(false);
       setFileStructureScope("current");
       setImplementationChooser(null);
       setCallHierarchyView(null);
@@ -8808,6 +8822,219 @@ export function useWorkbenchController(
       );
     },
     [openFile],
+  );
+
+  // Re-reads the given files from disk and refreshes any matching open tabs so
+  // the editor shows the post-replace content. Tabs with UNSAVED edits are left
+  // untouched (we never clobber the user's in-flight work); the next save will
+  // win. `isRequestedRootActive` is re-checked after every await so a stale
+  // replace cannot mutate documents that belong to a different workspace tab.
+  const refreshOpenDocumentsAfterReplace = useCallback(
+    async (
+      changedPaths: string[],
+      isRequestedRootActive: () => boolean,
+    ): Promise<void> => {
+      for (const path of changedPaths) {
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        const openDocument = documentsRef.current[path];
+
+        if (!openDocument) {
+          continue;
+        }
+
+        const hasUnsavedEdits = openDocument.content !== openDocument.savedContent;
+
+        if (hasUnsavedEdits) {
+          continue;
+        }
+
+        let refreshedContent: string;
+
+        try {
+          refreshedContent = await workspaceFiles.readTextFile(path);
+        } catch {
+          continue;
+        }
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        const latestDocument = documentsRef.current[path];
+
+        // Re-check after the await: the tab may have been edited, closed, or
+        // replaced by an unsaved version while we were reading from disk.
+        if (
+          !latestDocument ||
+          latestDocument.content !== latestDocument.savedContent
+        ) {
+          continue;
+        }
+
+        const refreshedDocument: EditorDocument = {
+          ...latestDocument,
+          content: refreshedContent,
+          savedContent: refreshedContent,
+        };
+
+        documentsRef.current = {
+          ...documentsRef.current,
+          [path]: refreshedDocument,
+        };
+        activeDocumentRef.current =
+          activeDocumentRef.current?.path === path
+            ? refreshedDocument
+            : activeDocumentRef.current;
+        setDocuments((current) => {
+          const currentDocument = current[path];
+
+          if (
+            !currentDocument ||
+            currentDocument.content !== currentDocument.savedContent
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [path]: {
+              ...currentDocument,
+              content: refreshedContent,
+              savedContent: refreshedContent,
+            },
+          };
+        });
+      }
+    },
+    [workspaceFiles],
+  );
+
+  // Shared Replace-in-Path runner. `scopePath === null` means Replace All (every
+  // matching file); a non-null path narrows the run to a single file (the
+  // backend still confines edits to its exact matches). Destructive (it rewrites
+  // files on disk), so it always confirms first and reports the outcome.
+  const runReplaceInPath = useCallback(
+    async (scopePath: string | null): Promise<void> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      const query = textSearchQuery.trim();
+
+      if (!requestedRoot || !query || textReplaceBusy) {
+        return;
+      }
+
+      // Preview the blast radius BEFORE the destructive write: count the
+      // matching files/occurrences (within scope) so the confirmation is honest.
+      const previewResults = textSearchResults.filter(
+        (result) => scopePath === null || result.path === scopePath,
+      );
+      const fileCount = new Set(previewResults.map((result) => result.path))
+        .size;
+      const matchCount = previewResults.length;
+
+      if (matchCount === 0) {
+        setMessage("No matches to replace");
+        return;
+      }
+
+      // The results list is capped at TEXT_SEARCH_RESULT_LIMIT; when it is full
+      // the real blast radius may be larger than what we can preview, so the
+      // confirmation says "at least N" rather than implying an exact count.
+      const isCapped =
+        scopePath === null &&
+        textSearchResults.length >= TEXT_SEARCH_RESULT_LIMIT;
+      const atLeast = isCapped ? "at least " : "";
+      const scopeLabel =
+        scopePath === null
+          ? `${atLeast}${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${atLeast}${fileCount} file${fileCount === 1 ? "" : "s"}`
+          : `${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${getFileName(scopePath)}`;
+
+      if (
+        !prompter.confirm(
+          `Replace ${scopeLabel}? This rewrites files on disk and cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      setTextReplaceBusy(true);
+
+      try {
+        // Single-file scope is passed out-of-band as an exact path (not as an
+        // extra include glob), so an active user file mask can never widen a
+        // "Replace in file" run into other files. `scopePath === null` means
+        // Replace All.
+        const result: ReplaceInPathResult = await textSearch.replaceInPath(
+          requestedRoot,
+          query,
+          textReplacement,
+          textSearchOptions,
+          scopePath ?? undefined,
+        );
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        await refreshOpenDocumentsAfterReplace(
+          result.files.map((file) => file.path),
+          isRequestedRootActive,
+        );
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        setMessage(
+          result.totalReplacements === 0
+            ? "No replacements made"
+            : `Replaced ${result.totalReplacements} occurrence${result.totalReplacements === 1 ? "" : "s"} in ${result.files.length} file${result.files.length === 1 ? "" : "s"}`,
+        );
+        // Re-run the search so the results list matches what is now on disk.
+        setTextSearchRefreshToken((token) => token + 1);
+      } catch (error) {
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        reportError("Replace in Path", error);
+      } finally {
+        if (isRequestedRootActive()) {
+          setTextReplaceBusy(false);
+        }
+      }
+    },
+    [
+      prompter,
+      refreshOpenDocumentsAfterReplace,
+      reportError,
+      textReplaceBusy,
+      textReplacement,
+      textSearch,
+      textSearchOptions,
+      textSearchQuery,
+      textSearchResults,
+      workspaceRoot,
+    ],
+  );
+
+  const replaceAllInPath = useCallback(
+    () => runReplaceInPath(null),
+    [runReplaceInPath],
+  );
+
+  const replaceInFile = useCallback(
+    (path: string) => runReplaceInPath(path),
+    [runReplaceInPath],
   );
 
   const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
@@ -26473,7 +26700,12 @@ export function useWorkbenchController(
 
     const timeout = window.setTimeout(() => {
       textSearch
-        .searchText(requestedRoot, textSearchQuery, 100, textSearchOptions)
+        .searchText(
+          requestedRoot,
+          textSearchQuery,
+          TEXT_SEARCH_RESULT_LIMIT,
+          textSearchOptions,
+        )
         .then((results) => {
           if (!active) {
             return;
@@ -26508,6 +26740,7 @@ export function useWorkbenchController(
     textSearchOpen,
     textSearchQuery,
     textSearchOptions,
+    textSearchRefreshToken,
     textSearch,
     workspaceRoot,
   ]);
@@ -27465,6 +27698,11 @@ export function useWorkbenchController(
     textSearchQuery,
     textSearchOptions,
     textSearchResults,
+    textReplacement,
+    setTextReplacement,
+    textReplaceBusy,
+    replaceAllInPath,
+    replaceInFile,
     toggleDirectory,
     toggleGitChangeIncluded,
     loadGitFileHunks,

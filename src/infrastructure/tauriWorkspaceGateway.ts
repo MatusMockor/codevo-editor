@@ -8,6 +8,7 @@ import type {
   ManagedPhpactorInstallUnsubscribeFn,
   PhpToolGateway,
   PhpToolAvailability,
+  ReplaceInPathResult,
   TextSearchGateway,
   TextSearchOptions,
   TextSearchResult,
@@ -110,6 +111,22 @@ export class TauriWorkspaceGateway
       query,
       limit,
       options: options ?? null,
+    });
+  }
+
+  replaceInPath(
+    root: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+    scopePath?: string,
+  ): Promise<ReplaceInPathResult> {
+    return invoke<ReplaceInPathResult>("replace_in_path", {
+      root,
+      query,
+      replacement,
+      options: options ?? null,
+      scopePath: scopePath ?? null,
     });
   }
 
