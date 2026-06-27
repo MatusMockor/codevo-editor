@@ -45,6 +45,7 @@ interface FakeEditor {
   executeEdits: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   getContribution: ReturnType<typeof vi.fn>;
+  gotoDefinitionContributionDispose: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
@@ -1725,6 +1726,75 @@ class InvoiceServiceTest extends TestCase
     expect(positionAtNavigation).toEqual(position);
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("disables Monaco's built-in Cmd-hover definition gesture so only explicit Cmd+click / Cmd+B navigate", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    // The reported repro: cursor over a class symbol in a PHP `use` statement.
+    // Monaco's built-in `gotodefinitionatposition` contribution navigates on its
+    // own Cmd interactions (mouseup with Cmd held, independent of leftButton and
+    // of the surface's guarded onMouseDown). Disposing it at mount is what stops
+    // Cmd-hover from yanking to the definition; navigation must only come from
+    // the surface's explicit Cmd+click handler and the Cmd+B keybinding.
+    const activeDocument: EditorDocument = {
+      content:
+        "<?php\n\nuse App\\Http\\Controllers\\Page\\LinkDomainVerificationController;\n",
+      language: "php",
+      name: "Routes.php",
+      path: "/workspace/app/Routes.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.getContribution).toHaveBeenCalledWith(
+      "editor.contrib.gotodefinitionatposition",
+    );
+    expect(editor.gotoDefinitionContributionDispose).toHaveBeenCalledTimes(1);
   });
 
   it("routes a Ctrl+click on code text through go-to-definition on Linux", async () => {
@@ -5317,7 +5387,11 @@ class Foo
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? { dispose: editor.gotoDefinitionContributionDispose }
+        : snippetController,
+    );
     editor.getSelection.mockReturnValue({
       endColumn: "doStuff();".length + 1,
       endLineNumber: 1,
@@ -5436,7 +5510,11 @@ class Foo
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? { dispose: editor.gotoDefinitionContributionDispose }
+        : snippetController,
+    );
     editor.getPosition.mockReturnValue({ column: 5, lineNumber: 1 });
     editor.getSelection.mockReturnValue({
       endColumn: 5,
@@ -5547,7 +5625,11 @@ class Foo
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? { dispose: editor.gotoDefinitionContributionDispose }
+        : snippetController,
+    );
     editor.getSelection.mockReturnValue({
       endColumn: "doStuff();".length + 1,
       endLineNumber: 1,
@@ -5898,7 +5980,11 @@ class Foo
     const lines = ["if ($ready)"];
     const { editor } = await mountCompleteStatementSurface(root, lines);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? { dispose: editor.gotoDefinitionContributionDispose }
+        : snippetController,
+    );
 
     editor.getPosition.mockReturnValue({
       column: lines[0].length + 1,
@@ -9303,6 +9389,11 @@ function createEditor(model: FakeModel): FakeEditor {
     startColumn: number;
     startLineNumber: number;
   } | null = null;
+  // Monaco's built-in Cmd/Ctrl definition gesture lives in the
+  // `editor.contrib.gotodefinitionatposition` contribution; the surface disposes
+  // it at mount so only the explicit Cmd+click / Cmd+B paths navigate. Track that
+  // dispose separately from the snippet controller stub.
+  const gotoDefinitionContributionDispose = vi.fn();
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
@@ -9310,7 +9401,14 @@ function createEditor(model: FakeModel): FakeEditor {
     ),
     executeEdits: vi.fn(),
     focus: vi.fn(),
-    getContribution: vi.fn(() => ({ insert: vi.fn() })),
+    getContribution: vi.fn((id?: string) => {
+      if (id === "editor.contrib.gotodefinitionatposition") {
+        return { dispose: gotoDefinitionContributionDispose };
+      }
+
+      return { insert: vi.fn() };
+    }),
+    gotoDefinitionContributionDispose,
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
       height: 480,

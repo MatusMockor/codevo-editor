@@ -1516,6 +1516,36 @@ function EditorSurfaceComponent({
     onToggleBookmarkAtLine,
   ]);
 
+  // Monaco ships a built-in "go to definition on Cmd/Ctrl" gesture
+  // (`editor.contrib.gotodefinitionatposition`). With `multiCursorModifier: "alt"`
+  // Cmd/Ctrl is the trigger modifier for that contribution, so it navigates on
+  // ITS OWN terms: it fires on mouse-UP whenever Cmd was held at mouse-down on
+  // the same line (a Cmd-hover that registers the faintest tap), it ignores the
+  // primary-button / CONTENT_TEXT guards the onMouseDown handler above enforces,
+  // and it reveals the definition through Monaco's own opener - bypassing the
+  // Laravel/PHP contextual cascade entirely. The net effect a user feels is
+  // being yanked to the definition merely by hovering a symbol with Cmd held.
+  //
+  // Dispose the contribution so go-to-definition fires ONLY through the two
+  // explicit, guarded paths: the Cmd+left-click handler above and the Cmd+B
+  // keybinding (both run the controller's onGoToDefinition cascade). Cmd-hover no
+  // longer navigates; document-link providers still render their own underline.
+  //
+  // Per-tab isolation: @monaco-editor/react reuses one editor instance across
+  // document switches, so disposing once at mount covers every tab; the effect
+  // re-runs if the editor instance itself changes.
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const gotoDefinitionGesture = editorApi.getContribution(
+      "editor.contrib.gotodefinitionatposition",
+    );
+
+    gotoDefinitionGesture?.dispose();
+  }, [editorApi]);
+
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
       return;
