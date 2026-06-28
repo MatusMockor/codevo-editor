@@ -1734,27 +1734,51 @@ export function useWorkbenchController(
         return false;
       }
 
-      return !syncedDocumentPathsRef.current.has(
-        languageServerDocumentSyncKey(rootPath, path),
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
+
+      // The document is genuinely unsynced only when neither language server
+      // (PHP nor JavaScript/TypeScript) still holds it open. An UnknownDocument
+      // error for a document that is still open on either server is a real
+      // desync, not the benign close race, so it must not be suppressed.
+      return (
+        !syncedDocumentPathsRef.current.has(syncKey) &&
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
       );
     },
     [],
   );
 
-  const reportLanguageServerError = useCallback((error: unknown) => {
-    const nextMessage = String(error);
-    setMessage(nextMessage);
+  const reportLanguageServerError = useCallback(
+    (error: unknown) => {
+      // Monaco feature providers (hover/completion/definition/codeAction/
+      // rename/references) report their failures through this path. When a tab
+      // is closed (didClose) between flushing a document change and the server's
+      // reply, phpactor answers with UnknownDocument for a path that is no
+      // longer open. That is a benign desync, not a real failure, so suppress it
+      // before it surfaces a false error toast or status message. Legitimate
+      // errors, and UnknownDocument for a document that is still open, fall
+      // through unchanged.
+      if (
+        isUnknownDocumentForUnsyncedPath(currentWorkspaceRootRef.current, error)
+      ) {
+        return;
+      }
 
-    if (lastLanguageServerCrashRef.current === nextMessage) {
-      return;
-    }
+      const nextMessage = String(error);
+      setMessage(nextMessage);
 
-    lastLanguageServerCrashRef.current = nextMessage;
-    setNotices((current) => [
-      createWorkbenchNotice("error", "Language Server", nextMessage),
-      ...current,
-    ]);
-  }, []);
+      if (lastLanguageServerCrashRef.current === nextMessage) {
+        return;
+      }
+
+      lastLanguageServerCrashRef.current = nextMessage;
+      setNotices((current) => [
+        createWorkbenchNotice("error", "Language Server", nextMessage),
+        ...current,
+      ]);
+    },
+    [isUnknownDocumentForUnsyncedPath],
+  );
 
   const reportLanguageServerErrorForActiveWorkspaceRoot = useCallback(
     (rootPath: string | null | undefined, error: unknown) => {

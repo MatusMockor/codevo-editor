@@ -5204,6 +5204,156 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("suppresses an UnknownDocument feature error for a document that is not open", async () => {
+    // RACE: a Monaco feature provider (hover/completion/codeAction) reports its
+    // error through onLanguageServerError -> reportLanguageServerError. If the
+    // tab was closed (didClose) between flushing the document change and the
+    // server's reply, phpactor answers with UnknownDocument for a path that is
+    // no longer synced. That is a benign desync, not a real failure, so it must
+    // not surface a false error toast or status message.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 821,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    // The document was never opened on the server (the tab is already closed),
+    // so its path is absent from the synced set.
+    const closedPath = "/workspace/app/Models/User.php";
+    const error = `UnknownDocument: Unknown text document "${fileUriFromPath(
+      closedPath,
+    )}"`;
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("UnknownDocument"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().message).toBeNull();
+  });
+
+  it("still reports a legitimate language server feature error", async () => {
+    // A genuine LSP failure (not UnknownDocument) reported through the Monaco
+    // feature path must continue to surface a notice and status message.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 822,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    const error = "Internal error: completion provider crashed";
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("completion provider crashed"),
+      ),
+    ).toBe(true);
+    expect(getWorkbench().message).toBe(error);
+  });
+
+  it("still reports an UnknownDocument error for an open, synced document", async () => {
+    // An UnknownDocument error for a document that IS still open is a real
+    // desync problem, not the benign close race, so it must remain visible.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 823,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    const error = `UnknownDocument: Unknown text document "${fileUriFromPath(
+      path,
+    )}"`;
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("UnknownDocument"),
+      ),
+    ).toBe(true);
+    expect(getWorkbench().message).toBe(error);
+  });
+
   it("drops a phpactor publication older than the last applied diagnostic", async () => {
     // BUG 1 protection: once a newer analysis version has been applied, a late
     // publication carrying an older analysis version must be dropped so it
