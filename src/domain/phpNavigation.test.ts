@@ -2093,6 +2093,46 @@ class PageService
       ),
     ).toBeNull();
   });
+
+  // Regression: `parent::method()` is a static method call whose receiver is the
+  // literal token `parent`. Go-to-definition must resolve that receiver via the
+  // extends clause (resolvePhpClassReference), never via resolvePhpClassName,
+  // which would treat `parent` as a real type name (`<namespace>\parent`) and
+  // never reach the parent declaration.
+  it("classifies parent::method() as a static call to the parent receiver", () => {
+    const source = `<?php
+
+namespace App\\DTOs\\Facebook\\Posts;
+
+final readonly class FacebookCarouselPostDTO extends AbstractFacebookPostDTO
+{
+    public function toImportFields(): array
+    {
+        return [...parent::toImportFields()];
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "parent::toImportFields"),
+      ),
+    ).toEqual({
+      className: "parent",
+      kind: "staticMethodCall",
+      methodName: "toImportFields",
+    });
+
+    // The extends clause names the real parent (covering `final readonly class`).
+    expect(phpExtendsClassName(source)).toBe("AbstractFacebookPostDTO");
+
+    // resolvePhpClassName must NOT be used for the `parent` receiver: it yields a
+    // junk namespaced literal instead of the parent class.
+    expect(resolvePhpClassName(source, "parent")).toBe(
+      "App\\DTOs\\Facebook\\Posts\\parent",
+    );
+  });
 });
 
 function phpProjectDescriptor(): PhpProjectDescriptor {

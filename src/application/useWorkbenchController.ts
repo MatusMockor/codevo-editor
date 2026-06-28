@@ -20733,7 +20733,13 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         !requestedRoot ||
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const className = resolvePhpClassName(
+      // resolvePhpClassReference (not resolvePhpClassName) so a `self::`,
+      // `static::`, or `parent::method()` static call maps to the enclosing /
+      // extended class. resolvePhpClassName treats `parent` as a literal type
+      // name (`<namespace>\parent`) and never reaches the parent declaration,
+      // so `parent::report()` / `parent::toImportFields()` go-to-definition
+      // failed before falling through to phpactor.
+      const className = resolvePhpClassReference(
         activeDocument.content,
         context.className,
       );
@@ -20819,6 +20825,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
+      resolvePhpClassReference,
       workspaceRoot,
     ],
   );
@@ -25392,6 +25399,17 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "git.commit",
+      title: "Git: Commit",
+      category: "Git",
+      shortcut: shortcut("git.commit"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void commitGitChanges();
+      },
+    });
+
+    registry.register({
       id: "editor.showCallHierarchy",
       title: "Show Call Hierarchy",
       category: "Editor",
@@ -25812,6 +25830,7 @@ export function useWorkbenchController(
     openGitStashPanel,
     openGitBranchPanel,
     createGitBranch,
+    commitGitChanges,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
@@ -26526,6 +26545,38 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("git.stashChanges")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitStashPanel();
+        }
+        return;
+      }
+
+      if (matches("git.showStashes")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitStashPanel();
+        }
+        return;
+      }
+
+      if (matches("git.switchBranch")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitBranchPanel();
+        }
+        return;
+      }
+
+      if (matches("git.newBranch")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void createGitBranch();
+        }
+        return;
+      }
+
       if (matches("bookmark.showPanel")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -26761,6 +26812,9 @@ export function useWorkbenchController(
     toggleGitBlame,
     openFileHistory,
     openLocalHistory,
+    openGitStashPanel,
+    openGitBranchPanel,
+    createGitBranch,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
