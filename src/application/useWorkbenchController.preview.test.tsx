@@ -25615,6 +25615,17 @@ class CommentController
     expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
       controllerPath,
     ]);
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "navigation.forward")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(agentPath);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      agentPath,
+    ]);
   });
 
   it("resolves Laravel request input through typed parameters instead of a random input method", async () => {

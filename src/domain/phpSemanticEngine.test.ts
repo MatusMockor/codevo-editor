@@ -1473,12 +1473,24 @@ Builder::macro('published', function (): Builder {
     return $this->whereNotNull('published_at');
 });
 
+Builder::macro('ids', function (): array {
+    return $this->pluck('id')->all();
+});
+
+Builder::macro('archive', function (): void {
+    $this->update(['archived' => true]);
+});
+
 $fromStaticChain = Post::query()->published()->first();
+$fromArrayMacroChain = Post::query()->ids()->first();
+$fromVoidMacroChain = Post::query()->archive()->first();
 $query = Post::query();
 $fromVariableChain = $query->published()->first();
 $fromUnknownVariableChain = $query->missingMacro()->first();
 
 $fromStaticChain->tit
+$fromArrayMacroChain->tit
+$fromVoidMacroChain->tit
 $fromVariableChain->tit
 $fromUnknownVariableChain->tit
 `;
@@ -1499,6 +1511,22 @@ $fromUnknownVariableChain->tit
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromArrayMacroChain->tit"),
+        "fromArrayMacroChain",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromVoidMacroChain->tit"),
+        "fromVoidMacroChain",
+        laravelOptions,
+      ),
+    ).toBeNull();
     expect(
       phpVariableTypeInSource(
         source,

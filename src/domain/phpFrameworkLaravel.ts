@@ -1211,14 +1211,7 @@ export function isLaravelEloquentBuilderMacroFromSource(
   source: string,
   methodName: string,
 ): boolean {
-  const lookupName = methodName.trim().toLowerCase();
-
-  return Boolean(
-    lookupName &&
-      phpLaravelEloquentBuilderMacrosFromSource(source).some(
-        (macro) => macro.name.toLowerCase() === lookupName,
-      ),
-  );
+  return Boolean(phpLaravelEloquentBuilderMacroFromSource(source, methodName));
 }
 
 export function phpLaravelEloquentBuilderMacroCompletionsFromSource(
@@ -3616,10 +3609,23 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
 ): boolean {
   return (
     isLaravelEloquentBuilderPreservingMethod(methodName) ||
-    isLaravelEloquentBuilderMacroFromSource(source, methodName) ||
+    phpLaravelEloquentBuilderMacroPreservesBuilder(source, methodName) ||
     phpLaravelModelHasDynamicWhere(source, modelType, methodName) ||
     phpLaravelModelHasLocalScope(source, modelType, methodName)
   );
+}
+
+function phpLaravelEloquentBuilderMacroPreservesBuilder(
+  source: string,
+  methodName: string,
+): boolean {
+  const returnType = phpLaravelEloquentBuilderMacroFromSource(source, methodName)
+    ?.returnType ?? null;
+
+  return phpLaravelGenericCarrierMatches(source, returnType, [
+    "builder",
+    "illuminate\\database\\eloquent\\builder",
+  ]);
 }
 
 function phpLaravelEloquentBuilderType(modelType: string): string {
@@ -3810,6 +3816,10 @@ function phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
   modelType: string,
   methodName: string,
 ): boolean {
+  if (isLaravelEloquentBuilderMacroFromSource(source, methodName)) {
+    return phpLaravelEloquentBuilderMacroPreservesBuilder(source, methodName);
+  }
+
   return (
     phpLaravelEloquentBuilderCallPreservesBuilder(
       source,
@@ -3885,6 +3895,23 @@ function phpLaravelEloquentBuilderMacrosFromSource(
   }
 
   return macros;
+}
+
+function phpLaravelEloquentBuilderMacroFromSource(
+  source: string,
+  methodName: string,
+): PhpLaravelEloquentBuilderMacro | null {
+  const lookupName = methodName.trim().toLowerCase();
+
+  if (!lookupName) {
+    return null;
+  }
+
+  return (
+    phpLaravelEloquentBuilderMacrosFromSource(source).find(
+      (macro) => macro.name.toLowerCase() === lookupName,
+    ) ?? null
+  );
 }
 
 function phpLaravelMacroNameFromArgument(argument: string): string | null {
