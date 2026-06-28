@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     io,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -47,6 +48,13 @@ pub struct GitFileDiff {
     pub original_content: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepoStatus {
+    pub git_available: bool,
+    pub is_repository: bool,
+}
+
 /// A single hunk from `git diff` (or `git diff --cached`) for one file. The
 /// `index` is the hunk's position within that file's diff and is the stable
 /// identifier the front-end sends back to stage/unstage exactly that hunk. The
@@ -59,6 +67,47 @@ pub struct GitDiffHunk {
     pub index: u32,
     pub lines: Vec<String>,
     pub is_staged: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranches {
+    pub current: Option<String>,
+    pub local: Vec<String>,
+    pub remotes: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFilters {
+    pub author: Option<String>,
+    pub branch: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
+    pub path: Option<String>,
+    pub query: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommit {
+    pub abbrev_hash: String,
+    pub author_email: String,
+    pub author_name: String,
+    pub date: String,
+    pub hash: String,
+    pub labels: Vec<String>,
+    pub parents: Vec<String>,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDetails {
+    #[serde(flatten)]
+    pub commit: GitCommit,
+    pub body: String,
+    pub containing_branches: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -79,6 +128,16 @@ pub struct GitFileHistoryEntry {
     pub timestamp: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFileChange {
+    pub is_rename: bool,
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub path: String,
+    pub status: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashEntry {
@@ -86,6 +145,29 @@ pub struct GitStashEntry {
     pub index: u32,
     pub message: String,
     pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitGraphNode {
+    pub children: Vec<String>,
+    pub commit: GitCommit,
+    pub depth: usize,
+    pub hash: String,
+    pub is_merge: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiffPayload {
+    pub commit_hash: String,
+    pub is_rename: bool,
+    pub language: String,
+    pub modified_content: String,
+    pub old_path: Option<String>,
+    pub original_content: String,
+    pub path: String,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -636,6 +718,338 @@ fn is_git_repository(root: &Path) -> io::Result<bool> {
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
+pub fn git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
+    let local = git_output_vec(root, vec!["branch", "--format=%(refname:short)"])?;
+    let remotes = git_output_vec(
+        root,
+        vec!["branch", "--remotes", "--format=%(refname:short)"],
+    )?;
+
+    let mut remote_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for line in remotes.lines() {
+        let line = line.trim();
+
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut parts = line.splitn(2, '/');
+        let remote = parts.next().unwrap_or("");
+        let branch = parts.next();
+
+        if remote.is_empty() || branch.is_none() {
+            continue;
+        }
+
+        let branch = branch.unwrap_or_default();
+        if branch == "HEAD" || branch.starts_with("HEAD ->") {
+            continue;
+        }
+
+        let remote_branches = remote_groups.entry(remote.to_string()).or_default();
+        remote_branches.push(branch.to_string());
+    }
+
+    Ok(GitBranches {
+        current: current_branch(root).ok().flatten(),
+        local: local
+            .lines()
+            .map(str::trim)
+            .map(str::to_owned)
+            .filter(|branch| !branch.is_empty())
+            .collect(),
+        remotes: remote_groups,
+    })
+}
+
+pub fn load_commit_log(
+    root: &Path,
+    filters: GitCommitFilters,
+) -> io::Result<Vec<GitCommit>> {
+    let limit = filters.limit.unwrap_or(100);
+    let mut args: Vec<String> = vec![
+        "log".to_string(),
+        "--date=iso-strict".to_string(),
+        "--decorate=short".to_string(),
+        format!("--max-count={limit}"),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string(),
+    ];
+
+    if let Some(skip) = filters
+        .cursor
+        .as_deref()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        args.push(format!("--skip={skip}"));
+    }
+
+    if let Some(author) = filters.author.as_deref().filter(|value| !value.is_empty()) {
+        args.push(format!("--author={author}"));
+    }
+
+    if let Some(query) = filters.query.as_deref().filter(|value| !value.is_empty()) {
+        args.push("--regexp-ignore-case".to_string());
+        args.push(format!("--grep={query}"));
+    }
+
+    let range_ref = filters.branch.unwrap_or_else(|| "HEAD".to_string());
+    if !git_ref_has_commits(root, &range_ref) {
+        return Ok(Vec::new());
+    }
+
+    args.push(range_ref);
+
+    if let Some(path) = filters.path.as_deref().filter(|value| !value.is_empty()) {
+        args.push("--".to_string());
+        args.push(path.to_string());
+    }
+
+    let output = git_output_vec(root, args)?;
+    Ok(parse_commit_log_output(&output))
+}
+
+fn git_ref_has_commits(root: &Path, reference: &str) -> bool {
+    git_output_vec(root, vec!["rev-parse", "--verify", reference]).is_ok()
+}
+
+fn parse_commit_log_output(output: &str) -> Vec<GitCommit> {
+    output
+        .split('\0')
+        .filter(|entry| !entry.trim().is_empty())
+        .filter_map(|entry| {
+            let fields: Vec<&str> = entry.split('\x1f').collect();
+            if fields.len() < 9 {
+                return None;
+            }
+
+            Some(parse_git_commit_from_fields(&fields))
+        })
+        .collect()
+}
+
+fn parse_git_commit_from_fields(fields: &[&str]) -> GitCommit {
+    let labels = parse_git_labels(fields[8]);
+    let parents = fields[6]
+        .split_whitespace()
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    GitCommit {
+        abbrev_hash: fields[1].trim().to_string(),
+        author_email: fields[3].trim().to_string(),
+        author_name: fields[2].trim().to_string(),
+        date: fields[4].trim().to_string(),
+        hash: fields[0].trim().to_string(),
+        labels,
+        parents,
+        subject: fields[5].trim().to_string(),
+    }
+}
+
+fn parse_git_labels(value: &str) -> Vec<String> {
+    let raw = value.trim().trim_start_matches('(').trim_end_matches(')');
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    raw.split(',')
+        .filter_map(|piece| {
+            let label = piece.trim();
+            if label.is_empty() || label == "HEAD" || label == "tag: HEAD" {
+                return None;
+            }
+
+            if label.starts_with("tag: ") || label.starts_with("origin/") {
+                Some(label.to_string())
+            } else if label.starts_with("HEAD -> ") {
+                Some(
+                    label
+                        .split("->")
+                        .nth(1)
+                        .map(str::trim)
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            } else {
+                Some(label.to_string())
+            }
+        })
+        .collect()
+}
+
+pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitCommitDetails> {
+    let commit_hash = safe_commit_sha(commit_hash)?;
+    let command = "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
+    let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash])?;
+    let commit = output
+        .split('\0')
+        .filter(|entry| !entry.trim().is_empty())
+        .next()
+        .map(|entry| {
+            let fields: Vec<&str> = entry.split('\x1f').collect();
+            parse_git_commit_from_fields(&fields)
+        })
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit not found."))?;
+
+    let body = git_output_vec(root, vec!["log", "-1", "--pretty=%B", &commit_hash])?
+        .trim_end()
+        .to_string();
+
+    let containing_local = git_output_vec(
+        root,
+        vec!["branch", "--format=%(refname:short)", "--contains", &commit_hash],
+    )?;
+    let containing_remote = git_output_vec(
+        root,
+        vec![
+            "branch",
+            "--remotes",
+            "--format=%(refname:short)",
+            "--contains",
+            &commit_hash,
+        ],
+    )?;
+
+    let mut containing_branches = containing_local
+        .lines()
+        .filter_map(|value| {
+            let branch = value.trim();
+            if branch.is_empty() {
+                None
+            } else {
+                Some(branch.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let remote_branches = containing_remote
+        .lines()
+        .filter_map(|value| {
+            let branch = value.trim();
+            if branch.is_empty() {
+                None
+            } else {
+                Some(branch.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for branch in remote_branches {
+        if !containing_branches.contains(&branch) {
+            containing_branches.push(branch);
+        }
+    }
+
+    Ok(GitCommitDetails {
+        commit,
+        body,
+        containing_branches,
+    })
+}
+
+pub fn load_commit_files(root: &Path, commit_hash: &str) -> io::Result<Vec<CommitFileChange>> {
+    let commit_hash = safe_commit_sha(commit_hash)?;
+    let output = git_output_vec(
+        root,
+        vec!["show", "--pretty=format:", "--name-status", &commit_hash],
+    )?;
+
+    Ok(output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let mut fields: Vec<&str> = line.split('\t').collect();
+            if fields.is_empty() {
+                return None;
+            }
+
+            let status = fields.remove(0);
+            if status.is_empty() {
+                return None;
+            }
+
+            if status.starts_with('R') {
+                if fields.len() < 2 {
+                    return None;
+                }
+
+                let old_path = fields.first().copied().map(ToOwned::to_owned);
+                let new_path = fields.get(1).copied().map(ToOwned::to_owned);
+
+                return Some(CommitFileChange {
+                    is_rename: true,
+                    new_path,
+                    old_path,
+                    path: fields.get(1).copied().unwrap_or_default().to_string(),
+                    status: "R".to_string(),
+                });
+            }
+
+            if fields.is_empty() {
+                return None;
+            }
+
+            Some(CommitFileChange {
+                is_rename: false,
+                old_path: None,
+                new_path: None,
+                path: fields[0].to_string(),
+                status: status.chars().next().unwrap_or('M').to_string(),
+            })
+        })
+        .collect())
+}
+
+pub fn load_commit_diff(
+    root: &Path,
+    commit_hash: &str,
+    path: &str,
+    old_path: Option<&str>,
+    files: &[CommitFileChange],
+) -> io::Result<CommitDiffPayload> {
+    let commit_hash = safe_commit_sha(commit_hash)?;
+    let normalized_old_path = old_path.unwrap_or(path);
+
+    let file = files
+        .iter()
+        .find(|candidate| {
+            if candidate.is_rename {
+                candidate.path == path
+                    || candidate
+                        .old_path
+                        .as_deref()
+                        .is_some_and(|value| value == normalized_old_path)
+            } else {
+                candidate.path == path
+            }
+        })
+        .or_else(|| files.iter().find(|candidate| candidate.path == normalized_old_path))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit file not found."))?;
+
+    let old_content = git_output_vec(root, vec!["show", "--no-color", &format!("{}^:{}", commit_hash, normalized_old_path)]).unwrap_or_default();
+    let modified_content = git_output_vec(root, vec!["show", "--no-color", &format!("{}:{}", commit_hash, path)]).unwrap_or_default();
+
+    Ok(CommitDiffPayload {
+        commit_hash: commit_hash.to_string(),
+        is_rename: file.is_rename,
+        language: language_for_path(path),
+        modified_content,
+        old_path: old_path.map(ToOwned::to_owned),
+        original_content: old_content,
+        path: path.to_string(),
+        status: file.status.to_string(),
+    })
+}
+
 fn current_branch(root: &Path) -> io::Result<Option<String>> {
     let output = Command::new("git")
         .arg("-C")
@@ -1125,17 +1539,22 @@ fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
     ))
 }
 
-fn git_output_vec(root: &Path, args: Vec<&str>) -> io::Result<String> {
+fn git_output_vec<S: AsRef<str>>(root: &Path, args: Vec<S>) -> io::Result<String> {
     git_output_vec_with_env(root, args, None)
 }
 
-fn git_output_vec_with_env(
+fn git_output_vec_with_env<S: AsRef<str>>(
     root: &Path,
-    args: Vec<&str>,
+    args: Vec<S>,
     index_file: Option<&Path>,
 ) -> io::Result<String> {
+    let command_args: Vec<String> = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect();
+
     let mut command = Command::new("git");
-    command.arg("-C").arg(root).args(args);
+    command.arg("-C").arg(root).args(&command_args);
 
     if let Some(index_file) = index_file {
         command.env("GIT_INDEX_FILE", index_file);
@@ -1572,10 +1991,11 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        load_commit_details, load_commit_diff, load_commit_files, load_commit_log,
         parse_blame_porcelain, parse_branch_list, parse_diff_hunks, parse_file_history,
         parse_porcelain_status, parse_stash_list, safe_branch_name, safe_commit_sha,
         safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
-        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitCommitFilters, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -1588,6 +2008,113 @@ mod tests {
     /// Guarantees a distinct temp-repo path for every `TestGitRepo`, even when
     /// the platform clock is too coarse to disambiguate concurrent tests.
     static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn commit_log_returns_empty_for_unborn_head() {
+        let repo = TestGitRepo::new();
+
+        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn commit_log_lists_commits_from_real_repository() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].subject, "second commit");
+        assert_eq!(commits[0].author_name, "History Author");
+        assert_eq!(commits[0].author_email, "history@example.com");
+        assert_eq!(commits[1].subject, "first commit");
+        assert_eq!(commits[0].parents.len(), 1);
+        assert!(commits[0].hash.len() >= 40);
+        assert!(commits
+            .iter()
+            .all(|commit| commit.hash.chars().all(|value| !value.is_whitespace())));
+    }
+
+    #[test]
+    fn commit_log_uses_cursor_as_skip_offset() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let commits = load_commit_log(
+            repo.path(),
+            GitCommitFilters {
+                cursor: Some("1".to_string()),
+                limit: Some(1),
+                ..empty_commit_filters()
+            },
+        )
+        .expect("commit log");
+
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].subject, "first commit");
+    }
+
+    #[test]
+    fn commit_details_loads_metadata_from_real_repository() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "details@example.com"]);
+        repo.run(["config", "user.name", "Details Author"]);
+        repo.write("file.txt", "details\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "subject line", "-m", "body line"]);
+        let sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        let details = load_commit_details(repo.path(), &sha).expect("details");
+
+        assert_eq!(details.commit.subject, "subject line");
+        assert_eq!(details.commit.author_name, "Details Author");
+        assert_eq!(details.commit.author_email, "details@example.com");
+        assert_eq!(details.body, "subject line\n\nbody line");
+        assert!(!details.containing_branches.is_empty());
+    }
+
+    #[test]
+    fn commit_history_loads_details_files_and_diff_for_non_head_commit() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "details@example.com"]);
+        repo.run(["config", "user.name", "Details Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        let first_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let details = load_commit_details(repo.path(), &first_sha).expect("details");
+        let files = load_commit_files(repo.path(), &first_sha).expect("files");
+        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files)
+            .expect("diff");
+
+        assert_eq!(details.commit.subject, "first commit");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "file.txt");
+        assert_eq!(files[0].status, "A");
+        assert_eq!(diff.original_content, "");
+        assert_eq!(diff.modified_content, "first\n");
+        assert_eq!(diff.status, "A");
+    }
 
     #[test]
     fn parses_porcelain_status_changes() {
@@ -2597,6 +3124,17 @@ mod tests {
             path: format!("/workspace/{relative_path}"),
             relative_path: relative_path.to_string(),
             status,
+        }
+    }
+
+    fn empty_commit_filters() -> GitCommitFilters {
+        GitCommitFilters {
+            author: None,
+            branch: None,
+            cursor: None,
+            limit: None,
+            path: None,
+            query: None,
         }
     }
 

@@ -14,6 +14,8 @@ import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
+import { GitHistoryPanel } from "./GitHistoryPanel";
+import type { GitHistoryGateway } from "../domain/git";
 
 interface BottomPanelProps {
   activeView: BottomPanelView;
@@ -30,13 +32,24 @@ interface BottomPanelProps {
   onSoftReindex(): void;
   onTerminalSessionReady?(sessionId: number | null): void;
   onTrustWorkspace(): void;
+  gitHistoryGateway: GitHistoryGateway;
+  onOpenCommitFileDiff(
+    commitHash: string,
+    path: string,
+    oldPath: string | null,
+  ): Promise<void> | void;
   terminalGateway: TerminalGateway;
   terminalTheme: TerminalTheme;
   workspaceTrusted: boolean;
   workspaceRoot: string | null;
 }
 
-const bottomPanelViews: BottomPanelView[] = ["problems", "index", "terminal"];
+const bottomPanelViews: BottomPanelView[] = [
+  "problems",
+  "index",
+  "history",
+  "terminal",
+];
 const LazyTerminalPanel = lazy(() =>
   import("./TerminalPanel").then((module) => ({
     default: module.TerminalPanel,
@@ -56,6 +69,8 @@ export function BottomPanel({
   onResizeStart,
   onSelectView,
   onSoftReindex,
+  onOpenCommitFileDiff,
+  gitHistoryGateway,
   onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
@@ -126,6 +141,8 @@ export function BottomPanel({
     onHardReindex,
     onOpenProblem,
     onPhpReindex,
+    onOpenCommitFileDiff,
+    gitHistoryGateway,
     onSoftReindex,
     workspaceRoot,
   });
@@ -243,6 +260,12 @@ interface RenderActivePanelOptions {
   onOpenProblem(notice: WorkbenchNotice): void;
   onPhpReindex(): void;
   onSoftReindex(): void;
+  onOpenCommitFileDiff(
+    commitHash: string,
+    path: string,
+    oldPath: string | null,
+  ): Promise<void> | void;
+  gitHistoryGateway: GitHistoryGateway;
   workspaceRoot: string | null;
 }
 
@@ -254,7 +277,9 @@ function renderActivePanel({
   onHardReindex,
   onOpenProblem,
   onPhpReindex,
+  onOpenCommitFileDiff,
   onSoftReindex,
+  gitHistoryGateway,
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "problems") {
@@ -263,6 +288,16 @@ function renderActivePanel({
         isActive
         notices={notices}
         onOpenNotice={onOpenProblem}
+      />
+    );
+  }
+
+  if (activeView === "history") {
+    return (
+      <GitHistoryPanel
+        gateway={gitHistoryGateway}
+        onOpenCommitFileDiff={onOpenCommitFileDiff}
+        rootPath={workspaceRoot}
       />
     );
   }

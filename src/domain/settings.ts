@@ -40,7 +40,11 @@ export type BackgroundRuntimePolicy =
 export type JavaScriptTypeScriptServiceMode = "auto" | "off";
 export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
-export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
+export type WorkspaceSessionBottomPanelView =
+  | "index"
+  | "problems"
+  | "history"
+  | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 export type SettingsSection =
   | "general"
@@ -852,7 +856,12 @@ function isJavaScriptTypeScriptVersionPreference(
 function isWorkspaceSessionBottomPanelView(
   value: unknown,
 ): value is WorkspaceSessionBottomPanelView {
-  return value === "index" || value === "problems" || value === "terminal";
+  return (
+    value === "index" ||
+    value === "problems" ||
+    value === "history" ||
+    value === "terminal"
+  );
 }
 
 function isWorkspaceSessionSidebarView(

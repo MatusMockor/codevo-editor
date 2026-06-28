@@ -301,7 +301,7 @@ describe("normalizeWorkspaceSettings", () => {
         revealActiveFileInTree: false,
         session: {
           activePath: "/project/src/User.php",
-          bottomPanelView: "index",
+          bottomPanelView: "history",
           openPaths: [
             "/project/src/User.php",
             "/project/src/User.php",
@@ -343,7 +343,7 @@ describe("normalizeWorkspaceSettings", () => {
       revealActiveFileInTree: false,
       session: {
         activePath: "/project/src/User.php",
-        bottomPanelView: "index",
+        bottomPanelView: "history",
         openPaths: ["/project/src/User.php", "/project/README.md"],
         sidebarView: "git",
       },
@@ -459,6 +459,22 @@ describe("normalizeWorkspaceSettings", () => {
 });
 
 describe("normalizeWorkspaceSession", () => {
+  it("accepts history as a valid stored bottom panel view", () => {
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/src/User.php",
+        bottomPanelView: "history",
+        openPaths: ["/project/src/User.php"],
+        sidebarView: "files",
+      }),
+    ).toEqual({
+      activePath: "/project/src/User.php",
+      bottomPanelView: "history",
+      openPaths: ["/project/src/User.php"],
+      sidebarView: "files",
+    });
+  });
+
   it("falls back for invalid layout values and inactive paths", () => {
     expect(
       normalizeWorkspaceSession({

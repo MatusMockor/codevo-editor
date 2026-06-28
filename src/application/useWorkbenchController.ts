@@ -660,6 +660,10 @@ interface OpenGitChangeOptions {
   pin?: boolean;
 }
 
+interface OpenReadOnlyDocumentOptions {
+  pin?: boolean;
+}
+
 interface PhpClassMemberCacheEntry {
   members: PhpMethodCompletion[];
   sourceSignature: string;
@@ -1894,18 +1898,33 @@ export function useWorkbenchController(
 
   const cacheCurrentWorkspaceState = useCallback(
     (rootPath: string) => {
+      const cacheableDocuments = Object.fromEntries(
+        Object.entries(documents).filter(([path]) =>
+          isPersistableEditorDocumentPath(path),
+        ),
+      );
+      const cacheableOpenPaths = openPaths.filter(isPersistableEditorDocumentPath);
+      const cacheablePreviewPath =
+        previewPath && isPersistableEditorDocumentPath(previewPath)
+          ? previewPath
+          : null;
+      const cacheableActivePath =
+        activePath && isPersistableEditorDocumentPath(activePath)
+          ? activePath
+          : null;
+
       workspaceStateCacheRef.current[rootPath] = {
-        activePath,
+        activePath: cacheableActivePath,
         bookmarks,
         bottomPanelView,
         bottomPanelVisible,
-        documents,
+        documents: cacheableDocuments,
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
         navigationHistory,
-        openPaths,
-        previewPath,
+        openPaths: cacheableOpenPaths,
+        previewPath: cacheablePreviewPath,
         recentFiles,
         recentLocations,
         sidebarView,
@@ -1931,15 +1950,37 @@ export function useWorkbenchController(
 
   const restoreCachedWorkspaceState = useCallback(
     (cached: CachedWorkspaceWorkbenchState) => {
+      const restoredDocuments = Object.fromEntries(
+        Object.entries(cached.documents).filter(([path]) =>
+          isPersistableEditorDocumentPath(path),
+        ),
+      );
+      const restoredOpenPaths = cached.openPaths.filter(
+        isPersistableEditorDocumentPath,
+      );
+      const restoredPreviewPath =
+        cached.previewPath &&
+        isPersistableEditorDocumentPath(cached.previewPath)
+          ? cached.previewPath
+          : null;
+      const cacheableActivePath =
+        cached.activePath && isPersistableEditorDocumentPath(cached.activePath)
+          ? cached.activePath
+          : null;
+      const nextActivePath = restoredActivePath(
+        cacheableActivePath,
+        restoredOpenPaths,
+      );
+
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
       setManuallyCollapsedDirectories(
         new Set(cached.manuallyCollapsedDirectories),
       );
-      setDocuments(cached.documents);
-      setOpenPaths(cached.openPaths);
-      setActivePath(cached.activePath);
-      setPreviewPath(cached.previewPath);
+      setDocuments(restoredDocuments);
+      setOpenPaths(restoredOpenPaths);
+      setActivePath(nextActivePath);
+      setPreviewPath(restoredPreviewPath);
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
@@ -4752,8 +4793,10 @@ export function useWorkbenchController(
 
   const restoreWorkspaceSession = useCallback(
     async (rootPath: string, session: WorkspaceSessionState) => {
-      const paths = session.openPaths.filter((path) =>
-        isSessionPathInWorkspace(rootPath, path),
+      const paths = session.openPaths.filter(
+        (path) =>
+          isPersistableEditorDocumentPath(path) &&
+          isSessionPathInWorkspace(rootPath, path),
       );
 
       if (paths.length === 0) {
@@ -6205,17 +6248,46 @@ export function useWorkbenchController(
   }, [activeDocument?.path, activeDocument?.savedContent, gitGateway, workspaceRoot]);
 
   const previewGitChange = useCallback(
-    async (change: GitChangedFile, _options: OpenGitChangeOptions = {}) => {
+    async (change: GitChangedFile, options: OpenGitChangeOptions = {}) => {
       if (!workspaceRoot) {
         return;
       }
 
       const requestedRoot = workspaceRoot;
       const requestToken = gitDiffRequestTokenRef.current + 1;
+      const documentPath = gitDiffDocumentPath(change);
+      const document = gitDiffDocument(change);
       gitDiffRequestTokenRef.current = requestToken;
+      recordCurrentNavigationLocation();
+      documentsRef.current = {
+        ...documentsRef.current,
+        [documentPath]: documentsRef.current[documentPath] ?? document,
+      };
+      activeDocumentRef.current = documentsRef.current[documentPath] ?? document;
+      setDocuments((current) => ({
+        ...current,
+        [documentPath]: current[documentPath] ?? document,
+      }));
+      if (options.pin === true) {
+        openPathsRef.current = openPathsRef.current.includes(documentPath)
+          ? openPathsRef.current
+          : [...openPathsRef.current, documentPath];
+        previewPathRef.current =
+          previewPathRef.current === documentPath ? null : previewPathRef.current;
+        setOpenPaths((current) =>
+          current.includes(documentPath) ? current : [...current, documentPath],
+        );
+        setPreviewPath((current) =>
+          current === documentPath ? null : current,
+        );
+      } else {
+        previewPathRef.current = documentPath;
+        setPreviewPath(documentPath);
+      }
       setSelectedGitChange(change);
       setGitDiffPreview(null);
       setGitDiffLoading(true);
+      setActivePath(documentPath);
 
       try {
         const diff = await gitGateway.getDiff(requestedRoot, change);
@@ -6230,7 +6302,6 @@ export function useWorkbenchController(
           return;
         }
 
-        recordCurrentNavigationLocation();
         setGitDiffPreview(diff);
         setMessage(`Diff ${change.relativePath}`);
       } catch (error) {
@@ -6275,20 +6346,83 @@ export function useWorkbenchController(
     [previewGitChange],
   );
 
-  const closeGitDiffPreview = useCallback(() => {
+  const openReadOnlyDocument = useCallback(
+    (document: EditorDocument, options: OpenReadOnlyDocumentOptions = {}) => {
+      const nextDocument = {
+        ...document,
+        readOnly: true,
+        savedContent: document.savedContent ?? document.content,
+      };
+
+      recordCurrentNavigationLocation();
+      documentsRef.current = {
+        ...documentsRef.current,
+        [nextDocument.path]: nextDocument,
+      };
+      activeDocumentRef.current = nextDocument;
+
+      if (options.pin === true) {
+        openPathsRef.current = openPathsRef.current.includes(nextDocument.path)
+          ? openPathsRef.current
+          : [...openPathsRef.current, nextDocument.path];
+        previewPathRef.current =
+          previewPathRef.current === nextDocument.path
+            ? null
+            : previewPathRef.current;
+        setOpenPaths((current) =>
+          current.includes(nextDocument.path)
+            ? current
+            : [...current, nextDocument.path],
+        );
+        setPreviewPath((current) =>
+          current === nextDocument.path ? null : current,
+        );
+      } else {
+        previewPathRef.current = nextDocument.path;
+        setPreviewPath(nextDocument.path);
+      }
+
+      setDocuments((current) => ({
+        ...current,
+        [nextDocument.path]: nextDocument,
+      }));
+      setSelectedGitChange(null);
+      setGitDiffPreview(null);
+      setGitDiffLoading(false);
+      setActivePath(nextDocument.path);
+      setMessage(null);
+    },
+    [recordCurrentNavigationLocation],
+  );
+
+  const clearGitDiffPreviewState = useCallback(() => {
     gitDiffRequestTokenRef.current += 1;
-    const documentPath = selectedGitChange
-      ? gitDiffDocumentPath(selectedGitChange)
-      : null;
     setGitDiffLoading(false);
     setSelectedGitChange(null);
     setGitDiffPreview(null);
+    setMessage(null);
+  }, []);
+
+  const closeGitDiffPreview = useCallback(() => {
+    clearGitDiffPreviewState();
+    const documentPath = selectedGitChange
+      ? gitDiffDocumentPath(selectedGitChange)
+      : null;
     if (documentPath) {
       const nextActivePath = nextActiveEditorPathAfterClose(
         documentPath,
         openPaths,
         previewPath,
       );
+      const nextDocumentsRef = { ...documentsRef.current };
+      delete nextDocumentsRef[documentPath];
+      documentsRef.current = nextDocumentsRef;
+      openPathsRef.current = openPathsRef.current.filter(
+        (path) => path !== documentPath,
+      );
+      if (previewPathRef.current === documentPath) {
+        previewPathRef.current = null;
+      }
       setDocuments((current) => {
         const next = { ...current };
         delete next[documentPath];
@@ -6308,8 +6442,8 @@ export function useWorkbenchController(
         );
       }
     }
-    setMessage(null);
   }, [
+    clearGitDiffPreviewState,
     gitStatus.changes,
     loadGitDiffDocument,
     openPaths,
@@ -28136,6 +28270,7 @@ export function useWorkbenchController(
     openReferencesPanel,
     openReferenceRow,
     openGitChange,
+    openReadOnlyDocument,
     openFileStructure,
     openImplementationTarget,
     openProblemNotice,
@@ -29575,6 +29710,22 @@ function gitDiffDocumentPath(change: GitChangedFile): string {
   return `mockor-git-diff:${side}:${change.path}`;
 }
 
+function isPersistableEditorDocumentPath(path: string): boolean {
+  return !path.startsWith("mockor-git-diff:") &&
+    !path.startsWith("mockor-git-history-diff:");
+}
+
+function gitDiffDocument(change: GitChangedFile): EditorDocument {
+  return {
+    content: "",
+    language: "plaintext",
+    name: `Diff: ${getFileName(change.relativePath)}`,
+    path: gitDiffDocumentPath(change),
+    readOnly: true,
+    savedContent: "",
+  };
+}
+
 function gitChangeForDiffDocumentPath(
   path: string,
   changes: GitChangedFile[],
@@ -29589,8 +29740,10 @@ function currentWorkspaceSession(
   sidebarView: SidebarView,
   bottomPanelView: BottomPanelView,
 ): WorkspaceSessionState {
-  const sessionPaths = openPaths.filter((path) =>
-    isSessionPathInWorkspace(rootPath, path),
+  const sessionPaths = openPaths.filter(
+    (path) =>
+      isPersistableEditorDocumentPath(path) &&
+      isSessionPathInWorkspace(rootPath, path),
   );
 
   return {

@@ -16,21 +16,56 @@ vi.mock("./application/useWorkbenchController", async () => {
     useWorkbenchController: () => {
       const change = readmeChange();
       const [state, setState] = React.useState({
+        activePath: null as string | null,
         gitDiffLoading: false,
         gitDiffPreview: null as GitFileDiff | null,
+        openDocuments: [] as Array<{
+          content: string;
+          language: string;
+          name: string;
+          path: string;
+          readOnly: boolean;
+          savedContent: string;
+        }>,
+        previewPath: null as string | null,
         selectedGitChange: null as GitChangedFile | null,
       });
 
       const previewGitChange = async (selected: GitChangedFile) => {
+        const diffPath = `mockor-git-diff:worktree:${selected.path}`;
         setState({
+          activePath: diffPath,
           gitDiffLoading: true,
           gitDiffPreview: null,
+          openDocuments: [
+            {
+              content: "",
+              language: "plaintext",
+              name: "Diff: README.md",
+              path: diffPath,
+              readOnly: true,
+              savedContent: "",
+            },
+          ],
+          previewPath: diffPath,
           selectedGitChange: selected,
         });
         await Promise.resolve();
         setState({
+          activePath: diffPath,
           gitDiffLoading: false,
           gitDiffPreview: readmeDiff(selected),
+          openDocuments: [
+            {
+              content: "",
+              language: "plaintext",
+              name: "Diff: README.md",
+              path: diffPath,
+              readOnly: true,
+              savedContent: "",
+            },
+          ],
+          previewPath: diffPath,
           selectedGitChange: selected,
         });
       };
@@ -101,11 +136,15 @@ describe("App Git diff click path", () => {
     });
 
     expect(host.textContent).toContain("README.md");
+    expect(host.textContent).toContain("Diff: README.md");
     expect(host.textContent).toContain("@@ -1 +1,3 @@");
     expect(host.textContent).toContain("Updated docs");
     expect(host.querySelector('[data-testid="plain-git-diff"]')).not.toBeNull();
     expect(host.innerHTML).not.toBe("");
-    expect(appGitDiffClickMocks.loadGitFileHunks).not.toHaveBeenCalled();
+    expect(appGitDiffClickMocks.loadGitFileHunks).toHaveBeenCalledWith(
+      "README.md",
+      false,
+    );
   });
 });
 
