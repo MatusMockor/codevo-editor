@@ -16,6 +16,7 @@ mod lsp_document;
 mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
+mod managed_javascript_typescript;
 mod managed_phpactor;
 pub mod php_file_outline;
 pub mod php_parser;
@@ -2391,6 +2392,19 @@ fn start_javascript_typescript_language_server(
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
+    #[cfg(unix)]
+    if !matches!(
+        registry.status(&root_path),
+        LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
+    ) {
+        managed_javascript_typescript::cleanup_orphaned_javascript_typescript_processes(
+            &command,
+            &initialize_request,
+            &root_path,
+            &registry.running_roots(),
+        );
+    }
+
     let watch_app = app.clone();
     let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
         app,
