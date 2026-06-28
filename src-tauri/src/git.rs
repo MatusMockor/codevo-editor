@@ -128,7 +128,7 @@ pub struct GitFileHistoryEntry {
     pub timestamp: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitFileChange {
     pub is_rename: bool,
@@ -748,8 +748,13 @@ pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
             continue;
         }
 
+        let branch = branch.unwrap_or_default();
+        if branch == "HEAD" || branch.starts_with("HEAD ->") {
+            continue;
+        }
+
         let remote_branches = remote_groups.entry(remote.to_string()).or_default();
-        remote_branches.push(branch.unwrap_or_default().to_string());
+        remote_branches.push(branch.to_string());
     }
 
     Ok(GitBranches {
@@ -1009,9 +1014,9 @@ pub fn load_commit_diff(
     commit_hash: &str,
     path: &str,
     old_path: Option<&str>,
+    files: &[CommitFileChange],
 ) -> io::Result<CommitDiffPayload> {
     let commit_hash = safe_commit_sha(commit_hash)?;
-    let files = load_commit_files(root, &commit_hash)?;
     let normalized_old_path = old_path.unwrap_or(path);
 
     let file = files
@@ -2099,7 +2104,7 @@ mod tests {
 
         let details = load_commit_details(repo.path(), &first_sha).expect("details");
         let files = load_commit_files(repo.path(), &first_sha).expect("files");
-        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None)
+        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files)
             .expect("diff");
 
         assert_eq!(details.commit.subject, "first commit");

@@ -1652,99 +1652,126 @@ async fn get_git_status(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String> {
-    let root = match canonicalize_workspace_root(&root_path) {
-        Ok(root) => root,
-        Err(_) => {
-            return Ok(GitRepoStatus {
-                git_available: git::git_available(),
-                is_repository: false,
-            });
-        }
-    };
-    let is_repository = CommandGitRepositoryGateway
-        .status(&root)
-        .map(|status| status.is_repository)
-        .unwrap_or(false);
+async fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String> {
+    run_blocking_command(move || {
+        let root = match canonicalize_workspace_root(&root_path) {
+            Ok(root) => root,
+            Err(_) => {
+                return Ok(GitRepoStatus {
+                    git_available: git::git_available(),
+                    is_repository: false,
+                });
+            }
+        };
+        let is_repository = CommandGitRepositoryGateway
+            .status(&root)
+            .map(|status| status.is_repository)
+            .unwrap_or(false);
 
-    Ok(GitRepoStatus {
-        git_available: git::git_available(),
-        is_repository,
+        Ok(GitRepoStatus {
+            git_available: git::git_available(),
+            is_repository,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    load_git_branches(&root).map_err(|error| error.to_string())
+async fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        load_git_branches(&root).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_commit_log(
+async fn get_git_commit_log(
     root_path: String,
     filters: GitCommitFilters,
 ) -> Result<Vec<GitCommit>, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    load_commit_log(&root, filters).map_err(|error| error.to_string())
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        load_commit_log(&root, filters).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_commit_graph_page(
+async fn get_git_commit_graph_page(
     root_path: String,
     cursor: Option<String>,
 ) -> Result<Vec<CommitGraphNode>, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    let commits = load_commit_log(
-        &root,
-        GitCommitFilters {
-            author: None,
-            branch: None,
-            cursor,
-            limit: Some(200),
-            path: None,
-            query: None,
-        },
-    )
-    .map_err(|error| error.to_string())?;
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let commits = load_commit_log(
+            &root,
+            GitCommitFilters {
+                author: None,
+                branch: None,
+                cursor,
+                limit: Some(200),
+                path: None,
+                query: None,
+            },
+        )
+        .map_err(|error| error.to_string())?;
 
-    Ok(commits
-        .into_iter()
-        .map(|commit| CommitGraphNode {
-            children: Vec::new(),
-            commit: commit.clone(),
-            depth: 0,
-            hash: commit.hash,
-            is_merge: commit.parents.len() > 1,
-        })
-        .collect())
+        Ok(commits
+            .into_iter()
+            .map(|commit| CommitGraphNode {
+                children: Vec::new(),
+                commit: commit.clone(),
+                depth: 0,
+                hash: commit.hash,
+                is_merge: commit.parents.len() > 1,
+            })
+            .collect())
+    })
+    .await
 }
 #[tauri::command]
-fn get_git_commit_details(root_path: String, commit_hash: String) -> Result<GitCommitDetails, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    load_commit_details(&root, &commit_hash).map_err(|error| error.to_string())
+async fn get_git_commit_details(root_path: String, commit_hash: String) -> Result<GitCommitDetails, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        load_commit_details(&root, &commit_hash).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_commit_files(root_path: String, commit_hash: String) -> Result<Vec<CommitFileChange>, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())
+async fn get_git_commit_files(root_path: String, commit_hash: String) -> Result<Vec<CommitFileChange>, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_commit_diff(
+async fn get_git_commit_diff(
     root_path: String,
     commit_hash: String,
     path: String,
     old_path: Option<String>,
+    files: Option<Vec<CommitFileChange>>,
 ) -> Result<CommitDiffPayload, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    load_commit_diff(
-        &root,
-        &commit_hash,
-        &path,
-        old_path.as_deref(),
-    )
-    .map_err(|error| error.to_string())
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let files = match files {
+            Some(files) => files,
+            None => load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())?,
+        };
+        load_commit_diff(
+            &root,
+            &commit_hash,
+            &path,
+            old_path.as_deref(),
+            &files,
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
