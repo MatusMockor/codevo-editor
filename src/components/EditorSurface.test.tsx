@@ -1191,7 +1191,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("keeps Monaco JavaScript and TypeScript built-in providers active unless the managed runtime matches the workspace, while never enabling built-in diagnostics", async () => {
+  it("keeps Monaco JavaScript and TypeScript built-ins active unless the managed runtime matches the workspace", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -1260,14 +1260,14 @@ describe("EditorSurface", () => {
     expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
       expect.objectContaining({
         completionItems: true,
-        diagnostics: false,
+        diagnostics: true,
         hovers: true,
       }),
     );
     expect(latestTypeScriptDiagnosticsOptions(monaco)).toEqual({
-      noSemanticValidation: true,
-      noSuggestionDiagnostics: true,
-      noSyntaxValidation: true,
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
     });
 
     await act(async () => {
@@ -1283,7 +1283,7 @@ describe("EditorSurface", () => {
     expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
       expect.objectContaining({
         completionItems: true,
-        diagnostics: false,
+        diagnostics: true,
         hovers: true,
       }),
     );
@@ -1305,6 +1305,11 @@ describe("EditorSurface", () => {
         hovers: false,
       }),
     );
+    expect(latestTypeScriptDiagnosticsOptions(monaco)).toEqual({
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
+    });
   });
 
   it("renders clickable implementation gutter icons for PHP interface methods", async () => {

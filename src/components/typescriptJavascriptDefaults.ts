@@ -18,15 +18,9 @@ export function configureTypescriptJavascriptDefaults(
   const managedLanguageServerActive =
     options.managedLanguageServerActive ?? false;
   const builtInProvidersEnabled = !managedLanguageServerActive;
-  // The managed language server always owns JS/TS diagnostics for parity with
-  // the desktop IDE. Monaco's built-in TypeScript worker runs in the browser
-  // without node_modules, so leaving its diagnostics on produces false
-  // "Cannot find module" (TS2307) markers on JSX before the managed server
-  // reports anything. Keep the built-in diagnostics off unconditionally so the
-  // worker never publishes those phantom markers, regardless of LSP timing or
-  // the user's validation preference (which is forwarded to the managed
-  // server, not to Monaco's built-in worker).
-  const builtInDiagnosticsEnabled = false;
+  const validationEnabled = options.validationEnabled ?? true;
+  const builtInDiagnosticsEnabled =
+    builtInProvidersEnabled && validationEnabled;
 
   const sharedCompilerOptions: Monaco.languages.typescript.CompilerOptions = {
     allowSyntheticDefaultImports: true,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
-describe("configureTypescriptJavascriptDefaults", () => {
+describe("Monaco JavaScript and TypeScript built-ins", () => {
   it("configures compiler options, eager sync, and diagnostics for TypeScript and JavaScript", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
@@ -23,20 +23,20 @@ describe("configureTypescriptJavascriptDefaults", () => {
     expect(typescriptDefaults.setEagerModelSync).toHaveBeenCalledWith(true);
     expect(javascriptDefaults.setEagerModelSync).toHaveBeenCalledWith(true);
     expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
-      noSemanticValidation: true,
-      noSuggestionDiagnostics: true,
-      noSyntaxValidation: true,
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
     });
     expect(javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
-      noSemanticValidation: true,
-      noSuggestionDiagnostics: true,
-      noSyntaxValidation: true,
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
     });
     expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
       expect.objectContaining({
         completionItems: true,
         definitions: true,
-        diagnostics: false,
+        diagnostics: true,
         hovers: true,
         rename: true,
       }),
@@ -59,7 +59,7 @@ describe("configureTypescriptJavascriptDefaults", () => {
     );
   });
 
-  it("disables Monaco diagnostics when JavaScript and TypeScript validation is off", () => {
+  it("keeps Monaco built-in JS/TS diagnostics disabled during fallback when validation is off", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
@@ -82,7 +82,7 @@ describe("configureTypescriptJavascriptDefaults", () => {
     );
   });
 
-  it("keeps Monaco built-in JS/TS diagnostics disabled even when the managed language server is inactive and validation is enabled", () => {
+  it("enables Monaco built-in JS/TS providers and diagnostics when the managed runtime is unavailable", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
@@ -93,24 +93,32 @@ describe("configureTypescriptJavascriptDefaults", () => {
     });
 
     expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
-      noSemanticValidation: true,
-      noSuggestionDiagnostics: true,
-      noSyntaxValidation: true,
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
     });
     expect(javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
-      noSemanticValidation: true,
-      noSuggestionDiagnostics: true,
-      noSyntaxValidation: true,
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
     });
     expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
-      expect.objectContaining({ diagnostics: false }),
+      expect.objectContaining({
+        completionItems: true,
+        diagnostics: true,
+        hovers: true,
+      }),
     );
     expect(javascriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
-      expect.objectContaining({ diagnostics: false }),
+      expect.objectContaining({
+        completionItems: true,
+        diagnostics: true,
+        hovers: true,
+      }),
     );
   });
 
-  it("disables Monaco built-in JS/TS providers while the managed language server owns them", () => {
+  it("disables Monaco built-in JS/TS providers and diagnostics while the matching-root managed runtime owns them", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
@@ -140,6 +148,30 @@ describe("configureTypescriptJavascriptDefaults", () => {
       rename: false,
       signatureHelp: false,
     });
+  });
+
+  it("enables Monaco built-in JS/TS providers and diagnostics for a stale-root managed runtime", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
+
+    configureTypescriptJavascriptDefaults(monaco as never, {
+      managedLanguageServerActive: false,
+      validationEnabled: true,
+    });
+
+    expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: false,
+      noSuggestionDiagnostics: false,
+      noSyntaxValidation: false,
+    });
+    expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        completionItems: true,
+        diagnostics: true,
+        hovers: true,
+      }),
+    );
   });
 });
 
