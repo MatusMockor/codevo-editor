@@ -1815,7 +1815,7 @@ class Comment
     ]);
   });
 
-  it("maps Laravel Schema create columns to model attributes and dynamic wheres", () => {
+  it("maps Laravel Schema create and table columns to model attributes and dynamic wheres", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -1827,6 +1827,11 @@ Schema::create('comments', function (Blueprint $table) {
     $table->id();
     $table->string('content');
     $table->boolean('is_pinned');
+});
+
+Schema::table('comments', function (Blueprint $table) {
+    $table->string('slug');
+    $table->dropColumn('legacy_slug');
 });
 
 class Comment extends Model {}
@@ -1860,6 +1865,13 @@ class Comment extends Model {}
         parameters: "",
         returnType: "bool",
       },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "slug",
+        parameters: "",
+        returnType: "string",
+      },
     ]);
 
     expect(
@@ -1888,7 +1900,23 @@ class Comment extends Model {}
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereSlug",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
     ]);
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereSlug",
+        "App\\Models\\Comment",
+        "Comment::whereSlug('draft')",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Comment>");
 
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
@@ -1903,15 +1931,37 @@ class Comment extends Model {}
       attributeName: "content",
       position: positionAfter(source, "$table->string('"),
     });
+    expect(phpLaravelModelAttributeTargetFromSource(source, "slug")).toEqual({
+      attributeName: "slug",
+      position: positionAfter(
+        source,
+        "Schema::table('comments', function (Blueprint $table) {\n    $table->string('",
+      ),
+    });
     expect(
       phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereContent"),
     ).toEqual({
       attributeName: "content",
       position: positionAfter(source, "$table->string('"),
     });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereSlug"),
+    ).toEqual({
+      attributeName: "slug",
+      position: positionAfter(
+        source,
+        "Schema::table('comments', function (Blueprint $table) {\n    $table->string('",
+      ),
+    });
+    expect(
+      phpLaravelModelAttributeTargetFromSource(source, "legacy_slug"),
+    ).toBeNull();
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereLegacySlug"),
+    ).toBeNull();
   });
 
-  it("uses explicit Laravel model table names for Schema create columns", () => {
+  it("uses explicit Laravel model table names for Schema columns", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -1926,6 +1976,10 @@ Schema::create('users', function (Blueprint $table) {
 Schema::create('people', function (Blueprint $table) {
     $table->string('name');
     $table->boolean('active');
+});
+
+Schema::table('people', function (Blueprint $table) {
+    $table->string('nickname');
 });
 
 class User extends Model
@@ -1955,13 +2009,20 @@ class User extends Model
         parameters: "",
         returnType: "bool",
       },
+      {
+        declaringClassName: "App\\Models\\User",
+        kind: "property",
+        name: "nickname",
+        parameters: "",
+        returnType: "string",
+      },
     ]);
 
     expect(
       phpLaravelDynamicWhereCompletionsFromSource(source, "App\\Models\\User", {
         isStatic: true,
       }).map((completion) => completion.name),
-    ).toEqual(["whereName", "whereActive"]);
+    ).toEqual(["whereName", "whereActive", "whereNickname"]);
 
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
@@ -1980,6 +2041,39 @@ class User extends Model
       ),
     ).toBeNull();
     expect(isLaravelDynamicWhereMethodForSource(source, "whereEmail")).toBe(false);
+  });
+
+  it("ignores destructive Laravel Schema table calls for model attributes", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+Schema::table('comments', function (Blueprint $table) {
+    $table->dropColumn('slug');
+});
+
+class Comment extends Model {}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Comment",
+        laravelCompletionOptions,
+      ).filter((completion) => completion.kind === "property"),
+    ).toEqual([]);
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "Comment", {
+        isStatic: true,
+      }),
+    ).toEqual([]);
+    expect(phpLaravelModelAttributeTargetFromSource(source, "slug")).toBeNull();
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereSlug"),
+    ).toBeNull();
   });
 
   it("locates Laravel dynamic where source attributes", () => {

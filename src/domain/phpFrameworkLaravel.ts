@@ -4484,7 +4484,7 @@ function phpLaravelDynamicWhereAttributeOccurrencesForModel(
 
   if (
     tableName &&
-    source.includes("Schema::create") &&
+    phpLaravelSourceHasSchemaColumns(source) &&
     source.includes(tableName)
   ) {
     occurrences.push(...phpLaravelSchemaAttributeOccurrences(source, tableName));
@@ -4592,7 +4592,7 @@ function phpLaravelSchemaAttributesForModel(
 
   if (
     !tableName ||
-    !source.includes("Schema::create") ||
+    !phpLaravelSourceHasSchemaColumns(source) ||
     !source.includes(tableName)
   ) {
     return [];
@@ -4652,13 +4652,13 @@ function phpLaravelSchemaAttributeOccurrences(
   source: string,
   tableName?: string,
 ): PhpLaravelSchemaAttributeOccurrence[] {
-  if (!source.includes("Schema::create")) {
+  if (!phpLaravelSourceHasSchemaColumns(source)) {
     return [];
   }
 
   const masked = maskPhpStringsAndComments(source);
   const occurrences: PhpLaravelSchemaAttributeOccurrence[] = [];
-  const pattern = /\bSchema\s*::\s*create\s*\(/g;
+  const pattern = /\bSchema\s*::\s*(?:create|table)\s*\(/g;
 
   for (const match of masked.matchAll(pattern)) {
     const matched = match[0] ?? "";
@@ -4704,6 +4704,10 @@ function phpLaravelSchemaAttributeOccurrences(
   }
 
   return occurrences;
+}
+
+function phpLaravelSourceHasSchemaColumns(source: string): boolean {
+  return source.includes("Schema::create") || source.includes("Schema::table");
 }
 
 interface PhpParameterRange {
@@ -4908,6 +4912,10 @@ function phpLaravelSchemaColumnFromCall(
 ): PhpLaravelSchemaColumn | null {
   const normalizedMethodName = methodName.toLowerCase();
 
+  if (!phpLaravelSchemaColumnMethodNames.has(normalizedMethodName)) {
+    return null;
+  }
+
   if (normalizedMethodName === "id") {
     return {
       attributeName: "id",
@@ -4935,6 +4943,63 @@ function phpLaravelSchemaColumnFromCall(
     returnType: phpLaravelSchemaColumnReturnType(methodName),
   };
 }
+
+const phpLaravelSchemaColumnMethodNames = new Set([
+  "bigincrements",
+  "biginteger",
+  "binary",
+  "boolean",
+  "char",
+  "date",
+  "datetime",
+  "datetimetz",
+  "decimal",
+  "double",
+  "enum",
+  "float",
+  "foreignid",
+  "foreignulid",
+  "foreignuuid",
+  "geometry",
+  "geometrycollection",
+  "id",
+  "increments",
+  "integer",
+  "ipaddress",
+  "json",
+  "jsonb",
+  "linestring",
+  "longtext",
+  "macaddress",
+  "mediumincrements",
+  "mediuminteger",
+  "mediumtext",
+  "multilinestring",
+  "multipoint",
+  "multipolygon",
+  "point",
+  "polygon",
+  "set",
+  "smallincrements",
+  "smallinteger",
+  "string",
+  "text",
+  "time",
+  "timestamp",
+  "timestamptz",
+  "timetz",
+  "tinyincrements",
+  "tinyinteger",
+  "ulid",
+  "unsignedbiginteger",
+  "unsigneddecimal",
+  "unsignedinteger",
+  "unsignedmediuminteger",
+  "unsignedsmallinteger",
+  "unsignedtinyinteger",
+  "uuid",
+  "year",
+]);
 
 function phpLaravelSchemaColumnReturnType(methodName: string): string | null {
   const normalized = methodName.toLowerCase();
