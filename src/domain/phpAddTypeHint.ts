@@ -1,5 +1,6 @@
 import { phpMethodParameters } from "./phpMethodCompletions";
 import { firstPhpDocTypeToken, phpDocReturnTypeToken } from "./phpDocTemplates";
+import { parsePhpClassStructure } from "./phpClassStructure";
 
 /**
  * Pure planning for two PhpStorm "Alt+Enter" intentions on PHP source:
@@ -359,6 +360,9 @@ function isUsableDocReturnType(token: string): boolean {
  *   - every `return new Foo()` -> `Foo`
  *   - every `return $this` -> `static`
  *   - every string / int / float / bool / array literal -> its scalar type
+ *   - a SOLE `return $this->prop` whose property has an unambiguous declared
+ *     type (typed property, `@var Type` docblock, or promoted ctor property) ->
+ *     that property's type (mirrors PhpStorm's getter inference).
  * A `return null` as the only signal is ambiguous (`?X`) and yields `null`.
  */
 function inferReturnTypeFromBody(
@@ -378,7 +382,7 @@ function inferReturnTypeFromBody(
     const type = scalarReturnType(expression);
 
     if (!type) {
-      return null;
+      return inferReturnTypeFromProperty(source, signature, returns);
     }
 
     types.add(type);
@@ -389,6 +393,194 @@ function inferReturnTypeFromBody(
   }
 
   return [...types][0] ?? null;
+}
+
+/**
+ * Conservative getter inference: a method whose body is a SINGLE
+ * `return $this->property;` (and nothing else) takes the property's declared
+ * type as its return type, matching PhpStorm. The property's type is read from
+ * the enclosing class structure - a typed property (`private Foo $x`), a
+ * `@var Foo` docblock, or a promoted constructor parameter (`__construct(private
+ * Foo $x)`). It fires only when:
+ *   - there is EXACTLY ONE direct return, and it is a bare `$this->property`
+ *     (no method call, no chained access, no operators),
+ *   - the method is enclosed by a single class we can parse,
+ *   - that property exists and resolves to ONE unambiguous, non-union type.
+ * Anything ambiguous (no class, missing property, union type, unresolved type)
+ * yields `null` - a missing hint over a wrong one.
+ */
+function inferReturnTypeFromProperty(
+  source: string,
+  signature: EnclosingFunction,
+  returns: string[],
+): string | null {
+  if (returns.length !== 1) {
+    return null;
+  }
+
+  const propertyName = soleThisPropertyName(returns[0] ?? "");
+
+  if (!propertyName) {
+    return null;
+  }
+
+  if (methodIsInsideNestedClass(source, signature.functionOffset)) {
+    // The method lives in a class (named or anonymous) nested inside the
+    // enclosing named class. `$this->property` then refers to the inner class,
+    // whose members the outer-class slice cannot resolve correctly - bail rather
+    // than risk reading the wrong class's property type.
+    return null;
+  }
+
+  const classBody = enclosingClassBody(source, signature.functionOffset);
+
+  if (!classBody) {
+    return null;
+  }
+
+  const propertyType = resolvePropertyType(classBody, propertyName);
+
+  if (!propertyType || !isUnambiguousPropertyType(propertyType)) {
+    return null;
+  }
+
+  return propertyType;
+}
+
+/**
+ * True when `offset` (a method's `function` keyword) sits inside the body of a
+ * class that is itself NESTED inside another class - either an anonymous class
+ * (`new class { ... }`) or a nested named class. Such a method's `$this` refers
+ * to the INNER class, which the outer-class source slice cannot model, so
+ * property inference must abstain. Detection counts `class` keywords (named or
+ * `new class`) whose brace scope still encloses `offset`: more than one such
+ * scope means the method is in a nested class.
+ */
+function methodIsInsideNestedClass(source: string, offset: number): boolean {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = /\bclass\b/g;
+  let enclosingClassCount = 0;
+
+  for (
+    let match = pattern.exec(masked);
+    match !== null && (match.index ?? 0) < offset;
+    match = pattern.exec(masked)
+  ) {
+    const bodyStart = masked.indexOf("{", match.index + "class".length);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPair(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    if (offset > bodyStart && offset < bodyEnd) {
+      enclosingClassCount += 1;
+    }
+  }
+
+  return enclosingClassCount > 1;
+}
+
+/**
+ * The bare property name of a `$this->property` expression, or `null` when the
+ * expression is anything else (a method call `$this->p()`, a chained access
+ * `$this->p->q`, a subscript, an operator expression, ...). The match must
+ * consume the WHOLE expression so only a plain property read qualifies.
+ */
+function soleThisPropertyName(expression: string): string | null {
+  const match = /^\$this->([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression.trim());
+
+  return match?.[1] ?? null;
+}
+
+/**
+ * The exact source slice of the `class ... { ... }` whose body encloses
+ * `offset` (from its declaration keyword to its closing `}`), or `null`. The
+ * slice is scoped to the INNERMOST enclosing class so property resolution reads
+ * the method's OWN class - never a same-named sibling class elsewhere in the
+ * file (which `parsePhpClassStructure(source, name)` would resolve to its FIRST
+ * match by name). Only `class` declarations are considered (a typed-property
+ * getter lives in a class); a free function has no enclosing class -> `null`.
+ */
+function enclosingClassBody(source: string, offset: number): string | null {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /\b(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*/g;
+  let body: string | null = null;
+  let narrowest = Number.POSITIVE_INFINITY;
+
+  for (
+    let match = pattern.exec(masked);
+    match !== null;
+    match = pattern.exec(masked)
+  ) {
+    const keywordStart = match.index ?? 0;
+    const bodyStart = masked.indexOf("{", keywordStart + match[0].length);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPair(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    const span = bodyEnd - keywordStart;
+
+    if (offset > bodyStart && offset < bodyEnd && span < narrowest) {
+      narrowest = span;
+      body = source.slice(keywordStart, bodyEnd + 1);
+    }
+  }
+
+  return body;
+}
+
+/**
+ * Resolves the declared type of `propertyName` from a single class's source
+ * slice (one `class ... { ... }`): a typed property declaration first, then its
+ * `@var` docblock, then a promoted constructor parameter of the same name.
+ * Returns `null` when the property is unknown or carries no resolvable type.
+ */
+function resolvePropertyType(
+  classBody: string,
+  propertyName: string,
+): string | null {
+  const structure = parsePhpClassStructure(classBody);
+  const property = structure.properties.find(
+    (member) => member.name === propertyName,
+  );
+
+  if (property) {
+    return property.type ?? property.phpDoc?.varType ?? null;
+  }
+
+  const constructor = structure.methods.find(
+    (method) => method.name === "__construct",
+  );
+  const promoted = constructor?.parameters.find(
+    (parameter) => parameter.name === `$${propertyName}`,
+  );
+
+  return promoted?.type ?? null;
+}
+
+/**
+ * Whether a property type may be emitted verbatim as a native return type. A
+ * single class / scalar name (optionally `?`-nullable or leading-`\` qualified)
+ * is accepted; a union (`A|B`) or intersection (`A&B`) is conservatively
+ * rejected because the property's union may not be a valid covariant return for
+ * this getter and is rarely the intended single getter type.
+ */
+function isUnambiguousPropertyType(type: string): boolean {
+  return /^\??[\\A-Za-z_][\\A-Za-z0-9_]*$/.test(type);
 }
 
 /**

@@ -385,6 +385,333 @@ class C
     expect(planAddReturnType(source, offset)).toBeNull();
   });
 
+  it("infers the return type from a typed property when the sole return is `return $this->prop`", () => {
+    const source = `<?php
+
+class C
+{
+    private UserAccount $userAccount;
+
+    public function getUserAccount()
+    {
+        return $this->userAccount;
+    }
+}
+`;
+    const offset = source.indexOf("getUserAccount(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": UserAccount");
+    expect(applyInsertion(source, plan)).toContain(
+      "public function getUserAccount(): UserAccount",
+    );
+  });
+
+  it("infers the return type from a property `@var` docblock", () => {
+    const source = `<?php
+
+class C
+{
+    /** @var UserAccount */
+    private $userAccount;
+
+    public function getUserAccount()
+    {
+        return $this->userAccount;
+    }
+}
+`;
+    const offset = source.indexOf("getUserAccount(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": UserAccount");
+  });
+
+  it("infers the return type from a `@var Type $name` property docblock", () => {
+    const source = `<?php
+
+class C
+{
+    /** @var User $user */
+    private $user;
+
+    public function getUser()
+    {
+        return $this->user;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": User");
+  });
+
+  it("infers the return type from a promoted constructor property", () => {
+    const source = `<?php
+
+class C
+{
+    public function __construct(private UserAccount $userAccount)
+    {
+    }
+
+    public function getUserAccount()
+    {
+        return $this->userAccount;
+    }
+}
+`;
+    const offset = source.indexOf("getUserAccount(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": UserAccount");
+  });
+
+  it("preserves a leading namespace separator on the property type", () => {
+    const source = `<?php
+
+class C
+{
+    private \\App\\Models\\User $user;
+
+    public function getUser()
+    {
+        return $this->user;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": \\App\\Models\\User");
+  });
+
+  it("infers a nullable property type verbatim", () => {
+    const source = `<?php
+
+class C
+{
+    private ?User $user;
+
+    public function getUser()
+    {
+        return $this->user;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": ?User");
+  });
+
+  it("returns null when the property type is a union (ambiguous)", () => {
+    const source = `<?php
+
+class C
+{
+    private User|Admin $user;
+
+    public function getUser()
+    {
+        return $this->user;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("returns null when the returned property has no resolvable type", () => {
+    const source = `<?php
+
+class C
+{
+    private $user;
+
+    public function getUser()
+    {
+        return $this->user;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("returns null when the returned property is unknown to the class", () => {
+    const source = `<?php
+
+class C
+{
+    private User $user;
+
+    public function getOther()
+    {
+        return $this->other;
+    }
+}
+`;
+    const offset = source.indexOf("getOther(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("returns null when a typed-property return mixes with another return type", () => {
+    const source = `<?php
+
+class C
+{
+    private User $user;
+
+    public function getUser($flag)
+    {
+        if ($flag) {
+            return $this->user;
+        }
+
+        return null;
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("returns null for `return $this->prop` when no class encloses the method", () => {
+    const source = `<?php
+
+function getUser()
+{
+    return $this->user;
+}
+`;
+    const offset = source.indexOf("getUser(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("infers from a typed property declared after the method (order-independent)", () => {
+    const source = `<?php
+
+class C
+{
+    public function getUser()
+    {
+        return $this->user;
+    }
+
+    private User $user;
+}
+`;
+    const offset = source.indexOf("getUser(");
+    const plan = planAddReturnType(source, offset);
+
+    expect(plan?.insertText).toBe(": User");
+  });
+
+  it("returns null for `return $this->prop->nested` (chained, not a bare property)", () => {
+    const source = `<?php
+
+class C
+{
+    private User $user;
+
+    public function getName()
+    {
+        return $this->user->name;
+    }
+}
+`;
+    const offset = source.indexOf("getName(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
+  it("resolves the property from the method's OWN class, not a same-named sibling", () => {
+    const source = `<?php
+
+class C
+{
+    private int $value;
+
+    public function first()
+    {
+        return $this->value;
+    }
+}
+
+class D
+{
+    private string $value;
+
+    public function second()
+    {
+        return $this->value;
+    }
+}
+`;
+    const first = planAddReturnType(source, source.indexOf("first("));
+    const second = planAddReturnType(source, source.indexOf("second("));
+
+    expect(first?.insertText).toBe(": int");
+    expect(second?.insertText).toBe(": string");
+  });
+
+  it("infers for a direct member but abstains inside a nested anonymous class", () => {
+    const source = `<?php
+
+class Outer
+{
+    private int $value;
+
+    public function build()
+    {
+        $anon = new class {
+            private string $value;
+
+            public function inner()
+            {
+                return $this->value;
+            }
+        };
+
+        return $this->value;
+    }
+}
+`;
+    // build() is a direct member of Outer -> reads Outer's int property.
+    const build = planAddReturnType(source, source.indexOf("build("));
+    expect(build?.insertText).toBe(": int");
+
+    // inner() sits inside a nested anonymous class; resolving against Outer's
+    // slice would emit a WRONG type, so inference must abstain (null).
+    const inner = planAddReturnType(source, source.indexOf("inner("));
+    expect(inner).toBeNull();
+  });
+
+  it("returns null for `return $this->method()` (a call, not a property)", () => {
+    const source = `<?php
+
+class C
+{
+    private User $user;
+
+    public function getUser()
+    {
+        return $this->user();
+    }
+}
+`;
+    const offset = source.indexOf("getUser(");
+
+    expect(planAddReturnType(source, offset)).toBeNull();
+  });
+
   it("does not let a nested closure's return drive the outer type", () => {
     const source = `<?php
 

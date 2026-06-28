@@ -476,3 +476,253 @@ class X
     expect(body).not.toContain("public function a(int $x):");
   });
 });
+
+describe("planExtractInterface - use imports for signature types", () => {
+  it("copies a `use` for an imported parameter type", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\UserAccount;
+
+class Repo
+{
+    public function save(UserAccount $account): void {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).toContain("use App\\Models\\UserAccount;");
+    expect(plan?.interfaceText).toContain(
+      "public function save(UserAccount $account): void;",
+    );
+    // The use block sits between the namespace and the interface declaration.
+    const text = plan?.interfaceText ?? "";
+    expect(text.indexOf("use App\\Models\\UserAccount;")).toBeGreaterThan(
+      text.indexOf("namespace App\\Services;"),
+    );
+    expect(text.indexOf("use App\\Models\\UserAccount;")).toBeLessThan(
+      text.indexOf("interface RepoInterface"),
+    );
+  });
+
+  it("copies a `use` for an imported return type", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+
+class Repo
+{
+    public function find(int $id): User {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).toContain("use App\\Models\\User;");
+    expect(plan?.interfaceText).toContain(
+      "public function find(int $id): User;",
+    );
+  });
+
+  it("copies an aliased `use` when the alias appears in a signature", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Account as Acc;
+
+class Repo
+{
+    public function load(Acc $account): Acc {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).toContain("use App\\Models\\Account as Acc;");
+    expect(plan?.interfaceText).toContain(
+      "public function load(Acc $account): Acc;",
+    );
+  });
+
+  it("does not emit a `use` for a fully-qualified type in the signature", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+class Repo
+{
+    public function find(): \\App\\Models\\User {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).not.toContain("use ");
+    expect(plan?.interfaceText).toContain(
+      "public function find(): \\App\\Models\\User;",
+    );
+  });
+
+  it("does not emit a `use` for a type in the same namespace (no import in source)", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+class Repo
+{
+    public function make(): Helper {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).not.toContain("use ");
+    expect(plan?.interfaceText).toContain("public function make(): Helper;");
+  });
+
+  it("does not emit a `use` for built-in scalar / pseudo types", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+class Repo
+{
+    public function calc(int $a, string $b, ?bool $c): array {}
+
+    public function self2(): self {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).not.toContain("use ");
+  });
+
+  it("copies each component of a union / nullable signature type that is imported", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use App\\Models\\Admin;
+
+class Repo
+{
+    public function pick(?User $u): User|Admin {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).toContain("use App\\Models\\User;");
+    expect(plan?.interfaceText).toContain("use App\\Models\\Admin;");
+    expect(plan?.interfaceText).toContain(
+      "public function pick(?User $u): User|Admin;",
+    );
+  });
+
+  it("emits each distinct imported type once and sorts them", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use App\\Models\\Account;
+
+class Repo
+{
+    public function a(User $u): User {}
+
+    public function b(Account $a): Account {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    const text = plan?.interfaceText ?? "";
+    expect(text.match(/use App\\Models\\User;/g)?.length).toBe(1);
+    expect(text.match(/use App\\Models\\Account;/g)?.length).toBe(1);
+    // Alphabetical: Account before User.
+    expect(text.indexOf("use App\\Models\\Account;")).toBeLessThan(
+      text.indexOf("use App\\Models\\User;"),
+    );
+  });
+
+  it("does not emit a `use` for a type with no import in the source (conservative)", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+class Repo
+{
+    public function save(UnknownType $x): void {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/app/Services/Repo.php",
+    );
+
+    expect(plan?.interfaceText).not.toContain("use ");
+    expect(plan?.interfaceText).toContain(
+      "public function save(UnknownType $x): void;",
+    );
+  });
+
+  it("emits no use block when no signature type is imported (global namespace)", () => {
+    const source = `<?php
+
+class Repo
+{
+    public function a(int $x): void {}
+}
+`;
+
+    const plan = planExtractInterface(
+      source,
+      cursorOn(source, "class Repo"),
+      "/workspace/Repo.php",
+    );
+
+    expect(plan?.interfaceText).not.toContain("use ");
+  });
+});
