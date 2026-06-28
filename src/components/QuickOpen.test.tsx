@@ -95,6 +95,56 @@ describe("QuickOpen", () => {
     expect(onOpen.mock.calls[0][0].name).toBe("Post.ts");
   });
 
+  it("opens the visible result when async search results shrink", () => {
+    const onChangeQuery = vi.fn();
+    const onClose = vi.fn();
+    const onOpen = vi.fn();
+
+    act(() => {
+      root.render(
+        <QuickOpen
+          isOpen
+          isLoading={false}
+          query="initial"
+          results={[fileResult("User.ts"), fileResult("Post.ts")]}
+          onChangeQuery={onChangeQuery}
+          onClose={onClose}
+          onOpen={onOpen}
+        />,
+      );
+    });
+
+    const field = input();
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+
+    act(() => {
+      root.render(
+        <QuickOpen
+          isOpen
+          isLoading={false}
+          query="post"
+          results={[fileResult("Post.ts")]}
+          onChangeQuery={onChangeQuery}
+          onClose={onClose}
+          onOpen={onOpen}
+        />,
+      );
+    });
+
+    act(() => {
+      input()?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpen.mock.calls[0][0].name).toBe("Post.ts");
+  });
+
   it("closes on Escape", () => {
     const { onClose } = render();
     const field = input();

@@ -35,11 +35,19 @@ export function QuickOpen({
     setActiveIndex(0);
   }, [query]);
 
+  useEffect(() => {
+    setActiveIndex((current) =>
+      results.length === 0 ? 0 : Math.min(current, results.length - 1),
+    );
+  }, [results.length]);
+
   if (!isOpen) {
     return null;
   }
 
-  const activeResult = results[activeIndex];
+  const safeActiveIndex =
+    results.length === 0 ? -1 : Math.min(activeIndex, results.length - 1);
+  const activeResult = safeActiveIndex >= 0 ? results[safeActiveIndex] : undefined;
 
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
@@ -92,7 +100,7 @@ export function QuickOpen({
           {results.map((result, index) => (
             <button
               className={
-                index === activeIndex
+                index === safeActiveIndex
                   ? "quick-open-result active"
                   : "quick-open-result"
               }
