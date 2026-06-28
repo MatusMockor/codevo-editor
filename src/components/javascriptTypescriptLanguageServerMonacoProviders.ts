@@ -158,6 +158,11 @@ const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
   "typescript",
   "javascriptreact",
   "typescriptreact",
+  // `.vue` single-file components are routed through the same tsserver, which
+  // gains `<script>` block intelligence via `@vue/typescript-plugin`. When the
+  // plugin is unavailable the server simply returns no results, so registering
+  // the providers here stays safe (highlighting-only fallback, no crash).
+  "vue",
 ];
 const JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET = new Set<string>(
   JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS,

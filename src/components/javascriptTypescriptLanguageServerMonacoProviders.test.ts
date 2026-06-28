@@ -25,40 +25,40 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       providerContext(),
     );
 
-    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDeclarationProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDeclarationProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentRangeFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerOnTypeFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(5);
     expect(monaco.languages.registerWorkspaceSymbolProvider).toHaveBeenCalledTimes(1);
-    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentSemanticTokensProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentRangeSemanticTokensProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls.map(
         ([language]: [string]) => language,
@@ -68,6 +68,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       "typescript",
       "javascriptreact",
       "typescriptreact",
+      "vue",
     ]);
     expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls[0][1]
@@ -90,7 +91,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(94);
+    expect(monaco.dispose).toHaveBeenCalledTimes(117);
   });
 
   it("registers advertised on-type formatting trigger characters", () => {

@@ -432,12 +432,16 @@ where
         root: &Path,
         server: &ToolLocation,
         typescript_server: Option<&ToolLocation>,
+        vue_typescript_plugin: Option<&ToolLocation>,
         settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
         let mut initialize_request = self.initialize_request_factory.create(root);
 
         if let Some(typescript_server) = typescript_server {
             configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
+        }
+        if let Some(vue_typescript_plugin) = vue_typescript_plugin {
+            configure_vue_typescript_plugin(&mut initialize_request, &vue_typescript_plugin.path);
         }
         configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
@@ -476,7 +480,13 @@ where
             );
         };
 
-        self.ready_plan(root, server, tools.typescript_server.as_ref(), settings)
+        self.ready_plan(
+            root,
+            server,
+            tools.typescript_server.as_ref(),
+            tools.vue_typescript_plugin.as_ref(),
+            settings,
+        )
     }
 }
 
@@ -499,6 +509,37 @@ fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
     };
 
     tsserver.insert("path".to_string(), Value::String(path.to_string()));
+}
+
+/// Registers `@vue/typescript-plugin` with the existing tsserver so `.vue`
+/// `<script>` blocks gain TypeScript intelligence without spawning a separate
+/// Volar process. The `languages: ["vue"]` entry tells the language server to
+/// accept `.vue` documents (a language id it does not handle by default). When
+/// no plugin location is available this is never called, so `.vue` files keep
+/// highlighting only.
+fn configure_vue_typescript_plugin(request: &mut JsonRpcRequest, location: &str) {
+    let Some(params) = request.params.as_object_mut() else {
+        return;
+    };
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let Some(initialization_options) = initialization_options.as_object_mut() else {
+        return;
+    };
+
+    let plugins = initialization_options
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(plugins) = plugins.as_array_mut() else {
+        return;
+    };
+
+    plugins.push(json!({
+        "name": "@vue/typescript-plugin",
+        "location": location,
+        "languages": ["vue"],
+    }));
 }
 
 fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool) {
@@ -1582,6 +1623,58 @@ mod tests {
     }
 
     #[test]
+    fn javascript_typescript_plan_registers_vue_typescript_plugin_when_available() {
+        let root = create_temp_dir("lsp-typescript-vue-plugin");
+        fs::write(root.join("package.json"), "{}").expect("write package.json");
+        let plugin_location = root
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin")
+            .to_string_lossy()
+            .to_string();
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            &tools_with_vue_typescript_plugin(&root, &plugin_location),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        let request = plan.initialize_request.expect("initialize request");
+        let plugins = request.params["initializationOptions"]["plugins"]
+            .as_array()
+            .expect("plugins array");
+        let vue_plugin = plugins
+            .iter()
+            .find(|plugin| plugin["name"] == "@vue/typescript-plugin")
+            .expect("vue plugin entry");
+        assert_eq!(vue_plugin["location"], plugin_location);
+        assert_eq!(vue_plugin["languages"], json!(["vue"]));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn javascript_typescript_plan_omits_plugins_when_vue_plugin_missing() {
+        let root = create_temp_dir("lsp-typescript-without-vue-plugin");
+        fs::write(root.join("package.json"), "{}").expect("write package.json");
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
+        let request = plan.initialize_request.expect("initialize request");
+        assert!(request.params["initializationOptions"]["plugins"].is_null());
+        // The JS/TS server itself must still be configured normally.
+        assert!(request.params["initializationOptions"]["tsserver"]["path"]
+            .as_str()
+            .expect("tsserver path")
+            .ends_with("node_modules/typescript/lib/tsserver.js"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn plain_workspace_gets_typescript_inferred_project_plan() {
         let root = create_temp_dir("lsp-typescript-inferred-project");
         let planner = TypeScriptLanguageServerPlanner::new();
@@ -1871,7 +1964,21 @@ mod tests {
                     .to_string(),
                 source: ToolSource::WorkspaceNodeModulesBin,
             }),
+            vue_typescript_plugin: None,
         }
+    }
+
+    fn tools_with_vue_typescript_plugin(
+        root: &Path,
+        plugin_location: &str,
+    ) -> JavaScriptTypeScriptToolAvailability {
+        let mut tools = tools_with_typescript_language_server(root);
+        tools.vue_typescript_plugin = Some(ToolLocation {
+            executable: "typescript-plugin".to_string(),
+            path: plugin_location.to_string(),
+            source: ToolSource::WorkspaceNodeModulesBin,
+        });
+        tools
     }
 
     fn create_temp_dir(prefix: &str) -> std::path::PathBuf {
