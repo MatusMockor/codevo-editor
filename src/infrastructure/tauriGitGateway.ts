@@ -3,7 +3,16 @@ import {
   emptyGitStatus,
   type GitChangedFile,
   type GitFileDiff,
+  type Commit,
+  type CommitDetails,
+  type CommitGraphNode,
+  type DiffPayload,
+  type FileChange,
+  type GitBranches,
   type GitGateway,
+  type GitHistoryGateway,
+  type GitRepoStatus,
+  type GitCommitFilters,
   type GitStatus,
 } from "../domain/git";
 
@@ -116,4 +125,118 @@ export class TauriGitGateway implements GitGateway {
       rootPath,
     }) as Promise<GitStatus>;
   }
+
+  async getRepoStatus(rootPath: string): Promise<GitRepoStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        gitAvailable: false,
+        isRepository: false,
+      };
+    }
+
+    return this.invokeCommand("get_git_repo_status", {
+      rootPath,
+    }) as Promise<GitRepoStatus>;
+  }
+
+  async getBranches(rootPath: string): Promise<GitBranches> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        current: null,
+        local: [],
+        remotes: {},
+      };
+    }
+
+    return this.invokeCommand("get_git_branches", {
+      rootPath,
+    }) as Promise<GitBranches>;
+  }
+
+  async getCommitLog(
+    rootPath: string,
+    filters: GitCommitFilters,
+  ): Promise<Commit[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_commit_log", {
+      filters,
+      rootPath,
+    }) as Promise<Commit[]>;
+  }
+
+  async getCommitGraphPage(
+    rootPath: string,
+    cursor: string | null = null,
+  ): Promise<CommitGraphNode[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_commit_graph_page", {
+      cursor,
+      rootPath,
+    }) as Promise<CommitGraphNode[]>;
+  }
+
+  async getCommitDetails(
+    rootPath: string,
+    commitHash: string,
+  ): Promise<CommitDetails> {
+    if (!this.isRuntimeAvailable()) {
+      throw new Error("Git unavailable.");
+    }
+
+    return this.invokeCommand("get_git_commit_details", {
+      commitHash,
+      rootPath,
+    }) as Promise<CommitDetails>;
+  }
+
+  async getCommitFiles(
+    rootPath: string,
+    commitHash: string,
+  ): Promise<FileChange[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_commit_files", {
+      commitHash,
+      rootPath,
+    }) as Promise<FileChange[]>;
+  }
+
+  async getCommitDiff(
+    rootPath: string,
+    commitHash: string,
+    path: string,
+    oldPath?: string | null,
+  ): Promise<DiffPayload> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        commitHash,
+        isRename: false,
+        language: "plaintext",
+        modifiedContent: "",
+        oldPath: oldPath ?? null,
+        originalContent: "",
+        path,
+        status: "M",
+      };
+    }
+
+    return this.invokeCommand("get_git_commit_diff", {
+      commitHash,
+      oldPath,
+      path,
+      rootPath,
+    }) as Promise<DiffPayload>;
+  }
 }
+
+export class TauriGitHistoryGateway
+  extends TauriGitGateway
+  implements GitHistoryGateway {}

@@ -2,6 +2,7 @@ import {
   FolderOpen,
   ListChecks,
   LoaderCircle,
+  History,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
@@ -23,8 +24,8 @@ import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
-import { GitChangesPanel } from "./components/GitChangesPanel";
 import { GitDiffPreview } from "./components/GitDiffPreview";
+import { GitHistoryPanel } from "./components/GitHistoryPanel";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { NoticeToastHost } from "./components/NoticeToastHost";
@@ -54,7 +55,7 @@ import {
 } from "./domain/indexProgress";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
-import type { GitChangeStatus } from "./domain/git";
+import { type GitFileDiff, type GitChangeStatus } from "./domain/git";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
@@ -98,7 +99,10 @@ import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGa
 import { TauriWorkspaceFileChangeGateway } from "./infrastructure/tauriWorkspaceFileChangeGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
-import { TauriGitGateway } from "./infrastructure/tauriGitGateway";
+import {
+  TauriGitGateway,
+  TauriGitHistoryGateway,
+} from "./infrastructure/tauriGitGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -128,6 +132,7 @@ const phpFileOutlineGateway = new TauriPhpFileOutlineGateway();
 const phpSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
 const gitGateway = new TauriGitGateway();
+const gitHistoryGateway = new TauriGitHistoryGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const javaScriptTypeScriptLanguageServerRuntimeGateway =
@@ -209,6 +214,9 @@ function App() {
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
   const [editorMenuCommandRunner, setEditorMenuCommandRunner] =
     useState<EditorMenuCommandRunner | null>(null);
+  const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
+  const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
+  const gitHistoryDiffRequestTokenRef = useRef(0);
   const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
     workspaceGateways,
@@ -642,6 +650,96 @@ function App() {
     };
   }, [editorMenuCommandRunner, workbench.commandContext]);
 
+  const openGitHistoryCommitDiff = useCallback(
+    async (commitHash: string, path: string, oldPath: string | null) => {
+      if (!workbench.workspaceRoot) {
+        return;
+      }
+
+      const requestToken = ++gitHistoryDiffRequestTokenRef.current;
+      setGitHistoryDiffLoading(true);
+      setGitHistoryDiff(null);
+      workbench.closeGitDiffPreview();
+
+      try {
+        const diff = await gitHistoryGateway.getCommitDiff(
+          workbench.workspaceRoot,
+          commitHash,
+          path,
+          oldPath,
+        );
+
+        if (requestToken !== gitHistoryDiffRequestTokenRef.current) {
+          return;
+        }
+
+        const status: GitChangeStatus =
+          diff.status === "A"
+            ? "added"
+            : diff.status === "D"
+              ? "deleted"
+              : diff.status === "R"
+                ? "renamed"
+                : "modified";
+
+        const diffPath = diff.path || path;
+        const diffOldPath = diff.oldPath ?? oldPath;
+
+        setGitHistoryDiff({
+          change: {
+            isStaged: false,
+            isUnversioned: false,
+            oldPath: diffOldPath ?? null,
+            oldRelativePath: diffOldPath ?? null,
+            path: diffPath,
+            relativePath: diffPath,
+            status,
+          },
+          language: diff.language,
+          modifiedContent: diff.modifiedContent,
+          originalContent: diff.originalContent,
+        });
+      } catch (error) {
+        if (requestToken !== gitHistoryDiffRequestTokenRef.current) {
+          return;
+        }
+
+        setGitHistoryDiff(null);
+        console.error("Failed to load commit file diff.", error);
+      } finally {
+        if (requestToken === gitHistoryDiffRequestTokenRef.current) {
+          setGitHistoryDiffLoading(false);
+        }
+      }
+    },
+    [gitHistoryGateway, workbench.closeGitDiffPreview, workbench.workspaceRoot],
+  );
+
+  const closeGitHistoryDiff = useCallback(() => {
+    setGitHistoryDiffLoading(false);
+    setGitHistoryDiff(null);
+    gitHistoryDiffRequestTokenRef.current += 1;
+  }, []);
+
+  const isShowingGitHistoryDiff = Boolean(
+    gitHistoryDiffLoading || gitHistoryDiff,
+  );
+  const gitDiffPreview = isShowingGitHistoryDiff ? gitHistoryDiff : workbench.gitDiffPreview;
+  const gitDiffLoading = isShowingGitHistoryDiff
+    ? gitHistoryDiffLoading
+    : workbench.gitDiffLoading;
+  const closeGitDiff = isShowingGitHistoryDiff
+    ? closeGitHistoryDiff
+    : workbench.closeGitDiffPreview;
+  const shouldShowGitDiff = Boolean(
+    isShowingGitHistoryDiff ||
+      workbench.selectedGitChange ||
+      workbench.gitDiffLoading,
+  );
+  useEffect(() => {
+    closeGitHistoryDiff();
+  }, [closeGitHistoryDiff, workbench.workspaceRoot]);
+
   return (
     <main
       className="app-shell"
@@ -679,6 +777,14 @@ function App() {
           type="button"
         >
           <ListChecks aria-hidden="true" size={20} />
+        </button>
+        <button
+          disabled={!workbench.workspaceRoot}
+          onClick={() => workbench.showBottomPanelView("history")}
+          title="Git history"
+          type="button"
+        >
+          <History aria-hidden="true" size={20} />
         </button>
         <button
           className="activity-bar-secondary"
@@ -751,24 +857,10 @@ function App() {
           ) : null}
         </header>
         {workbench.sidebarView === "git" ? (
-          <GitChangesPanel
-            activeChange={workbench.selectedGitChange}
-            commitMessage={workbench.gitCommitMessage}
-            gitOperationLoading={workbench.gitOperationLoading}
-            includedChangePaths={workbench.includedGitChangePaths}
-            isLoading={workbench.gitLoading}
-            onCommit={workbench.commitGitChanges}
-            onCommitAndPush={workbench.commitAndPushGitChanges}
-            onCommitMessageChange={workbench.setGitCommitMessage}
-            onOpenChange={workbench.openGitChange}
-            onPreviewChange={workbench.previewGitChange}
-            onRefresh={workbench.refreshGitStatus}
-            onRevertChanges={workbench.revertGitChanges}
-            onStageChanges={workbench.stageGitChanges}
-            onToggleChangeIncluded={workbench.toggleGitChangeIncluded}
-            onUnstageChanges={workbench.unstageGitChanges}
+          <GitHistoryPanel
+            gateway={gitHistoryGateway}
+            onOpenCommitFileDiff={openGitHistoryCommitDiff}
             rootPath={workbench.workspaceRoot}
-            status={workbench.gitStatus}
           />
         ) : workbench.sidebarView === "php" ? (
           <PhpTreePanel
@@ -889,15 +981,15 @@ function App() {
           onPin={workbench.pinDocument}
           previewPath={workbench.previewPath}
         />
-        {workbench.selectedGitChange || workbench.gitDiffLoading ? (
+        {shouldShowGitDiff ? (
           <GitDiffPreview
-            diff={workbench.gitDiffPreview}
-            isLoading={workbench.gitDiffLoading}
+            diff={gitDiffPreview}
+            isLoading={gitDiffLoading}
             monacoTheme={monacoTheme}
             editorFontFamily={workbench.appSettings.editorFontFamily}
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
-            onClose={workbench.closeGitDiffPreview}
+            onClose={closeGitDiff}
           />
         ) : (
           <EditorSurface
@@ -996,6 +1088,8 @@ function App() {
             onResizeStart={startBottomPanelResize}
             onSelectView={workbench.showBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
+            gitHistoryGateway={gitHistoryGateway}
+            onOpenCommitFileDiff={openGitHistoryCommitDiff}
             onTerminalSessionReady={workbench.registerActiveTerminalSession}
             onTrustWorkspace={workbench.toggleWorkspaceTrust}
             terminalGateway={terminalGateway}

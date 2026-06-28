@@ -29,6 +29,69 @@ export interface GitStatus {
   rootPath: string;
 }
 
+export interface GitRepoStatus {
+  gitAvailable: boolean;
+  isRepository: boolean;
+}
+
+export interface GitBranches {
+  current: string | null;
+  local: string[];
+  remotes: Record<string, string[]>;
+}
+
+export interface Commit {
+  abbrevHash: string;
+  authorEmail: string;
+  authorName: string;
+  date: string;
+  hash: string;
+  labels: string[];
+  parents: string[];
+  subject: string;
+}
+
+export interface CommitDetails extends Commit {
+  body: string;
+  containingBranches: string[];
+}
+
+export interface GitCommitFilters {
+  author?: string;
+  branch?: string | null;
+  cursor?: string;
+  limit?: number;
+  path?: string;
+  query?: string;
+}
+
+export interface FileChange {
+  isRename: boolean;
+  oldPath: string | null;
+  newPath: string | null;
+  path: string;
+  status: "A" | "M" | "D" | "R";
+}
+
+export interface CommitGraphNode {
+  children: string[];
+  commit: Commit;
+  depth: number;
+  hash: string;
+  isMerge: boolean;
+}
+
+export interface DiffPayload {
+  commitHash: string;
+  isRename: boolean;
+  language: string;
+  modifiedContent: string;
+  originalContent: string;
+  oldPath: string | null;
+  path: string;
+  status: "A" | "M" | "D" | "R";
+}
+
 export interface GitFileDiff {
   change: GitChangedFile;
   language: string;
@@ -48,6 +111,27 @@ export interface GitGateway {
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+}
+
+export interface GitHistoryGateway {
+  getBranches(rootPath: string): Promise<GitBranches>;
+  getCommitDetails(rootPath: string, commitHash: string): Promise<CommitDetails>;
+  getCommitDiff(
+    rootPath: string,
+    commitHash: string,
+    path: string,
+    oldPath?: string | null,
+  ): Promise<DiffPayload>;
+  getCommitFiles(rootPath: string, commitHash: string): Promise<FileChange[]>;
+  getCommitGraphPage(
+    rootPath: string,
+    cursor?: string | null,
+  ): Promise<CommitGraphNode[]>;
+  getCommitLog(
+    rootPath: string,
+    filters: GitCommitFilters,
+  ): Promise<Commit[]>;
+  getRepoStatus(rootPath: string): Promise<GitRepoStatus>;
 }
 
 export function gitChangeKey(change: GitChangedFile): string {

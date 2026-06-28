@@ -32,7 +32,11 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    CommandGitRepositoryGateway, GitChangedFile, GitFileDiff, GitRepositoryGateway, GitStatus,
+    load_commit_diff, load_commit_details, load_commit_files, load_commit_log,
+    load_git_branches, GitBranches, CommitDiffPayload, CommitFileChange,
+    CommitGraphNode, GitChangedFile, GitCommit, GitCommitDetails, GitRepoStatus,
+    CommandGitRepositoryGateway, GitCommitFilters, GitFileDiff, GitRepositoryGateway,
+    GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -1457,6 +1461,102 @@ fn get_git_status(root_path: String) -> Result<GitStatus, String> {
     CommandGitRepositoryGateway
         .status(&root)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String> {
+    let root = match canonicalize_workspace_root(&root_path) {
+        Ok(root) => root,
+        Err(_) => {
+            return Ok(GitRepoStatus {
+                git_available: git::git_available(),
+                is_repository: false,
+            });
+        }
+    };
+    let is_repository = CommandGitRepositoryGateway
+        .status(&root)
+        .map(|status| status.is_repository)
+        .unwrap_or(false);
+
+    Ok(GitRepoStatus {
+        git_available: git::git_available(),
+        is_repository,
+    })
+}
+
+#[tauri::command]
+fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    load_git_branches(&root).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_commit_log(
+    root_path: String,
+    filters: GitCommitFilters,
+) -> Result<Vec<GitCommit>, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    load_commit_log(&root, filters).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_commit_graph_page(
+    root_path: String,
+    cursor: Option<String>,
+) -> Result<Vec<CommitGraphNode>, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let commits = load_commit_log(
+        &root,
+        GitCommitFilters {
+            author: None,
+            branch: None,
+            cursor,
+            limit: Some(200),
+            path: None,
+            query: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+
+    Ok(commits
+        .into_iter()
+        .map(|commit| CommitGraphNode {
+            children: Vec::new(),
+            commit: commit.clone(),
+            depth: 0,
+            hash: commit.hash,
+            is_merge: commit.parents.len() > 1,
+        })
+        .collect())
+}
+#[tauri::command]
+fn get_git_commit_details(root_path: String, commit_hash: String) -> Result<GitCommitDetails, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    load_commit_details(&root, &commit_hash).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_commit_files(root_path: String, commit_hash: String) -> Result<Vec<CommitFileChange>, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_commit_diff(
+    root_path: String,
+    commit_hash: String,
+    path: String,
+    old_path: Option<String>,
+) -> Result<CommitDiffPayload, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    load_commit_diff(
+        &root,
+        &commit_hash,
+        &path,
+        old_path.as_deref(),
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -5443,6 +5543,13 @@ pub fn run() {
             detect_workspace,
             dispose_workspace_root,
             get_php_file_outline,
+            get_git_commit_graph_page,
+            get_git_commit_log,
+            get_git_commit_diff,
+            get_git_commit_details,
+            get_git_commit_files,
+            get_git_branches,
+            get_git_repo_status,
             get_git_diff,
             get_git_status,
             get_javascript_typescript_language_server_status,

@@ -5,6 +5,7 @@ describe("bottomPanelLabel", () => {
   it.each<[BottomPanelView, string]>([
     ["index", "Index"],
     ["problems", "Problems"],
+    ["history", "History"],
     ["terminal", "Terminal"],
   ])("labels the %s view", (view, label) => {
     expect(bottomPanelLabel(view)).toBe(label);
