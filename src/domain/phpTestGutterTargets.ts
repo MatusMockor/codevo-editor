@@ -48,9 +48,6 @@ const classDeclarationPattern =
 // edited). Docblocks are now pre-extracted with a single lazy span instead.
 const phpUnitMethodPattern =
   /(?:#\[\s*Test\b[^\]]*\]\s*)?(?:(?:final|abstract)\s+)*public\s+(?:static\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
-// A single, well-bounded lazy span (no nested ambiguity, no crossing of the
-// `*/` delimiter twice) - the safe shape mirroring `phpDocTypeForProperty`.
-const docBlockPattern = /\/\*\*[\s\S]*?\*\//g;
 const pestCallPattern =
   /(?:^|\n)[ \t]*(?:it|test)\s*\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
 
@@ -137,18 +134,36 @@ function phpUnitTargets(
   return targets;
 }
 
-// Pre-extracts every `/** ... */` docblock that contains `@test` and returns the
-// offset immediately after each one's closing `*/`. A single lazy span keeps this
-// linear even on a body full of malformed/unclosed docblocks.
+// Pre-extracts every closed `/** ... */` docblock that contains `@test` and
+// returns the offset immediately after each one's closing `*/`. This uses
+// `indexOf` rather than a global lazy regex so malformed files with many
+// unclosed `/**` starts scan the remainder once instead of retrying from every
+// opener while the user is mid-typing.
 function phpUnitTestDocBlockEndOffsets(body: string): number[] {
   const endOffsets: number[] = [];
+  let searchOffset = 0;
 
-  for (const block of body.matchAll(docBlockPattern)) {
-    if (!/@test\b/.test(block[0])) {
-      continue;
+  while (searchOffset < body.length) {
+    const startOffset = body.indexOf("/**", searchOffset);
+
+    if (startOffset === -1) {
+      break;
     }
 
-    endOffsets.push((block.index ?? 0) + block[0].length);
+    const endOffset = body.indexOf("*/", startOffset + 3);
+
+    if (endOffset === -1) {
+      break;
+    }
+
+    const blockEndOffset = endOffset + 2;
+    const block = body.slice(startOffset, blockEndOffset);
+
+    if (/@test\b/.test(block)) {
+      endOffsets.push(blockEndOffset);
+    }
+
+    searchOffset = blockEndOffset;
   }
 
   return endOffsets;
