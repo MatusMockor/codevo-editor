@@ -462,6 +462,7 @@ describe("normalizeWorkspaceSession", () => {
   it("accepts history as a valid stored bottom panel view", () => {
     expect(
       normalizeWorkspaceSession({
+        activePath: "/project/src/User.php",
         bottomPanelView: "history",
         openPaths: ["/project/src/User.php"],
         sidebarView: "files",

@@ -5,7 +5,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
+import {
+  emptyGitStatus,
+  gitChangeKey,
+  type GitChangedFile,
+  type GitGateway,
+} from "../domain/git";
 import type {
   LocalHistoryGateway,
   LocalHistoryVersion,
@@ -277,7 +282,9 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
-    expect(getWorkbench().activePath).toBe(file.path);
+    expect(getWorkbench().activePath).toBe(
+      "mockor-git-diff:worktree:/workspace/src/User.php",
+    );
 
     await act(async () => {
       getWorkbench().closeGitDiffPreview();
@@ -990,15 +997,93 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().previewGitChange(change);
     });
 
-    expect(getWorkbench().activePath).toBeNull();
-    expect(getWorkbench().previewPath).toBeNull();
-    expect(getWorkbench().openDocuments).toEqual([]);
+    const diffPath = "mockor-git-diff:worktree:/workspace/assets/spinner.gif";
+    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().previewPath).toBe(diffPath);
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: spinner.gif",
+        path: diffPath,
+        readOnly: true,
+      }),
+    ]);
     expect(getWorkbench().selectedGitChange).toEqual(change);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
         change,
       }),
     );
+  });
+
+  it("opens a read-only synthetic document as a pinned editor tab", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().openReadOnlyDocument(
+        {
+          content: "",
+          language: "plaintext",
+          name: "Diff: Older.php",
+          path: "mockor-git-history-diff:abc123:src/Older.php",
+          readOnly: true,
+          savedContent: "",
+        },
+        { pin: true },
+      );
+    });
+
+    expect(getWorkbench().activePath).toBe(
+      "mockor-git-history-diff:abc123:src/Older.php",
+    );
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: Older.php",
+        path: "mockor-git-history-diff:abc123:src/Older.php",
+        readOnly: true,
+      }),
+    ]);
+  });
+
+  it("opens a read-only synthetic document as a preview editor tab by default", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().openReadOnlyDocument({
+        content: "",
+        language: "plaintext",
+        name: "Diff: Preview.php",
+        path: "mockor-git-history-diff:def456:src/Preview.php",
+        readOnly: true,
+        savedContent: "",
+      });
+    });
+
+    expect(getWorkbench().activePath).toBe(
+      "mockor-git-history-diff:def456:src/Preview.php",
+    );
+    expect(getWorkbench().previewPath).toBe(
+      "mockor-git-history-diff:def456:src/Preview.php",
+    );
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: Preview.php",
+        path: "mockor-git-history-diff:def456:src/Preview.php",
+        readOnly: true,
+      }),
+    ]);
   });
 
   it("surfaces a recoverable notice (never an unhandled crash) when get_git_diff rejects for a README change", async () => {
@@ -1113,12 +1198,18 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().activePath).toBe(activePath);
-    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().previewPath).toBe(activePath);
     expect(getWorkbench().selectedGitChange).toEqual(change);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({ change }),
     );
-    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: spinner.gif",
+        path: activePath,
+        readOnly: true,
+      }),
+    ]);
   });
 
   it("clears the Git diff view when its editor tab is closed", async () => {
@@ -1194,7 +1285,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().openDocuments).toEqual([]);
   });
 
-  it("replaces the active Git diff preview when opening another changed file", async () => {
+  it("opens Git diffs as pinned tabs when opening changed files", async () => {
     const firstChange = gitChangedFile("src/First.php", false);
     const secondChange = gitChangedFile("src/Second.php", false);
     const gitGateway: GitGateway = {
@@ -1257,6 +1348,16 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(firstChange);
     });
+    const firstDiffPath = "mockor-git-diff:worktree:/workspace/src/First.php";
+    expect(getWorkbench().activePath).toBe(firstDiffPath);
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: First.php",
+        path: firstDiffPath,
+        readOnly: true,
+      }),
+    ]);
     expect(getWorkbench().selectedGitChange).toEqual(firstChange);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
@@ -1270,8 +1371,21 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().openGitChange(secondChange);
     });
 
-    expect(getWorkbench().activePath).toBeNull();
-    expect(getWorkbench().openDocuments).toEqual([]);
+    const secondDiffPath = "mockor-git-diff:worktree:/workspace/src/Second.php";
+    expect(getWorkbench().activePath).toBe(secondDiffPath);
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: First.php",
+        path: firstDiffPath,
+        readOnly: true,
+      }),
+      expect.objectContaining({
+        name: "Diff: Second.php",
+        path: secondDiffPath,
+        readOnly: true,
+      }),
+    ]);
     expect(getWorkbench().selectedGitChange).toEqual(secondChange);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
@@ -1282,7 +1396,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
-  it("keeps Git diff preview separate from active editor documents", async () => {
+  it("clears the active Git diff tab state when opening a real file", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const gitGateway: GitGateway = {
@@ -1345,12 +1459,19 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(change);
     });
+    const diffPath = "mockor-git-diff:worktree:/workspace/assets/spinner.gif";
     expect(getWorkbench().selectedGitChange).toEqual(change);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({ change }),
     );
-    expect(getWorkbench().activePath).toBeNull();
-    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: spinner.gif",
+        path: diffPath,
+        readOnly: true,
+      }),
+    ]);
 
     await act(async () => {
       await getWorkbench().openPinnedFile(file);
@@ -1399,6 +1520,50 @@ describe("useWorkbenchController preview tabs", () => {
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       }),
     );
+  });
+
+  it("does not restore synthetic Git diff tabs from the workspace cache", async () => {
+    const change: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: "/workspace-a/src/User.php",
+      relativePath: "src/User.php",
+      status: "modified",
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway: fileHistoryGitGateway({}),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        path: "mockor-git-diff:worktree:/workspace-a/src/User.php",
+      }),
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().activePath).toBeNull();
   });
 
   it("ignores inactive workspace runtime dispose errors after switching project tabs", async () => {

@@ -2711,6 +2711,10 @@ button {
   overflow: hidden;
 }
 
+.git-history-commits {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .git-history-section-header {
   display: flex;
   min-height: 28px;
@@ -2740,8 +2744,10 @@ button {
 
 .git-history-filters {
   display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(100px, 0.8fr) minmax(100px, 0.8fr);
   gap: 4px;
-  padding: 0 8px;
+  min-width: 0;
+  padding: 0 8px 2px;
 }
 
 .git-history-filter {
@@ -2771,6 +2777,15 @@ button {
   color: var(--color-text-subtle);
 }
 
+.git-history-branch-body {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 6px;
+}
+
 .git-history-current-branch,
 .git-history-group {
   display: grid;
@@ -2785,8 +2800,13 @@ button {
 }
 
 .git-history-current-branch strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-strong);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-history-group-toggle {
@@ -2832,6 +2852,13 @@ button {
   font-size: 10px;
 }
 
+.git-history-branch-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .git-history-branch-row.selected {
   background: var(--color-accent-soft);
   color: var(--color-text-strong);
@@ -2871,8 +2898,8 @@ button {
 .git-history-commit-row {
   display: grid;
   width: 100%;
-  grid-template-columns: 22px minmax(0, 2.2fr) minmax(0, 1.2fr) 66px;
-  gap: 4px;
+  grid-template-columns: 76px minmax(0, 2.2fr) minmax(0, 1.2fr) 66px;
+  gap: 6px;
   min-width: 0;
   align-items: center;
   border: 0;
@@ -2902,13 +2929,45 @@ button {
 
 .git-history-commit-graph {
   display: inline-grid;
-  width: 18px;
-  min-width: 18px;
+  width: 76px;
+  min-width: 76px;
   align-items: center;
-  justify-content: center;
+  justify-content: start;
   color: var(--color-text-muted);
-  font-size: 11px;
-  font-family: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.git-history-commit-graph-svg {
+  display: block;
+  width: 76px;
+  height: 30px;
+  overflow: visible;
+}
+
+.git-history-commit-graph-line,
+.git-history-commit-graph-branch {
+  fill: none;
+  stroke: var(--color-border-strong);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+  opacity: 0.78;
+}
+
+.git-history-commit-graph-branch {
+  stroke: var(--color-accent);
+  stroke-width: 1.35;
+  opacity: 0.95;
+}
+
+.git-history-commit-graph-node {
+  fill: var(--color-bg);
+  stroke: var(--color-accent);
+  stroke-width: 1.7;
+}
+
+.git-history-commit-graph-node--merge {
+  fill: var(--color-warning);
+  stroke: var(--color-warning);
 }
 
 .git-history-commit-subject {
@@ -3018,10 +3077,11 @@ button {
 }
 
 .git-history-refresh {
-  display: inline-grid;
+  display: inline-flex;
   height: 24px;
   width: fit-content;
   align-items: center;
+  justify-content: center;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   background: var(--color-control);
@@ -3038,33 +3098,34 @@ button {
 
 .git-history-files {
   display: grid;
-  gap: 6px;
+  align-content: start;
+  gap: 1px;
   min-height: 0;
   overflow: auto;
 }
 
-.git-history-file-group header {
-  min-height: 24px;
+.git-history-file-folder {
   display: grid;
+  gap: 1px;
+}
+
+.git-history-file-folder-label {
+  display: grid;
+  min-height: 24px;
+  grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
-  border-radius: 6px;
-  padding: 0 6px;
-  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  gap: 4px;
+  padding: 0 6px 0 calc(6px + var(--git-history-file-depth, 0) * 14px);
   color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 700;
 }
 
-.git-history-file-group header span {
+.git-history-file-folder-label span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.git-history-file-rows {
-  display: grid;
-  gap: 1px;
 }
 
 .git-history-file-row {
@@ -3078,8 +3139,9 @@ button {
   border-radius: 5px;
   background: transparent;
   color: var(--color-text);
+  cursor: pointer;
   text-align: left;
-  padding: 0 6px;
+  padding: 0 6px 0 calc(6px + var(--git-history-file-depth, 0) * 14px);
 }
 
 .git-history-file-row:hover,

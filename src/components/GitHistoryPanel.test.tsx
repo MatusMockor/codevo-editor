@@ -80,7 +80,12 @@ describe("GitHistoryPanel", () => {
 
     expect(selectedCommitRow(host)?.textContent).toContain("Initial");
     expect(selectedCommitRow(host)?.textContent).toContain("Developer");
-    expect(selectedCommitRow(host)?.textContent).toContain("◉");
+    expect(
+      selectedCommitRow(host)?.querySelector(".git-history-commit-graph-svg"),
+    ).not.toBeNull();
+    expect(
+      selectedCommitRow(host)?.querySelector(".git-history-commit-graph-line"),
+    ).not.toBeNull();
   });
 
   it("reloads commits when branch filter changes and refreshes selection", async () => {
@@ -172,6 +177,57 @@ describe("GitHistoryPanel", () => {
     );
   });
 
+  it("loads details for a selected older commit without reloading the log", async () => {
+    const latest = commitFixture("1111111111111111111111111111111111111111", "Latest");
+    const older = commitFixture("2222222222222222222222222222222222222222", "Older");
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog: [latest, older],
+      commitDetails: commitDetailsFixture(latest),
+      commitDetailsByHash: {
+        [older.hash]: commitDetailsFixture({ ...older, subject: "Older details" }),
+      },
+      commitFilesByHash: {
+        [older.hash]: [
+          {
+            isRename: false,
+            newPath: null,
+            oldPath: null,
+            path: "src/Older.ts",
+            status: "M",
+          },
+        ],
+      },
+    });
+
+    await renderPanel(root, gateway);
+
+    expect(gateway.getCommitLog).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      rowByText(host, ".git-history-commit-row", "Older").click();
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    expect(gateway.getCommitLog).toHaveBeenCalledTimes(1);
+    expect(gateway.getCommitDetails).toHaveBeenLastCalledWith(
+      "/workspace",
+      older.hash,
+    );
+    expect(gateway.getCommitFiles).toHaveBeenLastCalledWith(
+      "/workspace",
+      older.hash,
+    );
+    expect(host.textContent).toContain("Older details");
+    expect(host.textContent).toContain("Older.ts");
+  });
+
   it("supports an empty commit list fallback and allows re-fetch", async () => {
     const gateway = createGateway({
       branches: {
@@ -249,7 +305,79 @@ describe("GitHistoryPanel", () => {
     });
 
     expect(gateway.getCommitFiles).toHaveBeenCalledTimes(2);
-    expect(host.textContent).toContain("src/main.ts");
+    expect(host.textContent).toContain("src");
+    expect(host.textContent).toContain("main.ts");
+  });
+
+  it("renders changed files as a folder tree", async () => {
+    const commit = commitFixture("1111111111111111111111111111111111111111", "Initial");
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog: [commit],
+      commitDetails: commitDetailsFixture(commit),
+      commitFiles: [
+        {
+          isRename: false,
+          newPath: null,
+          oldPath: null,
+          path: "src/components/App.tsx",
+          status: "M",
+        },
+      ],
+    });
+
+    await renderPanel(root, gateway);
+
+    expect(host.querySelector(".git-history-file-folder-label")?.textContent)
+      .toContain("src");
+    expect(host.textContent).toContain("components");
+    expect(host.textContent).toContain("App.tsx");
+  });
+
+  it("renders file and child entries when a path changes from file to folder", async () => {
+    const commit = commitFixture("1111111111111111111111111111111111111111", "Initial");
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog: [commit],
+      commitDetails: commitDetailsFixture(commit),
+      commitFiles: [
+        {
+          isRename: false,
+          newPath: null,
+          oldPath: null,
+          path: "src",
+          status: "D",
+        },
+        {
+          isRename: false,
+          newPath: null,
+          oldPath: null,
+          path: "src/main.ts",
+          status: "A",
+        },
+      ],
+    });
+
+    await renderPanel(root, gateway);
+
+    const fileRows = [
+      ...host.querySelectorAll<HTMLButtonElement>(".git-history-file-row"),
+    ].map((row) => row.textContent ?? "");
+
+    expect(fileRows).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("src"),
+        expect.stringContaining("main.ts"),
+      ]),
+    );
   });
 
   it("retries loading commit metadata and files when detail loading fails", async () => {
@@ -289,7 +417,7 @@ describe("GitHistoryPanel", () => {
     expect(gateway.getCommitDetails).toHaveBeenCalledTimes(2);
     expect(gateway.getCommitFiles).toHaveBeenCalledTimes(2);
     expect(host.textContent).not.toContain("Failed to load selected commit data.");
-    expect(selectedCommitText(host)).toContain("Recovered");
+    expect(host.textContent).toContain("Recovered");
   });
 
   it("renders commit rows in a virtualized viewport for large histories", async () => {
@@ -315,6 +443,130 @@ describe("GitHistoryPanel", () => {
         ".git-history-commit-list",
       )?.querySelectorAll(".git-history-commit-row").length,
     ).toBeLessThan(commitLog.length);
+  });
+
+  it("does not snap scrolling back to the selected commit", async () => {
+    const commitLog = Array.from({ length: 220 }, (_, index) =>
+      commitFixture(hashAt(index), `Commit ${index}`),
+    );
+
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog,
+      commitDetails: commitDetailsFixture(commitLog[0]),
+    });
+
+    await renderPanel(root, gateway);
+
+    const list = host.querySelector<HTMLDivElement>(".git-history-commit-list");
+    expect(list).not.toBeNull();
+
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 320,
+    });
+    Object.defineProperty(list, "scrollHeight", {
+      configurable: true,
+      value: 6000,
+    });
+
+    await act(async () => {
+      if (list) {
+        list.scrollTop = 2100;
+        list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+      await flushAnimationFrame();
+      await flushAsync();
+    });
+
+    expect(list?.scrollTop).toBe(2100);
+  });
+
+  it("renders colored lanes for branched commit graph rows", async () => {
+    const commitLog = [
+      commitFixture(hashAt(0), "Merge", [hashAt(1), hashAt(2)]),
+      commitFixture(hashAt(1), "Main parent", [hashAt(3)]),
+      commitFixture(hashAt(2), "Feature parent", [hashAt(3)]),
+      commitFixture(hashAt(3), "Base"),
+    ];
+
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog,
+      commitDetails: commitDetailsFixture(commitLog[0]),
+    });
+
+    await renderPanel(root, gateway);
+
+    const mergeRow = rowByText(host, ".git-history-commit-row", "Merge");
+    const strokes = [
+      ...mergeRow.querySelectorAll<SVGElement>(
+        ".git-history-commit-graph-line, .git-history-commit-graph-branch",
+      ),
+    ].map((element) => element.style.stroke);
+    const branchPath = mergeRow.querySelector<SVGPathElement>(
+      ".git-history-commit-graph-branch",
+    );
+
+    expect(new Set(strokes).size).toBeGreaterThan(1);
+    expect(branchPath?.getAttribute("d")).toContain(" C ");
+    expect(branchPath?.getAttribute("d")).toMatch(/^M 9 15 C /);
+    expect(branchPath?.getAttribute("d")).toContain("32");
+  });
+
+  it("loads the next commit page when scrolling near the bottom", async () => {
+    const commitLog = Array.from({ length: 220 }, (_, index) =>
+      commitFixture(hashAt(index), `Commit ${index}`),
+    );
+
+    const gateway = createGateway({
+      branches: {
+        current: "main",
+        local: ["main"],
+        remotes: {},
+      },
+      commitLog,
+      commitDetails: commitDetailsFixture(commitLog[0]),
+    });
+
+    await renderPanel(root, gateway);
+
+    const list = host.querySelector<HTMLDivElement>(".git-history-commit-list");
+    expect(list).not.toBeNull();
+
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 320,
+    });
+    Object.defineProperty(list, "scrollHeight", {
+      configurable: true,
+      value: 6000,
+    });
+
+    await act(async () => {
+      if (list) {
+        list.scrollTop = 5700;
+        list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+      await flushAsync();
+    });
+
+    expect(gateway.getCommitLog).toHaveBeenCalledTimes(2);
+    expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        cursor: "200",
+        limit: 200,
+      }),
+    );
   });
 
   it("supports Home/End/PageUp/PageDown commit-row navigation", async () => {
@@ -390,6 +642,10 @@ async function flushAsync(): Promise<void> {
   await Promise.resolve();
 }
 
+async function flushAnimationFrame(): Promise<void> {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 async function renderPanel(
   root: Root,
   gateway: GitHistoryGateway,
@@ -445,7 +701,11 @@ function hashAt(index: number): string {
   );
 }
 
-function commitFixture(hash: string, subject: string): Commit {
+function commitFixture(
+  hash: string,
+  subject: string,
+  parents: string[] = [],
+): Commit {
   return {
     abbrevHash: hash.slice(0, 8),
     authorEmail: "dev@example.test",
@@ -453,7 +713,7 @@ function commitFixture(hash: string, subject: string): Commit {
     date: "2026-06-25T10:00:00.000Z",
     hash,
     labels: [],
-    parents: [],
+    parents,
     subject,
   };
 }
@@ -471,8 +731,10 @@ function createGateway(seed: {
   commitLog?: Commit[];
   commitLogByBranch?: Record<string, Commit[]>;
   commitDetails?: CommitDetails;
+  commitDetailsByHash?: Record<string, CommitDetails>;
   commitDetailsError?: boolean;
   commitFiles?: FileChange[];
+  commitFilesByHash?: Record<string, FileChange[]>;
   graphByCommit?: Record<string, CommitGraphNode>;
   graphByBranch?: Record<string, CommitGraphNode[]>;
   repoStatus?: GitRepoStatus;
@@ -497,6 +759,9 @@ function createGateway(seed: {
   } else {
     commitDetailsByHash.set(seedDefaultCommit.hash, commitDetailsFixture(seedDefaultCommit));
   }
+  for (const details of Object.values(seed.commitDetailsByHash ?? {})) {
+    commitDetailsByHash.set(details.hash, details);
+  }
 
   const gateway: CommitHistoryGateway = {
     getRepoStatus: vi.fn(async () =>
@@ -512,11 +777,16 @@ function createGateway(seed: {
     getCommitLog: vi.fn(async (_rootPath, filters) => {
       lastCommitBranch = filters.branch ?? null;
 
-    if (filters.branch && branchCommits[filters.branch]) {
-      return branchCommits[filters.branch];
-    }
+      const source =
+        filters.branch && branchCommits[filters.branch]
+          ? branchCommits[filters.branch]
+          : filters.branch
+            ? []
+            : currentCommitLog;
+      const start = Number.parseInt(filters.cursor ?? "0", 10) || 0;
+      const end = filters.limit ? start + filters.limit : undefined;
 
-      return filters.branch ? [] : currentCommitLog;
+      return source.slice(start, end);
     }),
     getCommitGraphPage: vi.fn(async (_rootPath, _cursor) => {
       if (lastCommitBranch && graphByBranch[lastCommitBranch]) {
@@ -546,7 +816,9 @@ function createGateway(seed: {
         )
       );
     }),
-    getCommitFiles: vi.fn(async (_rootPath, _commitHash) => commitFiles),
+    getCommitFiles: vi.fn(async (_rootPath, commitHash) =>
+      seed.commitFilesByHash?.[commitHash] ?? commitFiles,
+    ),
     getCommitDiff: vi.fn(async () => ({
       commitHash: "",
       isRename: false,

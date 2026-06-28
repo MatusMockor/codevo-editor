@@ -283,7 +283,7 @@ describe("TauriGitGateway", () => {
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("get_git_commit_graph_page", {
-      cursor: undefined,
+      cursor: null,
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("get_git_commit_log", {

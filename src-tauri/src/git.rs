@@ -774,8 +774,17 @@ pub fn load_commit_log(
         "--date=iso-strict".to_string(),
         "--decorate=short".to_string(),
         format!("--max-count={limit}"),
-        "--pretty=format:%H\x1f%h\x1f%an\x1f%ae\x1f%aI\x1f%s\x1f%P\x1f%B\x1f%D\x00".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string(),
     ];
+
+    if let Some(skip) = filters
+        .cursor
+        .as_deref()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        args.push(format!("--skip={skip}"));
+    }
 
     if let Some(author) = filters.author.as_deref().filter(|value| !value.is_empty()) {
         args.push(format!("--author={author}"));
@@ -787,6 +796,10 @@ pub fn load_commit_log(
     }
 
     let range_ref = filters.branch.unwrap_or_else(|| "HEAD".to_string());
+    if !git_ref_has_commits(root, &range_ref) {
+        return Ok(Vec::new());
+    }
+
     args.push(range_ref);
 
     if let Some(path) = filters.path.as_deref().filter(|value| !value.is_empty()) {
@@ -794,10 +807,12 @@ pub fn load_commit_log(
         args.push(path.to_string());
     }
 
-    let _has_cursor = filters.cursor.as_deref().filter(|value| !value.is_empty());
-
     let output = git_output_vec(root, args)?;
     Ok(parse_commit_log_output(&output))
+}
+
+fn git_ref_has_commits(root: &Path, reference: &str) -> bool {
+    git_output_vec(root, vec!["rev-parse", "--verify", reference]).is_ok()
 }
 
 fn parse_commit_log_output(output: &str) -> Vec<GitCommit> {
@@ -824,14 +839,14 @@ fn parse_git_commit_from_fields(fields: &[&str]) -> GitCommit {
         .collect();
 
     GitCommit {
-        abbrev_hash: fields[1].to_string(),
-        author_email: fields[3].to_string(),
-        author_name: fields[2].to_string(),
-        date: fields[4].to_string(),
-        hash: fields[0].to_string(),
+        abbrev_hash: fields[1].trim().to_string(),
+        author_email: fields[3].trim().to_string(),
+        author_name: fields[2].trim().to_string(),
+        date: fields[4].trim().to_string(),
+        hash: fields[0].trim().to_string(),
         labels,
         parents,
-        subject: fields[5].to_string(),
+        subject: fields[5].trim().to_string(),
     }
 }
 
@@ -867,8 +882,9 @@ fn parse_git_labels(value: &str) -> Vec<String> {
 }
 
 pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitCommitDetails> {
-    let command = "--pretty=format:%H\x1f%h\x1f%an\x1f%ae\x1f%aI\x1f%s\x1f%P\x1f%B\x1f%D\x00".to_string();
-    let output = git_output_vec(root, vec!["show", "-s", "--format", &command, commit_hash])?;
+    let commit_hash = safe_commit_sha(commit_hash)?;
+    let command = "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
+    let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash])?;
     let commit = output
         .split('\0')
         .filter(|entry| !entry.trim().is_empty())
@@ -879,13 +895,13 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit not found."))?;
 
-    let body = git_output_vec(root, vec!["log", "-1", "--pretty=%B", commit_hash])?
+    let body = git_output_vec(root, vec!["log", "-1", "--pretty=%B", &commit_hash])?
         .trim_end()
         .to_string();
 
     let containing_local = git_output_vec(
         root,
-        vec!["branch", "--format=%(refname:short)", "--contains", commit_hash],
+        vec!["branch", "--format=%(refname:short)", "--contains", &commit_hash],
     )?;
     let containing_remote = git_output_vec(
         root,
@@ -894,7 +910,7 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
             "--remotes",
             "--format=%(refname:short)",
             "--contains",
-            commit_hash,
+            &commit_hash,
         ],
     )?;
 
@@ -936,9 +952,10 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
 }
 
 pub fn load_commit_files(root: &Path, commit_hash: &str) -> io::Result<Vec<CommitFileChange>> {
+    let commit_hash = safe_commit_sha(commit_hash)?;
     let output = git_output_vec(
         root,
-        vec!["show", "--pretty=format:", "--name-status", commit_hash],
+        vec!["show", "--pretty=format:", "--name-status", &commit_hash],
     )?;
 
     Ok(output
@@ -993,7 +1010,8 @@ pub fn load_commit_diff(
     path: &str,
     old_path: Option<&str>,
 ) -> io::Result<CommitDiffPayload> {
-    let files = load_commit_files(root, commit_hash)?;
+    let commit_hash = safe_commit_sha(commit_hash)?;
+    let files = load_commit_files(root, &commit_hash)?;
     let normalized_old_path = old_path.unwrap_or(path);
 
     let file = files
@@ -1968,10 +1986,11 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        load_commit_details, load_commit_diff, load_commit_files, load_commit_log,
         parse_blame_porcelain, parse_branch_list, parse_diff_hunks, parse_file_history,
         parse_porcelain_status, parse_stash_list, safe_branch_name, safe_commit_sha,
         safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
-        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitCommitFilters, GitRepositoryGateway,
     };
     use std::{
         fs,
@@ -1984,6 +2003,113 @@ mod tests {
     /// Guarantees a distinct temp-repo path for every `TestGitRepo`, even when
     /// the platform clock is too coarse to disambiguate concurrent tests.
     static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn commit_log_returns_empty_for_unborn_head() {
+        let repo = TestGitRepo::new();
+
+        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn commit_log_lists_commits_from_real_repository() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].subject, "second commit");
+        assert_eq!(commits[0].author_name, "History Author");
+        assert_eq!(commits[0].author_email, "history@example.com");
+        assert_eq!(commits[1].subject, "first commit");
+        assert_eq!(commits[0].parents.len(), 1);
+        assert!(commits[0].hash.len() >= 40);
+        assert!(commits
+            .iter()
+            .all(|commit| commit.hash.chars().all(|value| !value.is_whitespace())));
+    }
+
+    #[test]
+    fn commit_log_uses_cursor_as_skip_offset() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let commits = load_commit_log(
+            repo.path(),
+            GitCommitFilters {
+                cursor: Some("1".to_string()),
+                limit: Some(1),
+                ..empty_commit_filters()
+            },
+        )
+        .expect("commit log");
+
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].subject, "first commit");
+    }
+
+    #[test]
+    fn commit_details_loads_metadata_from_real_repository() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "details@example.com"]);
+        repo.run(["config", "user.name", "Details Author"]);
+        repo.write("file.txt", "details\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "subject line", "-m", "body line"]);
+        let sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        let details = load_commit_details(repo.path(), &sha).expect("details");
+
+        assert_eq!(details.commit.subject, "subject line");
+        assert_eq!(details.commit.author_name, "Details Author");
+        assert_eq!(details.commit.author_email, "details@example.com");
+        assert_eq!(details.body, "subject line\n\nbody line");
+        assert!(!details.containing_branches.is_empty());
+    }
+
+    #[test]
+    fn commit_history_loads_details_files_and_diff_for_non_head_commit() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "details@example.com"]);
+        repo.run(["config", "user.name", "Details Author"]);
+        repo.write("file.txt", "first\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        let first_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        repo.write("file.txt", "second\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+
+        let details = load_commit_details(repo.path(), &first_sha).expect("details");
+        let files = load_commit_files(repo.path(), &first_sha).expect("files");
+        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None)
+            .expect("diff");
+
+        assert_eq!(details.commit.subject, "first commit");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "file.txt");
+        assert_eq!(files[0].status, "A");
+        assert_eq!(diff.original_content, "");
+        assert_eq!(diff.modified_content, "first\n");
+        assert_eq!(diff.status, "A");
+    }
 
     #[test]
     fn parses_porcelain_status_changes() {
@@ -2993,6 +3119,17 @@ mod tests {
             path: format!("/workspace/{relative_path}"),
             relative_path: relative_path.to_string(),
             status,
+        }
+    }
+
+    fn empty_commit_filters() -> GitCommitFilters {
+        GitCommitFilters {
+            author: None,
+            branch: None,
+            cursor: None,
+            limit: None,
+            path: None,
+            query: None,
         }
     }
 
