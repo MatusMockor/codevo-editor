@@ -78,7 +78,9 @@ interface FakeEditor {
         },
       ) => void)
     | null;
+  modelChangeHandler: (() => void) | null;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
+  onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
@@ -8661,6 +8663,49 @@ class Foo
     expect(modelValue).toBe(activeDocument.content);
   });
 
+  it("force-syncs when Monaco swaps to the active document model after the open effect has already run", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass QuickOpenFile {}\n",
+      language: "php",
+      name: "QuickOpenFile.php",
+      path: "/workspace/app/CodevoQa/QuickOpenFile.php",
+      savedContent: "<?php\nclass QuickOpenFile {}\n",
+    };
+    let modelValue = "";
+    const placeholderModel: FakeModel = {
+      uri: { fsPath: "/workspace/.placeholder", path: "/workspace/.placeholder" },
+    };
+    const activeModel: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      setValue: vi.fn((next: string) => {
+        modelValue = next;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    } as FakeModel & {
+      getValue: ReturnType<typeof vi.fn>;
+      setValue: ReturnType<typeof vi.fn>;
+    };
+    const editor = createEditor(placeholderModel);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(activeModel);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    expect(modelValue).toBe("");
+
+    editor.getModel.mockReturnValue(activeModel);
+
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    expect(modelValue).toBe(activeDocument.content);
+  });
+
   it("re-renders the Monaco surface when the active document content changes", async () => {
     const initialDocument: EditorDocument = {
       content: "const value = 1;\n",
@@ -9847,6 +9892,7 @@ function createEditor(model: FakeModel): FakeEditor {
     cursorPositionHandler: null,
     mouseDownHandler: null,
     modelContentChangeHandler: null,
+    modelChangeHandler: null,
     onDidChangeCursorPosition: vi.fn(
       (handler: (event: { position: EditorPosition }) => void) => {
         editor.cursorPositionHandler = handler;
@@ -9854,6 +9900,11 @@ function createEditor(model: FakeModel): FakeEditor {
         return { dispose: vi.fn() };
       },
     ),
+    onDidChangeModel: vi.fn((handler: () => void) => {
+      editor.modelChangeHandler = handler;
+
+      return { dispose: vi.fn() };
+    }),
     onDidChangeModelContent: vi.fn(
       (handler: (event: { changes: Array<{ text: string }> }) => void) => {
         editor.modelContentChangeHandler = handler;

@@ -2044,17 +2044,27 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const model = editorApi.getModel();
+    const syncActiveModelContent = () => {
+      const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
-      return;
-    }
+      if (!model || modelPath(model) !== activeDocument.path) {
+        return;
+      }
 
-    if (model.getValue() === activeDocument.content) {
-      return;
-    }
+      if (model.getValue() === activeDocument.content) {
+        return;
+      }
 
-    model.setValue(activeDocument.content);
+      model.setValue(activeDocument.content);
+    };
+
+    syncActiveModelContent();
+
+    const modelChangeDisposable = editorApi.onDidChangeModel(() => {
+      syncActiveModelContent();
+    });
+
+    return () => modelChangeDisposable.dispose();
   }, [activeDocument, editorApi]);
 
   useEffect(() => {
