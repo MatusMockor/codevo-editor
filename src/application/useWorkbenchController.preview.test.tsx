@@ -27434,6 +27434,121 @@ class Comment
     ]);
   });
 
+  it("completes trait $this host method from one same-source trait host", async () => {
+    const source = `<?php
+namespace App\\Models;
+
+trait HasHostHooks
+{
+    public function bootHooks(): void
+    {
+        $this->host
+    }
+}
+
+class User
+{
+    use HasHostHooks;
+
+    public function hostHook(): void {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$this->host"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "hostHook",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+  });
+
+  it("does not complete trait $this host method for trait-only source", async () => {
+    const source = `<?php
+namespace App\\Models;
+
+trait HasHostHooks
+{
+    public function bootHooks(): void
+    {
+        $this->host
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$this->host"),
+      ),
+    ).resolves.toEqual([]);
+  });
+
+  it("does not complete trait $this host method when two same-source trait hosts exist", async () => {
+    const source = `<?php
+namespace App\\Models;
+
+trait HasHostHooks
+{
+    public function bootHooks(): void
+    {
+        $this->host
+    }
+}
+
+class User
+{
+    use HasHostHooks;
+
+    public function hostHook(): void {}
+}
+
+class Admin
+{
+    use HasHostHooks;
+
+    public function hostHook(): void {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$this->host"),
+      ),
+    ).resolves.toEqual([]);
+  });
+
   it("resolves generic mixin method returns through PHPDoc mixin", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";

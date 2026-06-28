@@ -83,6 +83,7 @@ export interface PhpLaravelQueryCallbackContext {
 }
 
 export interface PhpSemanticEngineOptions {
+  contextualThisClassName?: string;
   frameworkProviders?: readonly PhpFrameworkProvider[];
 }
 
@@ -130,7 +131,8 @@ export function phpReceiverExpressionTypeInSource(
   const normalizedExpression = phpNormalizeReceiverExpression(receiverExpression);
 
   if (normalizedExpression === "$this") {
-    return phpCurrentClassName(source);
+    return options.contextualThisClassName?.trim().replace(/^\\+/, "") ||
+      phpCurrentClassName(source);
   }
 
   const thisPropertyMatch = new RegExp(
@@ -326,7 +328,7 @@ export function phpThisPropertyType(
       source,
       propertyName,
       options.frameworkProviders,
-      phpCurrentClassName(source),
+      options.contextualThisClassName ?? phpCurrentClassName(source),
     )
   );
 }

@@ -88,6 +88,36 @@ class CommentController
     );
   });
 
+  it("resolves contextual $this type only when explicitly provided", () => {
+    const source = `<?php
+namespace App\\Models;
+
+trait HasHostHooks
+{
+    public function bootHooks(): void
+    {
+        $this->host
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->host"),
+        "$this",
+      ),
+    ).toBe("App\\Models\\HasHostHooks");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->host"),
+        "$this",
+        { contextualThisClassName: "App\\Models\\User" },
+      ),
+    ).toBe("App\\Models\\User");
+  });
+
   it("resolves property type from the property declaration, not a same-named plain constructor param", () => {
     const source = `<?php
 namespace App\\Http\\Controllers;
