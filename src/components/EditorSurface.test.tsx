@@ -1738,6 +1738,87 @@ class InvoiceServiceTest extends TestCase
     expect(stopPropagation).toHaveBeenCalled();
   });
 
+  it("seeds the status bar's caret indicator on mount and forwards every cursor move", async () => {
+    // The status bar's "Ln X, Col Y" item reads the active editor's caret. On a
+    // tab switch @monaco-editor/react swaps the model and remounts this surface,
+    // so the surface must (a) report the active editor's CURRENT caret on mount
+    // (so the switched-to tab's position shows immediately) and (b) forward
+    // every subsequent move. A new tab's model thus seeds the indicator with its
+    // own caret, never a stale tab's.
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({ column: 5, lineNumber: 3 });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const onCursorPositionChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={onCursorPositionChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // The surface seeded the indicator with the editor's current caret.
+    expect(onCursorPositionChange).toHaveBeenCalledWith({
+      column: 5,
+      lineNumber: 3,
+    });
+
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 9, lineNumber: 12 },
+      });
+    });
+
+    // A later move is forwarded too, so the status bar tracks the live caret.
+    expect(onCursorPositionChange).toHaveBeenLastCalledWith({
+      column: 9,
+      lineNumber: 12,
+    });
+  });
+
   it("neutralizes Monaco's built-in Cmd-hover definition navigation without disposing the contribution so only explicit Cmd+click / Cmd+B navigate", async () => {
     stubNavigatorPlatform("MacIntel");
 

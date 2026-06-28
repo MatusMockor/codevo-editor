@@ -1140,6 +1140,14 @@ export function useWorkbenchController(
   );
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  // Reactive mirror of the active editor's caret for the status bar's "Ln X,
+  // Col Y" item. The ref above is read synchronously by navigation/definition
+  // flows; this state drives the rendered indicator. The EditorSurface refires
+  // `onCursorPositionChange` on every model swap (tab switch), so this always
+  // reflects the ACTIVE tab's caret, and it is cleared when the active document
+  // or workspace goes away so a stale tab's position can never linger.
+  const [activeEditorPosition, setActiveEditorPosition] =
+    useState<EditorPosition | null>(null);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -3687,6 +3695,7 @@ export function useWorkbenchController(
     openWorkspaceRequestPathRef.current = null;
     openFileRequestTokenRef.current += 1;
     activeEditorPositionRef.current = null;
+    setActiveEditorPosition(null);
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -4848,6 +4857,7 @@ export function useWorkbenchController(
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
       activeEditorPositionRef.current = null;
+      setActiveEditorPosition(null);
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
@@ -9299,7 +9309,27 @@ export function useWorkbenchController(
 
   const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
     activeEditorPositionRef.current = position;
+    setActiveEditorPosition((current) =>
+      current &&
+      current.lineNumber === position.lineNumber &&
+      current.column === position.column
+        ? current
+        : position,
+    );
   }, []);
+
+  // Drop the rendered caret indicator when no document is active (last tab
+  // closed). A new/switched tab repopulates it: the EditorSurface refires
+  // `onCursorPositionChange` on mount and on each model swap, so this only ever
+  // clears the empty-editor case and never races the active tab's own caret.
+  useEffect(() => {
+    if (activeDocument) {
+      return;
+    }
+
+    activeEditorPositionRef.current = null;
+    setActiveEditorPosition(null);
+  }, [activeDocument]);
 
   const showBottomPanelView = useCallback((view: BottomPanelView) => {
     setBottomPanelView(view);
@@ -28238,6 +28268,7 @@ export function useWorkbenchController(
     toggleSmartMode,
     toggleWorkspaceTrust,
     updateActiveDocument,
+    activeEditorPosition,
     updateActiveEditorPosition,
     openPhpTreeNode,
     openSearchResult,

@@ -46,7 +46,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,
@@ -111,7 +113,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,
@@ -171,7 +175,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,
@@ -229,7 +235,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,

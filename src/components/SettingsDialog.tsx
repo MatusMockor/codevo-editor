@@ -1,4 +1,4 @@
-import { Settings2, X } from "lucide-react";
+import { Search, Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultShortcutForCommand,
@@ -759,9 +759,39 @@ function KeymapSettingsPanel({
   appSettings,
   onChangeShortcut,
 }: KeymapSettingsPanelProps) {
+  const [filter, setFilter] = useState("");
+
+  const visibleCommands = useMemo(() => {
+    const normalizedFilter = filter.trim().toLowerCase();
+
+    if (!normalizedFilter) {
+      return keymapCommands;
+    }
+
+    return keymapCommands.filter((command) => {
+      const haystack = `${command.label} ${command.category} ${command.id}`;
+      return haystack.toLowerCase().includes(normalizedFilter);
+    });
+  }, [filter]);
+
   return (
     <div className="settings-group">
-      {keymapCommands.map((command) => (
+      <div className="palette-search keymap-search">
+        <Search aria-hidden="true" size={16} />
+        <input
+          aria-label="Filter shortcuts"
+          onChange={(event) => setFilter(event.currentTarget.value)}
+          placeholder="Filter shortcuts"
+          spellCheck={false}
+          value={filter}
+        />
+      </div>
+
+      {visibleCommands.length === 0 ? (
+        <div className="keymap-empty">No matching shortcuts</div>
+      ) : null}
+
+      {visibleCommands.map((command) => (
         <label className="settings-field keymap-field" key={command.id}>
           <span>
             <strong>{command.label}</strong>

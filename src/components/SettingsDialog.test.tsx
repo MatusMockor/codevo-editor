@@ -312,6 +312,127 @@ describe("SettingsDialog", () => {
     expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
   });
 
+  it("filters keymap commands by the search box", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const totalBefore = host.querySelectorAll(".keymap-field").length;
+    expect(totalBefore).toBeGreaterThan(1);
+
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "Save File");
+      await Promise.resolve();
+    });
+
+    const fields = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(fields).toHaveLength(1);
+    expect(fields[0]?.textContent).toContain("Save File");
+  });
+
+  it("matches keymap commands by category and id, case-insensitively", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "editor.save");
+      await Promise.resolve();
+    });
+
+    const byId = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(byId.some((field) => field.textContent?.includes("Save File"))).toBe(
+      true,
+    );
+
+    await act(async () => {
+      changeInputValue(search, "git");
+      await Promise.resolve();
+    });
+
+    const byCategory = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(byCategory.length).toBeGreaterThan(0);
+    expect(
+      byCategory.every((field) =>
+        field.textContent?.toLowerCase().includes("git"),
+      ),
+    ).toBe(true);
+  });
+
+  it("restores every keymap command when the search box is cleared", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const totalBefore = host.querySelectorAll(".keymap-field").length;
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "Save File");
+      await Promise.resolve();
+    });
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(1);
+
+    await act(async () => {
+      changeInputValue(search, "");
+      await Promise.resolve();
+    });
+
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(totalBefore);
+  });
+
   it("opens directly to the requested settings section", async () => {
     await act(async () => {
       root.render(
@@ -1080,6 +1201,16 @@ describe("SettingsDialog", () => {
 
     if (!input) {
       throw new Error(`${labelText} input was not rendered.`);
+    }
+
+    return input;
+  }
+
+  function keymapSearchInput(): HTMLInputElement {
+    const input = host.querySelector<HTMLInputElement>(".keymap-search input");
+
+    if (!input) {
+      throw new Error("Keymap search input was not rendered.");
     }
 
     return input;

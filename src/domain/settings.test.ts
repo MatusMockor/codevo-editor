@@ -62,7 +62,9 @@ describe("settings defaults", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,
@@ -347,7 +349,9 @@ describe("normalizeWorkspaceSettings", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: false,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,

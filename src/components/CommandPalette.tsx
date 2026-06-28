@@ -19,10 +19,12 @@ export function CommandPalette({
   onClose,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
     if (!isOpen) {
       setQuery("");
+      setActiveIndex(0);
     }
   }, [isOpen]);
 
@@ -39,9 +41,29 @@ export function CommandPalette({
     });
   }, [commands, query]);
 
+  // Keep the selection valid as the filtered list changes (query edits).
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
   if (!isOpen) {
     return null;
   }
+
+  const activeCommand = filteredCommands[activeIndex];
+
+  const runCommand = async (command: Command) => {
+    if (!command.isEnabled(context)) {
+      return;
+    }
+
+    try {
+      await command.run();
+      onClose();
+    } catch (error) {
+      onCommandError(error);
+    }
+  };
 
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
@@ -58,6 +80,36 @@ export function CommandPalette({
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 onClose();
+                return;
+              }
+
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                if (filteredCommands.length === 0) {
+                  return;
+                }
+                setActiveIndex(
+                  (current) => (current + 1) % filteredCommands.length,
+                );
+                return;
+              }
+
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                if (filteredCommands.length === 0) {
+                  return;
+                }
+                setActiveIndex(
+                  (current) =>
+                    (current - 1 + filteredCommands.length) %
+                    filteredCommands.length,
+                );
+                return;
+              }
+
+              if (event.key === "Enter" && activeCommand) {
+                event.preventDefault();
+                void runCommand(activeCommand);
               }
             }}
             placeholder="Run command"
@@ -66,26 +118,25 @@ export function CommandPalette({
         </div>
 
         <div className="palette-results">
-          {filteredCommands.map((command) => {
+          {filteredCommands.length === 0 ? (
+            <div className="quick-open-state">No matching commands</div>
+          ) : null}
+          {filteredCommands.map((command, index) => {
             const enabled = command.isEnabled(context);
 
             return (
               <button
-                className="palette-command"
+                className={
+                  index === activeIndex
+                    ? "palette-command active"
+                    : "palette-command"
+                }
                 disabled={!enabled}
                 key={command.id}
-                onClick={async () => {
-                  if (!enabled) {
-                    return;
-                  }
-
-                  try {
-                    await command.run();
-                    onClose();
-                  } catch (error) {
-                    onCommandError(error);
-                  }
+                onClick={() => {
+                  void runCommand(command);
                 }}
+                onMouseEnter={() => setActiveIndex(index)}
                 type="button"
               >
                 <span>

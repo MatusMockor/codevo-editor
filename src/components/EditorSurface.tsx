@@ -2595,6 +2595,8 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
       return "editor.action.clipboardCopyAction";
     case "cut":
       return "editor.action.clipboardCutAction";
+    case "gotoLine":
+      return "editor.action.gotoLine";
     case "paste":
       return "editor.action.clipboardPasteAction";
     case "redo":

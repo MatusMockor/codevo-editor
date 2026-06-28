@@ -147,7 +147,9 @@ export interface WorkspaceSessionState {
 
 export interface StatusBarItemVisibility {
   activePath: boolean;
+  cursorPosition: boolean;
   dirtyCount: boolean;
+  gitBranch: boolean;
   index: boolean;
   language: boolean;
   languageServer: boolean;
@@ -262,7 +264,9 @@ export function defaultWorkspaceSessionState(): WorkspaceSessionState {
 export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
   return {
     activePath: true,
+    cursorPosition: true,
     dirtyCount: true,
+    gitBranch: true,
     index: true,
     language: true,
     languageServer: true,
@@ -436,7 +440,12 @@ export function normalizeStatusBarItemVisibility(
 
   return {
     activePath: normalizeBoolean(value.activePath, defaults.activePath),
+    cursorPosition: normalizeBoolean(
+      value.cursorPosition,
+      defaults.cursorPosition,
+    ),
     dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
+    gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),
     index: normalizeBoolean(value.index, defaults.index),
     language: normalizeBoolean(value.language, defaults.language),
     languageServer: normalizeBoolean(

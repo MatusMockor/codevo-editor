@@ -115,4 +115,127 @@ describe("CommandPalette", () => {
     expect(rows[0]?.textContent).toContain("Format Document");
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  function setQuery(value: string) {
+    const field = input();
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+
+    if (field && setter) {
+      act(() => {
+        setter.call(field, value);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+  }
+
+  function input() {
+    return host.querySelector<HTMLInputElement>(".palette-search input");
+  }
+
+  it("marks the first command active by default", () => {
+    render();
+    const rows = host.querySelectorAll(".palette-command");
+    expect(rows[0]?.className).toContain("active");
+    expect(rows[1]?.className).not.toContain("active");
+  });
+
+  it("moves the active row with ArrowDown and back with ArrowUp", () => {
+    render();
+    const field = input();
+
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    let rows = host.querySelectorAll(".palette-command");
+    expect(rows[1]?.className).toContain("active");
+
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      );
+    });
+    rows = host.querySelectorAll(".palette-command");
+    expect(rows[0]?.className).toContain("active");
+  });
+
+  it("wraps the active row at both ends", () => {
+    render();
+    const field = input();
+
+    // ArrowUp from the first row wraps to the last.
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      );
+    });
+    let rows = host.querySelectorAll(".palette-command");
+    expect(rows[1]?.className).toContain("active");
+
+    // ArrowDown from the last row wraps back to the first.
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    rows = host.querySelectorAll(".palette-command");
+    expect(rows[0]?.className).toContain("active");
+  });
+
+  it("runs the active command on Enter", async () => {
+    const save = vi.fn();
+    const format = vi.fn();
+    const { onClose } = render({
+      commands: [
+        command("editor.save", "Save File", { run: save }),
+        command("editor.format", "Format Document", { run: format }),
+      ],
+    });
+    const field = input();
+
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    await act(async () => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+
+    expect(format).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an empty state when no command matches", () => {
+    render();
+    setQuery("nonexistent command xyz");
+
+    expect(host.querySelectorAll(".palette-command")).toHaveLength(0);
+    expect(host.textContent).toContain("No matching commands");
+  });
+
+  it("resets the active row when the query changes", () => {
+    render();
+    const field = input();
+
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    expect(host.querySelectorAll(".palette-command")[1]?.className).toContain(
+      "active",
+    );
+
+    setQuery("s");
+    const rows = host.querySelectorAll(".palette-command");
+    expect(rows[0]?.className).toContain("active");
+  });
 });

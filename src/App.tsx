@@ -608,6 +608,9 @@ function App() {
   const showProblemsPanel = useCallback(() => {
     workbench.showBottomPanelView("problems");
   }, [workbench.showBottomPanelView]);
+  const showGoToLine = useCallback(() => {
+    editorMenuCommandRunner?.("gotoLine");
+  }, [editorMenuCommandRunner]);
   const closeActiveTab = useCallback(() => {
     if (workbench.activeDocument) {
       workbench.closeDocument(workbench.activeDocument.path);
@@ -1058,11 +1061,15 @@ function App() {
       <StatusBar
         activeLanguage={activeLanguage}
         activePath={workbench.activePath}
+        cursorPosition={workbench.activeEditorPosition}
         dirtyCount={workbench.dirtyCount}
         errorCount={workbench.diagnosticsSummary.errors}
+        gitBranch={workbench.gitStatus?.branch ?? null}
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
+        onShowGitBranches={workbench.openGitBranchPanel}
+        onShowGoToLine={showGoToLine}
         onShowProblems={showProblemsPanel}
         statusBar={workbench.workspaceSettings.statusBar}
         warningCount={workbench.diagnosticsSummary.warnings}
