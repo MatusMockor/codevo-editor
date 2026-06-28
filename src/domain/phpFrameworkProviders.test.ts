@@ -240,6 +240,72 @@ $query = Post::query();
     ).toBeNull();
   });
 
+  it("routes same-source Laravel local scopes through the Laravel provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+    public function scopePublished(Builder $query): void
+    {
+        $query->whereNotNull('published_at');
+    }
+
+    #[Scope]
+    protected function popular(Builder $query): void
+    {
+        $query->where('views', '>', 100);
+    }
+}
+
+class Report
+{
+}
+
+$query = Post::query();
+`;
+
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Post", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Post::query()", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "$query", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Post", "popular", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Post", "missingScope", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Post::query()", "missingScope", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Report", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
+  });
+
   it("routes Laravel Eloquent collection return types through provider semantics", () => {
     const source = `<?php
 namespace App\\Models;

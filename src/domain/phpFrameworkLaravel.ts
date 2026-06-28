@@ -1239,6 +1239,33 @@ export function isLaravelEloquentStaticBuilderReceiver(
   return Boolean(resolvedClassName && isLaravelModelType(resolvedClassName));
 }
 
+export function isLaravelEloquentLocalScopeStaticMethod(
+  source: string,
+  className: string,
+  methodName: string,
+): boolean {
+  const modelType = phpLaravelResolvedModelTypeCandidate(source, className);
+
+  return Boolean(
+    modelType && phpLaravelModelHasLocalScope(source, modelType, methodName),
+  );
+}
+
+export function isLaravelEloquentLocalScopeMemberMethod(
+  source: string,
+  receiverExpression: string,
+  methodName: string,
+): boolean {
+  const modelType = phpLaravelEloquentBuilderModelTypeFromExpression(
+    source,
+    receiverExpression,
+  );
+
+  return Boolean(
+    modelType && phpLaravelModelHasLocalScope(source, modelType, methodName),
+  );
+}
+
 export function phpLaravelEloquentBuilderModelTypeCandidate(
   source: string,
   typeName: string | null,

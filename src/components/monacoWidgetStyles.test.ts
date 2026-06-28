@@ -24,6 +24,40 @@ function ruleBody(css: string, selectorNeedle: string): string {
   return css.slice(bodyStart + 1, bodyEnd);
 }
 
+function themeBlocks(css: string): Array<{ selector: string; body: string }> {
+  const blocks: Array<{ selector: string; body: string }> = [];
+  const themeSelector =
+    /(^|\n)(\s*(?::root|\.app-shell\[data-theme="[^"]+"\])\s*)\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = themeSelector.exec(css)) !== null) {
+    const selector = match[2].trim();
+    const bodyStart = css.indexOf("{", match.index);
+    const bodyEnd = css.indexOf("}", bodyStart);
+    if (bodyStart < 0 || bodyEnd < 0) {
+      throw new Error(`Unterminated theme block for selector ${selector}`);
+    }
+    blocks.push({
+      selector,
+      body: css.slice(bodyStart + 1, bodyEnd),
+    });
+  }
+  return blocks;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expectDeclarationUsesVar(
+  body: string,
+  property: string,
+  variable: string,
+): void {
+  expect(body).toMatch(
+    new RegExp(`${escapeRegExp(property)}:\\s*var\\(${escapeRegExp(variable)}\\)`),
+  );
+}
+
 describe("Monaco widget chrome (JetBrains classic)", () => {
   it("rounds and shadows the suggest widget with shared design tokens", () => {
     const body = ruleBody(appCss, ".monaco-editor .suggest-widget,");
@@ -104,6 +138,47 @@ describe("Monaco widget chrome (JetBrains classic)", () => {
       );
     }
   });
+
+  it("keeps focused widget states and popup surfaces on theme variables", () => {
+    const surfaceBody = ruleBody(appCss, ".app-shell .monaco-editor,");
+    const themeAwareBindings: Array<[string, string]> = [
+      ["--vscode-editorSuggestWidget-selectedBackground", "--color-accent-soft"],
+      ["--vscode-editorHoverWidget-background", "--color-modal"],
+      ["--vscode-editorHoverWidget-border", "--color-border-strong"],
+      ["--vscode-menu-selectionBackground", "--color-accent-soft"],
+      ["--vscode-editorActionList-focusBackground", "--color-accent-soft"],
+    ];
+    for (const [property, variable] of themeAwareBindings) {
+      expectDeclarationUsesVar(surfaceBody, property, variable);
+    }
+
+    const focusedSelectors: Array<[string, Array<[string, string]>]> = [
+      [
+        ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
+        [["background", "--color-accent-soft"]],
+      ],
+      [
+        ".monaco-menu\n  .monaco-action-bar.vertical\n  .action-item.focused\n  .action-menu-item",
+        [["background", "--color-accent-soft"]],
+      ],
+      [
+        ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused",
+        [
+          ["background-color", "--color-accent-soft"],
+          ["color", "--color-text-strong"],
+        ],
+      ],
+    ];
+
+    for (const [selector, declarations] of focusedSelectors) {
+      const body = ruleBody(appCss, selector);
+      for (const [property, variable] of declarations) {
+        expectDeclarationUsesVar(body, property, variable);
+      }
+      expect(body, `${selector} should not hardcode Monaco default colors`).not
+        .toMatch(/#(?:007acc|04395e|062f4a|094771|0e639c|264f78|006ab1)\b/i);
+    }
+  });
 });
 
 describe("Monaco suggest-widget kind icon recolor", () => {
@@ -142,10 +217,25 @@ describe("Monaco suggest-widget kind icon recolor", () => {
     }
   });
 
-  it("declares a --symbol-keyword role for every theme block", () => {
-    // Slice 2 shipped the other --symbol-* roles for 10 themes; the suggest
-    // widget adds the keyword kind, so the role must exist everywhere too.
-    const selectors = [
+  it("declares required widget and symbol variables in every theme block", () => {
+    const requiredThemeVariables = [
+      "--color-accent-soft",
+      "--color-modal",
+      "--color-border-strong",
+      "--symbol-method",
+      "--symbol-property",
+      "--symbol-const",
+      "--symbol-class",
+      "--symbol-interface",
+      "--symbol-enum",
+      "--symbol-function",
+      "--symbol-trait",
+      "--symbol-variable",
+      "--symbol-keyword",
+    ];
+
+    const blocks = themeBlocks(appCss);
+    expect(blocks.map(({ selector }) => selector)).toEqual([
       ":root",
       '.app-shell[data-theme="light"]',
       '.app-shell[data-theme="ayuMirage"]',
@@ -156,14 +246,15 @@ describe("Monaco suggest-widget kind icon recolor", () => {
       '.app-shell[data-theme="darkPlus"]',
       '.app-shell[data-theme="catppuccinLatte"]',
       '.app-shell[data-theme="oneLight"]',
-    ];
-    for (const selector of selectors) {
-      const start = appCss.indexOf(selector + " {");
-      expect(start, `missing theme block ${selector}`).toBeGreaterThan(-1);
-      const block = appCss.slice(start, appCss.indexOf("}", start));
-      expect(block, `${selector} missing --symbol-keyword`).toContain(
-        "--symbol-keyword:",
-      );
+      '.app-shell[data-theme="system"]',
+    ]);
+
+    for (const { selector, body } of blocks) {
+      for (const variable of requiredThemeVariables) {
+        expect(body, `${selector} missing ${variable}`).toContain(
+          `${variable}:`,
+        );
+      }
     }
   });
 });

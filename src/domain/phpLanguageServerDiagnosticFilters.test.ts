@@ -297,6 +297,88 @@ $fromUnknown = $query->missingMacro()->first();
     ).toEqual([staticMacro, memberMacro]);
   });
 
+  it("suppresses same-source Laravel local scope diagnostics without broadening unknown methods", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+    public function scopePublished(Builder $query): void
+    {
+        $query->whereNotNull('published_at');
+    }
+
+    #[Scope]
+    protected function popular(Builder $query): void
+    {
+        $query->where('views', '>', 100);
+    }
+}
+
+class Report
+{
+}
+
+$fromStatic = Post::published()->first();
+$fromMember = Post::query()->published()->first();
+$query = Post::query();
+$fromVariable = $query->published()->first();
+$fromAttribute = Post::popular()->first();
+$fromMissing = $query->missingScope()->first();
+$fromNonModel = Report::published();
+`;
+    const staticScope = diagnosticAt(
+      source,
+      "published()->first();\n$fromMember",
+      {
+        message: "Method App\\Models\\Post::published() does not exist",
+      },
+    );
+    const memberScope = diagnosticAt(source, "published()->first();\n$query", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::published() does not exist",
+    });
+    const variableScope = diagnosticAt(
+      source,
+      "published()->first();\n$fromAttribute",
+      {
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::published() does not exist",
+      },
+    );
+    const attributeScope = diagnosticAt(source, "popular()->first", {
+      message: "Method App\\Models\\Post::popular() does not exist",
+    });
+    const missingScope = diagnosticAt(source, "missingScope", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingScope() does not exist",
+    });
+    const nonModelScope = diagnosticAt(source, "published();", {
+      message: "Method App\\Models\\Report::published() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          staticScope,
+          memberScope,
+          variableScope,
+          attributeScope,
+          missingScope,
+          nonModelScope,
+        ],
+        {
+          frameworkProviders: [phpLaravelFrameworkProvider],
+        },
+      ),
+    ).toEqual([missingScope, nonModelScope]);
+  });
+
   it("suppresses confirmed unresolved member method diagnostics on multiline chains", () => {
     const source = `<?php
 

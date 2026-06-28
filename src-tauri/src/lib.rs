@@ -66,7 +66,8 @@ use lsp_document::{
     TextDocumentSyncNotificationFactory,
 };
 use lsp_features::{
-    parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_result,
+    parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
+    parse_completion_result,
     parse_definition_result, parse_document_highlights_result, parse_document_links_result,
     parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
     parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
@@ -2749,7 +2750,7 @@ async fn text_document_completion_resolve(
         return Ok(item);
     };
 
-    serde_json::from_value::<LanguageServerCompletionItem>(result)
+    parse_completion_item_result(&result)
         .map(|item| filter_lsp_completion_item_to_workspace(&root_path, item))
         .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
 }
@@ -2771,7 +2772,7 @@ async fn javascript_typescript_text_document_completion_resolve(
         return Ok(item);
     };
 
-    serde_json::from_value::<LanguageServerCompletionItem>(result)
+    parse_completion_item_result(&result)
         .map(|item| filter_lsp_completion_item_to_workspace(&root_path, item))
         .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
 }

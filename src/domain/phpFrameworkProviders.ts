@@ -1,6 +1,8 @@
 import {
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderMacroFromSource,
+  isLaravelEloquentLocalScopeMemberMethod,
+  isLaravelEloquentLocalScopeStaticMethod,
   isLaravelEloquentStaticBuilderReceiver,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
@@ -102,18 +104,24 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   },
   diagnostics: {
     isKnownMemberMethod: ({ methodName, receiverExpression, source }) =>
-      (isLaravelEloquentBuilderMethodName(methodName) ||
+      ((isLaravelEloquentBuilderMethodName(methodName) ||
         isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
-      Boolean(
-        phpLaravelEloquentBuilderModelTypeFromExpression(
-          source,
-          receiverExpression,
-        ),
+        Boolean(
+          phpLaravelEloquentBuilderModelTypeFromExpression(
+            source,
+            receiverExpression,
+          ),
+        )) ||
+      isLaravelEloquentLocalScopeMemberMethod(
+        source,
+        receiverExpression,
+        methodName,
       ),
     isKnownStaticMethod: ({ className, methodName, source }) =>
-      (isLaravelEloquentBuilderMethodName(methodName) ||
+      ((isLaravelEloquentBuilderMethodName(methodName) ||
         isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
-      isLaravelEloquentStaticBuilderReceiver(source, className),
+        isLaravelEloquentStaticBuilderReceiver(source, className)) ||
+      isLaravelEloquentLocalScopeStaticMethod(source, className, methodName),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>

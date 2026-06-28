@@ -1092,6 +1092,11 @@ pub fn parse_completion_result(value: &Value) -> Result<LanguageServerCompletion
     })
 }
 
+pub fn parse_completion_item_result(value: &Value) -> Result<LanguageServerCompletionItem, String> {
+    parse_completion_item(value, None)
+        .ok_or_else(|| "Language server returned a malformed completion item.".to_string())
+}
+
 pub fn parse_definition_result(value: &Value) -> Result<Vec<LanguageServerLocation>, String> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -2188,11 +2193,11 @@ struct LanguageServerLocationLink {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_result,
-        parse_definition_result, parse_document_highlights_result, parse_document_links_result,
-        parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
-        parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
-        parse_inlay_hints_result, parse_linked_editing_ranges_result,
+        parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
+        parse_completion_result, parse_definition_result, parse_document_highlights_result,
+        parse_document_links_result, parse_document_symbols_result, parse_folding_ranges_result,
+        parse_formatting_result, parse_hover_result, parse_incoming_calls_result,
+        parse_inlay_hint_result, parse_inlay_hints_result, parse_linked_editing_ranges_result,
         parse_optional_workspace_edit_result, parse_outgoing_calls_result,
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
         parse_signature_help_result, parse_type_hierarchy_items_result,
@@ -3093,6 +3098,68 @@ mod tests {
                 .label,
             "Repository"
         );
+    }
+
+    #[test]
+    fn parses_resolved_completion_item_with_markup_edits_and_optional_command() {
+        let item = parse_completion_item_result(&json!({
+            "label": "User",
+            "documentation": {
+                "kind": "markdown",
+                "value": "Resolved **User** docs"
+            },
+            "additionalTextEdits": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 0 }
+                    },
+                    "newText": "import { User } from './user';\n"
+                }
+            ],
+            "command": {
+                "title": "Apply completion code action",
+                "command": "_typescript.applyCompletionCodeAction",
+                "arguments": [{ "source": "completion" }]
+            }
+        }))
+        .expect("completion item");
+
+        assert_eq!(item.label, "User");
+        assert_eq!(
+            item.documentation,
+            Some("Resolved **User** docs".to_string())
+        );
+        assert_eq!(item.documentation_kind, Some("markdown".to_string()));
+        assert_eq!(
+            item.additional_text_edits,
+            vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+                new_text: "import { User } from './user';\n".to_string(),
+            }]
+        );
+        assert_eq!(
+            item.command,
+            Some(LanguageServerCodeActionCommand {
+                title: "Apply completion code action".to_string(),
+                command: "_typescript.applyCompletionCodeAction".to_string(),
+                arguments: Some(vec![json!({ "source": "completion" })]),
+            })
+        );
+
+        let item_without_command =
+            parse_completion_item_result(&json!({ "label": "UserWithoutCommand" }))
+                .expect("completion item");
+        assert_eq!(item_without_command.command, None);
     }
 
     #[test]
