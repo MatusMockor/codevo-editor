@@ -1207,6 +1207,36 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
   );
 }
 
+export function isLaravelEloquentBuilderMacroFromSource(
+  source: string,
+  methodName: string,
+): boolean {
+  const lookupName = methodName.trim().toLowerCase();
+
+  return Boolean(
+    lookupName &&
+      phpLaravelEloquentBuilderMacrosFromSource(source).some(
+        (macro) => macro.name.toLowerCase() === lookupName,
+      ),
+  );
+}
+
+export function phpLaravelEloquentBuilderMacroCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  if (!isLaravelEloquentBuilderClassName(source, declaringClassName)) {
+    return [];
+  }
+
+  return phpLaravelEloquentBuilderMacrosFromSource(source).map((macro) => ({
+    declaringClassName,
+    name: macro.name,
+    parameters: macro.parameters,
+    returnType: macro.returnType,
+  }));
+}
+
 export function isLaravelEloquentStaticBuilderReceiver(
   source: string,
   className: string,
@@ -3569,6 +3599,7 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
 ): boolean {
   return (
     isLaravelEloquentBuilderPreservingMethod(methodName) ||
+    isLaravelEloquentBuilderMacroFromSource(source, methodName) ||
     phpLaravelModelHasDynamicWhere(source, modelType, methodName) ||
     phpLaravelModelHasLocalScope(source, modelType, methodName)
   );
@@ -3601,6 +3632,50 @@ export function phpLaravelEloquentBuilderModelTypeFromExpression(
   source: string,
   expression: string,
 ): string | null {
+  return (
+    phpLaravelEloquentBuilderModelTypeFromVariableExpression(
+      source,
+      expression,
+    ) ??
+    phpLaravelEloquentBuilderModelTypeFromStaticExpression(source, expression)
+  );
+}
+
+function phpLaravelEloquentBuilderModelTypeFromVariableExpression(
+  source: string,
+  expression: string,
+): string | null {
+  const variableName = /^\s*\$([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+    expression,
+  )?.[1];
+
+  if (!variableName) {
+    return null;
+  }
+
+  const modelTypes = new Set<string>();
+
+  for (const assignmentExpression of phpLaravelVariableAssignmentExpressions(
+    source,
+    variableName,
+  )) {
+    const modelType = phpLaravelEloquentBuilderModelTypeFromStaticExpression(
+      source,
+      assignmentExpression,
+    );
+
+    if (modelType) {
+      modelTypes.add(modelType);
+    }
+  }
+
+  return modelTypes.size === 1 ? Array.from(modelTypes)[0] ?? null : null;
+}
+
+function phpLaravelEloquentBuilderModelTypeFromStaticExpression(
+  source: string,
+  expression: string,
+): string | null {
   const chain = phpLaravelStaticCallChain(expression);
   const modelType = phpLaravelResolvedModelTypeCandidate(
     source,
@@ -3624,6 +3699,32 @@ export function phpLaravelEloquentBuilderModelTypeFromExpression(
   }
 
   return modelType;
+}
+
+function phpLaravelVariableAssignmentExpressions(
+  source: string,
+  variableName: string,
+): string[] {
+  const expressions: string[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const escapedVariableName = escapeRegExp(variableName);
+  const pattern = new RegExp(
+    `(?:^|[;\\n])\\s*\\$${escapedVariableName}\\s*=\\s*`,
+    "g",
+  );
+
+  for (const match of masked.matchAll(pattern)) {
+    const expressionStart = (match.index ?? 0) + match[0].length;
+    const semicolonOffset = masked.indexOf(";", expressionStart);
+
+    if (semicolonOffset < 0) {
+      continue;
+    }
+
+    expressions.push(source.slice(expressionStart, semicolonOffset).trim());
+  }
+
+  return expressions;
 }
 
 export function phpLaravelEloquentBuilderCollectionModelTypeFromExpression(
@@ -3710,6 +3811,113 @@ function phpLaravelEloquentBuilderExpressionCallMayBeScopeOrMacro(
     !laravelEloquentBuilderTerminalModelMethods.has(normalizedMethodName) &&
     !laravelEloquentBuilderCollectionMethods.has(normalizedMethodName) &&
     !laravelEloquentBuilderNonModelTerminalMethods.has(normalizedMethodName)
+  );
+}
+
+interface PhpLaravelEloquentBuilderMacro {
+  name: string;
+  parameters: string;
+  returnType: string | null;
+}
+
+function phpLaravelEloquentBuilderMacrosFromSource(
+  source: string,
+): PhpLaravelEloquentBuilderMacro[] {
+  const macros: PhpLaravelEloquentBuilderMacro[] = [];
+  const seen = new Set<string>();
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*macro\s*\(/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const className = match[1];
+    const openOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (
+      !className ||
+      !isLaravelEloquentBuilderClassName(source, className) ||
+      openOffset < 0
+    ) {
+      continue;
+    }
+
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    const args = splitPhpParameterList(source.slice(openOffset + 1, closeOffset));
+    const name = phpLaravelMacroNameFromArgument(args[0] ?? "");
+
+    if (!name) {
+      continue;
+    }
+
+    const key = name.toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    macros.push({
+      name,
+      ...phpLaravelMacroClosureSignature(args[1] ?? ""),
+    });
+  }
+
+  return macros;
+}
+
+function phpLaravelMacroNameFromArgument(argument: string): string | null {
+  const match = /^\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*$/.exec(argument);
+
+  return match?.[2] ?? null;
+}
+
+function phpLaravelMacroClosureSignature(
+  expression: string,
+): Pick<PhpLaravelEloquentBuilderMacro, "parameters" | "returnType"> {
+  const functionMatch = /^\s*(?:static\s+)?function\s*\(/.exec(expression);
+  const openOffset = functionMatch
+    ? expression.indexOf("(", functionMatch.index)
+    : -1;
+
+  if (openOffset < 0) {
+    return {
+      parameters: "",
+      returnType: null,
+    };
+  }
+
+  const closeOffset = matchingPairOffset(expression, openOffset, "(", ")");
+
+  if (closeOffset === null) {
+    return {
+      parameters: "",
+      returnType: null,
+    };
+  }
+
+  return {
+    parameters: normalizeWhitespace(expression.slice(openOffset + 1, closeOffset)),
+    returnType: normalizeReturnType(
+      returnTypeAfterFunctionParameters(expression, closeOffset),
+    ),
+  };
+}
+
+function isLaravelEloquentBuilderClassName(
+  source: string,
+  className: string,
+): boolean {
+  const candidate = phpDeclaredTypeCandidate(className) ?? className;
+  const resolvedClassName = phpLaravelResolvedClassName(source, candidate);
+
+  return (
+    normalizedLaravelClassName(resolvedClassName ?? candidate) ===
+    "illuminate\\database\\eloquent\\builder"
   );
 }
 

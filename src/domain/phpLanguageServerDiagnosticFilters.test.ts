@@ -236,6 +236,67 @@ $album = Album::query()->withRelations()->first();
     ).toEqual([globalBuilderMethod]);
   });
 
+  it("suppresses discovered Laravel builder macro diagnostics without broadening unknown methods", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+
+Builder::macro('published', function (): Builder {
+    return $this->whereNotNull('published_at');
+});
+
+$fromStatic = Post::published()->first();
+$fromMember = Post::query()->published()->first();
+$query = Post::query();
+$fromVariable = $query->published()->first();
+$fromUnknown = $query->missingMacro()->first();
+`;
+    const staticMacro = diagnosticAt(
+      source,
+      "published()->first();\n$fromMember",
+      {
+        message: "Method App\\Models\\Post::published() does not exist",
+      },
+    );
+    const memberMacro = diagnosticAt(source, "published()->first();\n$query", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::published() does not exist",
+    });
+    const variableMacro = diagnosticAt(
+      source,
+      "published()->first();\n$fromUnknown",
+      {
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::published() does not exist",
+      },
+    );
+    const unknownBuilderMethod = diagnosticAt(source, "missingMacro", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingMacro() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [staticMacro, memberMacro, variableMacro, unknownBuilderMethod],
+        {
+          frameworkProviders: [phpLaravelFrameworkProvider],
+        },
+      ),
+    ).toEqual([unknownBuilderMethod]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [staticMacro, memberMacro], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([staticMacro, memberMacro]);
+  });
+
   it("suppresses confirmed unresolved member method diagnostics on multiline chains", () => {
     const source = `<?php
 
@@ -1273,4 +1334,25 @@ function diagnostic(
     source: "PHPactor",
     ...overrides,
   };
+}
+
+function diagnosticAt(
+  source: string,
+  needle: string,
+  overrides: Partial<LanguageServerDiagnostic>,
+): LanguageServerDiagnostic {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test diagnostic needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset);
+  const lines = before.split("\n");
+
+  return diagnostic({
+    character: (lines[lines.length - 1] ?? "").length,
+    line: lines.length - 1,
+    ...overrides,
+  });
 }

@@ -1,9 +1,11 @@
 import {
   isLaravelEloquentBuilderMethodName,
+  isLaravelEloquentBuilderMacroFromSource,
   isLaravelEloquentStaticBuilderReceiver,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
+  phpLaravelEloquentBuilderMacroCompletionsFromSource,
   phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelModelPropertyClassTypeFromSource,
@@ -87,6 +89,10 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   id: "laravel",
   completions: {
     memberCompletionsFromSource: ({ declaringClassName, source }) => [
+      ...phpLaravelEloquentBuilderMacroCompletionsFromSource(
+        source,
+        declaringClassName,
+      ),
       ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
       ...phpLaravelRelationPropertyCompletionsFromSource(
         source,
@@ -96,7 +102,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   },
   diagnostics: {
     isKnownMemberMethod: ({ methodName, receiverExpression, source }) =>
-      isLaravelEloquentBuilderMethodName(methodName) &&
+      (isLaravelEloquentBuilderMethodName(methodName) ||
+        isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
       Boolean(
         phpLaravelEloquentBuilderModelTypeFromExpression(
           source,
@@ -104,7 +111,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         ),
       ),
     isKnownStaticMethod: ({ className, methodName, source }) =>
-      isLaravelEloquentBuilderMethodName(methodName) &&
+      (isLaravelEloquentBuilderMethodName(methodName) ||
+        isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
       isLaravelEloquentStaticBuilderReceiver(source, className),
   },
   semantics: {

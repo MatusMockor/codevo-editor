@@ -1428,6 +1428,65 @@ class User extends Model
     ).toBeNull();
   });
 
+  it("preserves Laravel builder return types through discovered same-source macros", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+
+Builder::macro('published', function (): Builder {
+    return $this->whereNotNull('published_at');
+});
+
+$fromStaticChain = Post::query()->published()->first();
+$query = Post::query();
+$fromVariableChain = $query->published()->first();
+$fromUnknownVariableChain = $query->missingMacro()->first();
+
+$fromStaticChain->tit
+$fromVariableChain->tit
+$fromUnknownVariableChain->tit
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromStaticChain->tit"),
+        "fromStaticChain",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromVariableChain->tit"),
+        "fromVariableChain",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromUnknownVariableChain->tit"),
+        "fromUnknownVariableChain",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromVariableChain->tit"),
+        "fromVariableChain",
+        { frameworkProviders: [] },
+      ),
+    ).toBeNull();
+  });
+
   it("resolves Laravel model assignments from Eloquent collection chains", () => {
     const source = `<?php
 namespace App\\Models;

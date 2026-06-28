@@ -182,6 +182,64 @@ class Album extends Model
     ).toBe(false);
   });
 
+  it("routes same-source Laravel builder macros through the Laravel provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+
+Builder::macro('published', function (): Builder {
+    return $this->whereNotNull('published_at');
+});
+
+$query = Post::query();
+`;
+
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Post", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Post::query()", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "$query", "published", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Post::query()", "missingMacro", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "published",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Post>",
+        "$query",
+        [phpLaravelFrameworkProvider],
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Post>");
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "published",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Post>",
+        "$query",
+        [],
+      ),
+    ).toBeNull();
+  });
+
   it("routes Laravel Eloquent collection return types through provider semantics", () => {
     const source = `<?php
 namespace App\\Models;

@@ -1693,6 +1693,54 @@ class Comment
     ]);
   });
 
+  it("discovers same-source Laravel Eloquent builder macro completions", () => {
+    const source = `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+
+Builder::macro('published', function (bool $strict = true): Builder {
+    return $this->whereNotNull('published_at');
+});
+
+\\Illuminate\\Database\\Eloquent\\Builder::macro('archived', function (): void {
+});
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Builder",
+      },
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "archived",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "App\\Models\\Post",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        { frameworkProviders: [] },
+      ),
+    ).toEqual([]);
+  });
+
   it("maps Laravel column-like model attributes to dynamic where completions", () => {
     const source = `<?php
 use App\\Enums\\CommentType;
