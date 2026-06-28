@@ -1916,6 +1916,13 @@ export function phpLaravelDynamicWhereCompletionsFromSource(
     attributes.add(attribute);
   }
 
+  for (const [attribute] of phpLaravelSchemaAttributesForModel(
+    source,
+    declaringClassName,
+  )) {
+    attributes.add(attribute);
+  }
+
   return dedupePhpMembers(
     Array.from(attributes).flatMap((attribute) => {
       const suffix = phpLaravelDynamicWhereSuffix(attribute);
@@ -1941,10 +1948,12 @@ export function phpLaravelDynamicWhereAttributeTargetFromSource(
   source: string,
   methodName: string,
 ): PhpLaravelDynamicWhereAttributeTarget | null {
-  const firstOccurrence = phpLaravelDynamicWhereAttributeOccurrencesForMethod(
-    source,
-    methodName,
-  )[0];
+  const firstOccurrence =
+    phpLaravelDynamicWhereAttributeOccurrencesForMethod(source, methodName)[0] ??
+    phpLaravelDynamicWhereAttributeOccurrencesForMethodFromOccurrences(
+      methodName,
+      phpLaravelSchemaAttributeOccurrences(source),
+    )[0];
 
   if (!firstOccurrence) {
     return null;
@@ -1968,6 +1977,7 @@ export function phpLaravelModelAttributeTargetFromSource(
 
   const firstOccurrence = [
     ...phpLaravelDynamicWhereAttributeOccurrences(source),
+    ...phpLaravelSchemaAttributeOccurrences(source),
     ...phpArrayStringValueOccurrences(source, "appends"),
   ].find(
     (occurrence) => occurrence.attributeName.toLowerCase() === attributeLookup,
@@ -2023,6 +2033,13 @@ export function phpLaravelModelAttributeCompletionsFromSource(
 
   for (const attribute of phpLaravelFillableAttributes(source, declaringClassName)) {
     attributes.set(attribute, "mixed");
+  }
+
+  for (const [attribute, returnType] of phpLaravelSchemaAttributesForModel(
+    source,
+    declaringClassName,
+  )) {
+    attributes.set(attribute, returnType);
   }
 
   for (const [attribute, returnType] of phpLaravelDefaultAttributes(
@@ -4122,11 +4139,11 @@ function phpLaravelModelHasDynamicWhere(
   modelType: string,
   methodName: string,
 ): boolean {
-  return phpLaravelClassBodyRanges(source, modelType).some((range) =>
-    isLaravelDynamicWhereMethodForSource(
-      source.slice(range.bodyStart, range.bodyEnd),
+  return (
+    phpLaravelDynamicWhereAttributeOccurrencesForMethodFromOccurrences(
       methodName,
-    ),
+      phpLaravelDynamicWhereAttributeOccurrencesForModel(source, modelType),
+    ).length > 0
   );
 }
 
@@ -4357,13 +4374,23 @@ function phpLaravelDynamicWhereAttributeOccurrencesForMethod(
   source: string,
   methodName: string,
 ): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  return phpLaravelDynamicWhereAttributeOccurrencesForMethodFromOccurrences(
+    methodName,
+    phpLaravelDynamicWhereAttributeOccurrences(source),
+  );
+}
+
+function phpLaravelDynamicWhereAttributeOccurrencesForMethodFromOccurrences(
+  methodName: string,
+  attributeOccurrences: PhpLaravelDynamicWhereAttributeOccurrence[],
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
   const suffixSegments = phpLaravelDynamicWhereMethodSuffixSegments(methodName);
 
   if (!suffixSegments.length) {
     return [];
   }
 
-  const attributeSuffixes = phpLaravelDynamicWhereAttributeOccurrences(source)
+  const attributeSuffixes = attributeOccurrences
     .map((occurrence) => ({
       occurrence,
       suffix: phpLaravelDynamicWhereSuffix(occurrence.attributeName),
@@ -4436,6 +4463,39 @@ function phpLaravelDynamicWhereAttributeOccurrences(
     ...phpArrayKeyOccurrences(source, "attributes"),
     ...phpArrayKeyOccurrences(source, "casts"),
   ];
+
+  return phpLaravelDedupeAttributeOccurrences(occurrences);
+}
+
+function phpLaravelDynamicWhereAttributeOccurrencesForModel(
+  source: string,
+  modelType: string,
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  const occurrences = phpLaravelClassBodyRanges(source, modelType).flatMap(
+    (range) =>
+      phpLaravelDynamicWhereAttributeOccurrences(
+        source.slice(range.bodyStart, range.bodyEnd),
+      ).map((occurrence) => ({
+        ...occurrence,
+        attributeOffset: range.bodyStart + occurrence.attributeOffset,
+      })),
+  );
+  const tableName = phpLaravelModelTableNameFromSource(source, modelType);
+
+  if (
+    tableName &&
+    source.includes("Schema::create") &&
+    source.includes(tableName)
+  ) {
+    occurrences.push(...phpLaravelSchemaAttributeOccurrences(source, tableName));
+  }
+
+  return phpLaravelDedupeAttributeOccurrences(occurrences);
+}
+
+function phpLaravelDedupeAttributeOccurrences<
+  T extends PhpLaravelDynamicWhereAttributeOccurrence,
+>(occurrences: T[]): T[] {
   const seen = new Set<string>();
 
   return occurrences.filter((occurrence) => {
@@ -4519,6 +4579,412 @@ function phpLaravelCastAttributes(
   return phpLaravelCastAttributeBodies(source).flatMap((body) =>
     phpLaravelCastAttributesFromBody(source, body, declaringClassName),
   );
+}
+
+function phpLaravelSchemaAttributesForModel(
+  source: string,
+  declaringClassName: string,
+): Array<[string, string | null]> {
+  const tableName = phpLaravelModelTableNameFromSource(
+    source,
+    declaringClassName,
+  );
+
+  if (
+    !tableName ||
+    !source.includes("Schema::create") ||
+    !source.includes(tableName)
+  ) {
+    return [];
+  }
+
+  return phpLaravelSchemaAttributeOccurrences(source, tableName).map(
+    (occurrence) => [occurrence.attributeName, occurrence.returnType],
+  );
+}
+
+function phpLaravelModelTableNameFromSource(
+  source: string,
+  declaringClassName: string,
+): string | null {
+  for (const range of phpLaravelClassBodyRanges(source, declaringClassName)) {
+    const body = source.slice(range.bodyStart, range.bodyEnd);
+    const maskedBody = maskPhpStringsAndComments(body);
+    const pattern = /\$table\s*=/g;
+
+    for (const match of maskedBody.matchAll(pattern)) {
+      const literal = phpStringLiteralAtOffset(
+        source,
+        range.bodyStart + (match.index ?? 0) + (match[0]?.length ?? 0),
+      );
+
+      if (literal?.value) {
+        return literal.value;
+      }
+    }
+  }
+
+  return phpLaravelConventionalModelTableName(declaringClassName);
+}
+
+function phpLaravelConventionalModelTableName(className: string): string | null {
+  const shortName = className.trim().replace(/^\\+/, "").split("\\").pop();
+
+  if (!shortName) {
+    return null;
+  }
+
+  return `${phpCamelCaseToSnakeCase(shortName)}s`;
+}
+
+interface PhpLaravelSchemaAttributeOccurrence
+  extends PhpLaravelDynamicWhereAttributeOccurrence {
+  returnType: string | null;
+  tableName: string;
+}
+
+type PhpLaravelSchemaColumn = Pick<
+  PhpLaravelSchemaAttributeOccurrence,
+  "attributeName" | "attributeOffset" | "returnType"
+>;
+
+function phpLaravelSchemaAttributeOccurrences(
+  source: string,
+  tableName?: string,
+): PhpLaravelSchemaAttributeOccurrence[] {
+  if (!source.includes("Schema::create")) {
+    return [];
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  const occurrences: PhpLaravelSchemaAttributeOccurrence[] = [];
+  const pattern = /\bSchema\s*::\s*create\s*\(/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const matched = match[0] ?? "";
+    const openOffset = (match.index ?? 0) + matched.lastIndexOf("(");
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    const argumentRanges = splitPhpParameterRanges(
+      source,
+      openOffset + 1,
+      closeOffset,
+    );
+    const schemaTableName = phpStringLiteralValue(
+      argumentRanges[0]?.value ?? "",
+    );
+
+    if (!schemaTableName || (tableName && schemaTableName !== tableName)) {
+      continue;
+    }
+
+    const closure = argumentRanges
+      .slice(1)
+      .map((range) => phpLaravelSchemaClosureFromArgument(source, masked, range))
+      .find((candidate): candidate is PhpLaravelSchemaClosure =>
+        Boolean(candidate),
+      );
+
+    if (!closure) {
+      continue;
+    }
+
+    occurrences.push(
+      ...phpLaravelSchemaColumnsFromClosure(source, masked, closure).map(
+        (column) => ({
+          ...column,
+          tableName: schemaTableName,
+        }),
+      ),
+    );
+  }
+
+  return occurrences;
+}
+
+interface PhpParameterRange {
+  endOffset: number;
+  startOffset: number;
+  value: string;
+}
+
+function splitPhpParameterRanges(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+): PhpParameterRange[] {
+  const ranges: PhpParameterRange[] = [];
+  let itemStart = startOffset;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = startOffset; index < endOffset; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth > 0) {
+      continue;
+    }
+
+    const range = phpParameterRange(source, itemStart, index);
+
+    if (range) {
+      ranges.push(range);
+    }
+
+    itemStart = index + 1;
+  }
+
+  const range = phpParameterRange(source, itemStart, endOffset);
+
+  if (range) {
+    ranges.push(range);
+  }
+
+  return ranges;
+}
+
+function phpParameterRange(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+): PhpParameterRange | null {
+  let trimmedStart = startOffset;
+  let trimmedEnd = endOffset;
+
+  while (trimmedStart < trimmedEnd && /\s/.test(source[trimmedStart] ?? "")) {
+    trimmedStart += 1;
+  }
+
+  while (trimmedEnd > trimmedStart && /\s/.test(source[trimmedEnd - 1] ?? "")) {
+    trimmedEnd -= 1;
+  }
+
+  if (trimmedStart >= trimmedEnd) {
+    return null;
+  }
+
+  return {
+    endOffset: trimmedEnd,
+    startOffset: trimmedStart,
+    value: source.slice(trimmedStart, trimmedEnd),
+  };
+}
+
+interface PhpLaravelSchemaClosure {
+  bodyEnd: number;
+  bodyStart: number;
+  tableVariable: string;
+}
+
+function phpLaravelSchemaClosureFromArgument(
+  source: string,
+  masked: string,
+  range: PhpParameterRange,
+): PhpLaravelSchemaClosure | null {
+  const functionMatch = /\bfunction\s*\(/.exec(
+    masked.slice(range.startOffset, range.endOffset),
+  );
+
+  if (!functionMatch) {
+    return null;
+  }
+
+  const parametersOpen =
+    range.startOffset +
+    functionMatch.index +
+    (functionMatch[0]?.lastIndexOf("(") ?? 0);
+  const parametersClose = matchingPairOffset(source, parametersOpen, "(", ")");
+
+  if (parametersClose === null || parametersClose > range.endOffset) {
+    return null;
+  }
+
+  const firstParameter = splitPhpParameterList(
+    source.slice(parametersOpen + 1, parametersClose),
+  )[0];
+  const tableVariable = /\$([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+    firstParameter ?? "",
+  )?.[1];
+
+  if (!tableVariable) {
+    return null;
+  }
+
+  const bodyStart = masked.indexOf("{", parametersClose + 1);
+
+  if (bodyStart < 0 || bodyStart > range.endOffset) {
+    return null;
+  }
+
+  const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+  if (bodyEnd === null || bodyEnd > range.endOffset) {
+    return null;
+  }
+
+  return {
+    bodyEnd,
+    bodyStart: bodyStart + 1,
+    tableVariable,
+  };
+}
+
+function phpLaravelSchemaColumnsFromClosure(
+  source: string,
+  masked: string,
+  closure: PhpLaravelSchemaClosure,
+): PhpLaravelSchemaColumn[] {
+  const body = masked.slice(closure.bodyStart, closure.bodyEnd);
+  const pattern = new RegExp(
+    `\\$${escapeRegExp(closure.tableVariable)}\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+    "g",
+  );
+  const columns: PhpLaravelSchemaColumn[] = [];
+
+  for (const match of body.matchAll(pattern)) {
+    const methodName = match[1] ?? "";
+    const openOffset =
+      closure.bodyStart +
+      (match.index ?? 0) +
+      (match[0]?.lastIndexOf("(") ?? 0);
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (closeOffset === null || closeOffset > closure.bodyEnd) {
+      continue;
+    }
+
+    const column = phpLaravelSchemaColumnFromCall(
+      source,
+      methodName,
+      openOffset,
+      closeOffset,
+    );
+
+    if (column) {
+      columns.push(column);
+    }
+  }
+
+  return columns;
+}
+
+function phpLaravelSchemaColumnFromCall(
+  source: string,
+  methodName: string,
+  openOffset: number,
+  closeOffset: number,
+): PhpLaravelSchemaColumn | null {
+  const normalizedMethodName = methodName.toLowerCase();
+
+  if (normalizedMethodName === "id") {
+    return {
+      attributeName: "id",
+      attributeOffset: openOffset - methodName.length,
+      returnType: "int",
+    };
+  }
+
+  const firstArgument = splitPhpParameterRanges(
+    source,
+    openOffset + 1,
+    closeOffset,
+  )[0];
+  const literal = firstArgument
+    ? phpStringLiteralAtOffset(source, firstArgument.startOffset)
+    : null;
+
+  if (!literal || !isPhpAttributeName(literal.value)) {
+    return null;
+  }
+
+  return {
+    attributeName: literal.value,
+    attributeOffset: literal.valueOffset,
+    returnType: phpLaravelSchemaColumnReturnType(methodName),
+  };
+}
+
+function phpLaravelSchemaColumnReturnType(methodName: string): string | null {
+  const normalized = methodName.toLowerCase();
+
+  if (
+    /(?:^|_)(?:id|increments)$/.test(normalized) ||
+    normalized.includes("integer")
+  ) {
+    return "int";
+  }
+
+  if (normalized.includes("boolean")) {
+    return "bool";
+  }
+
+  if (
+    normalized.includes("float") ||
+    normalized.includes("double") ||
+    normalized.includes("decimal")
+  ) {
+    return "float";
+  }
+
+  if (
+    normalized.includes("date") ||
+    normalized.includes("time") ||
+    normalized.includes("timestamp")
+  ) {
+    return "\\Illuminate\\Support\\Carbon";
+  }
+
+  if (
+    normalized.includes("json") ||
+    normalized === "set" ||
+    normalized === "enum"
+  ) {
+    return "array";
+  }
+
+  if (
+    normalized.includes("string") ||
+    normalized.includes("text") ||
+    normalized === "char" ||
+    normalized === "uuid" ||
+    normalized === "ulid"
+  ) {
+    return "string";
+  }
+
+  return "mixed";
 }
 
 function phpLaravelCastAttributeBodies(source: string): string[] {
@@ -6072,6 +6538,47 @@ function phpStringLiteralValue(expression: string): string | null {
   }
 
   return (match[2] ?? "").replace(/\\(['"\\])/g, "$1");
+}
+
+function phpStringLiteralAtOffset(
+  source: string,
+  offset: number,
+): { value: string; valueOffset: number } | null {
+  let quoteOffset = offset;
+
+  while (quoteOffset < source.length && /\s/.test(source[quoteOffset] ?? "")) {
+    quoteOffset += 1;
+  }
+
+  const quote = source[quoteOffset] ?? "";
+
+  if (quote !== "'" && quote !== "\"") {
+    return null;
+  }
+
+  let value = "";
+
+  for (let index = quoteOffset + 1; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (character === "\\") {
+      const next = source[index + 1] ?? "";
+      value += next || character;
+      index += next ? 1 : 0;
+      continue;
+    }
+
+    if (character === quote) {
+      return {
+        value,
+        valueOffset: quoteOffset + 1,
+      };
+    }
+
+    value += character;
+  }
+
+  return null;
 }
 
 function escapeRegExp(value: string): string {

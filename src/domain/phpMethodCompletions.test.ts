@@ -1815,6 +1815,173 @@ class Comment
     ]);
   });
 
+  it("maps Laravel Schema create columns to model attributes and dynamic wheres", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+Schema::create('comments', function (Blueprint $table) {
+    $table->id();
+    $table->string('content');
+    $table->boolean('is_pinned');
+});
+
+class Comment extends Model {}
+`;
+
+    const properties = phpMethodCompletionsFromSource(
+      source,
+      "Comment",
+      laravelCompletionOptions,
+    ).filter((completion) => completion.kind === "property");
+
+    expect(properties).toEqual([
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "id",
+        parameters: "",
+        returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "content",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "is_pinned",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "Comment", {
+        isStatic: true,
+      }),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereId",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereContent",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereIsPinned",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereContent",
+        "App\\Models\\Comment",
+        "Comment::whereContent('draft')",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Comment>");
+
+    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual({
+      attributeName: "content",
+      position: positionAfter(source, "$table->string('"),
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereContent"),
+    ).toEqual({
+      attributeName: "content",
+      position: positionAfter(source, "$table->string('"),
+    });
+  });
+
+  it("uses explicit Laravel model table names for Schema create columns", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+Schema::create('users', function (Blueprint $table) {
+    $table->string('email');
+});
+
+Schema::create('people', function (Blueprint $table) {
+    $table->string('name');
+    $table->boolean('active');
+});
+
+class User extends Model
+{
+    protected $table = 'people';
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "App\\Models\\User",
+        laravelCompletionOptions,
+      ).filter((completion) => completion.kind === "property"),
+    ).toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        kind: "property",
+        name: "name",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "App\\Models\\User",
+        kind: "property",
+        name: "active",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "App\\Models\\User", {
+        isStatic: true,
+      }).map((completion) => completion.name),
+    ).toEqual(["whereName", "whereActive"]);
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereName",
+        "App\\Models\\User",
+        "User::whereName('Ada')",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\User>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereEmail",
+        "App\\Models\\User",
+        "User::whereEmail('ada@example.test')",
+      ),
+    ).toBeNull();
+    expect(isLaravelDynamicWhereMethodForSource(source, "whereEmail")).toBe(false);
+  });
+
   it("locates Laravel dynamic where source attributes", () => {
     const source = `<?php
 class Comment
