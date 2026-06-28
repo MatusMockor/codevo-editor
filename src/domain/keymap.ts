@@ -118,6 +118,22 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // VS Code's "Go to Next Change" (Alt+F5). Jumps the caret to the next git
+    // change hunk in the active editor using the gutter change markers.
+    defaultShortcut: "Alt+F5",
+    id: "editor.nextChange",
+    label: "Go to Next Change",
+  },
+  {
+    category: "Editor",
+    // VS Code's "Go to Previous Change" (Shift+Alt+F5). Mirrors editor.nextChange
+    // in the reverse direction across the gutter change markers.
+    defaultShortcut: "Shift+Alt+F5",
+    id: "editor.previousChange",
+    label: "Go to Previous Change",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Alt+ArrowUp",
     id: "editor.extendSelection",
     label: "Extend Selection",
@@ -300,45 +316,65 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
-    defaultShortcut: "",
+    // PhpStorm has no default for Annotate; Cmd+Alt+G is free and mirrors the
+    // "git" mnemonic. Distinct from Cmd+B go-to-definition by the Alt modifier.
+    defaultShortcut: "Cmd+Alt+G",
     id: "editor.toggleGitBlame",
     label: "Annotate with Git Blame",
   },
   {
     category: "Editor",
-    defaultShortcut: "",
+    // Cmd+Alt+H ("history") opens the VCS file history for the active document.
+    defaultShortcut: "Cmd+Alt+H",
     id: "editor.showFileHistory",
     label: "Show File History",
   },
   {
     category: "Editor",
-    defaultShortcut: "",
+    // Local History sits beside the git file history; Cmd+Shift+H keeps the "H"
+    // mnemonic while staying distinct from the Cmd+Alt+H git file history.
+    defaultShortcut: "Cmd+Shift+H",
     id: "editor.showLocalHistory",
     label: "Local History: Show History",
   },
   {
     category: "Git",
-    defaultShortcut: "",
+    // PhpStorm stashes with Cmd+Shift+S; the slot is free here, so we keep parity.
+    defaultShortcut: "Cmd+Shift+S",
     id: "git.stashChanges",
     label: "Git: Stash Changes",
   },
   {
     category: "Git",
-    defaultShortcut: "",
+    // Unstash/Show Stashes pairs with Stash; Cmd+Alt+S keeps the "stash" mnemonic
+    // and stays distinct from Cmd+Shift+S (stash) by the Alt vs Shift modifier.
+    defaultShortcut: "Cmd+Alt+S",
     id: "git.showStashes",
     label: "Git: Show Stashes",
   },
   {
     category: "Git",
-    defaultShortcut: "",
+    // Switch/checkout branch. Cmd+Shift+B is free ("B" = branch).
+    defaultShortcut: "Cmd+Shift+B",
     id: "git.switchBranch",
     label: "Git: Switch Branch",
   },
   {
     category: "Git",
-    defaultShortcut: "",
+    // New branch pairs with Switch Branch; Cmd+Alt+N ("new") stays distinct from
+    // the Cmd+Shift+B switch-branch shortcut by both key and modifier.
+    defaultShortcut: "Cmd+Alt+N",
     id: "git.newBranch",
     label: "Git: New Branch",
+  },
+  {
+    category: "Git",
+    // Commit the staged changes. Cmd+Enter is the VS Code / PhpStorm commit
+    // accelerator and is free (distinct from Cmd+Shift+Enter complete-statement
+    // and Alt+Enter context-actions by its modifier set).
+    defaultShortcut: "Cmd+Enter",
+    id: "git.commit",
+    label: "Git: Commit",
   },
   {
     category: "File",

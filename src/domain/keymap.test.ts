@@ -58,18 +58,30 @@ describe("keymap", () => {
     expect(stashChanges).toMatchObject({
       category: "Git",
       label: "Git: Stash Changes",
-      defaultShortcut: "",
+      defaultShortcut: "Cmd+Shift+S",
     });
     expect(showStashes).toMatchObject({
       category: "Git",
       label: "Git: Show Stashes",
-      defaultShortcut: "",
+      defaultShortcut: "Cmd+Alt+S",
     });
 
-    // The stash commands ship without a default shortcut, so they cannot collide
-    // with an existing binding; assert no other command claims the same id.
+    // The stash shortcuts are distinct from one another and from every other
+    // binding; assert no other command claims the same id or shortcut.
     const ids = keymapCommands.map((command) => command.id);
     expect(new Set(ids).size).toBe(ids.length);
+
+    const defaults = defaultKeymapSettings("mac");
+    expect(
+      Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === defaults["git.stashChanges"],
+      ),
+    ).toEqual([["git.stashChanges", "Cmd+Shift+S"]]);
+    expect(
+      Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === defaults["git.showStashes"],
+      ),
+    ).toEqual([["git.showStashes", "Cmd+Alt+S"]]);
   });
 
   it("registers the git branch commands without shortcut collisions", () => {
@@ -83,18 +95,96 @@ describe("keymap", () => {
     expect(switchBranch).toMatchObject({
       category: "Git",
       label: "Git: Switch Branch",
-      defaultShortcut: "",
+      defaultShortcut: "Cmd+Shift+B",
     });
     expect(newBranch).toMatchObject({
       category: "Git",
       label: "Git: New Branch",
-      defaultShortcut: "",
+      defaultShortcut: "Cmd+Alt+N",
     });
 
-    // The branch commands ship without a default shortcut, so they cannot collide
-    // with an existing binding; assert every command id stays unique.
+    // The branch shortcuts are distinct from one another and from every other
+    // binding; assert every command id stays unique.
     const ids = keymapCommands.map((command) => command.id);
     expect(new Set(ids).size).toBe(ids.length);
+
+    const defaults = defaultKeymapSettings("mac");
+    expect(
+      Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === defaults["git.switchBranch"],
+      ),
+    ).toEqual([["git.switchBranch", "Cmd+Shift+B"]]);
+    expect(
+      Object.entries(defaults).filter(
+        ([, shortcut]) => shortcut === defaults["git.newBranch"],
+      ),
+    ).toEqual([["git.newBranch", "Cmd+Alt+N"]]);
+  });
+
+  it("assigns discoverable default shortcuts to the git and history commands", () => {
+    const defaults = defaultKeymapSettings("mac");
+
+    expect(defaults["git.stashChanges"]).toBe("Cmd+Shift+S");
+    expect(defaults["git.showStashes"]).toBe("Cmd+Alt+S");
+    expect(defaults["git.switchBranch"]).toBe("Cmd+Shift+B");
+    expect(defaults["git.newBranch"]).toBe("Cmd+Alt+N");
+    expect(defaults["editor.toggleGitBlame"]).toBe("Cmd+Alt+G");
+    expect(defaults["editor.showFileHistory"]).toBe("Cmd+Alt+H");
+    expect(defaults["editor.showLocalHistory"]).toBe("Cmd+Shift+H");
+  });
+
+  it("maps the git and history shortcuts to the primary modifier on non-mac", () => {
+    const defaults = defaultKeymapSettings("linux");
+
+    expect(defaults["git.stashChanges"]).toBe("Ctrl+Shift+S");
+    expect(defaults["git.showStashes"]).toBe("Ctrl+Alt+S");
+    expect(defaults["git.switchBranch"]).toBe("Ctrl+Shift+B");
+    expect(defaults["git.newBranch"]).toBe("Ctrl+Alt+N");
+    expect(defaults["editor.toggleGitBlame"]).toBe("Ctrl+Alt+G");
+    expect(defaults["editor.showFileHistory"]).toBe("Ctrl+Alt+H");
+    expect(defaults["editor.showLocalHistory"]).toBe("Ctrl+Shift+H");
+  });
+
+  it("registers a Git: Commit command bound to Cmd+Enter", () => {
+    const commit = keymapCommands.find((command) => command.id === "git.commit");
+
+    expect(commit).toMatchObject({
+      category: "Git",
+      label: "Git: Commit",
+      defaultShortcut: "Cmd+Enter",
+    });
+    expect(defaultShortcutForCommand("git.commit", "mac")).toBe("Cmd+Enter");
+    expect(defaultShortcutForCommand("git.commit", "linux")).toBe("Ctrl+Enter");
+  });
+
+  it("registers next/previous change navigation commands", () => {
+    const nextChange = keymapCommands.find(
+      (command) => command.id === "editor.nextChange",
+    );
+    const previousChange = keymapCommands.find(
+      (command) => command.id === "editor.previousChange",
+    );
+
+    expect(nextChange).toMatchObject({
+      category: "Editor",
+      label: "Go to Next Change",
+      defaultShortcut: "Alt+F5",
+    });
+    expect(previousChange).toMatchObject({
+      category: "Editor",
+      label: "Go to Previous Change",
+      defaultShortcut: "Shift+Alt+F5",
+    });
+  });
+
+  it("keeps every default shortcut unique across the whole keymap (no collisions)", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const bound = Object.entries(defaults).filter(([, shortcut]) => shortcut);
+      const shortcuts = bound.map(([, shortcut]) => shortcut);
+
+      expect(new Set(shortcuts).size).toBe(shortcuts.length);
+    }
   });
 
   it("defaults Go to Super Method to Cmd+U on mac and Ctrl+U elsewhere (PhpStorm parity)", () => {

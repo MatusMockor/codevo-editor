@@ -5173,6 +5173,150 @@ class Foo
     expect(editor.trigger).not.toHaveBeenCalled();
   });
 
+  it("registers next/previous change actions that jump between gutter change hunks", async () => {
+    // Two separated change hunks: an edit on line 2 and an edit on line 6.
+    const baseline = [
+      "line1",
+      "line2",
+      "line3",
+      "line4",
+      "line5",
+      "line6",
+      "line7",
+    ].join("\n");
+    const current = [
+      "line1",
+      "line2-edited",
+      "line3",
+      "line4",
+      "line5",
+      "line6-edited",
+      "line7",
+    ].join("\n");
+    const changeHunks = editorChangeHunks(baseline, current);
+
+    expect(changeHunks).toHaveLength(2);
+    const firstHunkLine = changeHunks[0].startLineNumber;
+    const secondHunkLine = changeHunks[1].startLineNumber;
+    expect(firstHunkLine).toBeLessThan(secondHunkLine);
+
+    const activeDocument: EditorDocument = {
+      content: current,
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: baseline,
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={changeHunks}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actionById = (id: string) =>
+      editor.addAction.mock.calls
+        .map(([action]) => action)
+        .find((action) => action.id === id);
+
+    const nextChange = actionById("mockor.nextChange");
+    const previousChange = actionById("mockor.previousChange");
+
+    expect(nextChange).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F5],
+        label: "Go to Next Change",
+      }),
+    );
+    expect(previousChange).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F5,
+        ],
+        label: "Go to Previous Change",
+      }),
+    );
+
+    // Caret starts on line 1, before both hunks: Next jumps to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 1 });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+
+    // From inside the first hunk, Next advances to the second hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: secondHunkLine }),
+    );
+
+    // From the second (last) hunk, Next wraps around to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+
+    // From the first hunk, Previous wraps around to the last hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.setPosition.mockClear();
+    previousChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: secondHunkLine }),
+    );
+
+    // From the last hunk, Previous steps back to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.setPosition.mockClear();
+    previousChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+  });
+
   describe("cyclic expand word (hippie completion)", () => {
     interface HippieHarness {
       editor: FakeEditor;
@@ -9783,6 +9927,7 @@ function createMonaco(model: FakeModel) {
       Enter: 8,
       Equal: 86,
       F2: 60,
+      F5: 63,
       KeyB: 1,
       KeyD: 12,
       KeyF: 10,

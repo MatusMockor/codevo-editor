@@ -1429,6 +1429,20 @@ function EditorSurfaceComponent({
         keybindings: keybinding("navigation.forward"),
         run: onGoForward,
       }),
+      editorApi.addAction({
+        id: "mockor.nextChange",
+        label: "Go to Next Change",
+        keybindings: keybinding("editor.nextChange"),
+        run: () =>
+          jumpToChangeHunk(editorApi, changeHunksRef.current, "next"),
+      }),
+      editorApi.addAction({
+        id: "mockor.previousChange",
+        label: "Go to Previous Change",
+        keybindings: keybinding("editor.previousChange"),
+        run: () =>
+          jumpToChangeHunk(editorApi, changeHunksRef.current, "previous"),
+      }),
     ];
 
     return () => {
@@ -3521,6 +3535,58 @@ function findChangeHunkAtLine(
   );
 }
 
+// Moves the caret to the next/previous gutter change hunk in the active editor,
+// mirroring VS Code's "Go to Next/Previous Change". The hunks come from the live
+// editorChangeMarkers (the same ranges that render the gutter glyphs), so the
+// jump always lands on a real change. The list wraps around (last -> first and
+// first -> last) so repeated presses cycle every change without dead-ending.
+function jumpToChangeHunk(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  hunks: EditorChangeHunk[],
+  direction: "next" | "previous",
+): void {
+  if (!hunks.length || !editor.getModel()) {
+    return;
+  }
+
+  const ordered = [...hunks].sort(
+    (left, right) => left.startLineNumber - right.startLineNumber,
+  );
+  const currentLine = editor.getPosition()?.lineNumber ?? 1;
+  const target = nextChangeHunk(ordered, currentLine, direction);
+
+  if (!target) {
+    return;
+  }
+
+  const position = { column: 1, lineNumber: target.startLineNumber };
+  editor.setPosition(position);
+  editor.revealPositionInCenter(position);
+  editor.focus();
+}
+
+function nextChangeHunk(
+  ordered: EditorChangeHunk[],
+  currentLine: number,
+  direction: "next" | "previous",
+): EditorChangeHunk | null {
+  if (direction === "next") {
+    return (
+      ordered.find((hunk) => hunk.startLineNumber > currentLine) ??
+      ordered[0] ??
+      null
+    );
+  }
+
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    if (ordered[index].startLineNumber < currentLine) {
+      return ordered[index];
+    }
+  }
+
+  return ordered[ordered.length - 1] ?? null;
+}
+
 function glyphMarginLaneFromMouseEvent(
   event: Monaco.editor.IEditorMouseEvent,
 ): Monaco.editor.GlyphMarginLane | null {
@@ -3930,6 +3996,7 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
     enter: "Enter",
     escape: "Escape",
     f2: "F2",
+    f5: "F5",
   };
   const keyCodeName = specialKeyCodes[key];
 

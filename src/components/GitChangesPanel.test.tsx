@@ -210,6 +210,51 @@ describe("GitChangesPanel", () => {
     expect(onStageChanges).toHaveBeenCalledWith([untracked]);
   });
 
+  it("renders the stage toolbar button with a lucide Plus icon, not bare text", async () => {
+    await renderPanel({
+      status: gitStatus([gitChange("untracked", "notes.txt", false)]),
+    });
+
+    const stageButton = host.querySelector<HTMLButtonElement>(
+      '[title="Stage selected files"]',
+    );
+
+    expect(stageButton).not.toBeNull();
+    // The bare "+" glyph is replaced by an inline SVG icon.
+    expect(stageButton?.querySelector("svg")).not.toBeNull();
+    expect(stageButton?.textContent?.trim()).toBe("");
+  });
+
+  it("labels the change checkboxes as Stage/Unstage rather than Include/Exclude", async () => {
+    const staged = gitChange("modified", "src/Alpha.php", false);
+    const unstaged = gitChange("modified", "src/Beta.php", false);
+    await renderPanel({
+      includedChangePaths: new Set([gitChangeKey(staged)]),
+      status: gitStatus([staged, unstaged]),
+    });
+
+    const labelFor = (relativePath: string) =>
+      Array.from(
+        host.querySelectorAll<HTMLInputElement>(".git-change-checkbox input"),
+      )
+        .map((input) => input.getAttribute("aria-label") ?? "")
+        .find((label) => label.includes(relativePath)) ?? "";
+
+    // An included (checked) file offers to Unstage it; an excluded one to Stage.
+    expect(labelFor("src/Alpha.php")).toBe("Unstage src/Alpha.php");
+    expect(labelFor("src/Beta.php")).toBe("Stage src/Beta.php");
+
+    // The group header checkbox uses the same Stage/Unstage vocabulary.
+    const groupLabel = host
+      .querySelector<HTMLInputElement>(
+        ".git-change-group-header .git-themed-checkbox input",
+      )
+      ?.getAttribute("aria-label");
+
+    expect(groupLabel).toMatch(/Stage|Unstage/);
+    expect(groupLabel).not.toMatch(/Include|Exclude/);
+  });
+
   it("does not open rows or collapse groups while a Git operation is running", async () => {
     const change = gitChange("modified", "src/User.php", true);
     const onOpenChange = vi.fn();

@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   GitBranch,
+  Plus,
   RefreshCw,
   RotateCcw,
   Undo2,
@@ -246,7 +247,7 @@ function GitCommitHeader({
           title="Stage selected files"
           type="button"
         >
-          +
+          <Plus aria-hidden="true" size={14} />
         </button>
         <button
           disabled={disabled || !hasSelection}
@@ -337,7 +338,7 @@ function GitChangeGroupViewComponent({
         <ThemedCheckbox
           checked={allIncluded}
           disabled={disabled}
-          label={`${allIncluded ? "Exclude" : "Include"} ${group.title}`}
+          label={`${allIncluded ? "Unstage" : "Stage"} ${group.title}`}
           onChange={onToggleGroup}
         />
         <span className="git-change-group-title">
@@ -399,7 +400,7 @@ function GitChangeRowComponent({
         checked={isIncluded}
         className="git-change-checkbox"
         disabled={disabled}
-        label={`${isIncluded ? "Exclude" : "Include"} ${change.relativePath}`}
+        label={`${isIncluded ? "Unstage" : "Stage"} ${change.relativePath}`}
         onChange={() => onToggleChangeIncluded(change)}
       />
       <button
