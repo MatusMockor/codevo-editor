@@ -266,6 +266,12 @@ describe("createAppHighlighter", () => {
     expect(highlighter.getLoadedThemes()).toContain("dark-plus");
   });
 
+  it("ships the Vue single-file-component grammar", async () => {
+    const highlighter = await createAppHighlighter();
+    expect(SHIKI_LANGS).toContain("vue");
+    expect(highlighter.getLoadedLanguages()).toContain("vue");
+  });
+
   it("loads the bundled official Ayu Mirage theme", async () => {
     const highlighter = await createAppHighlighter();
     expect(highlighter.getLoadedThemes()).toContain("ayu-mirage");
@@ -463,6 +469,25 @@ describe("setupShikiTokenization", () => {
     }
     // Keywords/functions must resolve to real palette colors, not the default.
     expect(sawColoredToken).toBe(true);
+  });
+
+  it("produces non-empty encoded tokens for a Vue single-file component", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const vue = providers.get("vue");
+    expect(vue).toBeDefined();
+    const result = vue!.tokenizeEncoded(
+      "<template><div>{{ msg }}</div></template>\n" +
+        "<script setup lang=\"ts\">const msg = \"hi\";</script>",
+      vue!.getInitialState(),
+    );
+    expect(result.tokens).toBeInstanceOf(Uint32Array);
+    expect(result.tokens.length).toBeGreaterThan(0);
   });
 
   it("produces non-empty encoded tokens for TypeScript", async () => {

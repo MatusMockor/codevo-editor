@@ -312,6 +312,7 @@ export const SHIKI_LANGS = [
   "yaml",
   "markdown",
   "sql",
+  "vue",
 ] as const;
 
 export const APP_SHIKI_THEMES = [
@@ -399,6 +400,11 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/langs/yaml.mjs"),
       import("shiki/langs/markdown.mjs"),
       import("shiki/langs/sql.mjs"),
+      // Vue SFC grammar — highlights <template>/<script>/<style> blocks. The
+      // bundle is self-contained (it ships its embedded css/js/ts/html/markdown
+      // sub-grammars), so no extra imports are needed. Highlighting only; .vue
+      // does not get LSP/Volar completions or diagnostics in this slice.
+      import("shiki/langs/vue.mjs"),
     ],
   });
 

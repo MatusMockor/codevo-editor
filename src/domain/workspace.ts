@@ -313,6 +313,7 @@ export function detectLanguage(path: string): string {
     rs: "rust",
     ts: "typescript",
     tsx: "typescript",
+    vue: "vue",
     xml: "xml",
     yaml: "yaml",
     yml: "yaml",
