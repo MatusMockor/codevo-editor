@@ -298,6 +298,7 @@ export interface LanguageServerMonacoProviderContext {
    */
   applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
+  clearLanguageServerDiagnosticsForPath?(path: string): void;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
@@ -670,6 +671,10 @@ export function registerLanguageServerMonacoProviders(
       }
 
       try {
+        if (payload.sourcePath) {
+          await context.flushPendingDocumentChange(payload.sourcePath);
+        }
+
         // The controller callback owns the gateway disk write, the file-tree
         // refresh, the tab open AND the per-project isolation (requested-root
         // capture + re-check after each await), so a tab switch mid-write drops
@@ -682,6 +687,10 @@ export function registerLanguageServerMonacoProviders(
         );
 
         if (interfaceFileWritten) {
+          if (payload.sourcePath) {
+            context.clearLanguageServerDiagnosticsForPath?.(payload.sourcePath);
+          }
+
           applyPhpCodeActionDocumentEdits(monaco, payload);
         }
       } catch (error) {
@@ -2367,20 +2376,22 @@ async function provideCodeActions(
       return codeActionList([...activePhpActions(), ...localActions]);
     }
 
-    return codeActionList([
-      ...actions.flatMap((action) =>
-        toMonacoCodeAction(
-          monaco,
-          workspaceEditContext(model),
-          request.rootPath,
-          request.sessionId,
-          action,
-          actionContext,
+    return codeActionList(
+      orderCodeActions({
+        languageServerActions: actions.flatMap((action) =>
+          toMonacoCodeAction(
+            monaco,
+            workspaceEditContext(model),
+            request.rootPath,
+            request.sessionId,
+            action,
+            actionContext,
+          ),
         ),
-      ),
-      ...activePhpActions(),
-      ...localActions,
-    ]);
+        localActions,
+        phpActions: activePhpActions(),
+      }),
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
 
@@ -2794,6 +2805,100 @@ function codeActionList(
     actions,
     dispose: () => undefined,
   };
+}
+
+function orderCodeActions({
+  languageServerActions,
+  localActions,
+  phpActions,
+}: {
+  languageServerActions: Monaco.languages.CodeAction[];
+  localActions: Monaco.languages.CodeAction[];
+  phpActions: Monaco.languages.CodeAction[];
+}): Monaco.languages.CodeAction[] {
+  const safeCreateTypeNames = new Set(
+    phpActions.flatMap((action) => {
+      const name = phpCreateTypeActionName(action.title);
+      return name ? [name] : [];
+    }),
+  );
+  const seenLanguageServerActions = new Set<string>();
+  const filteredLanguageServerActions = languageServerActions.filter(
+    (action) => {
+      const phpactorCreateTypeName = phpactorCreateTypeVariantName(action);
+      if (
+        phpactorCreateTypeName &&
+        safeCreateTypeNames.has(phpactorCreateTypeName)
+      ) {
+        return false;
+      }
+
+      const key = codeActionDedupeKey(action);
+
+      if (seenLanguageServerActions.has(key)) {
+        return false;
+      }
+
+      seenLanguageServerActions.add(key);
+      return true;
+    },
+  );
+
+  return [...phpActions, ...filteredLanguageServerActions, ...localActions];
+}
+
+function phpCreateTypeActionName(title: string): string | null {
+  const match = /^Create (?:class|interface|trait|enum) ([A-Za-z_\\][A-Za-z0-9_\\]*)$/.exec(
+    title,
+  );
+
+  return match ? phpTypeShortName(match[1] ?? "") : null;
+}
+
+function phpactorCreateTypeVariantName(
+  action: Monaco.languages.CodeAction,
+): string | null {
+  const backedAction = action as LanguageServerBackedCodeAction;
+
+  if (!backedAction.__languageServerAction) {
+    return null;
+  }
+
+  return (
+    phpactorCreateFileActionName(action.title) ??
+    phpCreateTypeActionName(action.title)
+  );
+}
+
+function phpactorCreateFileActionName(title: string): string | null {
+  const quoted = /^Create (?:default|class|interface|trait|enum) file for "([^"]+)"$/i.exec(
+    title,
+  );
+
+  if (quoted) {
+    return phpTypeShortName(quoted[1] ?? "");
+  }
+
+  const bare = /^Create (?:default|class|interface|trait|enum) file\b\s*(?:for\s+)?(.+)$/i.exec(
+    title,
+  );
+
+  if (!bare) {
+    return null;
+  }
+
+  return phpTypeShortName((bare[1] ?? "").replace(/\.php$/i, "").trim());
+}
+
+function phpTypeShortName(name: string): string {
+  const normalized = name.replace(/^\\+/, "").trim();
+  const segments = normalized.split("\\").filter(Boolean);
+
+  return segments.length > 0 ? segments[segments.length - 1] ?? normalized : normalized;
+}
+
+function codeActionDedupeKey(action: Monaco.languages.CodeAction): string {
+  return [action.kind ?? "", action.title].join("\0");
 }
 
 function documentLinkList(

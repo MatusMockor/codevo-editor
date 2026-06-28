@@ -1719,6 +1719,28 @@ export function useWorkbenchController(
     [reportError],
   );
 
+  const isUnknownDocumentForUnsyncedPath = useCallback(
+    (rootPath: string | null | undefined, error: unknown): boolean => {
+      const message = String(error);
+
+      if (!message.includes("UnknownDocument")) {
+        return false;
+      }
+
+      const uri = /Unknown text document "([^"]+)"/.exec(message)?.[1];
+      const path = uri ? pathFromLanguageServerUri(uri) : null;
+
+      if (!path || !rootPath) {
+        return false;
+      }
+
+      return !syncedDocumentPathsRef.current.has(
+        languageServerDocumentSyncKey(rootPath, path),
+      );
+    },
+    [],
+  );
+
   const reportLanguageServerError = useCallback((error: unknown) => {
     const nextMessage = String(error);
     setMessage(nextMessage);
@@ -1740,9 +1762,13 @@ export function useWorkbenchController(
         return;
       }
 
+      if (isUnknownDocumentForUnsyncedPath(rootPath, error)) {
+        return;
+      }
+
       reportLanguageServerError(error);
     },
-    [reportLanguageServerError],
+    [isUnknownDocumentForUnsyncedPath, reportLanguageServerError],
   );
 
   const applyAppSettings = useCallback((settings: AppSettings) => {
@@ -28016,6 +28042,8 @@ export function useWorkbenchController(
     openPinnedFile,
     prefetchFile,
     cancelFilePrefetch,
+    clearLanguageServerDiagnosticsForPath: (path: string) =>
+      clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
     previewFile,
     previewPath,
     applyPhpCodeActionNewFile,

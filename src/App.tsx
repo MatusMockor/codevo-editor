@@ -948,6 +948,9 @@ function App() {
             applyPhpLanguageServerWorkspaceEdit={
               workbench.applyPhpLanguageServerWorkspaceEdit
             }
+            clearLanguageServerDiagnosticsForPath={
+              workbench.clearLanguageServerDiagnosticsForPath
+            }
             bookmarkedLineNumbers={activeBookmarkedLineNumbers}
             changeHunks={activeEditorChangeHunks}
             editorRevealTarget={workbench.editorRevealTarget}

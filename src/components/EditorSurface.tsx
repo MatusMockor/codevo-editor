@@ -157,6 +157,7 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
   ): Promise<void>;
+  clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
@@ -254,6 +255,7 @@ function EditorSurfaceComponent({
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
   applyPhpCodeActionNewFile = async () => false,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
+  clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,
   editorRevealTarget,
@@ -429,6 +431,9 @@ function EditorSurfaceComponent({
   } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
+  const clearLanguageServerDiagnosticsForPathRef = useRef(
+    clearLanguageServerDiagnosticsForPath,
+  );
   const bladeCompletionsRef = useRef(provideBladeCompletions);
   const bladeDefinitionRef = useRef(provideBladeDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
@@ -600,6 +605,11 @@ function EditorSurfaceComponent({
   }, [applyPhpCodeActionNewFile]);
 
   useEffect(() => {
+    clearLanguageServerDiagnosticsForPathRef.current =
+      clearLanguageServerDiagnosticsForPath;
+  }, [clearLanguageServerDiagnosticsForPath]);
+
+  useEffect(() => {
     bladeCompletionsRef.current = provideBladeCompletions;
   }, [provideBladeCompletions]);
 
@@ -723,6 +733,8 @@ function EditorSurfaceComponent({
         applyPhpCodeActionNewFileRef.current(newFile),
       applyWorkspaceEdit: (edit, editContext) =>
         applyPhpWorkspaceEditRef.current(edit, editContext),
+      clearLanguageServerDiagnosticsForPath: (path) =>
+        clearLanguageServerDiagnosticsForPathRef.current(path),
       featuresGateway: languageServerFeaturesGateway,
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,

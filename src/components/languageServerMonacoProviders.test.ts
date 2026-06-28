@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import type {
   LanguageServerCompletionList,
+  LanguageServerCodeAction,
   LanguageServerCodeLens,
   LanguageServerDocumentHighlight,
   LanguageServerDocumentLink,
@@ -5670,7 +5671,6 @@ function store($request): void
       { end: 6, start: 6 },
     );
     expect(actions.actions).toEqual([
-      expect.objectContaining({ title: "Import User" }),
       expect.objectContaining({
         edit: {
           edits: [
@@ -5695,7 +5695,212 @@ function store($request): void
         kind: "quickfix",
         title: "Implement methods",
       }),
+      expect.objectContaining({ title: "Import User" }),
     ]);
+  });
+
+  it("orders local Create class before external phpactor create-file actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        phpactorCreateTypeAction("Create interface MailDispatcher"),
+        phpactorCreateTypeAction("Create trait MailDispatcher"),
+        phpactorCreateTypeAction("Create enum MailDispatcher"),
+        {
+          command: {
+            arguments: ["App\\Services\\MailDispatcher"],
+            command: "phpactor.import_class",
+            title: "Import class",
+          },
+          data: { id: "import-class" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Import class",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content:
+            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          path: "/project/src/MailDispatcher.php",
+        },
+        title: "Create class MailDispatcher",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\n$service = new MailDispatcher();\n" }),
+      new registered.monaco.Range(2, 16, 2, 30),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create class MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create interface MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create trait MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create enum MailDispatcher");
+    expect(titles).toContain("Import class");
+  });
+
+  it("hides phpactor create-file variants when a safe local Create class action exists", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction(
+          "Create default file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create interface file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create trait file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create enum file CodevoQaGeneratedService.php",
+        ),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content: "<?php\n\nclass CodevoQaGeneratedService\n{\n}\n",
+          path: "/project/src/CodevoQaGeneratedService.php",
+        },
+        title: "Create class CodevoQaGeneratedService",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({
+        content: "<?php\n$service = new CodevoQaGeneratedService();\n",
+      }),
+      new registered.monaco.Range(2, 16, 2, 40),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create class CodevoQaGeneratedService");
+    expect(titles).not.toContain(
+      "Create default file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create interface file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create trait file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create enum file CodevoQaGeneratedService.php",
+    );
+    expect(titles).toContain("Add missing properties");
+  });
+
+  it("filters duplicate phpactor create class quick fixes while preserving unrelated phpactor actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content:
+            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          path: "/project/src/MailDispatcher.php",
+        },
+        title: "Create class MailDispatcher",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\n$service = new MailDispatcher();\n" }),
+      new registered.monaco.Range(2, 16, 2, 30),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(
+      titles.filter(
+        (title: string) => title === "Create class MailDispatcher",
+      ),
+    ).toHaveLength(1);
+    expect(titles[0]).toBe("Create class MailDispatcher");
+    expect(titles).toContain("Add missing properties");
   });
 
   it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
@@ -5858,12 +6063,16 @@ function store($request): void
     // Resolves `true`: the interface file was freshly written, so the command
     // applies the paired `implements` edit.
     const applyPhpCodeActionNewFile = vi.fn(async () => true);
+    const clearLanguageServerDiagnosticsForPath = vi.fn();
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
     vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
       sourceModel,
     ]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
+      clearLanguageServerDiagnosticsForPath,
       featuresGateway: gateway,
+      flushPendingDocumentChange,
       providePhpCodeActions,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
@@ -5894,7 +6103,13 @@ function store($request): void
       registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
     expect(run).toBeDefined();
     await run(null, extractInterface?.command?.arguments?.[0]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
     expect(applyPhpCodeActionNewFile).toHaveBeenCalledWith(newFile);
+    expect(clearLanguageServerDiagnosticsForPath).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
     expect(sourceModel.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -10162,6 +10377,9 @@ function providerContext(
     applyWorkspaceEdit: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyWorkspaceEdit"]
     >;
+    clearLanguageServerDiagnosticsForPath: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["clearLanguageServerDiagnosticsForPath"]
+    >;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
@@ -10203,6 +10421,8 @@ function providerContext(
   return {
     applyPhpCodeActionNewFile: overrides.applyPhpCodeActionNewFile,
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
+    clearLanguageServerDiagnosticsForPath:
+      overrides.clearLanguageServerDiagnosticsForPath,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
@@ -10600,6 +10820,26 @@ function workspaceEdit(uri: string, newText: string) {
         },
       ],
     },
+  };
+}
+
+function phpactorCreateTypeAction(title: string): LanguageServerCodeAction {
+  return {
+    command: {
+      arguments: [],
+      command: "phpactor.class_new",
+      title,
+    },
+    data: { id: title },
+    edit: {
+      changes: {},
+      fileOperations: [
+        { kind: "create", uri: "file:///project/src/MailDispatcher.php" },
+      ],
+    },
+    isPreferred: false,
+    kind: "quickfix",
+    title,
   };
 }
 
