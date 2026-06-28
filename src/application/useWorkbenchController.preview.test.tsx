@@ -52597,6 +52597,328 @@ class Greeter
     expect(actions[0]?.title).toBe("Create method 'doWork'");
   });
 
+  it("offers a static create-method action when the cursor is on a missing self:: call", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): void
+    {
+        self::make('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("make");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'make'",
+    );
+    expect(createMethod).toBeDefined();
+    expect(createMethod?.edits[0]?.text ?? "").toContain(
+      "private static function make(string $arg0)",
+    );
+  });
+
+  it("offers a create-constant action when the cursor is on a missing self::CONST", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): string
+    {
+        return self::DEFAULT_NAME;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("DEFAULT_NAME");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createConstant = actions.find(
+      (action) => action.title === "Create constant 'DEFAULT_NAME'",
+    );
+    expect(createConstant).toBeDefined();
+    expect(createConstant?.edits[0]?.text ?? "").toContain(
+      "private const DEFAULT_NAME = null;",
+    );
+  });
+
+  it("infers the property type from a typed $this assignment", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): void
+    {
+        $this->client = new HttpClient();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("client");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createProperty = actions.find(
+      (action) => action.title === "Create property 'client'",
+    );
+    expect(createProperty).toBeDefined();
+    expect(createProperty?.edits[0]?.text ?? "").toContain(
+      "private HttpClient $client;",
+    );
+  });
+
+  it("offers a same-file parent:: create-method action targeting the parent class", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+}
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'handle' in 'Base'",
+    );
+    expect(createMethod).toBeDefined();
+    const insertOffset =
+      classSource.split("\n").slice(0, 6).join("\n").length + 1;
+    // The edit lands inside Base's body (before Child), not at the end of file.
+    const editLine = createMethod?.edits[0]?.range.startLineNumber ?? 0;
+    expect(editLine).toBeLessThan(
+      classSource.slice(0, classSource.indexOf("class Child")).split("\n")
+        .length,
+    );
+    expect(insertOffset).toBeGreaterThan(0);
+  });
+
+  it("does not offer a parent:: action when the same-file parent already has the method", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+    public function handle(string $value): void
+    {
+    }
+}
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
+  it("offers a parent::CONST create-constant action targeting the same-file parent", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+}
+
+class Child extends Base
+{
+    public function run(): string
+    {
+        return parent::DEFAULT_LABEL;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset =
+      classSource.indexOf("parent::DEFAULT_LABEL") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createConstant = actions.find(
+      (action) => action.title === "Create constant 'DEFAULT_LABEL' in 'Base'",
+    );
+    expect(createConstant).toBeDefined();
+    expect(createConstant?.edits[0]?.text ?? "").toContain(
+      "private const DEFAULT_LABEL = null;",
+    );
+  });
+
+  it("does not offer a parent:: action when the parent lives in another file", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
   it("tags an Import class action as a preferred quickfix", async () => {
     const classPath = "/workspace/app/Http/PostController.php";
     const classSource = `<?php
