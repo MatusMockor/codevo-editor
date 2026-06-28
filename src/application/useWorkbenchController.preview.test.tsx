@@ -46880,12 +46880,17 @@ class CommentController
 {
     public function show(): mixed
     {
-        return View::make('comments.sh');
+        return View::first(['comments.sh', 'dashboard']);
     }
 
     public function home(): mixed
     {
-        return response()->view('dashb');
+        return response()->view('dashboard');
+    }
+
+    public function fallback(): mixed
+    {
+        return view()->first(['dashb']);
     }
 }
 `;
@@ -47110,7 +47115,7 @@ class CommentController
 {
     public function show(): mixed
     {
-        return View::make('comments.show');
+        return View::first(['comments.show', 'dashboard']);
     }
 }
 `;

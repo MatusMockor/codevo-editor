@@ -44,6 +44,58 @@ return view('comments.show');
     }
   });
 
+  it("detects Laravel fallback view array element strings", () => {
+    const samples = [
+      ["View::first(['comments.show', 'dashboard'])", "View::first"],
+      ["view()->first(['comments.show', 'dashboard'])", "view()->first"],
+      ["View::first(views: ['comments.show', 'dashboard'])", "View::first"],
+    ] as const;
+
+    for (const [expression, call] of samples) {
+      const source = `<?php\n\nreturn ${expression};\n`;
+
+      expect(
+        phpLaravelViewReferenceContextAt(
+          source,
+          positionAfter(source, "comments.sh"),
+        ),
+      ).toMatchObject({
+        call,
+        name: "comments.show",
+        prefix: "comments.sh",
+      });
+    }
+  });
+
+  it("ignores non-view fallback array strings", () => {
+    const associative = `<?php\n\nreturn View::first(['fallback' => 'comments.show']);\n`;
+    const secondArgument = `<?php\n\nreturn View::first(['dashboard'], ['comments.show']);\n`;
+    const wrongCall = `<?php\n\nreturn first(['comments.show']);\n`;
+    const wrongNamedArgument = `<?php\n\nreturn View::first(data: ['comments.show']);\n`;
+
+    expect(
+      phpLaravelViewReferenceContextAt(
+        associative,
+        positionAfter(associative, "comments.sh"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelViewReferenceContextAt(
+        secondArgument,
+        positionAfter(secondArgument, "comments.sh"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelViewReferenceContextAt(wrongCall, positionAfter(wrongCall, "comments.sh")),
+    ).toBeNull();
+    expect(
+      phpLaravelViewReferenceContextAt(
+        wrongNamedArgument,
+        positionAfter(wrongNamedArgument, "comments.sh"),
+      ),
+    ).toBeNull();
+  });
+
   it("detects Route::view view-name arguments", () => {
     const positional = `<?php\n\nRoute::view('/dashboard', 'dashboard');\n`;
     const named = `<?php\n\nRoute::view(uri: '/dashboard', view: 'dashboard');\n`;

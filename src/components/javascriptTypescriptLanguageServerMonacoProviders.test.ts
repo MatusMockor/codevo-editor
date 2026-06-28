@@ -187,6 +187,92 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("routes Vue completion, hover and definition requests through the JS/TS gateway using the Vue document path", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "const message: string",
+            documentation: null,
+            insertText: "message",
+            kind: 6,
+            label: "message",
+          },
+        ],
+      },
+      definition: [
+        {
+          range: range(1, 6, 1, 13),
+          uri: "file:///project/src/App.vue",
+        },
+      ],
+    });
+    vi.mocked(gateway.hover).mockResolvedValueOnce({
+      contents: "const message: string",
+    });
+    const vueDocument = {
+      ...document(),
+      content:
+        '<script setup lang="ts">\nconst message = "hello";\nmessage\n</script>\n',
+      language: "vue",
+      name: "App.vue",
+      path: "/project/src/App.vue",
+      savedContent:
+        '<script setup lang="ts">\nconst message = "hello";\nmessage\n</script>\n',
+    };
+    const context = providerContext({
+      featuresGateway: gateway,
+      getActiveDocument: () => vueDocument,
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = {
+      ...textModel(),
+      getValue: vi.fn(() => vueDocument.content),
+      uri: {
+        fsPath: "/project/src/App.vue",
+        path: "/project/src/App.vue",
+      },
+    };
+    const position = { column: 8, lineNumber: 3 };
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[4][1];
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[4][1];
+    const definitionProvider = (
+      monaco.languages.registerDefinitionProvider as any
+    ).mock.calls[4][1];
+
+    await completionProvider.provideCompletionItems(model, position, {
+      triggerCharacter: ".",
+      triggerKind: 1,
+    });
+    await hoverProvider.provideHover(model, position, {
+      isCancellationRequested: false,
+    });
+    await definitionProvider.provideDefinition(model, position, {
+      isCancellationRequested: false,
+    });
+
+    const expectedDocument = {
+      character: 7,
+      line: 2,
+      path: "/project/src/App.vue",
+    };
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      expectedDocument,
+      {
+        triggerCharacter: ".",
+        triggerKind: 2,
+      },
+    );
+    expect(gateway.hover).toHaveBeenCalledWith("/project", expectedDocument);
+    expect(gateway.definition).toHaveBeenCalledWith("/project", expectedDocument);
+  });
+
   it("does not request TypeScript completions from a rootless runtime status", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
@@ -3059,6 +3145,86 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         triggerKind: 2,
       },
     );
+  });
+
+  it("drops TypeScript signature help when the Monaco cancellation token is cancelled after the response", async () => {
+    const monaco = createMonaco();
+    const signatureHelp =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.signatureHelp).mockImplementationOnce(
+      async () => signatureHelp.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const signatureProvider = (
+      monaco.languages.registerSignatureHelpProvider as any
+    ).mock.calls[0][1];
+    const token = { isCancellationRequested: false };
+    const signatureHelpPromise = signatureProvider.provideSignatureHelp(
+      textModel(),
+      { column: 5, lineNumber: 1 },
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    signatureHelp.resolve({
+      activeParameter: 1,
+      activeSignature: 0,
+      signatures: [
+        {
+          documentation: "Loads a user.",
+          label: "loadUser(id: string, options?: Options): Promise<User>",
+          parameters: [
+            {
+              documentation: "User id",
+              label: "id: string",
+            },
+          ],
+        },
+      ],
+    });
+
+    await expect(signatureHelpPromise).resolves.toBeNull();
+  });
+
+  it("resolves TypeScript signature help to null when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const signatureHelp =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.signatureHelp).mockImplementationOnce(
+        async () => signatureHelp.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const signatureProvider = (
+        monaco.languages.registerSignatureHelpProvider as any
+      ).mock.calls[0][1];
+      const signatureHelpPromise = signatureProvider.provideSignatureHelp(
+        textModel(),
+        { column: 5, lineNumber: 1 },
+        { isCancellationRequested: false },
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(signatureHelpPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("preserves VS Code-like TypeScript completion metadata", async () => {

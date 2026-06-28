@@ -484,12 +484,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerSignatureHelpProvider(language, {
           signatureHelpRetriggerCharacters: [",", ")"],
           signatureHelpTriggerCharacters: ["(", ",", "<"],
-          provideSignatureHelp: (model, position, _token, signatureContext) =>
+          provideSignatureHelp: (model, position, token, signatureContext) =>
             provideSignatureHelp(
               monaco,
               context,
               model,
               position,
+              token,
               signatureContext,
             ),
         }),
@@ -1219,6 +1220,7 @@ async function provideSignatureHelp(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
   signatureContext?: Monaco.languages.SignatureHelpContext,
 ): Promise<Monaco.languages.SignatureHelpResult | null> {
   const request = featureRequestContext(context, model, position, "signatureHelp");
@@ -1234,16 +1236,26 @@ async function provideSignatureHelp(
 
     const languageServerSignatureContext =
       toLanguageServerSignatureHelpContext(signatureContext);
-    const signatureHelp = languageServerSignatureContext
-      ? await context.featuresGateway.signatureHelp(
-          request.rootPath,
-          request.position,
-          languageServerSignatureContext,
-        )
-      : await context.featuresGateway.signatureHelp(
-          request.rootPath,
-          request.position,
-        );
+    const signatureHelp = await raceInteractiveFeatureRequest(
+      languageServerSignatureContext
+        ? context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+            languageServerSignatureContext,
+          )
+        : context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+          ),
+    );
+
+    if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;

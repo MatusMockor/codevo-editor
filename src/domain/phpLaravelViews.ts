@@ -1,9 +1,12 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { phpStringArrayArgumentElementContextAt } from "./phpStringArgumentContext";
 
 export type PhpLaravelViewReferenceCall =
   | "view"
   | "View::make"
+  | "View::first"
   | "view()->make"
+  | "view()->first"
   | "response()->view"
   | "View::exists"
   | "Route::view";
@@ -39,6 +42,21 @@ export function phpLaravelViewReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelViewReferenceContext | null {
+  const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
+
+  if (arrayArgument && isUsableLaravelViewName(arrayArgument.value)) {
+    const call = laravelFallbackViewReferenceCallAt(source, arrayArgument);
+
+    if (call && isUsableLaravelViewName(arrayArgument.prefix)) {
+      return {
+        call,
+        name: arrayArgument.closed ? arrayArgument.value : arrayArgument.prefix,
+        position: arrayArgument.position,
+        prefix: arrayArgument.prefix,
+      };
+    }
+  }
+
   const offset = offsetAtPosition(source, position);
   const literal = stringLiteralAtOffset(source, offset);
 
@@ -192,11 +210,40 @@ function laravelViewReferenceCallAt(
   return functionMatch[1].toLowerCase() === "view" ? "view" : null;
 }
 
+function laravelFallbackViewReferenceCallAt(
+  source: string,
+  argument: PhpArgumentContext,
+): PhpLaravelViewReferenceCall | null {
+  if (!isFirstViewListArgument(argument)) {
+    return null;
+  }
+
+  const beforeCall = source.slice(0, argument.openParen);
+
+  if (/\bView\s*::\s*first\s*$/.test(beforeCall)) {
+    return "View::first";
+  }
+
+  if (/\bview\s*\(\s*\)\s*->\s*first\s*$/.test(beforeCall)) {
+    return "view()->first";
+  }
+
+  return null;
+}
+
 function isFirstArgument(argument: PhpArgumentContext): boolean {
   return (
     argument.argumentIndex === 0 ||
     argument.argumentName?.toLowerCase() === "view"
   );
+}
+
+function isFirstViewListArgument(argument: PhpArgumentContext): boolean {
+  if (argument.argumentName) {
+    return argument.argumentName.toLowerCase() === "views";
+  }
+
+  return argument.argumentIndex === 0;
 }
 
 function argumentContextAt(
