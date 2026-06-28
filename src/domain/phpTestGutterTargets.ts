@@ -40,8 +40,17 @@ export interface PhpTestGutterTarget {
 
 const classDeclarationPattern =
   /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{/g;
+// Matches only the method header plus an optional immediately-preceding
+// `#[Test]` attribute (bracket-bounded, so linear). A `/** @test */` docblock is
+// no longer part of this pattern: the previous form chained two lazy `[\s\S]*?`
+// spans across the closing `*/` delimiter, which degraded quadratically on
+// malformed/unclosed docblocks (the per-keystroke case in a test file being
+// edited). Docblocks are now pre-extracted with a single lazy span instead.
 const phpUnitMethodPattern =
-  /(?:#\[\s*Test\b[^\]]*\]\s*|\/\*\*[\s\S]*?@test[\s\S]*?\*\/\s*)?(?:(?:final|abstract)\s+)*public\s+(?:static\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  /(?:#\[\s*Test\b[^\]]*\]\s*)?(?:(?:final|abstract)\s+)*public\s+(?:static\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+// A single, well-bounded lazy span (no nested ambiguity, no crossing of the
+// `*/` delimiter twice) - the safe shape mirroring `phpDocTypeForProperty`.
+const docBlockPattern = /\/\*\*[\s\S]*?\*\//g;
 const pestCallPattern =
   /(?:^|\n)[ \t]*(?:it|test)\s*\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
 
@@ -103,22 +112,61 @@ function phpUnitTargets(
   ];
 
   const body = source.slice(declaration.bodyStart);
+  const testDocBlockEndOffsets = phpUnitTestDocBlockEndOffsets(body);
 
   for (const method of body.matchAll(phpUnitMethodPattern)) {
     const methodName = method[1] || "";
+    const matchOffset = method.index ?? 0;
+    const precededByTestDocBlock = phpUnitDocBlockImmediatelyPrecedes(
+      body,
+      testDocBlockEndOffsets,
+      matchOffset,
+    );
 
-    if (!isTestMethod(methodName, method[0])) {
+    if (!isTestMethod(methodName, method[0]) && !precededByTestDocBlock) {
       continue;
     }
 
     const methodOffset =
-      declaration.bodyStart + (method.index ?? 0) + method[0].lastIndexOf(methodName);
+      declaration.bodyStart + matchOffset + method[0].lastIndexOf(methodName);
     targets.push(
       target("method", "identifier", methodName, methodOffset, lineStartOffsets),
     );
   }
 
   return targets;
+}
+
+// Pre-extracts every `/** ... */` docblock that contains `@test` and returns the
+// offset immediately after each one's closing `*/`. A single lazy span keeps this
+// linear even on a body full of malformed/unclosed docblocks.
+function phpUnitTestDocBlockEndOffsets(body: string): number[] {
+  const endOffsets: number[] = [];
+
+  for (const block of body.matchAll(docBlockPattern)) {
+    if (!/@test\b/.test(block[0])) {
+      continue;
+    }
+
+    endOffsets.push((block.index ?? 0) + block[0].length);
+  }
+
+  return endOffsets;
+}
+
+// True when one of the `@test` docblocks ends right before `methodOffset`, with
+// only whitespace in between - the exact "/** @test * / public function" shape the
+// previous combined regex recognised.
+function phpUnitDocBlockImmediatelyPrecedes(
+  body: string,
+  testDocBlockEndOffsets: readonly number[],
+  methodOffset: number,
+): boolean {
+  return testDocBlockEndOffsets.some(
+    (endOffset) =>
+      endOffset <= methodOffset &&
+      body.slice(endOffset, methodOffset).trim() === "",
+  );
 }
 
 function pestTargets(

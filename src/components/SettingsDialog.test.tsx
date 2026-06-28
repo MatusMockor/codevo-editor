@@ -152,6 +152,47 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps Optimize imports on save disabled by default and persists enabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(optimizeImportsOnSaveCheckbox().checked).toBe(false);
+
+    await act(async () => {
+      optimizeImportsOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        optimizeImportsOnSave: true,
+      },
+    });
+  });
+
   it("keeps Format on Paste enabled by default and persists disabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -269,6 +310,127 @@ describe("SettingsDialog", () => {
     });
 
     expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
+  });
+
+  it("filters keymap commands by the search box", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const totalBefore = host.querySelectorAll(".keymap-field").length;
+    expect(totalBefore).toBeGreaterThan(1);
+
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "Save File");
+      await Promise.resolve();
+    });
+
+    const fields = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(fields).toHaveLength(1);
+    expect(fields[0]?.textContent).toContain("Save File");
+  });
+
+  it("matches keymap commands by category and id, case-insensitively", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "editor.save");
+      await Promise.resolve();
+    });
+
+    const byId = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(byId.some((field) => field.textContent?.includes("Save File"))).toBe(
+      true,
+    );
+
+    await act(async () => {
+      changeInputValue(search, "git");
+      await Promise.resolve();
+    });
+
+    const byCategory = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(byCategory.length).toBeGreaterThan(0);
+    expect(
+      byCategory.every((field) =>
+        field.textContent?.toLowerCase().includes("git"),
+      ),
+    ).toBe(true);
+  });
+
+  it("restores every keymap command when the search box is cleared", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const totalBefore = host.querySelectorAll(".keymap-field").length;
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "Save File");
+      await Promise.resolve();
+    });
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(1);
+
+    await act(async () => {
+      changeInputValue(search, "");
+      await Promise.resolve();
+    });
+
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(totalBefore);
   });
 
   it("opens directly to the requested settings section", async () => {
@@ -614,6 +776,48 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists the PHP inlay hints toggle", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="php"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(checkboxWithLabel("PHP inlay hints").checked).toBe(true);
+
+    await act(async () => {
+      checkboxWithLabel("PHP inlay hints").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        phpInlayHints: false,
+      },
+    });
+  });
+
   it("restarts JavaScript and TypeScript service from settings", async () => {
     const onRestart = vi.fn(async () => undefined);
 
@@ -704,6 +908,170 @@ describe("SettingsDialog", () => {
     expect(restartJavaScriptTypeScriptServiceButton().disabled).toBe(true);
   });
 
+  it("adds a user snippet from the Snippets section", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Snippets").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      addSnippetButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | { appSettings: { userSnippets: unknown[] } }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets).toHaveLength(1);
+  });
+
+  it("edits and persists an existing user snippet", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            userSnippets: [
+              {
+                prefix: "myhelper",
+                body: "helper($0);",
+                description: "Call helper",
+                languages: ["php"],
+              },
+            ],
+          }}
+          initialSection="snippets"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const prefixInput = snippetPrefixInputs()[0];
+    expect(prefixInput.value).toBe("myhelper");
+
+    await act(async () => {
+      changeInputValue(prefixInput, "newprefix");
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | {
+          appSettings: { userSnippets: Array<{ prefix: string }> };
+        }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets[0].prefix).toBe("newprefix");
+  });
+
+  it("deletes a user snippet", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            userSnippets: [
+              {
+                prefix: "myhelper",
+                body: "helper($0);",
+                description: "Call helper",
+                languages: ["php"],
+              },
+            ],
+          }}
+          initialSection="snippets"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      deleteSnippetButtons()[0].dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
+      | { appSettings: { userSnippets: unknown[] } }
+      | undefined;
+
+    expect(lastCall?.appSettings.userSnippets).toEqual([]);
+  });
+
+  function addSnippetButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Add snippet"),
+    );
+
+    if (!button) {
+      throw new Error("Add snippet button was not rendered.");
+    }
+
+    return button;
+  }
+
+  function snippetPrefixInputs(): HTMLInputElement[] {
+    return Array.from(
+      host.querySelectorAll<HTMLInputElement>(
+        "input[data-snippet-field='prefix']",
+      ),
+    );
+  }
+
+  function deleteSnippetButtons(): HTMLButtonElement[] {
+    return Array.from(host.querySelectorAll("button")).filter((item) =>
+      item.textContent?.includes("Delete snippet"),
+    );
+  }
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>
@@ -736,6 +1104,10 @@ describe("SettingsDialog", () => {
 
   function formatOnPasteCheckbox(): HTMLInputElement {
     return checkboxWithLabel("Format on Paste");
+  }
+
+  function optimizeImportsOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("Optimize imports on save");
   }
 
   function javaScriptTypeScriptServiceSelect(): HTMLSelectElement {
@@ -829,6 +1201,16 @@ describe("SettingsDialog", () => {
 
     if (!input) {
       throw new Error(`${labelText} input was not rendered.`);
+    }
+
+    return input;
+  }
+
+  function keymapSearchInput(): HTMLInputElement {
+    const input = host.querySelector<HTMLInputElement>(".keymap-search input");
+
+    if (!input) {
+      throw new Error("Keymap search input was not rendered.");
     }
 
     return input;

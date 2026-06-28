@@ -5,6 +5,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
+  shouldApplyClassEditAfterWrite,
+  writeExtractedInterfaceFile,
+} from "./phpExtractInterfaceWrite";
+import {
   capDiagnosticNotices,
   capWorkbenchNotices,
   createWorkbenchNotice,
@@ -24,11 +28,21 @@ import {
 import {
   emptyGitStatus,
   gitChangeKey,
+  type GitBlameLine,
+  type GitBranch,
   type GitChangedFile,
+  type GitDiffHunk,
   type GitFileDiff,
+  type GitFileHistoryEntry,
   type GitGateway,
+  type GitStashEntry,
   type GitStatus,
 } from "../domain/git";
+import type {
+  LocalHistoryDiff,
+  LocalHistoryGateway,
+  LocalHistoryVersion,
+} from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import { extractTodoComments } from "../domain/todoComments";
 import type { WorkspaceTodo } from "../domain/workspaceTodo";
@@ -115,13 +129,30 @@ import {
   planFormatOnSave,
   type FormatOnSavePlan,
 } from "../domain/formatOnSave";
+import {
+  fullDocumentRange,
+  organizeImportsCodeActionContext,
+  organizeImportsTextEditsForPath,
+  planOrganizeImportsOnSave,
+} from "../domain/organizeImportsOnSave";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
+import {
+  applyEditorConfigOnSave,
+  editorConfigDirectoriesForFile,
+  editorConfigPathForDirectory,
+  parseEditorConfig,
+  resolveEditorConfigSettings,
+  type EditorConfigFile,
+  type ResolvedEditorConfig,
+} from "../domain/editorConfig";
 import {
   FilePrefetchCache,
   isPrefetchableContentSize,
   shouldPrefetchFileContent,
 } from "../domain/filePrefetchCache";
 import {
+  collectBareKeyShortcutKeys,
+  eventCanMatchKeymapShortcut,
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
@@ -158,10 +189,11 @@ import {
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
 import { isJavaScriptTypeScriptWatchedPath } from "../domain/javascriptTypeScriptWatchedFiles";
-import type {
-  WorkspaceFileChangeEvent,
-  WorkspaceFileChangeGateway,
-  WorkspaceFileChangeUnsubscribeFn,
+import {
+  canRefreshDocumentFromExternalFileChange,
+  type WorkspaceFileChangeEvent,
+  type WorkspaceFileChangeGateway,
+  type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
 import {
   normalizedWorkspaceRootKey,
@@ -200,6 +232,11 @@ import {
   type PhpMethodCompletion,
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import {
+  phpCallArgumentInlayContexts,
+  phpParameterNameInlayHints,
+  type PhpParameterNameInlayHint,
+} from "../domain/phpInlayHints";
 import {
   isLaravelCollectionFluentMethod,
   isLaravelCollectionTerminalModelMethod,
@@ -267,11 +304,15 @@ import {
   phpLaravelAuthGuardReferenceContextAt,
 } from "../domain/phpLaravelAuth";
 import {
+  phpLaravelGateAbilityCompletionInsertText,
   phpLaravelGateAbilityDefinitions,
+  phpLaravelGateAbilityReferenceContextAt,
   type PhpLaravelGateAbilityDefinition,
 } from "../domain/phpLaravelAuthorization";
 import {
+  phpLaravelMiddlewareAliasCompletionInsertText,
   phpLaravelMiddlewareAliasDefinitions,
+  phpLaravelMiddlewareAliasReferenceContextAt,
   type PhpLaravelMiddlewareAliasDefinition,
 } from "../domain/phpLaravelMiddleware";
 import {
@@ -400,11 +441,13 @@ import {
   phpFrameworkProvidersForProject,
 } from "../domain/phpFrameworkProviders";
 import {
+  phpClassConstantPositionOrNull,
   phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpCurrentTypeKind,
   phpDocMethodPositionOrNull,
   phpPropertyPositionOrNull,
+  phpEnclosingMethodNameAt,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -452,24 +495,54 @@ import {
 } from "../domain/phpDocGen";
 import {
   detectMissingThisMember,
+  type MissingThisMember,
+  phpClassDeclaresMember,
+  renderCreateConstantStub,
   renderCreateMethodStub,
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
+import {
+  detectUnknownClassReference,
+  phpCreateClassDestination,
+  renderPhpTypeSkeleton,
+} from "../domain/phpCreateClass";
+import { planAddParameter } from "../domain/phpAddParameter";
+import {
+  planAddParameterType,
+  planAddReturnType,
+} from "../domain/phpAddTypeHint";
+import { planExtractInterface } from "../domain/phpExtractInterface";
+import { planExtractMethod } from "../domain/phpExtractMethod";
 import { planExtractVariable } from "../domain/phpExtractVariable";
 import { planInlineVariable } from "../domain/phpInlineVariable";
 import {
   planIntroduceConstant,
   planIntroduceField,
 } from "../domain/phpIntroduceMember";
-import { organizePhpImports } from "../domain/phpImportsOrganizer";
+import {
+  optimizePhpImportsSource,
+  organizePhpImports,
+} from "../domain/phpImportsOrganizer";
+import {
+  phpUnusedImportRemovalAt,
+  phpUnusedPrivateMethodRemovalAt,
+  phpUnusedVariableRemovalAt,
+} from "../domain/phpInspections";
+import {
+  phpCurrentNamespace,
+  phpShortNameIsImported,
+  planPhpAddImport,
+} from "../domain/phpAddImport";
 import {
   renderImplementMethodsStubs,
   renderOverrideMethodsStubs,
   renderUseImports,
 } from "../domain/phpCodeGen";
 import {
+  detectClassMemberIndent,
   findClassBodyInsertionOffset,
   findUseImportInsertionOffset,
+  indentLines,
   offsetToPosition,
 } from "../domain/phpInsertionPoint";
 import type {
@@ -478,6 +551,11 @@ import type {
   ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
+import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
+import {
+  buildSearchEverywhereModel,
+  type SearchEverywhereItem,
+} from "../domain/searchEverywhere";
 import {
   defaultAppSettings,
   defaultEditorFontSize,
@@ -501,6 +579,13 @@ import {
   renameRecentFile,
   type RecentFileEntry,
 } from "../domain/recentFiles";
+import {
+  buildRecentLocation,
+  pushRecentLocation,
+  removeRecentLocationsForPath,
+  renameRecentLocationsPath,
+  type RecentLocation,
+} from "../domain/recentLocations";
 import {
   nextBookmark,
   previousBookmark,
@@ -529,7 +614,10 @@ import {
   type PhpToolGateway,
   type PhpToolAvailability,
   type TextSearchResult,
+  type TextSearchOptions,
   type TextSearchGateway,
+  type ReplaceInPathResult,
+  defaultTextSearchOptions,
   type WorkspaceDescriptor,
   type WorkspaceDetectionGateway,
   type WorkspaceFileGateway,
@@ -596,6 +684,13 @@ interface PhpLaravelTargetCacheBucket {
 // can never leak across project tabs or serve stale targets after a reindex.
 const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
 
+// Upper bound on the number of PHP call expressions whose target signature is
+// resolved per inlay-hints viewport request. Keeps a dense file from fanning out
+// an unbounded number of signature resolutions on every scroll; calls beyond the
+// cap simply receive no parameter-name hint until they scroll into a fresh
+// viewport window.
+const PHP_INLAY_HINT_CALL_LIMIT = 40;
+
 // Coalescing window for directory reloads triggered by external filesystem
 // changes so a burst (e.g. `git checkout`) reloads each affected directory
 // once instead of thrashing the tree on every event.
@@ -623,9 +718,31 @@ interface PhpCodeActionTextEdit {
   text: string;
 }
 
+/**
+ * A brand-new file a code action creates as part of its workspace edit (e.g.
+ * "Extract interface" writes a sibling `<Class>Interface.php`). Carried
+ * alongside the in-document `edits` so the monaco mapper can emit a file-create
+ * resource edit plus the content insertion. The path is an absolute filesystem
+ * path; the action is only ever offered with a path inside the active root, so
+ * applying it stays within per-workspace isolation.
+ */
+export interface PhpCodeActionNewFile {
+  content: string;
+  path: string;
+}
+
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
+  /**
+   * When true, marks this action as the single most-likely choice for the
+   * current cursor / selection (PhpStorm Alt+Enter "most likely first"). Monaco
+   * floats a preferred action to the top of the code-action list and surfaces it
+   * as the auto-fix. Set on a contextual quickfix (Create method/property from
+   * usage, Import class) - never on a class-level generate action.
+   */
+  isPreferred?: boolean;
   kind?: string;
+  newFile?: PhpCodeActionNewFile;
   title: string;
 }
 
@@ -734,6 +851,7 @@ interface CachedWorkspaceWorkbenchState {
   openPaths: string[];
   previewPath: string | null;
   recentFiles: RecentFileEntry[];
+  recentLocations: RecentLocation[];
   sidebarView: SidebarView;
 }
 
@@ -754,6 +872,10 @@ const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 // cap trims notices, an `info` indicator carrying the truthful hidden count is
 // appended so diagnostics are never dropped silently.
 const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
+// Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
+// this to tell the user when the previewed count is a lower bound (the backend
+// replace itself is NOT capped to this; it rewrites every matching file).
+const TEXT_SEARCH_RESULT_LIMIT = 100;
 
 // Global ceiling on the total diagnostic notices retained in state. The
 // per-document cap above bounds a single file's contribution, but a large
@@ -866,6 +988,7 @@ export function useWorkbenchController(
   phpFileOutlineGateway: PhpFileOutlineGateway,
   phpTreeGateway: PhpTreeGateway,
   gitGateway: GitGateway,
+  localHistoryGateway: LocalHistoryGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
@@ -1017,6 +1140,14 @@ export function useWorkbenchController(
   );
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  // Reactive mirror of the active editor's caret for the status bar's "Ln X,
+  // Col Y" item. The ref above is read synchronously by navigation/definition
+  // flows; this state drives the rendered indicator. The EditorSurface refires
+  // `onCursorPositionChange` on every model swap (tab switch), so this always
+  // reflects the ACTIVE tab's caret, and it is cleared when the active document
+  // or workspace goes away so a stale tab's position can never linger.
+  const [activeEditorPosition, setActiveEditorPosition] =
+    useState<EditorPosition | null>(null);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -1031,11 +1162,73 @@ export function useWorkbenchController(
   // into another project's switcher.
   const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
   const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] = useState(false);
+  // Recent EDIT / navigation LOCATIONS (file + line + line snippet), newest
+  // first. Like recentFiles this is part of the per-tab workbench state so one
+  // project's visited positions can never leak into another project's panel.
+  const [recentLocations, setRecentLocations] = useState<RecentLocation[]>([]);
+  const [recentLocationsPanelOpen, setRecentLocationsPanelOpen] =
+    useState(false);
   // Per-workspace bookmarks (PhpStorm parity). Cached/restored alongside the
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false);
+  const [fileHistoryPanelOpen, setFileHistoryPanelOpen] = useState(false);
+  const [fileHistoryRelativePath, setFileHistoryRelativePath] = useState<
+    string | null
+  >(null);
+  const [fileHistoryCommits, setFileHistoryCommits] = useState<
+    GitFileHistoryEntry[]
+  >([]);
+  const [fileHistoryLoading, setFileHistoryLoading] = useState(false);
+  const [fileHistorySelectedSha, setFileHistorySelectedSha] = useState<
+    string | null
+  >(null);
+  const [fileHistoryDiff, setFileHistoryDiff] = useState<GitFileDiff | null>(
+    null,
+  );
+  const [fileHistoryDiffLoading, setFileHistoryDiffLoading] = useState(false);
+  // Git Stash (PhpStorm-style WIP) panel state. Lists the repository's stashes
+  // and shows the selected stash's diff. Save/apply/pop are reversible; drop is
+  // destructive and is gated behind an explicit confirmation in its handler.
+  const [gitStashPanelOpen, setGitStashPanelOpen] = useState(false);
+  const [gitStashEntries, setGitStashEntries] = useState<GitStashEntry[]>([]);
+  const [gitStashLoading, setGitStashLoading] = useState(false);
+  const [gitStashMessage, setGitStashMessage] = useState("");
+  const [gitStashSelectedIndex, setGitStashSelectedIndex] = useState<
+    number | null
+  >(null);
+  const [gitStashDiff, setGitStashDiff] = useState<string | null>(null);
+  const [gitStashDiffLoading, setGitStashDiffLoading] = useState(false);
+  // Git branch switcher (PhpStorm-style) panel state. Per-tab isolated like the
+  // stash panel: a switched-away tab's late list resolve must never repopulate.
+  const [gitBranchPanelOpen, setGitBranchPanelOpen] = useState(false);
+  const [gitBranchEntries, setGitBranchEntries] = useState<GitBranch[]>([]);
+  const [gitBranchLoading, setGitBranchLoading] = useState(false);
+  // Local History (PhpStorm-style) panel state. Mirrors the git file-history
+  // panel but is git-independent: versions come from per-workspace snapshots
+  // captured on save. The "current" content is diffed against a selected
+  // version, and a version can be reverted back into the live document.
+  const [localHistoryPanelOpen, setLocalHistoryPanelOpen] = useState(false);
+  const [localHistoryRelativePath, setLocalHistoryRelativePath] = useState<
+    string | null
+  >(null);
+  const [localHistoryVersions, setLocalHistoryVersions] = useState<
+    LocalHistoryVersion[]
+  >([]);
+  const [localHistoryLoading, setLocalHistoryLoading] = useState(false);
+  const [localHistorySelectedId, setLocalHistorySelectedId] = useState<
+    string | null
+  >(null);
+  const [localHistoryDiff, setLocalHistoryDiff] =
+    useState<LocalHistoryDiff | null>(null);
+  const [localHistoryDiffLoading, setLocalHistoryDiffLoading] = useState(false);
+  // Git blame annotation toggle, tracked per absolute document path so the
+  // annotation state never leaks across open tabs (each path is workspace-
+  // scoped). Reset on workspace switch alongside the other per-tab state.
+  const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [classOpenOpen, setClassOpenOpen] = useState(false);
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
@@ -1048,12 +1241,33 @@ export function useWorkbenchController(
   const [workspaceSymbolsResults, setWorkspaceSymbolsResults] = useState<
     ProjectSymbolSearchResult[]
   >([]);
+  // PhpStorm "Search Everywhere" (double-Shift). One dialog aggregating the
+  // file / symbol / action searches above. The raw per-source results are kept
+  // separately (each filled by its own per-root, debounced, drop-stale search)
+  // and combined into the categorized model only at render time.
+  const [searchEverywhereOpen, setSearchEverywhereOpen] = useState(false);
+  const [searchEverywhereQuery, setSearchEverywhereQuery] = useState("");
+  const [searchEverywhereLoading, setSearchEverywhereLoading] = useState(false);
+  const [searchEverywhereFiles, setSearchEverywhereFiles] = useState<
+    FileSearchResult[]
+  >([]);
+  const [searchEverywhereSymbols, setSearchEverywhereSymbols] = useState<
+    ProjectSymbolSearchResult[]
+  >([]);
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
   const [textSearchLoading, setTextSearchLoading] = useState(false);
+  const [textSearchOptions, setTextSearchOptions] = useState<TextSearchOptions>(
+    defaultTextSearchOptions,
+  );
   const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
     [],
   );
+  const [textReplacement, setTextReplacement] = useState("");
+  const [textReplaceBusy, setTextReplaceBusy] = useState(false);
+  // Bumped after every successful replace so the Find-in-Path search effect
+  // re-runs and the results list reflects what is now on disk.
+  const [textSearchRefreshToken, setTextSearchRefreshToken] = useState(0);
   const [implementationChooser, setImplementationChooser] = useState<{
     targets: ImplementationTarget[];
     title: string;
@@ -1072,6 +1286,12 @@ export function useWorkbenchController(
     useState<AppSettings>(defaultAppSettings);
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
+  // Resolved `.editorconfig` settings for the active document. Empty when no
+  // `.editorconfig` matches the active file (the editor then keeps its own
+  // defaults). Recomputed per active-file change, scoped to the active root.
+  const [activeEditorConfig, setActiveEditorConfig] =
+    useState<ResolvedEditorConfig>({});
+  const activeEditorConfigRef = useRef<ResolvedEditorConfig>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>("general");
@@ -1086,6 +1306,14 @@ export function useWorkbenchController(
   ] = useState(0);
   const hasRestoredRef = useRef(false);
   const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
+  // Memoized bare-key shortcut set for the keydown hot path. Rebuilding it on
+  // every keydown would re-parse every shortcut (~35 parseShortcut calls) on
+  // each auto-repeat event; we instead recompute only when the keymap object
+  // identity changes.
+  const bareKeyShortcutsRef = useRef<{
+    keymap: AppSettings["keymap"] | null;
+    keys: ReadonlySet<string>;
+  }>({ keymap: null, keys: new Set() });
   const workspaceSettingsRef = useRef<WorkspaceSettings>(
     defaultWorkspaceSettings(),
   );
@@ -1097,6 +1325,34 @@ export function useWorkbenchController(
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const gitDiffRequestTokenRef = useRef(0);
+  const fileHistoryRequestTokenRef = useRef(0);
+  const fileHistoryDiffRequestTokenRef = useRef(0);
+  const emptyDocumentRefreshTimeoutsRef = useRef<Set<number>>(new Set());
+  // Per-request tokens for the git stash panel: the list-load request and the
+  // selected-stash diff request. Bumped on every (re)load so a stale result
+  // from a switched-away tab or a superseded request is dropped (per-tab
+  // isolation), exactly like the file-history panel.
+  const gitStashRequestTokenRef = useRef(0);
+  const gitStashDiffRequestTokenRef = useRef(0);
+  // Invalidates an in-flight branch list request so a late resolve from a
+  // switched-away tab (or a superseded refresh) cannot repopulate the panel.
+  const gitBranchRequestTokenRef = useRef(0);
+  // Mirrors the file currently shown in the history panel. Read by
+  // selectFileHistoryCommit so a commit click always targets the panel's live
+  // file (not a stale state closure), keeping the diff request per-file isolated.
+  const fileHistoryRelativePathRef = useRef<string | null>(null);
+  const localHistoryRequestTokenRef = useRef(0);
+  const localHistoryDiffRequestTokenRef = useRef(0);
+  // Mirrors the file currently shown in the local-history panel, for the same
+  // reason as fileHistoryRelativePathRef: a version click always targets the
+  // panel's live file, keeping the diff/revert request per-file isolated.
+  const localHistoryRelativePathRef = useRef<string | null>(null);
+  // The absolute path of the local-history panel's file, used to read the live
+  // document content for the diff and to write the reverted content back.
+  const localHistoryAbsolutePathRef = useRef<string | null>(null);
+  // The Monaco language of the local-history panel's file, captured at open so
+  // the version diff highlights correctly.
+  const localHistoryLanguageRef = useRef<string>("plaintext");
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexRootRef = useRef<string | null>(null);
@@ -1133,6 +1389,11 @@ export function useWorkbenchController(
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const documentSyncGenerationRef = useRef(0);
   const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
+  // Cold first-nav fix: tracks which workspace roots have already had their
+  // phpactor index force-warmed (one low-priority documentSymbol request fired
+  // after the first PHP didOpen). Keyed by the workspace root so each open
+  // project tab warms exactly once and the warm-up never leaks across tabs.
+  const phpLanguageServerIndexWarmedRootsRef = useRef<Set<string>>(new Set());
   const languageServerRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -1220,6 +1481,12 @@ export function useWorkbenchController(
   const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  // PhpStorm double-Shift detector for Search Everywhere. Kept in a stable ref
+  // so the keydown listener keeps the same instance across re-renders (the tap
+  // timing must persist between events). 300ms is PhpStorm's default window.
+  const doubleShiftDetectorRef = useRef(
+    createDoubleShiftDetector({ windowMs: 300 }),
+  );
   // The backend session id of the project terminal currently mounted in the
   // bottom panel, tagged with the workspace root it belongs to. The terminal
   // panel reports this; "run test from gutter" writes into it. Tagging by root
@@ -1239,6 +1506,15 @@ export function useWorkbenchController(
   } | null>(null);
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
+  >({});
+  // Per-workspace `.editorconfig` cache. Keyed by workspace root, then by the
+  // absolute directory whose `.editorconfig` was read. `null` records a
+  // confirmed absence so a missing file is read at most once per session. This
+  // is scoped per root, so it is cleared exactly where the rest of the
+  // per-workspace caches are (workspace switch / tab close), preserving the
+  // per-project isolation invariant.
+  const editorConfigCacheRef = useRef<
+    Record<string, Record<string, EditorConfigFile | null>>
   >({});
   const filePrefetchCacheRef = useRef<FilePrefetchCache>(new FilePrefetchCache());
   const filePrefetchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -1404,6 +1680,17 @@ export function useWorkbenchController(
     previewPathRef.current = previewPath;
   }, [previewPath]);
 
+  useEffect(
+    () => () => {
+      for (const timeoutId of emptyDocumentRefreshTimeoutsRef.current) {
+        window.clearTimeout(timeoutId);
+      }
+
+      emptyDocumentRefreshTimeoutsRef.current.clear();
+    },
+    [],
+  );
+
   useEffect(() => {
     languageServerRuntimeStatusRef.current = languageServerRuntimeStatus;
     languageServerRuntimeStatusRootRef.current = languageServerRuntimeStatusRoot;
@@ -1443,20 +1730,66 @@ export function useWorkbenchController(
     [reportError],
   );
 
-  const reportLanguageServerError = useCallback((error: unknown) => {
-    const nextMessage = String(error);
-    setMessage(nextMessage);
+  const isUnknownDocumentForUnsyncedPath = useCallback(
+    (rootPath: string | null | undefined, error: unknown): boolean => {
+      const message = String(error);
 
-    if (lastLanguageServerCrashRef.current === nextMessage) {
-      return;
-    }
+      if (!message.includes("UnknownDocument")) {
+        return false;
+      }
 
-    lastLanguageServerCrashRef.current = nextMessage;
-    setNotices((current) => [
-      createWorkbenchNotice("error", "Language Server", nextMessage),
-      ...current,
-    ]);
-  }, []);
+      const uri = /Unknown text document "([^"]+)"/.exec(message)?.[1];
+      const path = uri ? pathFromLanguageServerUri(uri) : null;
+
+      if (!path || !rootPath) {
+        return false;
+      }
+
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
+
+      // The document is genuinely unsynced only when neither language server
+      // (PHP nor JavaScript/TypeScript) still holds it open. An UnknownDocument
+      // error for a document that is still open on either server is a real
+      // desync, not the benign close race, so it must not be suppressed.
+      return (
+        !syncedDocumentPathsRef.current.has(syncKey) &&
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
+      );
+    },
+    [],
+  );
+
+  const reportLanguageServerError = useCallback(
+    (error: unknown) => {
+      // Monaco feature providers (hover/completion/definition/codeAction/
+      // rename/references) report their failures through this path. When a tab
+      // is closed (didClose) between flushing a document change and the server's
+      // reply, phpactor answers with UnknownDocument for a path that is no
+      // longer open. That is a benign desync, not a real failure, so suppress it
+      // before it surfaces a false error toast or status message. Legitimate
+      // errors, and UnknownDocument for a document that is still open, fall
+      // through unchanged.
+      if (
+        isUnknownDocumentForUnsyncedPath(currentWorkspaceRootRef.current, error)
+      ) {
+        return;
+      }
+
+      const nextMessage = String(error);
+      setMessage(nextMessage);
+
+      if (lastLanguageServerCrashRef.current === nextMessage) {
+        return;
+      }
+
+      lastLanguageServerCrashRef.current = nextMessage;
+      setNotices((current) => [
+        createWorkbenchNotice("error", "Language Server", nextMessage),
+        ...current,
+      ]);
+    },
+    [isUnknownDocumentForUnsyncedPath],
+  );
 
   const reportLanguageServerErrorForActiveWorkspaceRoot = useCallback(
     (rootPath: string | null | undefined, error: unknown) => {
@@ -1464,9 +1797,13 @@ export function useWorkbenchController(
         return;
       }
 
+      if (isUnknownDocumentForUnsyncedPath(rootPath, error)) {
+        return;
+      }
+
       reportLanguageServerError(error);
     },
-    [reportLanguageServerError],
+    [isUnknownDocumentForUnsyncedPath, reportLanguageServerError],
   );
 
   const applyAppSettings = useCallback((settings: AppSettings) => {
@@ -1570,6 +1907,7 @@ export function useWorkbenchController(
         openPaths,
         previewPath,
         recentFiles,
+        recentLocations,
         sidebarView,
       };
     },
@@ -1586,6 +1924,7 @@ export function useWorkbenchController(
       openPaths,
       previewPath,
       recentFiles,
+      recentLocations,
       sidebarView,
     ],
   );
@@ -1602,6 +1941,7 @@ export function useWorkbenchController(
       setActivePath(cached.activePath);
       setPreviewPath(cached.previewPath);
       setRecentFiles(cached.recentFiles);
+      setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
       setNavigationHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
@@ -1637,7 +1977,35 @@ export function useWorkbenchController(
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
     setWorkspaceSymbolsOpen(false);
+    setRecentLocationsPanelOpen(false);
     setRecentFilesSwitcherOpen(true);
+  }, []);
+
+  const forgetRecentLocationsForPath = useCallback((path: string) => {
+    setRecentLocations((current) =>
+      removeRecentLocationsForPath(current, path),
+    );
+  }, []);
+
+  const remapRecentLocations = useCallback(
+    (oldPath: string, next: { name: string; path: string; relativePath: string }) => {
+      setRecentLocations((current) =>
+        renameRecentLocationsPath(current, oldPath, next),
+      );
+    },
+    [],
+  );
+
+  const openRecentLocationsPanel = useCallback(() => {
+    if (!currentWorkspaceRootRef.current) {
+      return;
+    }
+
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(true);
   }, []);
 
   const currentNavigationLocation =
@@ -1663,9 +2031,46 @@ export function useWorkbenchController(
     );
   }, []);
 
+  // Records a visited/edited POSITION in the per-workspace Recent Locations
+  // history. Reads documents + workspace root from refs (so it stays stable on
+  // the navigation hot path) and delegates snippet/relative-path extraction to
+  // the pure domain helper. Targets outside the workspace yield a null location
+  // and are dropped. Isolation: the requested root is captured by the ref read,
+  // so a navigation in the active tab never appends to another tab's history.
+  const recordRecentLocationSnapshot = useCallback(
+    (location: NavigationLocation | null) => {
+      const root = currentWorkspaceRootRef.current;
+
+      if (!location || !root) {
+        return;
+      }
+
+      const document = documentsRef.current[location.path];
+      const built = buildRecentLocation({
+        content: document?.content ?? null,
+        name: document?.name ?? null,
+        navigation: location,
+        relativePath: workspaceRelativePath(root, location.path),
+      });
+
+      if (!built) {
+        return;
+      }
+
+      setRecentLocations((current) => pushRecentLocation(current, built));
+    },
+    [],
+  );
+
   const recordCurrentNavigationLocation = useCallback(() => {
-    recordNavigationLocationSnapshot(currentNavigationLocation());
-  }, [currentNavigationLocation, recordNavigationLocationSnapshot]);
+    const location = currentNavigationLocation();
+    recordNavigationLocationSnapshot(location);
+    recordRecentLocationSnapshot(location);
+  }, [
+    currentNavigationLocation,
+    recordNavigationLocationSnapshot,
+    recordRecentLocationSnapshot,
+  ]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -2791,6 +3196,10 @@ export function useWorkbenchController(
     documentVersionsByUriRef.current = {};
     lastAppliedDiagnosticVersionByUriRef.current = {};
     documentSyncQueuesRef.current = {};
+    // A document-sync reset means the phpactor session/generation changed, so
+    // its index is cold again: allow the next PHP didOpen to re-fire the
+    // force-index warm-up.
+    phpLanguageServerIndexWarmedRootsRef.current.clear();
   }, [clearDocumentChangeTimer]);
 
   const resetJavaScriptTypeScriptLanguageServerDocuments = useCallback(() => {
@@ -2982,6 +3391,48 @@ export function useWorkbenchController(
     [stopProjectRuntimes],
   );
 
+  // Cold first-nav fix: the open-time PHP probe only starts phpactor; it never
+  // issues a real LSP request, so phpactor's index stays cold until the user's
+  // first Cmd+B / hover / completion eats the full cold-index latency. After
+  // the first PHP document is synced (didOpen) we fire one low-priority,
+  // fire-and-forget documentSymbol request to force phpactor to index, so the
+  // first real navigation is already warm (PhpStorm-style pre-warm).
+  //
+  // Isolation: the requested root and session are captured up front; the
+  // post-await re-check drops the warm-up if the workspace switched or the
+  // phpactor session changed before it ran, and the result is discarded. The
+  // per-root warmed-set guard keeps it to exactly once per workspace
+  // session/root (no flood, no cross-tab leak).
+  const warmUpPhpLanguageServerIndex = useCallback(
+    (rootPath: string, path: string, requestedSessionId: number) => {
+      if (phpLanguageServerIndexWarmedRootsRef.current.has(rootPath)) {
+        return;
+      }
+
+      if (!isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)) {
+        return;
+      }
+
+      phpLanguageServerIndexWarmedRootsRef.current.add(rootPath);
+
+      void (async () => {
+        try {
+          await languageServerFeaturesGateway.documentSymbols(rootPath, path);
+        } catch {
+          // The warm-up is best-effort: its only purpose is to force phpactor
+          // to index. Failures (a transient phpactor error or a session/root
+          // teardown mid-flight) are swallowed and never surfaced to the user.
+          // Roll back the warmed flag so the next PHP didOpen on this root can
+          // retry; the once-per-root guard still prevents a flood. The set is
+          // cleared anyway when the session/generation changes
+          // (resetLanguageServerDocuments), so a stale root just no-ops there.
+          phpLanguageServerIndexWarmedRootsRef.current.delete(rootPath);
+        }
+      })();
+    },
+    [isLanguageServerSessionCurrentForRoot, languageServerFeaturesGateway],
+  );
+
   const syncOpenDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
@@ -3059,6 +3510,11 @@ export function useWorkbenchController(
             syncedDocument,
           );
           clearPendingOpenSyncAttempt();
+          // The first PHP document is now open on the active phpactor session:
+          // force-warm its index off the back of this didOpen so the user's
+          // first real navigation is warm. Fire-and-forget (does not block the
+          // sync queue), once per root, self-isolating.
+          warmUpPhpLanguageServerIndex(rootPath, document.path, requestedSessionId);
         });
       } catch (error) {
         clearPendingOpenSyncState();
@@ -3073,6 +3529,7 @@ export function useWorkbenchController(
       languageServerRuntimeStatusRoot,
       nextDocumentVersion,
       reportLanguageServerError,
+      warmUpPhpLanguageServerIndex,
     ],
   );
 
@@ -3225,6 +3682,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    editorConfigCacheRef.current = {};
     resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
     languageServerDiagnosticsByRootRef.current = {};
@@ -3237,6 +3695,7 @@ export function useWorkbenchController(
     openWorkspaceRequestPathRef.current = null;
     openFileRequestTokenRef.current += 1;
     activeEditorPositionRef.current = null;
+    setActiveEditorPosition(null);
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -3256,8 +3715,10 @@ export function useWorkbenchController(
     setActivePath(null);
     setPreviewPath(null);
     setRecentFiles([]);
+    setRecentLocations([]);
     setBookmarks([]);
     setBookmarksPanelOpen(false);
+    setGitBlameEnabledPaths(new Set());
     setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
@@ -3291,15 +3752,24 @@ export function useWorkbenchController(
     setWorkspaceSymbolsQuery("");
     setWorkspaceSymbolsLoading(false);
     setWorkspaceSymbolsResults([]);
+    setSearchEverywhereOpen(false);
+    setSearchEverywhereQuery("");
+    setSearchEverywhereLoading(false);
+    setSearchEverywhereFiles([]);
+    setSearchEverywhereSymbols([]);
     setQuickOpenOpen(false);
     setQuickOpenQuery("");
     setQuickOpenLoading(false);
     setQuickOpenResults([]);
     setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
     setTextSearchQuery("");
     setTextSearchLoading(false);
     setTextSearchResults([]);
+    setTextSearchOptions(defaultTextSearchOptions);
+    setTextReplacement("");
+    setTextReplaceBusy(false);
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setFileStructureScope("current");
@@ -4387,6 +4857,7 @@ export function useWorkbenchController(
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
       activeEditorPositionRef.current = null;
+      setActiveEditorPosition(null);
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
@@ -4422,7 +4893,9 @@ export function useWorkbenchController(
         setActivePath(null);
         setPreviewPath(null);
         setRecentFiles([]);
+        setRecentLocations([]);
         setBookmarks([]);
+        setGitBlameEnabledPaths(new Set());
         setNavigationHistory(createNavigationHistory());
         setSidebarView("files");
         setBottomPanelView("problems");
@@ -4438,6 +4911,10 @@ export function useWorkbenchController(
       // The recent files switcher is a transient overlay too; close it on a
       // switch so it never shows another tab's MRU list mid-transition.
       setRecentFilesSwitcherOpen(false);
+      // The recent locations panel is a transient overlay too; close it on a
+      // switch so it never shows another tab's positions mid-transition. The
+      // location list itself is cached/restored per tab above.
+      setRecentLocationsPanelOpen(false);
       // The bookmarks panel is a transient overlay; close it on a switch so it
       // never shows another tab's bookmarks mid-transition. The bookmark list
       // itself is cached/restored per tab above.
@@ -4492,6 +4969,11 @@ export function useWorkbenchController(
       setWorkspaceSymbolsQuery("");
       setWorkspaceSymbolsLoading(false);
       setWorkspaceSymbolsResults([]);
+      setSearchEverywhereOpen(false);
+      setSearchEverywhereQuery("");
+      setSearchEverywhereLoading(false);
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
       setQuickOpenOpen(false);
       setQuickOpenQuery("");
       setQuickOpenLoading(false);
@@ -4500,6 +4982,9 @@ export function useWorkbenchController(
       setTextSearchQuery("");
       setTextSearchLoading(false);
       setTextSearchResults([]);
+      setTextSearchOptions(defaultTextSearchOptions);
+      setTextReplacement("");
+      setTextReplaceBusy(false);
       setFileStructureScope("current");
       setImplementationChooser(null);
       setCallHierarchyView(null);
@@ -4815,6 +5300,8 @@ export function useWorkbenchController(
 
         delete workspaceStateCacheRef.current[tabPath];
         delete workspaceStateCacheRef.current[targetRootPath];
+        delete editorConfigCacheRef.current[tabPath];
+        delete editorConfigCacheRef.current[targetRootPath];
         forgetLanguageServerRuntimeStatuses(targetRootPath);
         await Promise.allSettled([
           closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -4853,6 +5340,8 @@ export function useWorkbenchController(
 
       delete workspaceStateCacheRef.current[tabPath];
       delete workspaceStateCacheRef.current[targetRootPath];
+      delete editorConfigCacheRef.current[tabPath];
+      delete editorConfigCacheRef.current[targetRootPath];
       forgetLanguageServerRuntimeStatuses(targetRootPath);
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -5139,8 +5628,107 @@ export function useWorkbenchController(
         return false;
       }
 
-      if (documents[entry.path]) {
-        const openedDocument = documents[entry.path];
+      const scheduleEmptyDocumentRefresh = (targetPath: string) => {
+        const timeoutId = window.setTimeout(() => {
+          emptyDocumentRefreshTimeoutsRef.current.delete(timeoutId);
+
+          const refreshEmptyDocument = async () => {
+            if (
+              requestedRoot !== null &&
+              !workspaceRootKeysEqual(
+                currentWorkspaceRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              return;
+            }
+
+            const currentDocument = documentsRef.current[targetPath];
+
+            if (
+              !currentDocument ||
+              currentDocument.content !== "" ||
+              currentDocument.savedContent !== ""
+            ) {
+              return;
+            }
+
+            let refreshedContent = "";
+
+            try {
+              refreshedContent = await workspaceFiles.readTextFile(targetPath);
+            } catch {
+              return;
+            }
+
+            if (
+              refreshedContent === "" ||
+              (requestedRoot !== null &&
+                !workspaceRootKeysEqual(
+                  currentWorkspaceRootRef.current,
+                  requestedRoot,
+                ))
+            ) {
+              return;
+            }
+
+            const latestDocument = documentsRef.current[targetPath];
+
+            if (
+              !latestDocument ||
+              latestDocument.content !== "" ||
+              latestDocument.savedContent !== ""
+            ) {
+              return;
+            }
+
+            const refreshedDocument: EditorDocument = {
+              ...latestDocument,
+              content: refreshedContent,
+              savedContent: refreshedContent,
+            };
+
+            documentsRef.current = {
+              ...documentsRef.current,
+              [targetPath]: refreshedDocument,
+            };
+            activeDocumentRef.current =
+              activeDocumentRef.current?.path === targetPath
+                ? refreshedDocument
+                : activeDocumentRef.current;
+            setDocuments((current) => {
+              const currentDocument = current[targetPath];
+
+              if (
+                !currentDocument ||
+                currentDocument.content !== "" ||
+                currentDocument.savedContent !== ""
+              ) {
+                return current;
+              }
+
+              return {
+                ...current,
+                [targetPath]: {
+                  ...currentDocument,
+                  content: refreshedContent,
+                  savedContent: refreshedContent,
+                },
+              };
+            });
+          };
+
+          void refreshEmptyDocument();
+        }, 150);
+
+        emptyDocumentRefreshTimeoutsRef.current.add(timeoutId);
+      };
+
+      const existingDocument =
+        documentsRef.current[entry.path] ?? documents[entry.path];
+
+      if (existingDocument) {
+        const openedDocument = existingDocument;
         const hasEmptySavedContentWithoutUnsavedEdits =
           openedDocument.savedContent === "" && openedDocument.content === "";
 
@@ -5187,6 +5775,8 @@ export function useWorkbenchController(
                 savedContent: refreshedContent,
               },
             }));
+          } else if (refreshedContent === "" && stillEmptyAndUnedited) {
+            scheduleEmptyDocumentRefresh(entry.path);
           }
         }
 
@@ -5248,14 +5838,17 @@ export function useWorkbenchController(
           requestedRoot,
           entry.path,
         );
+        const hasUsablePrefetchedContent =
+          prefetchedContent !== null && prefetchedContent !== "";
 
-        if (prefetchedContent === null) {
+        if (!hasUsablePrefetchedContent) {
           openingFileFlagOwnerTokenRef.current = requestToken;
           setIsOpeningFile(true);
         }
 
-        const content =
-          prefetchedContent ?? (await workspaceFiles.readTextFile(entry.path));
+        const content = hasUsablePrefetchedContent
+          ? prefetchedContent
+          : await workspaceFiles.readTextFile(entry.path);
 
         if (
           openFileRequestTokenRef.current !== requestToken ||
@@ -5296,6 +5889,40 @@ export function useWorkbenchController(
           void syncClosedJavaScriptTypeScriptDocument(replacement);
         }
 
+        const nextDocuments = {
+          ...documentsRef.current,
+          [entry.path]: document,
+        };
+
+        if (replacedPath) {
+          delete nextDocuments[replacedPath];
+        }
+
+        const nextOpenPaths = (() => {
+          if (shouldPin && !replacedPath) {
+            return openPathsRef.current.includes(entry.path)
+              ? openPathsRef.current
+              : [...openPathsRef.current, entry.path];
+          }
+
+          if (shouldPin && replacedPath) {
+            const mapped = openPathsRef.current.map((openPath) =>
+              openPath === replacedPath ? entry.path : openPath,
+            );
+            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
+          }
+
+          return openPathsRef.current.filter(
+            (openPath) => openPath !== replacedPath,
+          );
+        })();
+        const nextPreviewPath = shouldPin ? null : entry.path;
+
+        documentsRef.current = nextDocuments;
+        activeDocumentRef.current = document;
+        openPathsRef.current = nextOpenPaths;
+        previewPathRef.current = nextPreviewPath;
+
         setDocuments((current) => {
           const next = { ...current, [entry.path]: document };
 
@@ -5321,7 +5948,7 @@ export function useWorkbenchController(
 
           return current.filter((openPath) => openPath !== replacedPath);
         });
-        setPreviewPath(shouldPin ? null : entry.path);
+        setPreviewPath(nextPreviewPath);
 
         setSelectedGitChange(null);
         setGitDiffPreview(null);
@@ -5329,6 +5956,9 @@ export function useWorkbenchController(
         recordRecentFile({ name: entry.name, path: entry.path });
         setMessage(null);
         filePrefetchCacheRef.current.invalidate(entry.path);
+        if (content === "") {
+          scheduleEmptyDocumentRefresh(entry.path);
+        }
         clearOpeningFileForRequest();
         return true;
       } catch (error) {
@@ -5575,16 +6205,16 @@ export function useWorkbenchController(
   }, [activeDocument?.path, activeDocument?.savedContent, gitGateway, workspaceRoot]);
 
   const previewGitChange = useCallback(
-    async (change: GitChangedFile, options: OpenGitChangeOptions = {}) => {
+    async (change: GitChangedFile, _options: OpenGitChangeOptions = {}) => {
       if (!workspaceRoot) {
         return;
       }
 
       const requestedRoot = workspaceRoot;
       const requestToken = gitDiffRequestTokenRef.current + 1;
-      const shouldPin = options.pin === true;
       gitDiffRequestTokenRef.current = requestToken;
       setSelectedGitChange(change);
+      setGitDiffPreview(null);
       setGitDiffLoading(true);
 
       try {
@@ -5600,61 +6230,7 @@ export function useWorkbenchController(
           return;
         }
 
-        const documentPath = gitDiffDocumentPath(change);
-        // Compute the replacement from live refs (current state) AFTER the diff
-        // resolves so rapid back-to-back diff/file opens never act on a stale
-        // closure capture, matching openFile's PhpStorm preview parity.
-        const replacement = cleanReplacementDocument(
-          activeDocumentRef.current,
-          documentsRef.current,
-          openPathsRef.current,
-          previewPathRef.current,
-        );
-        const replacedPath =
-          replacement && replacement.path !== documentPath ? replacement.path : null;
-        const document: EditorDocument = {
-          path: documentPath,
-          name: gitDiffDocumentName(change),
-          content: "",
-          savedContent: "",
-          language: diff.language,
-        };
-
-        if (replacement && replacement.path !== documentPath) {
-          void syncClosedDocument(replacement);
-          void syncClosedJavaScriptTypeScriptDocument(replacement);
-        }
-
         recordCurrentNavigationLocation();
-        setDocuments((current) => {
-          const next = { ...current, [documentPath]: document };
-
-          if (replacedPath) {
-            delete next[replacedPath];
-          }
-
-          return next;
-        });
-        setOpenPaths((current) => {
-          if (shouldPin && !replacedPath) {
-            return current.includes(documentPath)
-              ? current
-              : [...current, documentPath];
-          }
-
-          if (shouldPin && replacedPath) {
-            const mapped = current.map((openPath) =>
-              openPath === replacedPath ? documentPath : openPath,
-            );
-            return mapped.includes(documentPath)
-              ? mapped
-              : [...mapped, documentPath];
-          }
-
-          return current.filter((openPath) => openPath !== replacedPath);
-        });
-        setPreviewPath(shouldPin ? null : documentPath);
-        setActivePath(documentPath);
         setGitDiffPreview(diff);
         setMessage(`Diff ${change.relativePath}`);
       } catch (error) {
@@ -5688,8 +6264,6 @@ export function useWorkbenchController(
       gitGateway,
       recordCurrentNavigationLocation,
       reportError,
-      syncClosedDocument,
-      syncClosedJavaScriptTypeScriptDocument,
       workspaceRoot,
     ],
   );
@@ -5827,6 +6401,115 @@ export function useWorkbenchController(
 
         applyGitOperationStatus(status);
         setMessage(null);
+      } catch (error) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const loadGitFileHunks = useCallback(
+    async (relativePath: string, staged: boolean): Promise<GitDiffHunk[]> => {
+      if (!workspaceRoot) {
+        return [];
+      }
+
+      const requestedRoot = workspaceRoot;
+
+      try {
+        const hunks = await gitGateway.getFileHunks(
+          requestedRoot,
+          relativePath,
+          staged,
+        );
+
+        // Drop stale results: the active workspace may have changed while the
+        // diff resolved (per-tab isolation).
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return [];
+        }
+
+        return hunks;
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git", error);
+        }
+
+        return [];
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
+  );
+
+  const stageGitHunk = useCallback(
+    async (relativePath: string, hunkIndex: number) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.stageHunk(
+          requestedRoot,
+          relativePath,
+          hunkIndex,
+        );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(`Staged hunk in ${relativePath}`);
+      } catch (error) {
+        // A rejected patch (stale hunk / already staged) fails atomically on
+        // the Rust side - the index is untouched, so this is a safe no-op.
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const unstageGitHunk = useCallback(
+    async (relativePath: string, hunkIndex: number) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.unstageHunk(
+          requestedRoot,
+          relativePath,
+          hunkIndex,
+        );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(`Unstaged hunk in ${relativePath}`);
       } catch (error) {
         if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
@@ -6056,6 +6739,28 @@ export function useWorkbenchController(
     [documents, workspaceFiles],
   );
 
+  // Always live-parse the single active PHP file (instant tree-sitter parse) so
+  // the structure carries fresh signature metadata (visibility, parameters,
+  // return type) that the SQLite project index does not store. The index only
+  // serves non-PHP paths defensively. The caller re-checks the active root
+  // after this resolves, so no shared state is mutated for a stale workspace.
+  const loadActivePhpFileOutline = useCallback(
+    async (requestedRoot: string, path: string): Promise<PhpFileOutline> => {
+      if (isPhpPath(path)) {
+        const source = await readPhpFileOutlineSource(path);
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return emptyPhpFileOutline();
+        }
+
+        return phpFileOutlineGateway.parsePhpFileOutline(path, source);
+      }
+
+      return phpFileOutlineGateway.getPhpFileOutline(requestedRoot, path);
+    },
+    [phpFileOutlineGateway, readPhpFileOutlineSource],
+  );
+
   const loadPhpFileOutline = useCallback(
     async (path: string) => {
       if (!workspaceRoot) {
@@ -6070,21 +6775,7 @@ export function useWorkbenchController(
       setLoadingPhpFileOutlinePaths((current) => new Set(current).add(path));
 
       try {
-        const indexedOutline = await phpFileOutlineGateway.getPhpFileOutline(
-          requestedRoot,
-          path,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        let outline = indexedOutline;
-
-        if (indexedOutline.nodes.length === 0 && isPhpPath(path)) {
-          const source = await readPhpFileOutlineSource(path);
-          outline = await phpFileOutlineGateway.parsePhpFileOutline(path, source);
-        }
+        const outline = await loadActivePhpFileOutline(requestedRoot, path);
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
@@ -6117,12 +6808,7 @@ export function useWorkbenchController(
         });
       }
     },
-    [
-      phpFileOutlineGateway,
-      readPhpFileOutlineSource,
-      reportError,
-      workspaceRoot,
-    ],
+    [loadActivePhpFileOutline, reportError, workspaceRoot],
   );
 
   const loadJavaScriptTypeScriptFileOutline = useCallback(
@@ -7201,6 +7887,124 @@ export function useWorkbenchController(
     [flushPendingDocumentChange, flushPendingJavaScriptTypeScriptDocumentChange],
   );
 
+  // Reads (and caches) the `.editorconfig` file for one directory, scoped to
+  // `requestedRoot`. Returns the parsed file, or `null` when absent. The result
+  // is dropped (returns null) if the active workspace switched mid-read, so a
+  // stale read can never feed another project's resolution.
+  const loadEditorConfigFile = useCallback(
+    async (
+      requestedRoot: string,
+      directory: string,
+    ): Promise<EditorConfigFile | null> => {
+      const cacheForRoot = (editorConfigCacheRef.current[requestedRoot] ??= {});
+
+      if (directory in cacheForRoot) {
+        return cacheForRoot[directory];
+      }
+
+      const path = editorConfigPathForDirectory(directory);
+      let content: string | null = null;
+
+      try {
+        content = await workspaceFiles.readTextFile(path);
+      } catch {
+        content = null;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return null;
+      }
+
+      const file: EditorConfigFile | null =
+        content === null
+          ? null
+          : { directory, parsed: parseEditorConfig(content) };
+      // Re-read the per-root bucket: a workspace switch + reopen could have
+      // recreated it while we awaited.
+      (editorConfigCacheRef.current[requestedRoot] ??= {})[directory] = file;
+
+      return file;
+    },
+    [workspaceFiles],
+  );
+
+  // Resolves the effective EditorConfig settings for `filePath` within
+  // `requestedRoot` by reading the applicable `.editorconfig` cascade (deepest
+  // first, stopping at the first `root = true`) and resolving glob sections.
+  // Returns empty settings when nothing matches. The active root is re-checked
+  // after every read; a cross-tab switch yields empty settings (the caller then
+  // applies no override, i.e. editor defaults).
+  const resolveEditorConfigForFile = useCallback(
+    async (
+      requestedRoot: string,
+      filePath: string,
+    ): Promise<ResolvedEditorConfig> => {
+      const directories = editorConfigDirectoriesForFile(filePath, requestedRoot);
+      const files: EditorConfigFile[] = [];
+
+      for (const directory of directories) {
+        const file = await loadEditorConfigFile(requestedRoot, directory);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return {};
+        }
+
+        if (!file) {
+          continue;
+        }
+
+        files.push(file);
+
+        if (file.parsed.root) {
+          break;
+        }
+      }
+
+      return resolveEditorConfigSettings(files, filePath, requestedRoot);
+    },
+    [loadEditorConfigFile],
+  );
+
+  // Recompute the resolved EditorConfig for the active document whenever it
+  // changes. Captures the requested root up front and re-checks the active root
+  // and active path after the async resolution before committing, so a tab or
+  // file switch mid-resolution drops the stale result (per-project isolation).
+  const activeDocumentPath = activeDocument?.path ?? null;
+  useEffect(() => {
+    if (!activeDocumentPath || !workspaceRoot) {
+      activeEditorConfigRef.current = {};
+      setActiveEditorConfig({});
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    let cancelled = false;
+
+    void (async () => {
+      const resolved = await resolveEditorConfigForFile(
+        requestedRoot,
+        activeDocumentPath,
+      );
+
+      if (
+        cancelled ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+        activeDocumentRef.current?.path !== activeDocumentPath
+      ) {
+        return;
+      }
+
+      activeEditorConfigRef.current = resolved;
+      setActiveEditorConfig(resolved);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDocumentPath, resolveEditorConfigForFile, workspaceRoot]);
+
   const formattedContentForSave = useCallback(
     async (
       document: EditorDocument,
@@ -7275,6 +8079,133 @@ export function useWorkbenchController(
     ],
   );
 
+  // Optimize-imports-on-save: a pure, synchronous PHP `use` reorganizer applied
+  // to the (already formatted) content just before it is written. It only runs
+  // for PHP documents in a PHP workspace when the setting is on, and is a no-op
+  // (returns the input) for any other language or when the imports are already
+  // clean. Being synchronous, it adds no extra await to the save path, so the
+  // existing post-format workspace-root re-check still fully guards the write.
+  const optimizedImportsContentForSave = useCallback(
+    (document: EditorDocument, content: string): string => {
+      if (!workspaceSettingsRef.current.optimizeImportsOnSave) {
+        return content;
+      }
+
+      if (!isLanguageServerDocument(document) || !workspaceDescriptor?.php) {
+        return content;
+      }
+
+      return optimizePhpImportsSource(content) ?? content;
+    },
+    [workspaceDescriptor?.php],
+  );
+
+  // Organize-imports-on-save for JavaScript/TypeScript: unlike the synchronous
+  // PHP path, this asks the JS/TS language server for its `source.organizeImports`
+  // code action and applies the resulting edits to the (already formatted)
+  // content before it is written. It is async (one LSP round-trip), so the
+  // session is re-checked after the await and the caller re-checks the workspace
+  // root before writing. Any failure (server down, request throws, no usable
+  // edit) is a no-op that returns the input content, so it can never block a save.
+  const organizedImportsContentForSave = useCallback(
+    async (
+      document: EditorDocument,
+      content: string,
+      requestedRoot: string,
+    ): Promise<string> => {
+      if (!workspaceSettingsRef.current.optimizeImportsOnSave) {
+        return content;
+      }
+
+      const plan = planOrganizeImportsOnSave({
+        document,
+        javaScriptTypeScript: {
+          status: javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
+          statusRoot:
+            javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        },
+        workspaceRoot: requestedRoot,
+      });
+
+      if (!plan) {
+        return content;
+      }
+
+      const isRequestedSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          plan.sessionId,
+        );
+
+      try {
+        // Flush any debounced change so the server organizes the current content
+        // rather than the stale snapshot it last received.
+        await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
+
+        if (!isRequestedSessionActive()) {
+          return content;
+        }
+
+        const actions =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
+            requestedRoot,
+            document.path,
+            fullDocumentRange(content),
+            organizeImportsCodeActionContext(),
+          );
+
+        if (!isRequestedSessionActive()) {
+          return content;
+        }
+
+        const edits = organizeImportsTextEditsForPath(actions, document.path);
+
+        if (!edits || edits.length === 0) {
+          return content;
+        }
+
+        return applyLanguageServerTextEdits(content, edits);
+      } catch {
+        return content;
+      }
+    },
+    [
+      flushPendingJavaScriptTypeScriptDocumentChange,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+    ],
+  );
+
+  // Records a Local History snapshot for a saved document, scoped to the
+  // workspace root captured by the caller. Best-effort: a snapshot failure must
+  // never surface as a save error, so it is swallowed (logged) rather than
+  // thrown. The absolute path is converted to a workspace-relative path so the
+  // snapshot lands in the requested workspace's bucket only.
+  const captureLocalHistorySnapshot = useCallback(
+    async (
+      requestedRoot: string,
+      absolutePath: string,
+      content: string,
+    ): Promise<void> => {
+      const relativePath = workspaceRelativePath(requestedRoot, absolutePath);
+
+      if (!relativePath) {
+        return;
+      }
+
+      try {
+        await localHistoryGateway.recordSnapshot(
+          requestedRoot,
+          relativePath,
+          content,
+        );
+      } catch (error) {
+        console.error("Local History snapshot failed", error);
+      }
+    },
+    [localHistoryGateway],
+  );
+
   const saveActiveDocument = useCallback(async () => {
     const documentToFormat = activeDocumentRef.current;
     if (!documentToFormat || documentToFormat.readOnly) {
@@ -7296,9 +8227,52 @@ export function useWorkbenchController(
         return;
       }
 
+      // Optimize imports AFTER formatting and AFTER the root re-check, on the
+      // formatted content, so the two save-time fixers compose (format then
+      // organize imports) and never act on a stale or cross-tab document. PHP
+      // uses a synchronous reorganizer; this is a no-op for any other language.
+      const phpOptimizedContent = optimizedImportsContentForSave(
+        documentToFormat,
+        formattedContent,
+      );
+
+      // JavaScript/TypeScript organize-imports goes through the language server
+      // (`source.organizeImports`). It is async, so it is given the upfront
+      // requested root (which it uses for every LSP call and re-checks after its
+      // await), and the workspace root is re-checked again here before writing.
+      // It is a no-op for non-JS/TS documents.
+      const contentToSave = await organizedImportsContentForSave(
+        documentToFormat,
+        phpOptimizedContent,
+        requestedRoot,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      // EditorConfig on-save transforms (trim trailing whitespace, insert final
+      // newline, normalize EOL) run LAST so they compose over the formatted +
+      // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
+      // saved document's own path through the per-workspace cascade. A no-op when
+      // no `.editorconfig` enables any on-save behaviour.
+      const editorConfigForSave = await resolveEditorConfigForFile(
+        requestedRoot,
+        documentToFormat.path,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const editorConfiguredContent = applyEditorConfigOnSave(
+        contentToSave,
+        editorConfigForSave,
+      );
+
       const documentToSave: EditorDocument = {
         ...documentToFormat,
-        content: formattedContent,
+        content: editorConfiguredContent,
       };
 
       await workspaceFiles.writeTextFile(
@@ -7306,6 +8280,15 @@ export function useWorkbenchController(
         documentToSave.content,
       );
       filePrefetchCacheRef.current.invalidate(documentToSave.path);
+      // Capture a Local History snapshot of the just-saved content, scoped to
+      // the workspace root that was active when the save began. The gateway
+      // dedupes identical content and the storage is per-workspace, so this is
+      // a no-op when nothing changed and never leaks across tabs.
+      void captureLocalHistorySnapshot(
+        requestedRoot,
+        documentToSave.path,
+        documentToSave.content,
+      );
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -7337,8 +8320,12 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
+    captureLocalHistorySnapshot,
     formattedContentForSave,
+    optimizedImportsContentForSave,
+    organizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
+    resolveEditorConfigForFile,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     workspaceFiles,
@@ -7809,6 +8796,111 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  // Persists a synthesized PHP code action's NEW file (currently "Extract
+  // interface", which writes a sibling `<Class>Interface.php`) to DISK and opens
+  // it in a tab. Extract Interface is atomic from the user's perspective: this
+  // resolves `true` ONLY when the interface file was freshly written, and the
+  // Monaco command applies the paired in-document `implements` edit only then -
+  // so a pre-existing target or a failed write leaves the class untouched (no
+  // class implementing an interface that was never created). The interface is
+  // always a sibling of the already-open class, so its directory exists and no
+  // `createDirectory` is attempted (a non-idempotent create on the existing
+  // sibling directory was the `File exists (os error 17)` that previously failed
+  // the write yet still applied the class edit). Conservative: an already-present
+  // sibling is NEVER overwritten - the class is left unchanged and a recoverable
+  // message is shown. Per the per-workspace isolation rule the requested root is
+  // captured up front and re-checked before each post-write UI mutation so a tab
+  // switch mid-write drops the (now stale) refresh while still completing the
+  // file + class edit.
+  const applyPhpCodeActionNewFile = useCallback(
+    async (newFile: PhpCodeActionNewFile): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return false;
+      }
+
+      const targetPath = newFile.path;
+      const result = await writeExtractedInterfaceFile(
+        targetPath,
+        newFile.content,
+        {
+          fileExists: async (path) =>
+            (await readTestFileIfExists(path)) !== null,
+          writeFile: (path, content) =>
+            workspaceFiles.writeTextFile(path, content),
+        },
+      );
+
+      if (result.status === "target-exists") {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Extract Interface",
+          new Error(
+            `${getFileName(targetPath)} already exists - the class was left unchanged.`,
+          ),
+        );
+
+        if (isRequestedRootActive()) {
+          await openFile({
+            kind: "file",
+            name: getFileName(targetPath),
+            path: targetPath,
+          });
+        }
+
+        return false;
+      }
+
+      if (result.status === "write-failed") {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Extract Interface",
+          result.error,
+        );
+
+        return false;
+      }
+
+      const parentPath = getParentPath(targetPath);
+
+      if (isRequestedRootActive()) {
+        await notifyJavaScriptTypeScriptWatchedFilesChanged([
+          {
+            changeType: "created",
+            path: targetPath,
+          },
+        ]);
+      }
+
+      if (isRequestedRootActive()) {
+        setExpandedDirectories((current) => new Set(current).add(parentPath));
+        await refreshDirectory(parentPath);
+      }
+
+      if (isRequestedRootActive()) {
+        await openFile({
+          kind: "file",
+          name: getFileName(targetPath),
+          path: targetPath,
+        });
+      }
+
+      return shouldApplyClassEditAfterWrite(result);
+    },
+    [
+      notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile,
+      readTestFileIfExists,
+      refreshDirectory,
+      reportErrorForActiveWorkspaceRoot,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
+
   // PhpStorm-style "Go to Test / Test Subject": from the active PHP file, decide
   // (via PSR-4) whether it is a TEST or a production SUBJECT and jump to its
   // partner. From a source class, both Unit and Feature suites are probed and the
@@ -7988,6 +9080,13 @@ export function useWorkbenchController(
       }
 
       setTextSearchOpen(false);
+      setEditorRevealTarget({
+        path: result.path,
+        position: {
+          column: Math.max(1, Number(result.column)),
+          lineNumber: Math.max(1, Number(result.lineNumber)),
+        },
+      });
       setMessage(
         `Opened ${result.relativePath}:${result.lineNumber}:${result.column}`,
       );
@@ -7995,9 +9094,242 @@ export function useWorkbenchController(
     [openFile],
   );
 
+  // Re-reads the given files from disk and refreshes any matching open tabs so
+  // the editor shows the post-replace content. Tabs with UNSAVED edits are left
+  // untouched (we never clobber the user's in-flight work); the next save will
+  // win. `isRequestedRootActive` is re-checked after every await so a stale
+  // replace cannot mutate documents that belong to a different workspace tab.
+  const refreshOpenDocumentsAfterReplace = useCallback(
+    async (
+      changedPaths: string[],
+      isRequestedRootActive: () => boolean,
+    ): Promise<void> => {
+      for (const path of changedPaths) {
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        const openDocument = documentsRef.current[path];
+
+        if (!openDocument) {
+          continue;
+        }
+
+        const hasUnsavedEdits = openDocument.content !== openDocument.savedContent;
+
+        if (hasUnsavedEdits) {
+          continue;
+        }
+
+        let refreshedContent: string;
+
+        try {
+          refreshedContent = await workspaceFiles.readTextFile(path);
+        } catch {
+          continue;
+        }
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        const latestDocument = documentsRef.current[path];
+
+        // Re-check after the await: the tab may have been edited, closed, or
+        // replaced by an unsaved version while we were reading from disk.
+        if (
+          !latestDocument ||
+          latestDocument.content !== latestDocument.savedContent
+        ) {
+          continue;
+        }
+
+        const refreshedDocument: EditorDocument = {
+          ...latestDocument,
+          content: refreshedContent,
+          savedContent: refreshedContent,
+        };
+
+        documentsRef.current = {
+          ...documentsRef.current,
+          [path]: refreshedDocument,
+        };
+        activeDocumentRef.current =
+          activeDocumentRef.current?.path === path
+            ? refreshedDocument
+            : activeDocumentRef.current;
+        setDocuments((current) => {
+          const currentDocument = current[path];
+
+          if (
+            !currentDocument ||
+            currentDocument.content !== currentDocument.savedContent
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [path]: {
+              ...currentDocument,
+              content: refreshedContent,
+              savedContent: refreshedContent,
+            },
+          };
+        });
+      }
+    },
+    [workspaceFiles],
+  );
+
+  // Shared Replace-in-Path runner. `scopePath === null` means Replace All (every
+  // matching file); a non-null path narrows the run to a single file (the
+  // backend still confines edits to its exact matches). Destructive (it rewrites
+  // files on disk), so it always confirms first and reports the outcome.
+  const runReplaceInPath = useCallback(
+    async (scopePath: string | null): Promise<void> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      const query = textSearchQuery.trim();
+
+      if (!requestedRoot || !query || textReplaceBusy) {
+        return;
+      }
+
+      // Preview the blast radius BEFORE the destructive write: count the
+      // matching files/occurrences (within scope) so the confirmation is honest.
+      const previewResults = textSearchResults.filter(
+        (result) => scopePath === null || result.path === scopePath,
+      );
+      const fileCount = new Set(previewResults.map((result) => result.path))
+        .size;
+      const matchCount = previewResults.length;
+
+      if (matchCount === 0) {
+        setMessage("No matches to replace");
+        return;
+      }
+
+      // The results list is capped at TEXT_SEARCH_RESULT_LIMIT; when it is full
+      // the real blast radius may be larger than what we can preview, so the
+      // confirmation says "at least N" rather than implying an exact count.
+      const isCapped =
+        scopePath === null &&
+        textSearchResults.length >= TEXT_SEARCH_RESULT_LIMIT;
+      const atLeast = isCapped ? "at least " : "";
+      const scopeLabel =
+        scopePath === null
+          ? `${atLeast}${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${atLeast}${fileCount} file${fileCount === 1 ? "" : "s"}`
+          : `${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${getFileName(scopePath)}`;
+
+      if (
+        !prompter.confirm(
+          `Replace ${scopeLabel}? This rewrites files on disk and cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      setTextReplaceBusy(true);
+
+      try {
+        // Single-file scope is passed out-of-band as an exact path (not as an
+        // extra include glob), so an active user file mask can never widen a
+        // "Replace in file" run into other files. `scopePath === null` means
+        // Replace All.
+        const result: ReplaceInPathResult = await textSearch.replaceInPath(
+          requestedRoot,
+          query,
+          textReplacement,
+          textSearchOptions,
+          scopePath ?? undefined,
+        );
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        await refreshOpenDocumentsAfterReplace(
+          result.files.map((file) => file.path),
+          isRequestedRootActive,
+        );
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        setMessage(
+          result.totalReplacements === 0
+            ? "No replacements made"
+            : `Replaced ${result.totalReplacements} occurrence${result.totalReplacements === 1 ? "" : "s"} in ${result.files.length} file${result.files.length === 1 ? "" : "s"}`,
+        );
+        // Re-run the search so the results list matches what is now on disk.
+        setTextSearchRefreshToken((token) => token + 1);
+      } catch (error) {
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        reportError("Replace in Path", error);
+      } finally {
+        if (isRequestedRootActive()) {
+          setTextReplaceBusy(false);
+        }
+      }
+    },
+    [
+      prompter,
+      refreshOpenDocumentsAfterReplace,
+      reportError,
+      textReplaceBusy,
+      textReplacement,
+      textSearch,
+      textSearchOptions,
+      textSearchQuery,
+      textSearchResults,
+      workspaceRoot,
+    ],
+  );
+
+  const replaceAllInPath = useCallback(
+    () => runReplaceInPath(null),
+    [runReplaceInPath],
+  );
+
+  const replaceInFile = useCallback(
+    (path: string) => runReplaceInPath(path),
+    [runReplaceInPath],
+  );
+
   const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
     activeEditorPositionRef.current = position;
+    setActiveEditorPosition((current) =>
+      current &&
+      current.lineNumber === position.lineNumber &&
+      current.column === position.column
+        ? current
+        : position,
+    );
   }, []);
+
+  // Drop the rendered caret indicator when no document is active (last tab
+  // closed). A new/switched tab repopulates it: the EditorSurface refires
+  // `onCursorPositionChange` on mount and on each model swap, so this only ever
+  // clears the empty-editor case and never races the active tab's own caret.
+  useEffect(() => {
+    if (activeDocument) {
+      return;
+    }
+
+    activeEditorPositionRef.current = null;
+    setActiveEditorPosition(null);
+  }, [activeDocument]);
 
   const showBottomPanelView = useCallback((view: BottomPanelView) => {
     setBottomPanelView(view);
@@ -8600,6 +9932,926 @@ export function useWorkbenchController(
     toggleBookmarkAtLine(lineNumber);
   }, [toggleBookmarkAtLine]);
 
+  // Toggles git blame annotations for the active document. State is keyed by the
+  // absolute document path so it stays isolated per tab.
+  const toggleGitBlame = useCallback(() => {
+    const document = activeDocumentRef.current;
+
+    if (!document) {
+      return;
+    }
+
+    setGitBlameEnabledPaths((current) => {
+      const next = new Set(current);
+
+      if (next.has(document.path)) {
+        next.delete(document.path);
+        return next;
+      }
+
+      next.add(document.path);
+      return next;
+    });
+  }, []);
+
+  // Fetches per-line git blame for a document. The requested workspace root is
+  // captured up front; EditorSurface re-checks the active path after the await
+  // before rendering, so a stale result from a switched-away tab is dropped.
+  const provideGitBlame = useCallback(
+    async (path: string): Promise<GitBlameLine[]> => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const relativePath = workspaceRelativePath(requestedRoot, path);
+
+      if (!relativePath) {
+        return [];
+      }
+
+      return gitGateway.blame(requestedRoot, relativePath);
+    },
+    [gitGateway, workspaceRoot],
+  );
+
+  // Reads an arbitrary file's text from disk by absolute path. Used to load
+  // local JSON Schemas referenced by a document's `$schema` (e.g.
+  // `.phpactor.json`) so Monaco can validate inline instead of trying to fetch
+  // the schema (which has no request service and would error). The path may sit
+  // outside the workspace root (the phpactor schema lives in the app tools dir),
+  // so this intentionally does not constrain the path to the root.
+  const readWorkspaceFile = useCallback(
+    (path: string): Promise<string> => workspaceFiles.readTextFile(path),
+    [workspaceFiles],
+  );
+
+  // Closes the file history panel and invalidates any in-flight history/diff
+  // requests so their results are dropped instead of repopulating a closed
+  // panel (or a different tab's panel after a fast reopen).
+  const closeFileHistory = useCallback(() => {
+    fileHistoryRequestTokenRef.current += 1;
+    fileHistoryDiffRequestTokenRef.current += 1;
+    fileHistoryRelativePathRef.current = null;
+    setFileHistoryPanelOpen(false);
+    setFileHistoryCommits([]);
+    setFileHistoryLoading(false);
+    setFileHistorySelectedSha(null);
+    setFileHistoryDiff(null);
+    setFileHistoryDiffLoading(false);
+    setFileHistoryRelativePath(null);
+  }, []);
+
+  const closeLocalHistory = useCallback(() => {
+    localHistoryRequestTokenRef.current += 1;
+    localHistoryDiffRequestTokenRef.current += 1;
+    localHistoryRelativePathRef.current = null;
+    localHistoryAbsolutePathRef.current = null;
+    setLocalHistoryPanelOpen(false);
+    setLocalHistoryVersions([]);
+    setLocalHistoryLoading(false);
+    setLocalHistorySelectedId(null);
+    setLocalHistoryDiff(null);
+    setLocalHistoryDiffLoading(false);
+    setLocalHistoryRelativePath(null);
+  }, []);
+
+  // Current live content of the local-history panel's file: the open editor
+  // buffer when the document is loaded, otherwise null. Used as the "modified"
+  // (right) side of the version diff and as the pre-revert snapshot source.
+  const currentLocalHistoryContent = useCallback((): string | null => {
+    const absolutePath = localHistoryAbsolutePathRef.current;
+
+    if (!absolutePath) {
+      return null;
+    }
+
+    return documentsRef.current[absolutePath]?.content ?? null;
+  }, []);
+
+  // Loads the diff for a single local-history version (selected version vs the
+  // file's current content). The requested root, relative path, and request
+  // token are captured up front; after the await we re-check the active root and
+  // the token so a stale result from a switched-away tab or superseded click is
+  // dropped (per-tab isolation).
+  const selectLocalHistoryVersion = useCallback(
+    async (versionId: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = localHistoryRelativePathRef.current;
+
+      if (!requestedRoot || !relativePath) {
+        return;
+      }
+
+      const requestToken = localHistoryDiffRequestTokenRef.current + 1;
+      localHistoryDiffRequestTokenRef.current = requestToken;
+      setLocalHistorySelectedId(versionId);
+      setLocalHistoryDiffLoading(true);
+
+      const isCurrentRequest = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        localHistoryRelativePathRef.current === relativePath &&
+        localHistoryDiffRequestTokenRef.current === requestToken;
+
+      try {
+        const originalContent = await localHistoryGateway.readVersion(
+          requestedRoot,
+          relativePath,
+          versionId,
+        );
+
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setLocalHistoryDiff({
+          language: localHistoryLanguageRef.current,
+          modifiedContent: currentLocalHistoryContent() ?? "",
+          originalContent,
+        });
+      } catch (error) {
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setLocalHistoryDiff(null);
+        reportError("Local History", error);
+      } finally {
+        if (isCurrentRequest()) {
+          setLocalHistoryDiffLoading(false);
+        }
+      }
+    },
+    [
+      currentLocalHistoryContent,
+      localHistoryGateway,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  // Opens the Local History panel for the active document. The requested root
+  // and the active document's relative/absolute paths + language are captured up
+  // front; after the await we re-check the active root, document, and request
+  // token so a stale version list from a switched-away tab is dropped.
+  const openLocalHistory = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+    const document = activeDocumentRef.current;
+
+    if (!requestedRoot || !document) {
+      return;
+    }
+
+    const requestedDocumentPath = document.path;
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocumentPath,
+    );
+
+    if (!relativePath) {
+      return;
+    }
+
+    const requestToken = localHistoryRequestTokenRef.current + 1;
+    localHistoryRequestTokenRef.current = requestToken;
+    localHistoryDiffRequestTokenRef.current += 1;
+    localHistoryRelativePathRef.current = relativePath;
+    localHistoryAbsolutePathRef.current = requestedDocumentPath;
+    localHistoryLanguageRef.current = document.language;
+    setLocalHistoryRelativePath(relativePath);
+    setLocalHistorySelectedId(null);
+    setLocalHistoryDiff(null);
+    setLocalHistoryDiffLoading(false);
+    setLocalHistoryVersions([]);
+    setLocalHistoryPanelOpen(true);
+    setLocalHistoryLoading(true);
+
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current?.path === requestedDocumentPath &&
+      localHistoryRequestTokenRef.current === requestToken;
+
+    try {
+      const versions = await localHistoryGateway.listVersions(
+        requestedRoot,
+        relativePath,
+      );
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setLocalHistoryVersions(versions);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setLocalHistoryVersions([]);
+      reportError("Local History", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setLocalHistoryLoading(false);
+      }
+    }
+  }, [localHistoryGateway, reportError, workspaceRoot]);
+
+  // Reverts the panel's file to a stored version. Before overwriting, the
+  // current content is snapshotted into Local History so the revert itself is
+  // undoable. The version content is read first, then written to disk and synced
+  // into the open document. All work is scoped to the root captured up front and
+  // re-checked after each await so a tab switch drops the revert.
+  const revertLocalHistoryVersion = useCallback(
+    async (versionId: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = localHistoryRelativePathRef.current;
+      const absolutePath = localHistoryAbsolutePathRef.current;
+
+      if (!requestedRoot || !relativePath || !absolutePath) {
+        return;
+      }
+
+      try {
+        const versionContent = await localHistoryGateway.readVersion(
+          requestedRoot,
+          relativePath,
+          versionId,
+        );
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        // Snapshot the pre-revert content (best-effort) so the revert can be
+        // undone from history too.
+        const preRevertContent = currentLocalHistoryContent();
+        if (preRevertContent !== null && preRevertContent !== versionContent) {
+          await captureLocalHistorySnapshot(
+            requestedRoot,
+            absolutePath,
+            preRevertContent,
+          );
+        }
+
+        await workspaceFiles.writeTextFile(absolutePath, versionContent);
+        filePrefetchCacheRef.current.invalidate(absolutePath);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        // Record the reverted content as the newest version too, so the file's
+        // current on-disk state always has a matching snapshot.
+        await captureLocalHistorySnapshot(
+          requestedRoot,
+          absolutePath,
+          versionContent,
+        );
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setDocuments((current) => {
+          const existing = current[absolutePath];
+
+          if (!existing) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [absolutePath]: {
+              ...existing,
+              content: versionContent,
+              savedContent: versionContent,
+            },
+          };
+        });
+
+        const reverted = documentsRef.current[absolutePath];
+        if (reverted) {
+          await syncSavedDocument(reverted);
+          await syncSavedJavaScriptTypeScriptDocument(reverted);
+        }
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setMessage("Reverted to selected local history version");
+        // Refresh the panel so the new version list + diff reflect the revert.
+        void openLocalHistory();
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Local History", error);
+      }
+    },
+    [
+      captureLocalHistorySnapshot,
+      currentLocalHistoryContent,
+      localHistoryGateway,
+      openLocalHistory,
+      reportErrorForActiveWorkspaceRoot,
+      syncSavedDocument,
+      syncSavedJavaScriptTypeScriptDocument,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
+
+  // Loads the diff for a single commit in the file history panel. The requested
+  // root, relative path, and request token are captured up front; after the
+  // await we re-check both the active workspace root and the token so a stale
+  // result from a switched-away tab or a superseded click is dropped.
+  const selectFileHistoryCommit = useCallback(
+    async (sha: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const relativePath = fileHistoryRelativePathRef.current;
+
+      if (!requestedRoot || !relativePath) {
+        return;
+      }
+
+      const requestToken = fileHistoryDiffRequestTokenRef.current + 1;
+      fileHistoryDiffRequestTokenRef.current = requestToken;
+      setFileHistorySelectedSha(sha);
+      setFileHistoryDiffLoading(true);
+
+      try {
+        const diff = await gitGateway.fileCommitDiff(
+          requestedRoot,
+          relativePath,
+          sha,
+        );
+
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
+          fileHistoryDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setFileHistoryDiff(diff);
+      } catch (error) {
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
+          fileHistoryDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setFileHistoryDiff(null);
+        reportError("File History", error);
+      } finally {
+        if (
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) &&
+          fileHistoryDiffRequestTokenRef.current === requestToken
+        ) {
+          setFileHistoryDiffLoading(false);
+        }
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
+  );
+
+  // Opens the file history panel for the active document. The requested root and
+  // the active document's relative path are captured up front; after the await
+  // we re-check the active workspace root and the request token so a stale
+  // history list from a switched-away tab is dropped (per-tab isolation).
+  const openFileHistory = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+    const document = activeDocumentRef.current;
+
+    if (!requestedRoot || !document) {
+      return;
+    }
+
+    const requestedDocumentPath = document.path;
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocumentPath,
+    );
+
+    if (!relativePath) {
+      return;
+    }
+
+    const requestToken = fileHistoryRequestTokenRef.current + 1;
+    fileHistoryRequestTokenRef.current = requestToken;
+    // Reset any previously selected commit/diff for the new file.
+    fileHistoryDiffRequestTokenRef.current += 1;
+    fileHistoryRelativePathRef.current = relativePath;
+    setFileHistoryRelativePath(relativePath);
+    setFileHistorySelectedSha(null);
+    setFileHistoryDiff(null);
+    setFileHistoryDiffLoading(false);
+    setFileHistoryCommits([]);
+    setFileHistoryPanelOpen(true);
+    setFileHistoryLoading(true);
+
+    // Re-checks that, after the history await, the request still belongs to the
+    // active workspace root, the active document, and the latest open request.
+    // A switched-away tab or a superseded reopen drops the stale result.
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current?.path === requestedDocumentPath &&
+      fileHistoryRequestTokenRef.current === requestToken;
+
+    try {
+      const commits = await gitGateway.fileHistory(requestedRoot, relativePath);
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setFileHistoryCommits(commits);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setFileHistoryCommits([]);
+      reportError("File History", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setFileHistoryLoading(false);
+      }
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
+
+  const closeGitStashPanel = useCallback(() => {
+    // Invalidate any in-flight list/diff requests so a late resolve cannot
+    // repopulate a closed panel.
+    gitStashRequestTokenRef.current += 1;
+    gitStashDiffRequestTokenRef.current += 1;
+    setGitStashPanelOpen(false);
+    setGitStashEntries([]);
+    setGitStashLoading(false);
+    setGitStashMessage("");
+    setGitStashSelectedIndex(null);
+    setGitStashDiff(null);
+    setGitStashDiffLoading(false);
+  }, []);
+
+  // Reloads the stash list for the active workspace. The requested root is
+  // captured up front and re-checked (with the request token) after the await
+  // so a stale list from a switched-away tab is dropped (per-tab isolation).
+  const refreshGitStashes = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    const requestToken = (gitStashRequestTokenRef.current += 1);
+    setGitStashLoading(true);
+
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      gitStashRequestTokenRef.current === requestToken;
+
+    try {
+      const entries = await gitGateway.stashList(requestedRoot);
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitStashEntries(entries);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitStashEntries([]);
+      reportError("Git Stash", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setGitStashLoading(false);
+      }
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
+
+  const openGitStashPanel = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    // Reset any prior selection/diff before the new list loads.
+    gitStashDiffRequestTokenRef.current += 1;
+    setGitStashMessage("");
+    setGitStashSelectedIndex(null);
+    setGitStashDiff(null);
+    setGitStashDiffLoading(false);
+    setGitStashEntries([]);
+    setGitStashPanelOpen(true);
+
+    await refreshGitStashes();
+  }, [refreshGitStashes, workspaceRoot]);
+
+  // Loads the diff for a selected stash. The requested root and stash index are
+  // captured up front; after the await we re-check the active root and the diff
+  // request token so a stale diff from a switched-away tab or a superseded
+  // selection is dropped (per-tab, per-selection isolation).
+  const selectGitStash = useCallback(
+    async (index: number) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      const requestToken = (gitStashDiffRequestTokenRef.current += 1);
+      setGitStashSelectedIndex(index);
+      setGitStashDiffLoading(true);
+
+      const isCurrentRequest = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        gitStashDiffRequestTokenRef.current === requestToken;
+
+      try {
+        const diff = await gitGateway.stashShow(requestedRoot, index);
+
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setGitStashDiff(diff);
+      } catch (error) {
+        if (!isCurrentRequest()) {
+          return;
+        }
+
+        setGitStashDiff(null);
+        reportError("Git Stash", error);
+      } finally {
+        if (isCurrentRequest()) {
+          setGitStashDiffLoading(false);
+        }
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
+  );
+
+  const saveGitStash = useCallback(
+    async (message: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const trimmed = message.trim();
+
+      if (!requestedRoot || trimmed.length === 0) {
+        return;
+      }
+
+      setGitStashLoading(true);
+
+      try {
+        await gitGateway.stashSave(requestedRoot, trimmed);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setGitStashMessage("");
+        setMessage("Stashed working tree changes");
+        // Refresh the panel list and the changes panel (the working tree is now
+        // clean), both scoped to the requested root.
+        await refreshGitStashes();
+        await refreshGitStatus();
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git Stash", error);
+        }
+      } finally {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitStashLoading(false);
+        }
+      }
+    },
+    [gitGateway, refreshGitStashes, refreshGitStatus, reportError, workspaceRoot],
+  );
+
+  const applyGitStash = useCallback(
+    async (index: number) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      setGitStashLoading(true);
+
+      try {
+        await gitGateway.stashApply(requestedRoot, index);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setMessage("Applied stash to working tree");
+        await refreshGitStatus();
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git Stash", error);
+        }
+      } finally {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitStashLoading(false);
+        }
+      }
+    },
+    [gitGateway, refreshGitStatus, reportError, workspaceRoot],
+  );
+
+  const popGitStash = useCallback(
+    async (index: number) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      setGitStashLoading(true);
+
+      try {
+        await gitGateway.stashPop(requestedRoot, index);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setGitStashSelectedIndex(null);
+        setGitStashDiff(null);
+        setMessage("Popped stash into working tree");
+        await refreshGitStashes();
+        await refreshGitStatus();
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git Stash", error);
+        }
+      } finally {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitStashLoading(false);
+        }
+      }
+    },
+    [gitGateway, refreshGitStashes, refreshGitStatus, reportError, workspaceRoot],
+  );
+
+  // Dropping a stash is DESTRUCTIVE and irreversible, so it is gated behind an
+  // explicit confirmation. The requested root is captured before the confirm and
+  // re-checked after the await so a tab switch during the operation never mutates
+  // another workspace's panel (per-tab isolation).
+  const dropGitStash = useCallback(
+    async (index: number) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      if (
+        !prompter.confirm(
+          "Drop this stash? This permanently discards the stashed changes.",
+        )
+      ) {
+        return;
+      }
+
+      setGitStashLoading(true);
+
+      try {
+        await gitGateway.stashDrop(requestedRoot, index);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setGitStashSelectedIndex(null);
+        setGitStashDiff(null);
+        setMessage("Dropped stash");
+        await refreshGitStashes();
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          reportError("Git Stash", error);
+        }
+      } finally {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitStashLoading(false);
+        }
+      }
+    },
+    [gitGateway, prompter, refreshGitStashes, reportError, workspaceRoot],
+  );
+
+  const closeGitBranchPanel = useCallback(() => {
+    // Invalidate any in-flight list request so a late resolve cannot repopulate
+    // a closed panel.
+    gitBranchRequestTokenRef.current += 1;
+    setGitBranchPanelOpen(false);
+    setGitBranchEntries([]);
+    setGitBranchLoading(false);
+  }, []);
+
+  const refreshGitBranches = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    const requestToken = (gitBranchRequestTokenRef.current += 1);
+    setGitBranchLoading(true);
+
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      gitBranchRequestTokenRef.current === requestToken;
+
+    try {
+      const branches = await gitGateway.branchList(requestedRoot);
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitBranchEntries(branches);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitBranchEntries([]);
+      reportError("Git Branch", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setGitBranchLoading(false);
+      }
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
+
+  const openGitBranchPanel = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    setGitBranchEntries([]);
+    setGitBranchPanelOpen(true);
+
+    await refreshGitBranches();
+  }, [refreshGitBranches, workspaceRoot]);
+
+  const switchGitBranch = useCallback(
+    async (name: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const trimmed = name.trim();
+
+      if (!requestedRoot || trimmed.length === 0) {
+        return;
+      }
+
+      setGitBranchLoading(true);
+
+      try {
+        await gitGateway.switchBranch(requestedRoot, trimmed);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setMessage(`Switched to branch ${trimmed}`);
+        closeGitBranchPanel();
+        // The status-bar branch indicator and the changes panel both read the
+        // refreshed status, scoped to the requested root.
+        await refreshGitStatus();
+      } catch (error) {
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        // `git switch` (no `-f`/`--discard`) refuses rather than discard local
+        // changes. Surface a clear, actionable notice that points the user at
+        // the stash workflow; no work was lost.
+        reportError(
+          "Git Branch",
+          new Error(
+            "Cannot switch branches with uncommitted changes. Commit or stash your changes first (Git: Stash Changes).",
+          ),
+        );
+      } finally {
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitBranchLoading(false);
+        }
+      }
+    },
+    [
+      closeGitBranchPanel,
+      gitGateway,
+      refreshGitStatus,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const createGitBranch = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    const name = prompter.prompt("New branch name", "feature/");
+
+    if (name === null) {
+      return;
+    }
+
+    const trimmed = name.trim();
+
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    setGitBranchLoading(true);
+
+    try {
+      // `create_branch` validates the name against git's ref grammar and creates
+      // the branch WITHOUT switching, so uncommitted work is never touched.
+      await gitGateway.createBranch(requestedRoot, trimmed);
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      setMessage(`Created branch ${trimmed}`);
+      await refreshGitBranches();
+    } catch (error) {
+      if (
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        reportError("Git Branch", error);
+      }
+    } finally {
+      if (
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        setGitBranchLoading(false);
+      }
+    }
+  }, [gitGateway, prompter, refreshGitBranches, reportError, workspaceRoot]);
+
   // The cursor anchor for next/previous bookmark navigation. Uses the active
   // document plus the live editor position so navigation steps relative to where
   // the user is, not an arbitrary start.
@@ -8994,6 +11246,62 @@ export function useWorkbenchController(
     ],
   );
 
+  // Probes a list of deterministic PSR-4 candidate paths and returns only those
+  // that actually exist AND declare the requested class. This is the cheap,
+  // instant alternative to the project-wide findPhpClassSourcePathsByFileName
+  // fuzzy search: each probe is a single read against a known path. The caller
+  // owns the requested-root capture; we re-check it after every await and bail
+  // with [] the moment the active workspace changes, so a stale resolution can
+  // never leak a path into another project tab.
+  const verifyPhpClassCandidatePaths = useCallback(
+    async (
+      candidatePaths: string[],
+      normalizedClassName: string,
+      isRequestedRootActive: () => boolean,
+    ): Promise<string[]> => {
+      const normalizedLookup = normalizedClassName.toLowerCase();
+      const verified: string[] = [];
+      const visited = new Set<string>();
+
+      for (const path of candidatePaths) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (visited.has(path)) {
+          continue;
+        }
+
+        visited.add(path);
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          if (
+            phpCurrentClassName(content)?.toLowerCase() === normalizedLookup
+          ) {
+            verified.push(path);
+          }
+        } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          // Missing/unreadable candidate (the guessed path does not exist) -
+          // skip it and keep probing the remaining candidates.
+          continue;
+        }
+      }
+
+      return verified;
+    },
+    [readNavigationFileContent],
+  );
+
   const findPhpClassSourcePathsByFileName = useCallback(
     async (className: string): Promise<string[]> => {
       const requestedRoot = workspaceRoot;
@@ -9073,13 +11381,12 @@ export function useWorkbenchController(
         return [];
       }
 
-      const paths = new Set(
-        phpClassPathCandidates(
-          requestedRoot,
-          requestedDescriptor.php,
-          normalizedClassName,
-        ),
+      const candidatePaths = phpClassPathCandidates(
+        requestedRoot,
+        requestedDescriptor.php,
+        normalizedClassName,
       );
+      const paths = new Set(candidatePaths);
       let hasIndexedPath = false;
 
       if (shouldIndexWorkspace(intelligenceMode)) {
@@ -9110,6 +11417,39 @@ export function useWorkbenchController(
 
           hasIndexedPath = true;
           paths.add(symbol.path);
+        }
+      }
+
+      // INSTANT PATH (Fleet parity, every mode incl. basic/light): the PSR-4
+      // candidates above are deterministic guesses. Before paying for the
+      // project-wide fuzzy file search, probe those candidates directly - a
+      // candidate read is a single I/O against a known path (sub-ms), whereas
+      // findPhpClassSourcePathsByFileName walks the whole workspace tree and
+      // reads dozens of files (cold 5-10s on large repos). If a candidate
+      // exists and declares the requested class, it is the authoritative
+      // target and we skip the expensive fallback entirely. Skip when the index
+      // already produced a verified path (hasIndexedPath) - that is just as
+      // authoritative and avoids redundant reads.
+      if (!hasIndexedPath && candidatePaths.length > 0) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const verifiedCandidates = await verifyPhpClassCandidatePaths(
+          candidatePaths,
+          normalizedClassName,
+          isRequestedRootActive,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (verifiedCandidates.length > 0) {
+          // Authoritative resolution from a deterministic candidate - no
+          // project-wide search needed. Return only the verified paths so
+          // downstream readers do not have to skip non-existent guesses.
+          return verifiedCandidates;
         }
       }
 
@@ -9149,6 +11489,7 @@ export function useWorkbenchController(
       findPhpClassSourcePathsByFileName,
       intelligenceMode,
       projectSymbolSearch,
+      verifyPhpClassCandidatePaths,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -15202,6 +17543,75 @@ export function useWorkbenchController(
           }));
       }
 
+      const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && gateAbilityContext && activeDocument) {
+        const normalizedPrefix = gateAbilityContext.prefix.toLowerCase();
+        const abilities = await collectPhpLaravelGateAbilityTargets(
+          source,
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return abilities
+          .filter((ability) =>
+            ability.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((ability) => ({
+            declaringClassName: ability.relativePath ?? getFileName(ability.path),
+            insertText: phpLaravelGateAbilityCompletionInsertText(ability.name),
+            kind: "config",
+            name: ability.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
+      const middlewareAliasContext = phpLaravelMiddlewareAliasReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (
+        isLaravelFrameworkActive &&
+        middlewareAliasContext &&
+        !middlewareAliasContext.aliasParameterStarted &&
+        activeDocument
+      ) {
+        const normalizedPrefix = middlewareAliasContext.alias.toLowerCase();
+        const aliases = await collectPhpLaravelMiddlewareAliasTargets(
+          source,
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return aliases
+          .filter((alias) =>
+            alias.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((alias) => ({
+            declaringClassName: alias.relativePath ?? getFileName(alias.path),
+            insertText: phpLaravelMiddlewareAliasCompletionInsertText(
+              alias.name,
+            ),
+            kind: "config",
+            name: alias.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const authGuardContext = phpLaravelAuthGuardReferenceContextAt(
         source,
         position,
@@ -15686,6 +18096,8 @@ export function useWorkbenchController(
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
+      collectPhpLaravelGateAbilityTargets,
+      collectPhpLaravelMiddlewareAliasTargets,
       collectPhpLaravelViewTargets,
       activeDocument,
       isLaravelFrameworkActive,
@@ -15753,6 +18165,60 @@ export function useWorkbenchController(
       resolvePhpStaticMethodCompletions,
       workspaceRoot,
     ],
+  );
+
+  const providePhpParameterInlayHints = useCallback(
+    async (
+      source: string,
+      range: { endLine: number; startLine: number },
+    ): Promise<PhpParameterNameInlayHint[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const calls = phpCallArgumentInlayContexts(source, range);
+
+      if (calls.length === 0) {
+        return [];
+      }
+
+      // Cap the calls resolved per viewport so a dense file does not fan out an
+      // unbounded number of signature resolutions on every scroll.
+      const hints: PhpParameterNameInlayHint[] = [];
+
+      for (const call of calls.slice(0, PHP_INLAY_HINT_CALL_LIMIT)) {
+        const firstArgument = call.arguments[0];
+
+        if (!firstArgument) {
+          continue;
+        }
+
+        // Reuse the signature-resolution flow by probing a position inside the
+        // call's argument list; it resolves method / static / receiver targets
+        // (free functions resolve to null, so they yield no hint).
+        const signature = await providePhpMethodSignature(source, {
+          column: firstArgument.character + 1,
+          lineNumber: firstArgument.line + 1,
+        });
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (!signature) {
+          continue;
+        }
+
+        hints.push(...phpParameterNameInlayHints(call, signature.parameters));
+      }
+
+      return hints;
+    },
+    [providePhpMethodSignature, workspaceRoot],
   );
 
   const collectPhpAbstractMembersToImplement = useCallback(
@@ -15975,6 +18441,112 @@ export function useWorkbenchController(
     [readNavigationFileContent, resolvePhpClassSourcePaths],
   );
 
+  // Builds the PhpStorm "Create class X" quick fix from a referenced-but-missing
+  // type under the cursor. Conservative: offered only when the reference is NOT
+  // already imported-and-resolvable, NOT a PHP built-in, the resolved FQN maps
+  // to a project PSR-4 destination (uncertain destination -> no offer), the
+  // resolved class does NOT already exist on disk, and the target file is not
+  // already present. Cross-file probes make it async; the requested root is
+  // re-checked after every await so a tab switch mid-flight drops the offer
+  // (per-workspace isolation). Returns an action that WRITES the skeleton file
+  // (via `newFile` -> applyPhpCodeActionNewFile) with NO in-document edit.
+  const phpCreateClassCodeAction = useCallback(
+    async (
+      source: string,
+      range: PhpCodeActionRange,
+      isRequestedRootActive: () => boolean,
+    ): Promise<PhpCodeActionDescriptor | null> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return null;
+      }
+
+      const reference = detectUnknownClassReference(source, range.start);
+
+      if (!reference) {
+        return null;
+      }
+
+      const fqn = resolvePhpClassName(source, reference.reference);
+
+      if (!fqn || isPhpBuiltinTypeName(fqn)) {
+        return null;
+      }
+
+      const destination = phpCreateClassDestination(
+        requestedRoot,
+        requestedDescriptor.php.psr4Roots,
+        VENDOR_PSR4_PREFIXES,
+        fqn,
+      );
+
+      if (!destination) {
+        return null;
+      }
+
+      // The class must not already exist. `resolvePhpClassSourcePaths` returns
+      // best-guess PSR-4 candidate paths that may NOT exist on disk, so each
+      // candidate is verified with a real read before it counts as "exists" -
+      // otherwise the deterministic guess (the destination itself) would always
+      // suppress the offer. A single existing path means the class is already
+      // defined somewhere, so nothing is created.
+      const candidatePaths = await resolvePhpClassSourcePaths(fqn);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      for (const candidatePath of candidatePaths) {
+        const existingSource = await readTestFileIfExists(candidatePath);
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        if (existingSource !== null) {
+          return null;
+        }
+      }
+
+      // The destination file itself must not already exist (a different class in
+      // the expected file, or a race) - never overwrite. (Covered by the loop
+      // above when the destination is among the candidates, but re-checked here
+      // so a non-candidate destination is still guarded.)
+      const existingTarget = await readTestFileIfExists(destination.path);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      if (existingTarget !== null) {
+        return null;
+      }
+
+      const shortName = fqn.slice(fqn.lastIndexOf("\\") + 1);
+      const skeleton = renderPhpTypeSkeleton(
+        reference.kind,
+        shortName,
+        destination.namespace,
+      );
+
+      return {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: { content: skeleton, path: destination.path },
+        title: `Create ${reference.kind} ${shortName}`,
+      };
+    },
+    [
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const providePhpCodeActions = useCallback(
     async (
       source: string,
@@ -15989,6 +18561,32 @@ export function useWorkbenchController(
       }
 
       const actions: PhpCodeActionDescriptor[] = [];
+
+      // "Remove unused import" pairs with the unused-import inspection. It is a
+      // single-line deletion valid anywhere a top-level `use` sits (not only in
+      // a class), so it runs before the class-only guard below. Offered only
+      // when the cursor is on a conservatively-detected unused class import.
+      const removeUnusedImportAction = phpRemoveUnusedImportCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedImportAction) {
+        actions.push(removeUnusedImportAction);
+      }
+
+      // "Remove unused variable" pairs with the unused-variable inspection. A
+      // local assignment can sit in a class method OR a free function, and the
+      // action is offered only for a side-effect-free assignment, so it runs
+      // before the class-only guard below.
+      const removeUnusedVariableAction = phpRemoveUnusedVariableCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedVariableAction) {
+        actions.push(removeUnusedVariableAction);
+      }
 
       // "Extract variable" is a pure single-file synthesis from the current
       // selection and is valid anywhere a PHP expression sits (class body or a
@@ -16010,8 +18608,62 @@ export function useWorkbenchController(
         actions.push(inlineVariableAction);
       }
 
+      // "Add parameter" (Change Signature - slice 1) appends an optional
+      // placeholder parameter to the enclosing function's signature. It is a
+      // pure single-file synthesis valid on a class method OR a free function,
+      // so it runs before the class-only guard below.
+      const addParameterAction = phpAddParameterCodeAction(source, range);
+
+      if (addParameterAction) {
+        actions.push(addParameterAction);
+      }
+
+      // "Add return type" / "Add type hint" (PhpStorm Alt+Enter) conservatively
+      // infer a missing return type / parameter type and insert it. Both are
+      // pure single-file additive insertions valid on a class method OR a free
+      // function (and, for the return type, an abstract / interface
+      // declaration), so they run before the class-only guard below.
+      const addReturnTypeAction = phpAddReturnTypeCodeAction(source, range);
+
+      if (addReturnTypeAction) {
+        actions.push(addReturnTypeAction);
+      }
+
+      const addParameterTypeAction = phpAddParameterTypeCodeAction(
+        source,
+        range,
+      );
+
+      if (addParameterTypeAction) {
+        actions.push(addParameterTypeAction);
+      }
+
+      // "Create class X" (PhpStorm Alt+Enter) when the cursor sits on a
+      // referenced-but-unresolved class/interface/trait/enum (`new X()`,
+      // `X::method()`/`X::CONST`, a type hint / return type, `extends`/
+      // `implements`, `catch (X $e)`). It WRITES a new PSR-4 file with a minimal
+      // skeleton, so it runs before the class-only guard (a reference may sit in
+      // a class header type position OR a free function). The build is async
+      // (existence probes) and re-checks the requested root after every await so
+      // a tab switch mid-flight drops a stale offer (per-workspace isolation).
+      const createClassAction = await phpCreateClassCodeAction(
+        source,
+        range,
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      if (createClassAction) {
+        actions.push(createClassAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
-        return actions;
+        // Free-function context: only the pre-class-guard refactors are offered.
+        // Order them like the class path so the list stays "most likely first".
+        return orderPhpCodeActions(actions);
       }
 
       const structure = parsePhpClassStructure(source);
@@ -16023,6 +18675,54 @@ export function useWorkbenchController(
 
       if (createFromUsageAction) {
         actions.push(createFromUsageAction);
+      }
+
+      // "Remove unused method" pairs with the unused-private-method inspection.
+      // Offered only when the cursor sits on a conservatively-detected unused
+      // private method; deletes the whole method (and its decorating lines).
+      const removeUnusedMethodAction = phpRemoveUnusedMethodCodeAction(
+        source,
+        range,
+      );
+
+      if (removeUnusedMethodAction) {
+        actions.push(removeUnusedMethodAction);
+      }
+
+      // "Extract method" lifts a contiguous, whole-statement selection inside a
+      // class method into a new private method and replaces it with a call. It
+      // is a pure single-file synthesis from the selection; the conservative
+      // planner returns null whenever the extraction could change behaviour.
+      const extractMethodAction = phpExtractMethodCodeAction(source, range);
+
+      if (extractMethodAction) {
+        actions.push(extractMethodAction);
+      }
+
+      // "Extract interface" (PhpStorm) synthesises a sibling
+      // `<Class>Interface.php` from the class's public instance methods and adds
+      // an `implements` clause to the class. It needs the active document's
+      // path to place the new file (PSR-4 sibling), so it is keyed off
+      // `activeDocument`. The conservative planner returns null for anything but
+      // a plain class with public instance methods.
+      const extractInterfaceAction = phpExtractInterfaceCodeAction(
+        source,
+        range,
+        activeDocument?.path ?? null,
+      );
+
+      if (extractInterfaceAction?.newFile) {
+        const existingInterface = await readTestFileIfExists(
+          extractInterfaceAction.newFile.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (existingInterface === null) {
+          actions.push(extractInterfaceAction);
+        }
       }
 
       // "Introduce constant / field" are pure single-file syntheses keyed off the
@@ -16111,11 +18811,51 @@ export function useWorkbenchController(
         actions.push(optimizeImportsAction);
       }
 
-      return actions;
+      // "Import class" (PhpStorm Alt+Enter -> Import): when the cursor sits on an
+      // unimported, unqualified class reference, look the short name up in the
+      // workspace symbol index and offer a `use FQN;` insertion per candidate
+      // namespace. Indexed-only (the index is per-root); the requested root is
+      // re-checked after the async search and before mutating `actions` so a tab
+      // switch mid-search drops stale results (per-workspace isolation).
+      const importShortName = phpImportClassShortNameAt(source, range);
+
+      if (importShortName && shouldIndexWorkspace(intelligenceMode)) {
+        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+          requestedRoot,
+          importShortName,
+          25,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const candidateFqns = indexedSymbols
+          .filter(isTypeProjectSymbol)
+          .filter(
+            (symbol) =>
+              symbol.name.toLowerCase() === importShortName.toLowerCase(),
+          )
+          .map((symbol) => symbol.fullyQualifiedName);
+
+        for (const importAction of phpImportClassCodeActions(
+          source,
+          candidateFqns,
+        )) {
+          actions.push(importAction);
+        }
+      }
+
+      return orderPhpCodeActions(actions);
     },
     [
+      activeDocument?.path,
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
+      intelligenceMode,
+      phpCreateClassCodeAction,
+      projectSymbolSearch,
+      readTestFileIfExists,
       workspaceRoot,
     ],
   );
@@ -17214,6 +19954,126 @@ export function useWorkbenchController(
     ],
   );
 
+  // Walks the resolved class and its trait / mixin / supertype hierarchy for a
+  // declared `const NAME` (or enum `case NAME`) and opens its declaration line.
+  // Mirrors openDirectPhpPropertyTarget so an inherited constant resolves to the
+  // ancestor that actually declares it. Captures the requested workspace root up
+  // front and re-checks it after every await so a tab switch drops stale results.
+  const openDirectPhpClassConstantTarget = useCallback(
+    async (className: string, constantName: string): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return false;
+      }
+
+      const visitedClassNames = new Set<string>();
+      const openConstantInClassHierarchy = async (
+        candidateClassName: string,
+      ): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedCandidate.toLowerCase();
+
+        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
+          return false;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            const position = phpClassConstantPositionOrNull(content, constantName);
+
+            if (position) {
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
+              return openNavigationTarget(path, position, constantName);
+            }
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassReference(
+                content,
+                traitName,
+              );
+
+              if (
+                resolvedTraitName &&
+                (await openConstantInClassHierarchy(resolvedTraitName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassReference(
+                content,
+                mixinName,
+              );
+
+              if (
+                resolvedMixinName &&
+                (await openConstantInClassHierarchy(resolvedMixinName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const superTypeName of phpSuperTypeReferences(content)) {
+              const resolvedSuperTypeName = resolvePhpClassReference(
+                content,
+                superTypeName,
+              );
+
+              if (
+                resolvedSuperTypeName &&
+                (await openConstantInClassHierarchy(resolvedSuperTypeName))
+              ) {
+                return true;
+              }
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return openConstantInClassHierarchy(className);
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpSourceInheritsOrImplementsType = useCallback(
     async (
       source: string,
@@ -17873,7 +20733,13 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         !requestedRoot ||
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const className = resolvePhpClassName(
+      // resolvePhpClassReference (not resolvePhpClassName) so a `self::`,
+      // `static::`, or `parent::method()` static call maps to the enclosing /
+      // extended class. resolvePhpClassName treats `parent` as a literal type
+      // name (`<namespace>\parent`) and never reaches the parent declaration,
+      // so `parent::report()` / `parent::toImportFields()` go-to-definition
+      // failed before falling through to phpactor.
+      const className = resolvePhpClassReference(
         activeDocument.content,
         context.className,
       );
@@ -17959,6 +20825,58 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
+      resolvePhpClassReference,
+      workspaceRoot,
+    ],
+  );
+
+  // Navigates a class constant / enum case access (`Class::CONST`,
+  // `self::CONST`, `parent::CONST`) to its declaration. Resolves the receiver
+  // with resolvePhpClassReference so self/static map to the enclosing class and
+  // parent to the extended one, walks the hierarchy for the declaring const, and
+  // falls back to the class declaration. Returns false (without a misleading
+  // `()` message) so the phpactor fallback still runs when nothing is found.
+  const goToPhpClassConstantDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "classConstant" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        !requestedRoot ||
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const className = resolvePhpClassReference(
+        activeDocument.content,
+        context.className,
+      );
+
+      if (!className) {
+        return false;
+      }
+
+      const constantTargetOpened = await openDirectPhpClassConstantTarget(
+        className,
+        context.constantName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (constantTargetOpened) {
+        return true;
+      }
+
+      return openPhpClassTarget(className, context.className);
+    },
+    [
+      activeDocument,
+      openDirectPhpClassConstantTarget,
+      openPhpClassTarget,
+      resolvePhpClassReference,
       workspaceRoot,
     ],
   );
@@ -18796,6 +21714,10 @@ export function useWorkbenchController(
       return goToPhpStaticMethodCallDefinition(context);
     }
 
+    if (context.kind === "classConstant") {
+      return goToPhpClassConstantDefinition(context);
+    }
+
     if (context.kind === "laravelRelationString") {
       return goToPhpLaravelRelationStringDefinition(context);
     }
@@ -18905,6 +21827,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
@@ -18923,6 +21846,140 @@ export function useWorkbenchController(
     goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,
     openPhpClassTarget,
+  ]);
+
+  const goToSuperMethod = useCallback(async (): Promise<boolean> => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return false;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      return false;
+    }
+
+    const source = activeDocument.content;
+    const methodName = phpEnclosingMethodNameAt(source, editorPosition);
+
+    if (!methodName) {
+      return false;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!requestedRoot || !requestedDescriptor?.php) {
+      return false;
+    }
+
+    // Walk a super type's hierarchy (extends / implements / used traits /
+    // mixins) looking for the overridden method declaration. The current class
+    // is intentionally excluded: navigation must land on the PARENT / interface
+    // declaration, never on the method we are standing in.
+    const visitedClassNames = new Set<string>();
+    const openSuperMethodInHierarchy = async (
+      candidateClassName: string,
+    ): Promise<boolean> => {
+      const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+      const visitedKey = normalizedCandidate.toLowerCase();
+
+      if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
+        return false;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          const position =
+            phpMethodPositionOrNull(content, methodName) ??
+            phpDocMethodPositionOrNull(content, methodName);
+
+          if (position) {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            return openNavigationTarget(path, position, `${methodName}()`);
+          }
+
+          for (const superReference of phpSuperMethodHierarchyReferences(
+            content,
+          )) {
+            const resolvedReference = resolvePhpClassReference(
+              content,
+              superReference,
+            );
+
+            if (
+              resolvedReference &&
+              (await openSuperMethodInHierarchy(resolvedReference))
+            ) {
+              return true;
+            }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+          }
+        } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          continue;
+        }
+      }
+
+      return false;
+    };
+
+    for (const superReference of phpSuperMethodHierarchyReferences(source)) {
+      const resolvedReference = resolvePhpClassReference(source, superReference);
+
+      if (
+        resolvedReference &&
+        (await openSuperMethodInHierarchy(resolvedReference))
+      ) {
+        return true;
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    setMessage(`No super method found for ${methodName}().`);
+    return false;
+  }, [
+    activeDocument,
+    openNavigationTarget,
+    readNavigationFileContent,
+    resolvePhpClassReference,
+    resolvePhpClassSourcePaths,
+    workspaceDescriptor,
+    workspaceRoot,
   ]);
 
   const implementationTargetsFromLocations = useCallback(
@@ -19413,6 +22470,10 @@ export function useWorkbenchController(
           return goToPhpStaticMethodCallDefinition(context);
         }
 
+        if (context.kind === "classConstant") {
+          return goToPhpClassConstantDefinition(context);
+        }
+
         if (context.kind === "laravelRelationString") {
           return goToPhpLaravelRelationStringDefinition(context);
         }
@@ -19589,6 +22650,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpLaravelAuthGuardDefinition,
+    goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
@@ -20403,6 +23465,56 @@ export function useWorkbenchController(
     await applyNavigationLocation(next.target);
   }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
 
+  // Jumps to a recent location from the panel. Mirrors the navigation flow:
+  // snapshot where we were (so Back works and the spot stays in history), then
+  // reveal the target. Isolation: the requested root is captured up front and
+  // re-checked after the await, so a workspace switch mid-jump drops the stale
+  // result (no reveal, no panel mutation) for another tab.
+  const openRecentLocation = useCallback(
+    async (location: RecentLocation) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      recordCurrentNavigationLocation();
+
+      const target: NavigationLocation = {
+        path: location.path,
+        position: { column: location.column, lineNumber: location.line },
+      };
+      const opened = await openPathForNavigation(target.path, {
+        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+          requestedRoot,
+          target.path,
+        ),
+      });
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      if (!opened) {
+        // The file vanished out from under the panel (deleted/moved outside the
+        // editor). Drop every dead position so it stops being offered.
+        forgetRecentLocationsForPath(location.path);
+        setRecentLocationsPanelOpen(false);
+        return;
+      }
+
+      setEditorRevealTarget(target);
+      setRecentLocationsPanelOpen(false);
+    },
+    [
+      forgetRecentLocationsForPath,
+      openPathForNavigation,
+      recordCurrentNavigationLocation,
+    ],
+  );
+
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -20518,6 +23630,12 @@ export function useWorkbenchController(
       );
       setActivePath(nextPath);
       remapRecentFile(oldPath, { name: nextName, path: nextPath });
+      remapRecentLocations(oldPath, {
+        name: nextName,
+        path: nextPath,
+        relativePath:
+          workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
+      });
       setBookmarks((current) =>
         renameBookmarksForPath(current, oldPath, nextPath),
       );
@@ -20539,6 +23657,7 @@ export function useWorkbenchController(
     prompter,
     refreshDirectory,
     remapRecentFile,
+    remapRecentLocations,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -20586,6 +23705,7 @@ export function useWorkbenchController(
 
       closeDocument(deletedPath);
       forgetRecentFile(deletedPath);
+      forgetRecentLocationsForPath(deletedPath);
       setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
       clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
       await refreshDirectory(parentPath);
@@ -20602,6 +23722,7 @@ export function useWorkbenchController(
     closeActiveSurface,
     closeDocument,
     forgetRecentFile,
+    forgetRecentLocationsForPath,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
@@ -20663,6 +23784,70 @@ export function useWorkbenchController(
     ],
   );
 
+  const refreshOpenDocumentFromExternalFileChange = useCallback(
+    async (requestedRoot: string, path: string): Promise<void> => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const openDocument = documentsRef.current[path];
+
+      if (!canRefreshDocumentFromExternalFileChange(openDocument)) {
+        return;
+      }
+
+      let refreshedContent: string;
+
+      try {
+        refreshedContent = await workspaceFiles.readTextFile(path);
+      } catch {
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const latestDocument = documentsRef.current[path];
+
+      if (!canRefreshDocumentFromExternalFileChange(latestDocument)) {
+        return;
+      }
+
+      const refreshedDocument: EditorDocument = {
+        ...latestDocument,
+        content: refreshedContent,
+        savedContent: refreshedContent,
+      };
+
+      documentsRef.current = {
+        ...documentsRef.current,
+        [path]: refreshedDocument,
+      };
+      activeDocumentRef.current =
+        activeDocumentRef.current?.path === path
+          ? refreshedDocument
+          : activeDocumentRef.current;
+      setDocuments((current) => {
+        const currentDocument = current[path];
+
+        if (!canRefreshDocumentFromExternalFileChange(currentDocument)) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [path]: {
+            ...currentDocument,
+            content: refreshedContent,
+            savedContent: refreshedContent,
+          },
+        };
+      });
+    },
+    [workspaceFiles],
+  );
+
   const handleWorkspaceFileChange = useCallback(
     (event: WorkspaceFileChangeEvent) => {
       const requestedRoot = currentWorkspaceRootRef.current;
@@ -20693,8 +23878,16 @@ export function useWorkbenchController(
       if (event.kind === "created" || event.kind === "modified") {
         queueWorkspaceDirectoryRefresh(getParentPath(event.path));
       }
+
+      if (event.kind === "modified" && event.fileKind !== "directory") {
+        void refreshOpenDocumentFromExternalFileChange(requestedRoot, event.path);
+      }
     },
-    [handleExternalRemovedPath, queueWorkspaceDirectoryRefresh],
+    [
+      handleExternalRemovedPath,
+      queueWorkspaceDirectoryRefresh,
+      refreshOpenDocumentFromExternalFileChange,
+    ],
   );
 
   const toggleSmartMode = useCallback(async () => {
@@ -21481,6 +24674,11 @@ export function useWorkbenchController(
   ]);
 
   const closeFloatingSurface = useCallback((): boolean => {
+    if (searchEverywhereOpen) {
+      setSearchEverywhereOpen(false);
+      return true;
+    }
+
     if (referencesView) {
       setReferencesView(null);
       return true;
@@ -21541,6 +24739,11 @@ export function useWorkbenchController(
       return true;
     }
 
+    if (recentLocationsPanelOpen) {
+      setRecentLocationsPanelOpen(false);
+      return true;
+    }
+
     if (paletteOpen) {
       setPaletteOpen(false);
       return true;
@@ -21562,7 +24765,9 @@ export function useWorkbenchController(
     languageServerSetupOpen,
     paletteOpen,
     quickOpenOpen,
+    searchEverywhereOpen,
     recentFilesSwitcherOpen,
+    recentLocationsPanelOpen,
     referencesView,
     selectedGitChange,
     settingsOpen,
@@ -21598,9 +24803,75 @@ export function useWorkbenchController(
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
     setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
     setWorkspaceSymbolsOpen(true);
   }, []);
+
+  // Search Everywhere is additive: opening it closes the four separate dialogs
+  // it aggregates so only one search surface is ever visible, exactly like the
+  // other openers above. It works without a workspace too (commands/actions are
+  // always searchable); file/symbol sources simply stay empty until a root is
+  // open.
+  const openSearchEverywhere = useCallback(() => {
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setRecentFilesSwitcherOpen(false);
+    setRecentLocationsPanelOpen(false);
+    setTextSearchOpen(false);
+    setSearchEverywhereQuery("");
+    setSearchEverywhereFiles([]);
+    setSearchEverywhereSymbols([]);
+    setSearchEverywhereOpen(true);
+  }, []);
+
+  const activateSearchEverywhereItem = useCallback(
+    async (item: SearchEverywhereItem) => {
+      if (item.kind === "action") {
+        setSearchEverywhereOpen(false);
+
+        try {
+          await item.command.run();
+        } catch (error) {
+          reportError("Command", error);
+        }
+
+        return;
+      }
+
+      // Capture the requested root up front so a workspace switch during the
+      // open cannot reveal a symbol position in another tab's editor.
+      const requestedRoot = currentWorkspaceRootRef.current;
+      const path = item.kind === "file" ? item.file.path : item.symbol.path;
+      const name =
+        item.kind === "file" ? item.file.name : getFileName(item.symbol.path);
+
+      const opened = await openFile({ kind: "file", name, path });
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      if (!opened) {
+        return;
+      }
+
+      setSearchEverywhereOpen(false);
+
+      if (item.kind === "symbol") {
+        setEditorRevealTarget({
+          path: item.symbol.path,
+          position: editorPositionFromProjectSymbol(item.symbol),
+        });
+        setMessage(
+          `Opened ${item.symbol.name} ${item.symbol.relativePath}:${item.symbol.lineNumber}:${item.symbol.column}`,
+        );
+      }
+    },
+    [openFile, reportError],
+  );
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -21710,6 +24981,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.recentLocations",
+      title: "Recent Locations",
+      category: "File",
+      shortcut: shortcut("editor.recentLocations"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: openRecentLocationsPanel,
+    });
+
+    registry.register({
       id: "class.quickOpen",
       title: "Open Class",
       category: "PHP",
@@ -21731,6 +25011,15 @@ export function useWorkbenchController(
       isEnabled: (context) =>
         context.hasWorkspace && canSearchClassOpenSymbols,
       run: openWorkspaceSymbols,
+    });
+
+    registry.register({
+      id: "workbench.searchEverywhere",
+      title: "Search Everywhere",
+      category: "Workbench",
+      shortcut: shortcut("workbench.searchEverywhere"),
+      isEnabled: () => true,
+      run: openSearchEverywhere,
     });
 
     registry.register({
@@ -21992,6 +25281,17 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToSuperMethod",
+      title: "Go to Super Method",
+      category: "Editor",
+      shortcut: shortcut("editor.goToSuperMethod"),
+      isEnabled: () => activeDocument?.language === "php",
+      run: async () => {
+        await goToSuperMethod();
+      },
+    });
+
+    registry.register({
       id: "editor.fileStructure",
       title: "File Structure",
       category: "Editor",
@@ -22018,6 +25318,95 @@ export function useWorkbenchController(
         return isLanguageServerDocument(activeDocument);
       },
       run: openFileStructure,
+    });
+
+    registry.register({
+      id: "editor.toggleGitBlame",
+      title: "Annotate with Git Blame",
+      category: "Editor",
+      shortcut: shortcut("editor.toggleGitBlame"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: toggleGitBlame,
+    });
+
+    registry.register({
+      id: "editor.showFileHistory",
+      title: "Show File History",
+      category: "Editor",
+      shortcut: shortcut("editor.showFileHistory"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: () => {
+        void openFileHistory();
+      },
+    });
+
+    registry.register({
+      id: "editor.showLocalHistory",
+      title: "Local History: Show History",
+      category: "Editor",
+      shortcut: shortcut("editor.showLocalHistory"),
+      isEnabled: (context) =>
+        context.hasWorkspace && context.hasActiveDocument,
+      run: () => {
+        void openLocalHistory();
+      },
+    });
+
+    registry.register({
+      id: "git.stashChanges",
+      title: "Git: Stash Changes",
+      category: "Git",
+      shortcut: shortcut("git.stashChanges"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void openGitStashPanel();
+      },
+    });
+
+    registry.register({
+      id: "git.showStashes",
+      title: "Git: Show Stashes",
+      category: "Git",
+      shortcut: shortcut("git.showStashes"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void openGitStashPanel();
+      },
+    });
+
+    registry.register({
+      id: "git.switchBranch",
+      title: "Git: Switch Branch",
+      category: "Git",
+      shortcut: shortcut("git.switchBranch"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void openGitBranchPanel();
+      },
+    });
+
+    registry.register({
+      id: "git.newBranch",
+      title: "Git: New Branch",
+      category: "Git",
+      shortcut: shortcut("git.newBranch"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void createGitBranch();
+      },
+    });
+
+    registry.register({
+      id: "git.commit",
+      title: "Git: Commit",
+      category: "Git",
+      shortcut: shortcut("git.commit"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void commitGitChanges();
+      },
     });
 
     registry.register({
@@ -22401,6 +25790,7 @@ export function useWorkbenchController(
     goToDefinition,
     goToImplementation,
     goToSourceDefinition,
+    goToSuperMethod,
     goToTypeDefinition,
     gitDiffLoading,
     navigateBackward,
@@ -22410,9 +25800,11 @@ export function useWorkbenchController(
     openFileStructure,
     openReferencesPanel,
     openRecentFilesSwitcher,
+    openRecentLocationsPanel,
     openTypeHierarchy,
     openSettingsPanel,
     openWorkspaceSymbols,
+    openSearchEverywhere,
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
@@ -22432,6 +25824,13 @@ export function useWorkbenchController(
     toggleEditorFontLigatures,
     toggleTodoPanel,
     refreshWorkspaceTodos,
+    toggleGitBlame,
+    openFileHistory,
+    openLocalHistory,
+    openGitStashPanel,
+    openGitBranchPanel,
+    createGitBranch,
+    commitGitChanges,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
@@ -22462,6 +25861,31 @@ export function useWorkbenchController(
       activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
     ),
   };
+
+  // Combine the three raw sources into the categorized Search Everywhere model.
+  // Files/symbols are already query-filtered by their gateways; actions are
+  // filtered here against the live query + command context so disabled commands
+  // never show. Pure aggregation lives in the domain layer (searchEverywhere).
+  const searchEverywhereCommands = commandRegistry.list();
+  const searchEverywhereModel = useMemo(
+    () =>
+      buildSearchEverywhereModel({
+        query: searchEverywhereQuery,
+        files: searchEverywhereFiles,
+        symbols: searchEverywhereSymbols,
+        commands: searchEverywhereCommands,
+        context: commandContext,
+      }),
+    [
+      searchEverywhereQuery,
+      searchEverywhereFiles,
+      searchEverywhereSymbols,
+      searchEverywhereCommands,
+      commandContext.hasWorkspace,
+      commandContext.hasActiveDocument,
+      commandContext.activeDocumentDirty,
+    ],
+  );
 
   useEffect(() => {
     if (!workspaceRoot) {
@@ -22996,11 +26420,22 @@ export function useWorkbenchController(
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        doubleShiftDetectorRef.current.reset();
+
         if (closeFloatingSurface()) {
           event.preventDefault();
           event.stopPropagation();
         }
 
+        return;
+      }
+
+      // PhpStorm double-Shift -> Search Everywhere. The detector consumes every
+      // keydown so an intervening key cancels a pending first tap; it returns
+      // true only on the qualifying second bare Shift tap inside the window.
+      if (doubleShiftDetectorRef.current.handleKeyDown(event, Date.now())) {
+        event.preventDefault();
+        openSearchEverywhere();
         return;
       }
 
@@ -23017,6 +26452,22 @@ export function useWorkbenchController(
       }
 
       const keymap = appSettingsRef.current.keymap;
+
+      // Keydown hot path: a held bare key (ArrowUp/ArrowDown, plain letters)
+      // fires ~30 auto-repeat events/sec and can never match a keymap shortcut,
+      // so skip the ~35-iteration matching loop below for such events. The
+      // double-Shift detector and the explicit Escape/F12/Cmd+Q handlers above
+      // already ran, so this only short-circuits the per-command matching.
+      const bareKeyCache = bareKeyShortcutsRef.current;
+      if (bareKeyCache.keymap !== keymap) {
+        bareKeyCache.keymap = keymap;
+        bareKeyCache.keys = collectBareKeyShortcutKeys(keymap);
+      }
+
+      if (!eventCanMatchKeymapShortcut(event, bareKeyCache.keys)) {
+        return;
+      }
+
       const matches = (commandId: KeymapCommandId) =>
         matchesShortcut(event, shortcutForCommand(keymap, commandId));
 
@@ -23067,6 +26518,62 @@ export function useWorkbenchController(
       if (matches("bookmark.toggle")) {
         event.preventDefault();
         toggleBookmarkAtCursor();
+        return;
+      }
+
+      if (matches("editor.toggleGitBlame")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          toggleGitBlame();
+        }
+        return;
+      }
+
+      if (matches("editor.showFileHistory")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openFileHistory();
+        }
+        return;
+      }
+
+      if (matches("editor.showLocalHistory")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openLocalHistory();
+        }
+        return;
+      }
+
+      if (matches("git.stashChanges")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitStashPanel();
+        }
+        return;
+      }
+
+      if (matches("git.showStashes")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitStashPanel();
+        }
+        return;
+      }
+
+      if (matches("git.switchBranch")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void openGitBranchPanel();
+        }
+        return;
+      }
+
+      if (matches("git.newBranch")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void createGitBranch();
+        }
         return;
       }
 
@@ -23148,6 +26655,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.goToSuperMethod")) {
+        event.preventDefault();
+        void goToSuperMethod();
+        return;
+      }
+
       if (matches("php.goToTest")) {
         event.preventDefault();
         void goToTestForActiveDocument();
@@ -23187,6 +26700,12 @@ export function useWorkbenchController(
       if (matches("navigation.forward")) {
         event.preventDefault();
         void navigateForwardInHistory();
+        return;
+      }
+
+      if (matches("workbench.searchEverywhere")) {
+        event.preventDefault();
+        openSearchEverywhere();
         return;
       }
 
@@ -23235,6 +26754,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.recentLocations")) {
+        event.preventDefault();
+        openRecentLocationsPanel();
+        return;
+      }
+
       if (matches("search.text")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -23258,6 +26783,7 @@ export function useWorkbenchController(
     goToDeclaration,
     goToDefinition,
     goToImplementation,
+    goToSuperMethod,
     goToTestForActiveDocument,
     runTestForActiveDocument,
     goToNextProblem,
@@ -23269,9 +26795,11 @@ export function useWorkbenchController(
     openAppearanceSettingsPanel,
     openFileStructure,
     openRecentFilesSwitcher,
+    openRecentLocationsPanel,
     openReferencesPanel,
     openSettingsPanel,
     openWorkspaceSymbols,
+    openSearchEverywhere,
     quitApplication,
     resetEditorFontSize,
     saveActiveDocument,
@@ -23281,6 +26809,12 @@ export function useWorkbenchController(
     toggleTodoPanel,
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
+    toggleGitBlame,
+    openFileHistory,
+    openLocalHistory,
+    openGitStashPanel,
+    openGitBranchPanel,
+    createGitBranch,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
@@ -23654,6 +27188,103 @@ export function useWorkbenchController(
     workspaceSymbolsQuery,
   ]);
 
+  // Search Everywhere unified file + symbol search. Reuses the exact same
+  // gateways as Quick Open (files) and Go to Symbol (symbols) - this effect only
+  // fans the one query out to both and stores the raw per-source results. The
+  // command/action source needs no async search (the registry is already in
+  // memory) so it is filtered synchronously in the render-time model.
+  //
+  // Isolation: the requested root is captured up front and the `active` flag
+  // (reset by cleanup on any dependency change, including a workspace tab
+  // switch) drops stale results so a slow search from a previous root can never
+  // overwrite the current tab's results. `searchClassOpenSymbols` additionally
+  // re-checks `currentWorkspaceRootRef` after its awaits.
+  useEffect(() => {
+    if (!searchEverywhereOpen || !workspaceRoot) {
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
+      setSearchEverywhereLoading(false);
+      return;
+    }
+
+    const trimmedQuery = searchEverywhereQuery.trim();
+
+    if (!trimmedQuery) {
+      setSearchEverywhereFiles([]);
+      setSearchEverywhereSymbols([]);
+      setSearchEverywhereLoading(false);
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    let active = true;
+    setSearchEverywhereLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      const fileSearchPromise = fileSearch
+        .searchFiles(requestedRoot, searchEverywhereQuery, 40)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setSearchEverywhereFiles(results);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setSearchEverywhereFiles([]);
+          reportError("Search Everywhere", error);
+        });
+
+      if (!canSearchClassOpenSymbols) {
+        setSearchEverywhereSymbols([]);
+      }
+
+      const symbolSearchPromise = canSearchClassOpenSymbols
+        ? searchClassOpenSymbols(searchEverywhereQuery, 40)
+            .then((results) => {
+              if (!active) {
+                return;
+              }
+
+              setSearchEverywhereSymbols(results);
+            })
+            .catch((error) => {
+              if (!active) {
+                return;
+              }
+
+              setSearchEverywhereSymbols([]);
+              reportError("Search Everywhere", error);
+            })
+        : Promise.resolve();
+
+      void Promise.all([fileSearchPromise, symbolSearchPromise]).finally(() => {
+        if (!active) {
+          return;
+        }
+
+        setSearchEverywhereLoading(false);
+      });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    canSearchClassOpenSymbols,
+    fileSearch,
+    reportError,
+    searchClassOpenSymbols,
+    searchEverywhereOpen,
+    searchEverywhereQuery,
+    workspaceRoot,
+  ]);
+
   useEffect(() => {
     if (!textSearchOpen || !workspaceRoot || !textSearchQuery.trim()) {
       setTextSearchResults([]);
@@ -23661,12 +27292,22 @@ export function useWorkbenchController(
       return;
     }
 
+    // Capture the requested root + filters up front; the `active` flag (reset by
+    // cleanup whenever any of these change, including a workspace tab switch)
+    // drops stale results so a slow search from a previous root/filter set can
+    // never overwrite the current one.
+    const requestedRoot = workspaceRoot;
     let active = true;
     setTextSearchLoading(true);
 
     const timeout = window.setTimeout(() => {
       textSearch
-        .searchText(workspaceRoot, textSearchQuery, 100)
+        .searchText(
+          requestedRoot,
+          textSearchQuery,
+          TEXT_SEARCH_RESULT_LIMIT,
+          textSearchOptions,
+        )
         .then((results) => {
           if (!active) {
             return;
@@ -23700,6 +27341,8 @@ export function useWorkbenchController(
     reportError,
     textSearchOpen,
     textSearchQuery,
+    textSearchOptions,
+    textSearchRefreshToken,
     textSearch,
     workspaceRoot,
   ]);
@@ -24400,6 +28043,7 @@ export function useWorkbenchController(
     activeDocumentGitBaseline: activeDocument
       ? editorGitBaselinesByPath[activeDocument.path] ?? null
       : null,
+    activeEditorConfig,
     activePath,
     isOpeningFile,
     appSettings,
@@ -24417,6 +28061,14 @@ export function useWorkbenchController(
     workspaceSymbolsOpen,
     workspaceSymbolsQuery,
     workspaceSymbolsResults,
+    searchEverywhereOpen,
+    searchEverywhereQuery,
+    searchEverywhereLoading,
+    searchEverywhereModel,
+    openSearchEverywhere,
+    activateSearchEverywhereItem,
+    setSearchEverywhereOpen,
+    setSearchEverywhereQuery,
     closeImplementationChooser: () => setImplementationChooser(null),
     closeCallHierarchy: () => setCallHierarchyView(null),
     closeTypeHierarchy: () => setTypeHierarchyView(null),
@@ -24444,6 +28096,7 @@ export function useWorkbenchController(
     isLanguageServerDocumentSynced,
     goToDefinition,
     goToImplementationAt,
+    goToSuperMethod,
     goToNextProblem,
     goToPreviousProblem,
     isActiveDocumentPhpTest,
@@ -24500,14 +28153,18 @@ export function useWorkbenchController(
     openPinnedFile,
     prefetchFile,
     cancelFilePrefetch,
+    clearLanguageServerDiagnosticsForPath: (path: string) =>
+      clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
     previewFile,
     previewPath,
+    applyPhpCodeActionNewFile,
     provideBladeCompletions,
     provideBladeDefinition,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,
     providePhpMethodSignature,
+    providePhpParameterInlayHints,
     openSettingsPanel,
     openWorkspace,
     paletteOpen,
@@ -24528,9 +28185,20 @@ export function useWorkbenchController(
     openRecentFile,
     openRecentFilesSwitcher,
     setRecentFilesSwitcherOpen,
+    recentLocations,
+    recentLocationsPanelOpen,
+    openRecentLocation,
+    openRecentLocationsPanel,
+    setRecentLocationsPanelOpen,
     bookmarks,
     sortedBookmarks: sortBookmarks(bookmarks),
     bookmarksPanelOpen,
+    isActiveDocumentGitBlameEnabled: activeDocument
+      ? gitBlameEnabledPaths.has(activeDocument.path)
+      : false,
+    toggleGitBlame,
+    provideGitBlame,
+    readWorkspaceFile,
     toggleBookmarkAtCursor,
     toggleBookmarkAtLine,
     goToNextBookmark,
@@ -24539,6 +28207,50 @@ export function useWorkbenchController(
     openBookmarksPanel,
     closeBookmarksPanel,
     toggleBookmarksPanel,
+    fileHistoryPanelOpen,
+    fileHistoryRelativePath,
+    fileHistoryCommits,
+    fileHistoryLoading,
+    fileHistorySelectedSha,
+    fileHistoryDiff,
+    fileHistoryDiffLoading,
+    openFileHistory,
+    selectFileHistoryCommit,
+    closeFileHistory,
+    gitStashPanelOpen,
+    gitStashEntries,
+    gitStashLoading,
+    gitStashMessage,
+    gitStashSelectedIndex,
+    gitStashDiff,
+    gitStashDiffLoading,
+    openGitStashPanel,
+    closeGitStashPanel,
+    selectGitStash,
+    saveGitStash,
+    applyGitStash,
+    popGitStash,
+    dropGitStash,
+    setGitStashMessage,
+    gitBranchPanelOpen,
+    gitBranchEntries,
+    gitBranchLoading,
+    openGitBranchPanel,
+    closeGitBranchPanel,
+    switchGitBranch,
+    createGitBranch,
+    refreshGitBranches,
+    localHistoryPanelOpen,
+    localHistoryRelativePath,
+    localHistoryVersions,
+    localHistoryLoading,
+    localHistorySelectedId,
+    localHistoryDiff,
+    localHistoryDiffLoading,
+    openLocalHistory,
+    selectLocalHistoryVersion,
+    revertLocalHistoryVersion,
+    closeLocalHistory,
     clearNotices: () => setNotices([]),
     notices,
     navigateBackward,
@@ -24569,6 +28281,7 @@ export function useWorkbenchController(
     setSettingsOpen,
     setTextSearchOpen,
     setTextSearchQuery,
+    setTextSearchOptions,
     setLanguageServerSetupOpen,
     setStatusBarItemVisibility,
     settingsInitialSection,
@@ -24589,17 +28302,27 @@ export function useWorkbenchController(
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,
+    textSearchOptions,
     textSearchResults,
+    textReplacement,
+    setTextReplacement,
+    textReplaceBusy,
+    replaceAllInPath,
+    replaceInFile,
     toggleDirectory,
     toggleGitChangeIncluded,
+    loadGitFileHunks,
     stageGitChanges,
+    stageGitHunk,
     unstageGitChanges,
+    unstageGitHunk,
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,
     toggleSmartMode,
     toggleWorkspaceTrust,
     updateActiveDocument,
+    activeEditorPosition,
     updateActiveEditorPosition,
     openPhpTreeNode,
     openSearchResult,
@@ -25852,10 +29575,6 @@ function gitDiffDocumentPath(change: GitChangedFile): string {
   return `mockor-git-diff:${side}:${change.path}`;
 }
 
-function gitDiffDocumentName(change: GitChangedFile): string {
-  return `Diff: ${getFileName(change.relativePath)}`;
-}
-
 function gitChangeForDiffDocumentPath(
   path: string,
   changes: GitChangedFile[],
@@ -26266,7 +29985,7 @@ async function phpImplementMethodsCodeAction(
     edits.unshift(importEdit);
   }
 
-  return { edits, title: "Implement methods" };
+  return { edits, kind: "refactor.rewrite", title: "Implement methods" };
 }
 
 type PhpOverridableParentMethodsCollector = (
@@ -26292,6 +30011,21 @@ function isPhpOverridableParentMethod(member: PhpMethodMember): boolean {
   }
 
   return member.name.toLowerCase() !== "__construct";
+}
+
+/**
+ * Collects every super-type reference that can carry an overridden method
+ * declaration for "Go to Super Method": parent class / interfaces (extends and
+ * implements), used traits and PHPDoc `@mixin` types. Walking all four mirrors
+ * the resolution already used by direct method navigation and the override
+ * code action.
+ */
+function phpSuperMethodHierarchyReferences(source: string): string[] {
+  return [
+    ...phpSuperTypeReferences(source),
+    ...phpTraitClassNames(source),
+    ...phpMixinClassNames(source),
+  ];
 }
 
 /**
@@ -26354,7 +30088,7 @@ async function phpOverrideMethodsCodeAction(
     edits.unshift(importEdit);
   }
 
-  return { edits, title: "Override methods" };
+  return { edits, kind: "refactor.rewrite", title: "Override methods" };
 }
 
 /**
@@ -26526,6 +30260,7 @@ function phpGeneratePhpDocCodeAction(
         text: `${docBlock}\n`,
       },
     ],
+    kind: "refactor.rewrite",
     title: "Generate PHPDoc",
   };
 }
@@ -26580,13 +30315,22 @@ function phpClassBodyInsertionAction(
   source: string,
   block: string,
   title: string,
+  className?: string,
 ): PhpCodeActionDescriptor | null {
-  const insertionPoint = findClassBodyInsertionOffset(source);
+  const insertionPoint = findClassBodyInsertionOffset(source, className);
 
   if (!insertionPoint) {
     return null;
   }
 
+  // The renderers emit column-0 member text; indent it to the class's own
+  // member level (detected from the existing members, falling back to four
+  // spaces) so generated methods line up like PhpStorm's, instead of landing at
+  // column 1 in front of the closing brace.
+  const indentedBlock = indentLines(
+    block,
+    detectClassMemberIndent(source, className),
+  );
   const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
   const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
   const insertionPosition = offsetToPosition(source, insertionPoint.offset);
@@ -26595,11 +30339,88 @@ function phpClassBodyInsertionAction(
     edits: [
       {
         range: zeroLengthPhpEditRange(insertionPosition),
-        text: `${leadingBlankLine}${block}\n${trailingBlankLine}`,
+        text: `${leadingBlankLine}${indentedBlock}\n${trailingBlankLine}`,
       },
     ],
+    // Class-body generators ("Generate constructor / accessors") read as the
+    // PhpStorm Generate family - a "refactor" in the action widget (distinct
+    // icon / group from the quickfix lightbulb). "Create method/property from
+    // usage" reuses this builder but re-stamps itself a preferred quickfix.
+    kind: "refactor.rewrite",
     title,
   };
+}
+
+/**
+ * Orders the aggregated PHP code actions so the most-likely action for the
+ * cursor / selection leads the list (PhpStorm Alt+Enter "most likely first").
+ * The order is a STABLE sort by kind family - contextual quickfixes, then
+ * `extract` refactors, then `inline`, then `rewrite` (generate family + add
+ * type), then the organize-imports source action, then anything unkinded -
+ * which preserves each family's existing relative order (e.g. the alphabetical
+ * import candidates) while floating the lightbulb fixes to the top. A single
+ * `isPreferred` quickfix (Create method/property/Import) therefore wins the
+ * first slot, matching the action Monaco offers as the lightbulb's auto-fix.
+ */
+function orderPhpCodeActions(
+  actions: PhpCodeActionDescriptor[],
+): PhpCodeActionDescriptor[] {
+  return actions
+    .map((action, index) => ({ action, index }))
+    .sort((left, right) => {
+      const byFamily =
+        phpCodeActionFamilyRank(left.action) -
+        phpCodeActionFamilyRank(right.action);
+
+      if (byFamily !== 0) {
+        return byFamily;
+      }
+
+      // Within a family a preferred action (the contextual fix) leads; ties keep
+      // their original insertion order so nothing else is reshuffled.
+      const byPreferred =
+        Number(right.action.isPreferred ?? false) -
+        Number(left.action.isPreferred ?? false);
+
+      if (byPreferred !== 0) {
+        return byPreferred;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.action);
+}
+
+/**
+ * Ranks a code action's kind family for "most likely first" ordering: contextual
+ * quickfixes (0) lead, then extract (1) / inline (2) / rewrite (3) refactors, the
+ * organize-imports source action (4), and any unkinded action (5) trails. The
+ * kind defaults to `quickfix` to mirror the Monaco mapper's fallback.
+ */
+function phpCodeActionFamilyRank(action: PhpCodeActionDescriptor): number {
+  const kind = action.kind ?? "quickfix";
+
+  if (kind.startsWith("quickfix")) {
+    return 0;
+  }
+
+  if (kind.startsWith("refactor.extract")) {
+    return 1;
+  }
+
+  if (kind.startsWith("refactor.inline")) {
+    return 2;
+  }
+
+  if (kind.startsWith("refactor")) {
+    return 3;
+  }
+
+  if (kind.startsWith("source")) {
+    return 4;
+  }
+
+  return 5;
 }
 
 /**
@@ -26621,19 +30442,261 @@ function phpCreateFromUsageCodeAction(
     return null;
   }
 
-  if (member.kind === "method") {
-    return phpClassBodyInsertionAction(
-      source,
-      renderCreateMethodStub(member.name, member.argTypes ?? []),
-      `Create method '${member.name}'`,
+  // A `parent::` usage targets the parent class's body. Only a SAME-FILE parent
+  // is handled here: it is a pure single-file edit reusing the class-body
+  // insertion (targeted at the parent class). A parent declared in another file
+  // would need a cross-file write the in-document edit channel cannot express,
+  // so it is conservatively dropped (no offer) - never a wrong / partial edit.
+  if (member.target === "parent") {
+    return phpCreateParentMemberCodeAction(source, member);
+  }
+
+  return phpCreateSelfMemberCodeAction(source, member);
+}
+
+/**
+ * Build the "Create ..." action for a `$this->` / `self::` / `static::` usage -
+ * a member synthesized into the enclosing class itself (single-file). Static
+ * receivers stamp the `static` modifier on a method; a non-call `self::IDENT`
+ * is a class constant; a `$this->prop = <typed expr>` carries an inferred type.
+ */
+function phpCreateSelfMemberCodeAction(
+  source: string,
+  member: MissingThisMember,
+): PhpCodeActionDescriptor | null {
+  if (member.kind === "constant") {
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        renderCreateConstantStub(member.name, { indent: "" }),
+        `Create constant '${member.name}'`,
+      ),
     );
   }
 
-  return phpClassBodyInsertionAction(
-    source,
-    renderCreatePropertyStub(member.name),
-    `Create property '${member.name}'`,
+  if (member.kind === "method") {
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        renderCreateMethodStub(member.name, member.argTypes ?? [], {
+          indent: "",
+          isStatic: member.isStatic,
+        }),
+        `Create method '${member.name}'`,
+      ),
+    );
+  }
+
+  return phpPreferredQuickfix(
+    phpClassBodyInsertionAction(
+      source,
+      renderCreatePropertyStub(member.name, {
+        indent: "",
+        type: member.propertyType ?? null,
+      }),
+      `Create property '${member.name}'`,
+    ),
   );
+}
+
+/**
+ * Build the "Create ..." action for a `parent::` usage when the parent class is
+ * declared in the SAME file. Resolves the parent's short name (the in-file
+ * insertion is keyed by class name) and inserts the member into the parent's
+ * body. Returns `null` (no offer) when the parent is not present in this file -
+ * a cross-file parent edit is conservatively out of scope.
+ */
+function phpCreateParentMemberCodeAction(
+  source: string,
+  member: MissingThisMember,
+): PhpCodeActionDescriptor | null {
+  const parentName = member.parentClass;
+
+  if (!parentName) {
+    return null;
+  }
+
+  const parentShortName = phpShortClassName(parentName);
+  const insertion = findClassBodyInsertionOffset(source, parentShortName);
+
+  if (!insertion) {
+    return null;
+  }
+
+  // A same-file parent may already declare the member (its body is in this
+  // source); suppress the offer in that case so we never create a duplicate.
+  // The check is scoped to the parent class so a sibling class's member of the
+  // same name does not falsely suppress it.
+  if (phpClassDeclaresMember(source, member.name, member.kind, parentShortName)) {
+    return null;
+  }
+
+  if (member.kind === "constant") {
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        renderCreateConstantStub(member.name, { indent: "" }),
+        `Create constant '${member.name}' in '${parentShortName}'`,
+        parentShortName,
+      ),
+    );
+  }
+
+  if (member.kind === "method") {
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        renderCreateMethodStub(member.name, member.argTypes ?? [], {
+          indent: "",
+        }),
+        `Create method '${member.name}' in '${parentShortName}'`,
+        parentShortName,
+      ),
+    );
+  }
+
+  // PHP has no `parent::$property` access, so a parent target is only ever a
+  // method or a constant. Anything else is dropped defensively (no offer)
+  // rather than emitting a property that could never have been referenced.
+  return null;
+}
+
+/**
+ * Short (un-namespaced) class name for an `extends` reference like
+ * `App\Base\Service` or `\Service`. The in-file class-body insertion locates a
+ * class by its declared (short) name, so a namespaced parent reference is
+ * reduced to its last segment.
+ */
+function phpShortClassName(reference: string): string {
+  const segments = reference.split("\\").filter((segment) => segment.length > 0);
+
+  return segments[segments.length - 1] ?? reference;
+}
+
+/**
+ * Stamps a class-body insertion action as a preferred quickfix (the contextual
+ * fix for an unresolved symbol). Passes a `null` plan through unchanged so the
+ * conservative "offer nothing" path is preserved.
+ */
+function phpPreferredQuickfix(
+  action: PhpCodeActionDescriptor | null,
+): PhpCodeActionDescriptor | null {
+  if (!action) {
+    return null;
+  }
+
+  return { ...action, isPreferred: true, kind: "quickfix" };
+}
+
+/**
+ * Namespace prefixes "Create class" must never write into even when a project
+ * PSR-4 root happens to cover them: a `Composer\` autoload entry pointing at a
+ * vendored package, or the framework's own `Illuminate\` / `Symfony\` roots.
+ * Defensive - a normal app maps these via the `packages` list (which the
+ * destination mapper does not consult), so this only matters when a root maps
+ * one of these directly.
+ */
+const VENDOR_PSR4_PREFIXES = ["Composer\\", "Illuminate\\", "Symfony\\"];
+
+/**
+ * Conservative set of PHP built-in / SPL / common-extension type names that
+ * "Create class" must never offer to create (they already exist at runtime and
+ * have no workspace source file). Lower-cased, short-name keyed: a reference is
+ * a built-in when its FQN is global (no namespace) and its short name is in this
+ * set. Namespaced user types of the same short name (e.g. `App\Exception`) are
+ * unaffected. Not exhaustive - it covers the high-frequency names a developer
+ * is most likely to reference; anything else still falls through to the
+ * existence + PSR-4 guards.
+ */
+const PHP_BUILTIN_CLASS_NAMES = new Set(
+  [
+    "stdClass",
+    "Closure",
+    "Generator",
+    "Stringable",
+    "Iterator",
+    "IteratorAggregate",
+    "Traversable",
+    "Countable",
+    "ArrayAccess",
+    "ArrayObject",
+    "ArrayIterator",
+    "JsonSerializable",
+    "Serializable",
+    "SplStack",
+    "SplQueue",
+    "SplObjectStorage",
+    "SplFixedArray",
+    "SplDoublyLinkedList",
+    "SplPriorityQueue",
+    "SplHeap",
+    "SplMinHeap",
+    "SplMaxHeap",
+    "WeakMap",
+    "WeakReference",
+    "DateTime",
+    "DateTimeImmutable",
+    "DateTimeInterface",
+    "DateInterval",
+    "DateTimeZone",
+    "DatePeriod",
+    "Throwable",
+    "Exception",
+    "Error",
+    "TypeError",
+    "ValueError",
+    "ArgumentCountError",
+    "ArithmeticError",
+    "DivisionByZeroError",
+    "ErrorException",
+    "RuntimeException",
+    "LogicException",
+    "InvalidArgumentException",
+    "OutOfRangeException",
+    "OutOfBoundsException",
+    "LengthException",
+    "DomainException",
+    "RangeException",
+    "UnexpectedValueException",
+    "UnderflowException",
+    "OverflowException",
+    "BadFunctionCallException",
+    "BadMethodCallException",
+    "UnhandledMatchError",
+    "JsonException",
+    "ReflectionClass",
+    "ReflectionMethod",
+    "ReflectionProperty",
+    "ReflectionFunction",
+    "ReflectionParameter",
+    "ReflectionNamedType",
+    "ReflectionEnum",
+    "PDO",
+    "PDOStatement",
+    "PDOException",
+    "SimpleXMLElement",
+    "DOMDocument",
+    "DOMElement",
+    "DOMNode",
+    "UnitEnum",
+    "BackedEnum",
+  ].map((name) => name.toLowerCase()),
+);
+
+/**
+ * Whether `fqn` names a PHP built-in type. Only a GLOBAL (un-namespaced) name is
+ * treated as built-in - a namespaced `App\Exception` is a user type and remains
+ * creatable. A leading `\` (already stripped by the resolver, but tolerated
+ * here) does not make a name namespaced.
+ */
+function isPhpBuiltinTypeName(fqn: string): boolean {
+  const normalized = fqn.trim().replace(/^\\+/, "");
+
+  if (normalized.includes("\\")) {
+    return false;
+  }
+
+  return PHP_BUILTIN_CLASS_NAMES.has(normalized.toLowerCase());
 }
 
 /**
@@ -26680,6 +30743,213 @@ function phpExtractVariableCodeAction(
     ],
     kind: "refactor.extract",
     title: "Extract variable",
+  };
+}
+
+/**
+ * Offers "Extract method" when the request carries a non-empty selection of one
+ * or more whole statements inside a class method that `planExtractMethod`
+ * confirms is safe to lift. The plan yields two non-overlapping edits against
+ * the original document: the selected statements are replaced by a call to a new
+ * private method (`$this->extracted(...)`, optionally assigned to the single
+ * returned variable), and the method definition is inserted immediately after
+ * the enclosing method. Returns `null` for an empty selection or any selection
+ * the conservative planner rejects (cross-boundary, partial block, multiple
+ * outputs, control-flow escape, heredoc, ...).
+ */
+function phpExtractMethodCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  if (range.start >= range.end) {
+    return null;
+  }
+
+  const plan = planExtractMethod(source, range.start, range.end);
+
+  if (!plan) {
+    return null;
+  }
+
+  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
+  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
+  const insertionPosition = offsetToPosition(source, plan.methodInsertionOffset);
+
+  return {
+    edits: [
+      {
+        range: {
+          endColumn: replaceEndPosition.column + 1,
+          endLineNumber: replaceEndPosition.line + 1,
+          startColumn: replaceStartPosition.column + 1,
+          startLineNumber: replaceStartPosition.line + 1,
+        },
+        text: plan.replacementText,
+      },
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.methodText,
+      },
+    ],
+    kind: "refactor.extract",
+    title: "Extract method",
+  };
+}
+
+/**
+ * Offers "Extract interface" (PhpStorm) when the cursor sits on a concrete
+ * `class` declaration that exposes at least one public instance method. The
+ * `planExtractInterface` planner synthesises a sibling `<Class>Interface.php`
+ * (carrying the public-instance-method signatures) and the in-place edit that
+ * adds `implements <Class>Interface` to the class header. The resulting action
+ * therefore CREATES a file (the new interface) and EDITS the current document
+ * (the implements clause). Returns `null` for any shape the conservative
+ * planner rejects (abstract class / interface / trait / enum, no public
+ * instance methods, parse failure, cursor outside a class) so the action is
+ * never offered where it could create an empty or malformed interface.
+ *
+ * `sourcePath` is the active document's absolute path; without it the sibling
+ * interface path cannot be derived, so the action is not offered.
+ */
+function phpExtractInterfaceCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+  sourcePath: string | null,
+): PhpCodeActionDescriptor | null {
+  if (!sourcePath) {
+    return null;
+  }
+
+  const plan = planExtractInterface(source, range.start, sourcePath);
+
+  if (!plan) {
+    return null;
+  }
+
+  const implementsPosition = offsetToPosition(
+    source,
+    plan.implementsEdit.offset,
+  );
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(implementsPosition),
+        text: plan.implementsEdit.text,
+      },
+    ],
+    kind: "refactor.extract",
+    newFile: {
+      content: plan.interfaceText,
+      path: plan.interfaceFilePath,
+    },
+    title: "Extract interface",
+  };
+}
+
+/**
+ * Offers "Add parameter" (Change Signature - slice 1) when the request's cursor
+ * sits on the signature or inside the body of a class method or free function
+ * that `planAddParameter` confirms can safely receive an appended OPTIONAL
+ * parameter. The plan is a single zero-length insertion that appends a
+ * placeholder `$parameter = null` to the END of the parameter list. Because the
+ * appended parameter is optional (carries a default), every existing call-site
+ * stays valid - so this is a pure single-file refactor with no cross-file edits.
+ * Returns `null` for any shape the conservative planner rejects (abstract /
+ * interface declaration, trailing variadic, unbalanced signature, cursor not on
+ * a function) so the action is never offered where it could corrupt the file or
+ * require call-site changes.
+ */
+function phpAddParameterCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddParameter(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add parameter",
+  };
+}
+
+/**
+ * Offers "Add return type" when the cursor sits on a method / function (or an
+ * abstract / interface declaration) that declares NO return type and whose type
+ * `planAddReturnType` can infer UNAMBIGUOUSLY - from a PHPDoc `@return`, or from
+ * literal-only `return` statements that all agree (`void`, a `new Foo()` class,
+ * `static`, or a scalar/array literal). The plan is a single zero-length
+ * insertion of `: Type` after the close `)`. Returns `null` for any shape the
+ * conservative planner rejects (a mixed / variable / call return, a lone
+ * `return null`, an already-typed signature, the cursor off any function) so a
+ * wrong type is never inserted.
+ */
+function phpAddReturnTypeCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddReturnType(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add return type",
+  };
+}
+
+/**
+ * Offers "Add type hint" when the cursor sits inside the parameter list, on a
+ * parameter that declares NO type and whose type `planAddParameterType` can
+ * infer UNAMBIGUOUSLY - from a PHPDoc `@param`, or from a literal default value
+ * (`[]` -> `array`, `'x'` -> `string`, `123` -> `int`, `1.5` -> `float`,
+ * `true`/`false` -> `bool`). The plan is a single zero-length insertion of
+ * `Type ` before the parameter token (after any promotion modifiers). Returns
+ * `null` for an already-typed parameter, an ambiguous `= null` default, a
+ * parameter with no usable signal, or the cursor outside the parameter list.
+ */
+function phpAddParameterTypeCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planAddParameterType(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.insertOffset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.insertText,
+      },
+    ],
+    kind: "refactor.rewrite",
+    title: "Add type hint",
   };
 }
 
@@ -26811,6 +31081,209 @@ function phpIntroduceMemberEdits(
 }
 
 /**
+ * Returns the bare (single-segment) short class name under the cursor that is a
+ * candidate for an "Import class" quickfix, or `null` when it should not be
+ * offered. Conservative gates, in order:
+ *  - the cursor must sit on a `classIdentifier` reference (method calls,
+ *    property/static accesses, Laravel string helpers etc. are excluded by
+ *    {@link phpClassIdentifierNameAt});
+ *  - the name must be unqualified (no `\`) - a qualified reference already names
+ *    its namespace, so no `use` is needed;
+ *  - the name must NOT already be imported by a top-level `use` (alias-aware).
+ */
+function phpImportClassShortNameAt(
+  source: string,
+  range: PhpCodeActionRange,
+): string | null {
+  const shortName = phpClassIdentifierNameAt(source, range.start);
+
+  if (!shortName || shortName.includes("\\")) {
+    return null;
+  }
+
+  if (phpShortNameIsImported(source, shortName)) {
+    return null;
+  }
+
+  return shortName;
+}
+
+/**
+ * Builds the "Import \\Fully\\Qualified\\Name" code actions for an unimported
+ * class reference. Pure: the indexed candidate FQNs are resolved by the caller
+ * (workspace symbol index) and passed in. A candidate is offered only when it is
+ * namespaced AND its namespace differs from the file's current namespace (a
+ * same-namespace class needs no `use`); duplicates are de-duplicated and the
+ * actions are ordered alphabetically by FQN so an ambiguous short name yields a
+ * stable list of choices. Each action inserts `use FQN;` into the existing use
+ * block in sorted order (or starts a fresh block) via {@link planPhpAddImport}.
+ */
+function phpImportClassCodeActions(
+  source: string,
+  candidateFqns: readonly string[],
+): PhpCodeActionDescriptor[] {
+  const currentNamespace = (phpCurrentNamespace(source) ?? "").toLowerCase();
+  const seen = new Set<string>();
+  const actions: PhpCodeActionDescriptor[] = [];
+
+  for (const candidate of candidateFqns) {
+    const fqn = candidate.trim().replace(/^\\+/, "");
+
+    if (!fqn.includes("\\")) {
+      continue;
+    }
+
+    const key = fqn.toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+
+    const namespacePart = fqn.slice(0, fqn.lastIndexOf("\\")).toLowerCase();
+
+    if (namespacePart === currentNamespace) {
+      continue;
+    }
+
+    const action = phpImportClassCodeAction(source, fqn);
+
+    if (action) {
+      actions.push(action);
+    }
+  }
+
+  const sorted = actions.sort((a, b) => a.title.localeCompare(b.title));
+
+  // Monaco honours a SINGLE preferred action; with several import candidates for
+  // an ambiguous short name only the first (alphabetically) stays preferred so
+  // the others remain plain quickfix choices the user can still pick.
+  return sorted.map((action, index) =>
+    index === 0 ? action : { ...action, isPreferred: false },
+  );
+}
+
+function phpImportClassCodeAction(
+  source: string,
+  fqn: string,
+): PhpCodeActionDescriptor | null {
+  const plan = planPhpAddImport(source, fqn);
+
+  if (!plan) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(source, plan.offset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: plan.text,
+      },
+    ],
+    // Importing the class is the contextual fix for an unresolved short name, so
+    // it reads as a preferred quickfix (PhpStorm Alt+Enter -> Import at the top).
+    isPreferred: true,
+    kind: "quickfix",
+    title: `Import ${fqn}`,
+  };
+}
+
+/**
+ * Offers "Remove unused import" when the cursor sits on a conservatively
+ * detected unused class import (pairs with the unused-import inspection). The
+ * edit deletes the whole `use ...;` statement and its trailing newline.
+ * Conservative: only single, non-grouped class imports are ever offered (see
+ * `phpUnusedImportRemovalAt` / `phpUnusedClassImports`).
+ */
+function phpRemoveUnusedImportCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedImportRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused import ${removal.label}`,
+  };
+}
+
+/**
+ * Offers "Remove unused method" when the cursor sits on a conservatively
+ * detected unused private method (pairs with the unused-private-method
+ * inspection). The edit deletes the whole method declaration (decorating lines
+ * through the body's closing brace). Conservative: suppressed for any class
+ * with dynamic dispatch and skipped when the body brace cannot be matched.
+ */
+function phpRemoveUnusedMethodCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedPrivateMethodRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused method '${removal.label}'`,
+  };
+}
+
+/**
+ * Offers "Remove unused variable" when the cursor sits on a conservatively
+ * detected unused local whose assignment is side-effect-free (pairs with the
+ * unused-variable inspection). The edit deletes the whole assignment statement
+ * line. Conservative: returns null for an assignment with any potential side
+ * effect (call / member access / non-trivial RHS) - those are warned but never
+ * auto-removed, because deleting them would drop the side-effecting call.
+ */
+function phpRemoveUnusedVariableCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const removal = phpUnusedVariableRemovalAt(source, range.start);
+
+  if (!removal) {
+    return null;
+  }
+
+  return {
+    edits: [removalEdit(source, removal)],
+    kind: "quickfix",
+    title: `Remove unused variable ${removal.label}`,
+  };
+}
+
+/** Maps a character-offset removal span to a single empty-text Monaco edit. */
+function removalEdit(
+  source: string,
+  removal: { end: number; start: number },
+): PhpCodeActionTextEdit {
+  const startPosition = offsetToPosition(source, removal.start);
+  const endPosition = offsetToPosition(source, removal.end);
+
+  return {
+    range: {
+      endColumn: endPosition.column + 1,
+      endLineNumber: endPosition.line + 1,
+      startColumn: startPosition.column + 1,
+      startLineNumber: startPosition.line + 1,
+    },
+    text: "",
+  };
+}
+
+/**
  * Offers "Optimize imports" when `organizePhpImports` reports a change (unused
  * imports removed and/or reordering). The edit replaces the exact span of the
  * existing top-level `use` block with the organized block. The action is
@@ -26846,6 +31319,7 @@ function phpOptimizeImportsCodeAction(
         text: organized.organizedUseBlock,
       },
     ],
+    kind: "source.organizeImports",
     title: "Optimize imports",
   };
 }

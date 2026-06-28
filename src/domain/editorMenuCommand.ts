@@ -1,6 +1,7 @@
 export type EditorMenuCommand =
   | "copy"
   | "cut"
+  | "gotoLine"
   | "paste"
   | "redo"
   | "selectAll"

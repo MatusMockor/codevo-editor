@@ -1,5 +1,11 @@
+import { memo } from "react";
 import { AlertCircle, Info, ListFilter, TriangleAlert } from "lucide-react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
+
+const ERROR_ICON = <AlertCircle aria-hidden="true" size={15} />;
+const WARNING_ICON = <TriangleAlert aria-hidden="true" size={15} />;
+const INFO_ICON = <Info aria-hidden="true" size={15} />;
+const OVERFLOW_ICON = <ListFilter aria-hidden="true" size={15} />;
 
 function isOverflowNotice(notice: WorkbenchNotice): boolean {
   return notice.kind === "overflow";
@@ -11,7 +17,7 @@ interface ProblemsPanelProps {
   onOpenNotice(notice: WorkbenchNotice): void;
 }
 
-export function ProblemsPanel({
+function ProblemsPanelComponent({
   isActive,
   notices,
   onOpenNotice,
@@ -26,51 +32,59 @@ export function ProblemsPanel({
       {notices.length === 0 ? (
         <p>No problems</p>
       ) : (
-        notices.map((notice) => {
-          if (isOverflowNotice(notice)) {
-            return (
-              <div
-                className="problem-row overflow"
-                data-testid="diagnostics-overflow"
-                key={notice.id}
-              >
-                <ProblemRowContent notice={notice} />
-              </div>
-            );
-          }
-
-          if (notice.navigationTarget) {
-            return (
-              <button
-                className={`problem-row ${notice.severity}`}
-                key={notice.id}
-                onClick={() => onOpenNotice(notice)}
-                type="button"
-              >
-                <ProblemRowContent notice={notice} />
-              </button>
-            );
-          }
-
-          return (
-            <div className={`problem-row ${notice.severity}`} key={notice.id}>
-              <ProblemRowContent notice={notice} />
-            </div>
-          );
-        })
+        notices.map((notice) => (
+          <ProblemRow
+            key={notice.id}
+            notice={notice}
+            onOpen={onOpenNotice}
+          />
+        ))
       )}
     </div>
   );
 }
 
+export const ProblemsPanel = memo(ProblemsPanelComponent);
+
+interface ProblemRowProps {
+  notice: WorkbenchNotice;
+  onOpen(notice: WorkbenchNotice): void;
+}
+
+function ProblemRowComponent({ notice, onOpen }: ProblemRowProps) {
+  if (isOverflowNotice(notice)) {
+    return (
+      <div className="problem-row overflow" data-testid="diagnostics-overflow">
+        <ProblemRowContent notice={notice} />
+      </div>
+    );
+  }
+
+  if (notice.navigationTarget) {
+    return (
+      <button
+        className={`problem-row ${notice.severity}`}
+        onClick={() => onOpen(notice)}
+        type="button"
+      >
+        <ProblemRowContent notice={notice} />
+      </button>
+    );
+  }
+
+  return (
+    <div className={`problem-row ${notice.severity}`}>
+      <ProblemRowContent notice={notice} />
+    </div>
+  );
+}
+
+const ProblemRow = memo(ProblemRowComponent);
+
 function ProblemRowContent({ notice }: { notice: WorkbenchNotice }) {
   return (
     <>
-      {isOverflowNotice(notice) ? (
-        <ListFilter aria-hidden="true" size={15} />
-      ) : (
-        getNoticeIcon(notice.severity)
-      )}
+      {isOverflowNotice(notice) ? OVERFLOW_ICON : getNoticeIcon(notice.severity)}
       <span>
         <strong>{notice.source}</strong>
         <small>{notice.message}</small>
@@ -81,12 +95,12 @@ function ProblemRowContent({ notice }: { notice: WorkbenchNotice }) {
 
 function getNoticeIcon(severity: WorkbenchNotice["severity"]) {
   if (severity === "error") {
-    return <AlertCircle aria-hidden="true" size={15} />;
+    return ERROR_ICON;
   }
 
   if (severity === "warning") {
-    return <TriangleAlert aria-hidden="true" size={15} />;
+    return WARNING_ICON;
   }
 
-  return <Info aria-hidden="true" size={15} />;
+  return INFO_ICON;
 }

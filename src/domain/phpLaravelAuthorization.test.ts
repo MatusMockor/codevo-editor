@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isUsableLaravelGateAbilityName,
+  phpLaravelGateAbilityCompletionInsertText,
   phpLaravelGateAbilityDefinitions,
   phpLaravelGateAbilityReferenceContextAt,
 } from "./phpLaravelAuthorization";
@@ -177,6 +178,15 @@ class AuthServiceProvider extends ServiceProvider
     const source = `<?php\n\nGate::define($ability, fn () => true);\nGate::define("update-{$model}", fn () => true);\n`;
 
     expect(phpLaravelGateAbilityDefinitions(source)).toEqual([]);
+  });
+
+  it("builds the completion insert text from the full ability name", () => {
+    expect(phpLaravelGateAbilityCompletionInsertText("update-post")).toBe(
+      "update-post",
+    );
+    expect(phpLaravelGateAbilityCompletionInsertText("posts.update")).toBe(
+      "posts.update",
+    );
   });
 
   it("validates usable ability names", () => {

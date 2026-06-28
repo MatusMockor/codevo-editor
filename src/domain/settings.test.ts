@@ -31,6 +31,7 @@ describe("settings defaults", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     expect(defaultWorkspaceSettings()).toEqual({
@@ -47,7 +48,9 @@ describe("settings defaults", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      optimizeImportsOnSave: false,
       phpBackend: "auto",
+      phpInlayHints: true,
       phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
@@ -59,7 +62,9 @@ describe("settings defaults", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,
@@ -89,6 +94,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: ["/project"],
     });
     expect(
@@ -113,6 +119,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "suspendOnBackground",
       theme: "light",
+      userSnippets: [],
       workspaceTabs: ["/project-a", "/project-b"],
     });
     expect(
@@ -129,6 +136,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [],
       workspaceTabs: [],
     });
   });
@@ -166,6 +174,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     expect(
@@ -213,6 +222,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: "/project/api",
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
     });
   });
@@ -222,6 +232,36 @@ describe("normalizeAppSettings", () => {
       defaultAppSettings(),
     );
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
+  });
+
+  it("persists and normalizes user snippets", () => {
+    const normalized = normalizeAppSettings({
+      userSnippets: [
+        {
+          prefix: "  myhelper ",
+          body: "helper($0);",
+          description: " Call helper ",
+          languages: ["php", "php", "blade"],
+        },
+        { prefix: "", body: "x", description: "", languages: ["php"] },
+      ],
+    });
+
+    expect(normalized.userSnippets).toEqual([
+      {
+        prefix: "myhelper",
+        body: "helper($0);",
+        description: "Call helper",
+        languages: ["php", "blade"],
+      },
+    ]);
+  });
+
+  it("defaults user snippets to an empty array when absent or invalid", () => {
+    expect(normalizeAppSettings({}).userSnippets).toEqual([]);
+    expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual(
+      [],
+    );
   });
 });
 
@@ -253,7 +293,9 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptService: "off",
         javaScriptTypeScriptValidation: false,
         javaScriptTypeScriptVersion: "workspace",
+        optimizeImportsOnSave: true,
         phpBackend: "phpactor",
+        phpInlayHints: false,
         phpVersionOverride: "8.3",
         phpactorPath: " /tools/phpactor ",
         revealActiveFileInTree: false,
@@ -293,7 +335,9 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      optimizeImportsOnSave: true,
       phpBackend: "phpactor",
+      phpInlayHints: false,
       phpVersionOverride: "8.3",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
@@ -305,7 +349,9 @@ describe("normalizeWorkspaceSettings", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: false,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,
@@ -349,6 +395,35 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults optimizeImportsOnSave to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).optimizeImportsOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: "yes" })
+        .optimizeImportsOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: true })
+        .optimizeImportsOnSave,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ optimizeImportsOnSave: false })
+        .optimizeImportsOnSave,
+    ).toBe(false);
+  });
+
+  it("defaults phpInlayHints to true and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).phpInlayHints).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: "yes" }).phpInlayHints,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: false }).phpInlayHints,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ phpInlayHints: true }).phpInlayHints,
     ).toBe(true);
   });
 

@@ -37,6 +37,11 @@ describe("workspace path helpers", () => {
     expect(detectLanguage("/project/src/server.cts")).toBe("typescript");
   });
 
+  it("detects Vue single-file components", () => {
+    expect(detectLanguage("/project/src/components/App.vue")).toBe("vue");
+    expect(detectLanguage("/project.v1/src/HelloWorld.vue")).toBe("vue");
+  });
+
   it("normalizes parent and joined paths", () => {
     expect(getParentPath("C:\\project\\src\\User.php")).toBe("C:/project/src");
     expect(joinWorkspacePath("C:\\project\\", "\\src\\User.php")).toBe(

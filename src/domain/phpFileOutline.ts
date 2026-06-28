@@ -12,16 +12,27 @@ export type PhpFileOutlineNodeKind =
   | "trait"
   | "variable";
 
+export type PhpSymbolVisibility = "public" | "private" | "protected";
+
+export interface PhpFileOutlineParameter {
+  name: string;
+  type?: string;
+}
+
 export interface PhpFileOutlineNode {
   children: PhpFileOutlineNode[];
   column: number | null;
   fullyQualifiedName: string | null;
   id: string;
+  isStatic?: boolean;
   kind: PhpFileOutlineNodeKind;
   label: string;
   lineNumber: number | null;
+  parameters?: PhpFileOutlineParameter[];
   path: string | null;
   relativePath: string | null;
+  returnType?: string;
+  visibility?: PhpSymbolVisibility;
 }
 
 export interface PhpFileOutline {

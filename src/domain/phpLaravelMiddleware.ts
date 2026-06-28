@@ -10,6 +10,9 @@ const middlewareAliasArrayProperties = ["middlewareAliases", "routeMiddleware"];
 
 export interface PhpLaravelMiddlewareAliasReferenceContext {
   alias: string;
+  // True when the cursor sits in the parameter portion after the alias colon
+  // (e.g. `auth:web|`). Alias-name completion must not fire there.
+  aliasParameterStarted: boolean;
   position: EditorPosition;
 }
 
@@ -78,6 +81,12 @@ export function phpLaravelMiddlewareAliasDefinitions(
   return definitions;
 }
 
+export function phpLaravelMiddlewareAliasCompletionInsertText(
+  alias: string,
+): string {
+  return alias;
+}
+
 export function isUsableLaravelMiddlewareAlias(alias: string): boolean {
   return (
     alias.length > 0 &&
@@ -107,6 +116,7 @@ function middlewareAliasReferenceContext(
 
   return {
     alias,
+    aliasParameterStarted: argument.prefix.includes(":"),
     position: argument.position,
   };
 }

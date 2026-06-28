@@ -209,4 +209,227 @@ describe("StatusBar", () => {
     // referentially unchanged, so `statusBar.activePath` is never read again.
     expect(activePathReads).toBe(readsAfterMount);
   });
+
+  it("shows the active editor cursor position as Ln/Col and goes to line on click", async () => {
+    const onShowGoToLine = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={{ column: 7, lineNumber: 42 }}
+          dirtyCount={0}
+          gitBranch={null}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onShowGitBranches={vi.fn()}
+          onShowGoToLine={onShowGoToLine}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const cursor = host.querySelector<HTMLButtonElement>(
+      ".status-cursor-position",
+    );
+
+    expect(cursor).not.toBeNull();
+    expect(cursor?.textContent).toBe("Ln 42, Col 7");
+
+    await act(async () => {
+      cursor?.click();
+    });
+
+    expect(onShowGoToLine).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the cursor position when no editor position is known", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={null}
+          dirtyCount={0}
+          gitBranch={null}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    expect(host.querySelector(".status-cursor-position")).toBeNull();
+  });
+
+  it("hides the cursor position when its status bar item is toggled off", async () => {
+    const statusBar = {
+      ...defaultStatusBarItemVisibility(),
+      cursorPosition: false,
+    };
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={{ column: 7, lineNumber: 42 }}
+          dirtyCount={0}
+          gitBranch={null}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={statusBar}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    expect(host.querySelector(".status-cursor-position")).toBeNull();
+  });
+
+  it("shows the active git branch and opens the branch panel on click", async () => {
+    const onShowGitBranches = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={null}
+          dirtyCount={0}
+          gitBranch="feature/status-bar"
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onShowGitBranches={onShowGitBranches}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const branch = host.querySelector<HTMLButtonElement>(".status-git-branch");
+
+    expect(branch).not.toBeNull();
+    expect(branch?.textContent).toContain("feature/status-bar");
+
+    await act(async () => {
+      branch?.click();
+    });
+
+    expect(onShowGitBranches).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the git branch when no branch is known", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={null}
+          dirtyCount={0}
+          gitBranch={null}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    expect(host.querySelector(".status-git-branch")).toBeNull();
+  });
+
+  it("hides the git branch when its status bar item is toggled off", async () => {
+    const statusBar = {
+      ...defaultStatusBarItemVisibility(),
+      gitBranch: false,
+    };
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={null}
+          dirtyCount={0}
+          gitBranch="main"
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={statusBar}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    expect(host.querySelector(".status-git-branch")).toBeNull();
+  });
+
+  it("offers cursor position and git branch in the visibility context menu", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={{ column: 1, lineNumber: 1 }}
+          dirtyCount={0}
+          gitBranch="main"
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const footer = host.querySelector("footer.status-bar");
+
+    await act(async () => {
+      footer?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
+      );
+    });
+
+    const menu = host.querySelector(".status-bar-menu");
+
+    expect(menu?.textContent).toContain("Cursor position");
+    expect(menu?.textContent).toContain("Git branch");
+  });
 });

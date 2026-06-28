@@ -21,7 +21,11 @@ export function isLanguageServerDocument(document: EditorDocument): boolean {
 export function isJavaScriptTypeScriptLanguageServerDocument(
   document: EditorDocument,
 ): boolean {
-  return document.language === "javascript" || document.language === "typescript";
+  return (
+    document.language === "javascript" ||
+    document.language === "typescript" ||
+    document.language === "vue"
+  );
 }
 
 export function createLanguageServerTextDocument(

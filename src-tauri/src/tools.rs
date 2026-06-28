@@ -16,6 +16,11 @@ pub struct PhpToolAvailability {
 pub struct JavaScriptTypeScriptToolAvailability {
     pub typescript_language_server: Option<ToolLocation>,
     pub typescript_server: Option<ToolLocation>,
+    /// Location of the optional `@vue/typescript-plugin` package directory. When
+    /// present it is loaded into the existing tsserver so `.vue` `<script>`
+    /// blocks gain TypeScript intelligence; when absent `.vue` files keep
+    /// highlighting only (no language-server features, no crash).
+    pub vue_typescript_plugin: Option<ToolLocation>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,6 +101,7 @@ impl JavaScriptTypeScriptToolDetector for LocalJavaScriptTypeScriptToolDetector 
                 preference,
             ),
             typescript_server: find_typescript_server(workspace_root, preference),
+            vue_typescript_plugin: find_vue_typescript_plugin(workspace_root),
         })
     }
 }
@@ -148,6 +154,53 @@ fn find_javascript_typescript_tool(
     }
 
     find_path_tool(name)
+}
+
+/// Locates the `@vue/typescript-plugin` package directory so it can be loaded
+/// into the existing tsserver for `.vue` `<script>` TypeScript intelligence.
+/// Prefers the workspace `node_modules` (so a project-pinned Vue toolchain wins)
+/// and falls back to the bundled `node_modules`. Returns `None` when the plugin
+/// is not installed, in which case `.vue` files degrade to highlighting only.
+fn find_vue_typescript_plugin(workspace_root: Option<&Path>) -> Option<ToolLocation> {
+    let mut candidates = Vec::new();
+
+    if let Some(root) = workspace_root {
+        candidates.push((
+            root.join("node_modules"),
+            ToolSource::WorkspaceNodeModulesBin,
+        ));
+    }
+
+    candidates.extend(
+        bundled_node_modules_roots()
+            .into_iter()
+            .map(|node_modules| (node_modules, ToolSource::BundledNodeModulesBin)),
+    );
+
+    candidates
+        .into_iter()
+        .find_map(|(node_modules, source)| {
+            find_vue_typescript_plugin_in_node_modules(&node_modules, source)
+        })
+}
+
+fn find_vue_typescript_plugin_in_node_modules(
+    node_modules: &Path,
+    source: ToolSource,
+) -> Option<ToolLocation> {
+    let plugin_dir = node_modules.join("@vue").join("typescript-plugin");
+
+    plugin_dir
+        .join("package.json")
+        .is_file()
+        .then(|| ToolLocation {
+            // The plugin is a package directory loaded via `location`, not an
+            // executable; `executable` is unused for plugin entries and only
+            // carries the package name for provenance/debugging.
+            executable: "@vue/typescript-plugin".to_string(),
+            path: plugin_dir.to_string_lossy().to_string(),
+            source,
+        })
 }
 
 fn find_typescript_server(
@@ -445,6 +498,7 @@ fn is_executable_metadata(_metadata: &fs::Metadata) -> bool {
 mod tests {
     use super::{
         find_javascript_typescript_tool, find_tool_with_managed_locations, find_typescript_server,
+        find_vue_typescript_plugin, find_vue_typescript_plugin_in_node_modules,
         JavaScriptTypeScriptToolPreference, ToolSource,
     };
     use std::{fs, time::SystemTime};
@@ -533,6 +587,55 @@ mod tests {
 
         assert_eq!(server.path, server_path.to_string_lossy().to_string());
         assert!(matches!(server.source, ToolSource::WorkspaceNodeModulesBin));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_workspace_vue_typescript_plugin_directory() {
+        let root = create_temp_dir("workspace-vue-typescript-plugin");
+        let plugin_dir = root
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin");
+        fs::create_dir_all(&plugin_dir).expect("create vue plugin dir");
+        fs::write(plugin_dir.join("package.json"), "{}").expect("write plugin package.json");
+
+        let plugin = find_vue_typescript_plugin(Some(&root)).expect("vue plugin location");
+
+        assert_eq!(plugin.path, plugin_dir.to_string_lossy().to_string());
+        assert!(matches!(plugin.source, ToolSource::WorkspaceNodeModulesBin));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn vue_typescript_plugin_keeps_bundled_provenance_source() {
+        let bundled = create_temp_dir("bundled-vue-typescript-plugin");
+        let plugin_dir = bundled.join("@vue").join("typescript-plugin");
+        fs::create_dir_all(&plugin_dir).expect("create bundled vue plugin dir");
+        fs::write(plugin_dir.join("package.json"), "{}").expect("write plugin package.json");
+
+        let plugin =
+            find_vue_typescript_plugin_in_node_modules(&bundled, ToolSource::BundledNodeModulesBin)
+                .expect("bundled vue plugin location");
+
+        assert_eq!(plugin.path, plugin_dir.to_string_lossy().to_string());
+        assert!(matches!(plugin.source, ToolSource::BundledNodeModulesBin));
+        fs::remove_dir_all(bundled).expect("cleanup");
+    }
+
+    #[test]
+    fn missing_vue_typescript_plugin_in_node_modules_resolves_to_none() {
+        let root = create_temp_dir("workspace-without-vue-plugin");
+        let node_modules = root.join("node_modules");
+        fs::create_dir_all(&node_modules).expect("create node_modules");
+
+        // A node_modules tree without the plugin yields no location, so `.vue`
+        // files degrade to highlighting only rather than crashing.
+        assert!(find_vue_typescript_plugin_in_node_modules(
+            &node_modules,
+            ToolSource::WorkspaceNodeModulesBin,
+        )
+        .is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCompletionList,
   type LanguageServerCodeLens,
   type LanguageServerDocumentSymbol,
   type LanguageServerDocumentLink,
@@ -28,13 +29,23 @@ import {
   type LanguageServerWorkspaceEditGateway,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
+import {
+  createDocumentHighlightRequestTracker,
+  type DocumentHighlightRequestTracker,
+} from "../domain/documentHighlightRequestTracker";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
+import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
 } from "../domain/phpPostfixCompletions";
+import {
+  normalizeUserSnippets,
+  snippetCompletionSuggestions,
+  type UserSnippet,
+} from "../domain/snippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -91,9 +102,23 @@ export interface PhpCodeActionTextEdit {
   text: string;
 }
 
+/**
+ * A brand-new file a PHP code action creates as part of its edit (e.g. "Extract
+ * interface" writes a sibling `<Class>Interface.php`). `path` is an absolute
+ * filesystem path inside the active root. When the host provides a disk
+ * callback, the monaco mapper routes it through an atomic command; otherwise it
+ * falls back to a file-create resource edit plus a content insertion.
+ */
+export interface PhpCodeActionNewFile {
+  content: string;
+  path: string;
+}
+
 export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
+  isPreferred?: boolean;
   kind?: string;
+  newFile?: PhpCodeActionNewFile;
   title: string;
 }
 
@@ -149,8 +174,52 @@ interface ExecuteCommandPayload {
   sessionId: number;
 }
 
+interface ResolveAndApplyCodeActionPayload {
+  action: LanguageServerCodeAction;
+  editContext: WorkspaceEditContext;
+  rootPath: string;
+  sessionId: number;
+}
+
+interface ApplyPhpCodeActionNewFilePayload {
+  edits: PhpCodeActionTextEdit[];
+  newFile: PhpCodeActionNewFile;
+  sourcePath: string | null;
+  versionId: number | undefined;
+}
+
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
+const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
+  "mockor.php.resolveAndApplyCodeAction";
+/**
+ * Monaco command fired by a synthesized PHP code action that creates a new file
+ * (currently "Extract interface"). The command persists the new interface file
+ * first and then applies the paired in-document edit, so a failed file creation
+ * cannot leave a partial `implements` clause behind.
+ */
+const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID =
+  "mockor.php.applyCodeActionNewFile";
+/**
+ * Upper bound (ms) for an interactive hover / navigation request before the
+ * provider gives up and resolves to "no result". A cold phpactor (mid-index or
+ * just-warmed) can take seconds to answer; without a bound the Monaco hover
+ * widget would show its "Loading…" placeholder indefinitely. A warm phpactor
+ * answers in well under this budget, so the timeout only trips on genuinely
+ * stuck cold requests and never cancels a legitimate (slower-but-valid) result.
+ */
+const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
+/**
+ * Shorter upper bound (ms) for a hover request. Hover is passive information,
+ * so the worse outcome is leaving the Monaco "Loading…" placeholder on screen
+ * for the full {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS} budget when a cold
+ * phpactor is slow. A warm phpactor answers a symbol hover in well under this
+ * budget, so the only behavioural change is that a stuck cold hover tears down
+ * its "Loading…" widget in ~700ms (PhpStorm-like) instead of 2.5s. Actionable
+ * navigation/references/completion requests keep the longer budget.
+ */
+const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
+const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
 const PHP_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -214,11 +283,32 @@ export interface BladeCompletion {
 }
 
 export interface LanguageServerMonacoProviderContext {
+  /**
+   * Persists a PHP code action's new file (e.g. "Extract interface" writes a
+   * sibling `<Class>Interface.php`) to DISK and opens it in a tab. When wired,
+   * the code-action mapper routes the new file through this controller callback
+   * (a monaco command) instead of monaco's in-memory file-create bulk edit, so
+   * the interface is a real `.php` file that survives reopening the workspace.
+   * The controller owns the gateway write, the file-tree refresh, the tab open
+   * AND the per-project isolation (requested-root capture + re-check after each
+   * await). RESOLVES `true` only when the file was freshly written; the command
+   * applies the paired in-document edit (e.g. the `implements` clause) ONLY then,
+   * so a pre-existing target or a failed write never leaves a partial class edit.
+   * Omitted callers fall back to the legacy in-memory monaco file-create edit.
+   */
+  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
+  clearLanguageServerDiagnosticsForPath?(path: string): void;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  /**
+   * Returns the GLOBAL (app-level) user-authored live templates so they can be
+   * merged with the built-in snippet registry at completion time. Omitted when
+   * the host wires no user snippets; the provider then offers built-ins only.
+   */
+  getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
   /**
    * Reports whether `path` has already been opened on the language server (its
@@ -229,6 +319,13 @@ export interface LanguageServerMonacoProviderContext {
    * document on demand for interactive requests).
    */
   isDocumentSynced?(rootPath: string, path: string): boolean;
+  /**
+   * Reports whether PHP inlay hints (both the managed phpactor hints and the
+   * TS-domain parameter-name fallback) are enabled for the active workspace.
+   * When omitted the provider treats PHP inlay hints as enabled so callers that
+   * do not wire the toggle keep the prior behaviour.
+   */
+  isPhpInlayHintsEnabled?(): boolean;
   limitNavigationResultsToOpenModels?: boolean;
   /**
    * Resolves and navigates to the Blade target (a view referenced by
@@ -279,6 +376,19 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<PhpMethodSignature | null>;
+  /**
+   * Resolves PHP parameter-name inlay hints for the call expressions whose
+   * opening parenthesis sits inside `range` (a 0-based inclusive line span). The
+   * controller reuses the signature-resolution flow to map parameter names onto
+   * positional arguments and enforces per-project isolation (requested-root
+   * capture + re-check after each await), dropping stale results on a tab
+   * switch. Returns one hint per argument that should display its parameter
+   * name, with 0-based `line`/`character` positions.
+   */
+  providePhpParameterInlayHints?(
+    source: string,
+    range: { endLine: number; startLine: number },
+  ): Promise<PhpParameterNameInlayHint[]>;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -324,6 +434,8 @@ export function registerLanguageServerMonacoProviders(
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
   const registry = monaco.languages as Partial<typeof monaco.languages>;
+  const documentHighlightTracker =
+    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
   const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -455,13 +567,152 @@ export function registerLanguageServerMonacoProviders(
       }
     },
   });
+  const resolveAndApplyCodeActionCommand = monaco.editor.addCommand({
+    id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
+    run: async (
+      _accessor,
+      payload: ResolveAndApplyCodeActionPayload | undefined,
+    ) => {
+      if (
+        !payload ||
+        payload.sessionId == null ||
+        !isStoredLanguageServerPayloadActive(
+          context,
+          payload.rootPath,
+          payload.sessionId,
+        )
+      ) {
+        return;
+      }
+
+      try {
+        if (payload.editContext.path) {
+          await context.flushPendingDocumentChange(payload.editContext.path);
+
+          if (
+            !isStoredLanguageServerPayloadActive(
+              context,
+              payload.rootPath,
+              payload.sessionId,
+            )
+          ) {
+            return;
+          }
+        }
+
+        const resolved = await context.featuresGateway.resolveCodeAction(
+          payload.rootPath,
+          payload.action,
+        );
+
+        if (
+          !isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
+          return;
+        }
+
+        if (resolved.edit) {
+          await applyWorkspaceEditWithOpenModels(
+            monaco,
+            context,
+            resolved.edit,
+            payload.rootPath,
+          );
+        }
+
+        if (resolved.command) {
+          const edit = await context.featuresGateway.executeCommand(
+            payload.rootPath,
+            resolved.command,
+          );
+
+          if (
+            edit &&
+            isStoredLanguageServerPayloadActive(
+              context,
+              payload.rootPath,
+              payload.sessionId,
+            )
+          ) {
+            await applyWorkspaceEditWithOpenModels(
+              monaco,
+              context,
+              edit,
+              payload.rootPath,
+            );
+          }
+        }
+      } catch (error) {
+        if (
+          !isUnsupportedCodeActionResolveError(error) &&
+          isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
+          context.reportError(error);
+        }
+      }
+    },
+  });
+  const applyNewFileCommand = monaco.editor.addCommand({
+    id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
+    run: async (
+      _accessor,
+      payload: ApplyPhpCodeActionNewFilePayload | undefined,
+    ) => {
+      if (!payload?.newFile || !context.applyPhpCodeActionNewFile) {
+        return;
+      }
+
+      try {
+        if (payload.sourcePath) {
+          await context.flushPendingDocumentChange(payload.sourcePath);
+        }
+
+        // The controller callback owns the gateway disk write, the file-tree
+        // refresh, the tab open AND the per-project isolation (requested-root
+        // capture + re-check after each await), so a tab switch mid-write drops
+        // the stale result. It resolves `true` ONLY when the interface file was
+        // freshly written; we apply the paired in-document edits only then, so a
+        // pre-existing target or a failed creation cannot leave a partial class
+        // edit behind.
+        const interfaceFileWritten = await context.applyPhpCodeActionNewFile(
+          payload.newFile,
+        );
+
+        if (interfaceFileWritten) {
+          if (payload.sourcePath) {
+            context.clearLanguageServerDiagnosticsForPath?.(payload.sourcePath);
+          }
+
+          applyPhpCodeActionDocumentEdits(monaco, payload);
+        }
+      } catch (error) {
+        context.reportError(error);
+      }
+    },
+  });
   const hover = monaco.languages.registerHoverProvider("php", {
-    provideHover: (model, position) => provideHover(monaco, context, model, position),
+    provideHover: (model, position, token) =>
+      provideHover(monaco, context, model, position, token),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
     triggerCharacters: ["$", ">", ":", "'", "\"", "."],
-    provideCompletionItems: (model, position) =>
-      provideCompletionItems(monaco, context, model, position),
+    provideCompletionItems: (model, position, completionContext, token) =>
+      provideCompletionItems(
+        monaco,
+        context,
+        model,
+        position,
+        completionContext,
+        token,
+      ),
   });
   const signature = monaco.languages.registerSignatureHelpProvider("php", {
     signatureHelpRetriggerCharacters: [","],
@@ -501,38 +752,45 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const references = monaco.languages.registerReferenceProvider
     ? monaco.languages.registerReferenceProvider("php", {
-        provideReferences: (model, position) =>
-          provideReferences(monaco, context, model, position),
+        provideReferences: (model, position, _referenceContext, token) =>
+          provideReferences(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const definition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("php", {
-        provideDefinition: (model, position) =>
-          provideDefinition(monaco, context, model, position),
+        provideDefinition: (model, position, token) =>
+          provideDefinition(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const declaration = monaco.languages.registerDeclarationProvider
     ? monaco.languages.registerDeclarationProvider("php", {
-        provideDeclaration: (model, position) =>
-          provideDeclaration(monaco, context, model, position),
+        provideDeclaration: (model, position, token) =>
+          provideDeclaration(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const implementation = monaco.languages.registerImplementationProvider
     ? monaco.languages.registerImplementationProvider("php", {
-        provideImplementation: (model, position) =>
-          provideImplementation(monaco, context, model, position),
+        provideImplementation: (model, position, token) =>
+          provideImplementation(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const typeDefinition = monaco.languages.registerTypeDefinitionProvider
     ? monaco.languages.registerTypeDefinitionProvider("php", {
-        provideTypeDefinition: (model, position) =>
-          provideTypeDefinition(monaco, context, model, position),
+        provideTypeDefinition: (model, position, token) =>
+          provideTypeDefinition(monaco, context, model, position, token),
       })
     : { dispose: () => undefined };
   const documentHighlight = monaco.languages.registerDocumentHighlightProvider
     ? monaco.languages.registerDocumentHighlightProvider("php", {
-        provideDocumentHighlights: (model, position) =>
-          provideDocumentHighlights(monaco, context, model, position),
+        provideDocumentHighlights: (model, position, token) =>
+          provideDocumentHighlights(
+            monaco,
+            context,
+            documentHighlightTracker,
+            model,
+            position,
+            token,
+          ),
       })
     : { dispose: () => undefined };
   const documentSymbol = monaco.languages.registerDocumentSymbolProvider
@@ -660,6 +918,8 @@ export function registerLanguageServerMonacoProviders(
       inlayHintRefreshEmitter.dispose();
       semanticTokensRefreshEmitter.dispose();
       command.dispose();
+      resolveAndApplyCodeActionCommand.dispose();
+      applyNewFileCommand.dispose();
       hover.dispose();
       completion.dispose();
       signature.dispose();
@@ -746,6 +1006,13 @@ async function provideBladeCompletionItems(
   const source = modelSource(model, documentContext.activeDocument.content);
   const word = model.getWordUntilPosition(position);
   const fallbackRange = bladeCompletionFallbackRange(position, word);
+  const snippetSuggestions = bladeSnippetSuggestions(
+    monaco,
+    context,
+    model,
+    position,
+    word,
+  );
 
   try {
     const completions = await context.provideBladeCompletions(source, position);
@@ -755,16 +1022,19 @@ async function provideBladeCompletionItems(
     }
 
     return {
-      suggestions: completions.map((completion, index) =>
-        toMonacoBladeCompletion(
-          monaco,
-          model,
-          source,
-          fallbackRange,
-          completion,
-          index,
+      suggestions: [
+        ...completions.map((completion, index) =>
+          toMonacoBladeCompletion(
+            monaco,
+            model,
+            source,
+            fallbackRange,
+            completion,
+            index,
+          ),
         ),
-      ),
+        ...snippetSuggestions,
+      ],
     };
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
@@ -829,6 +1099,45 @@ function bladeCompletionFallbackRange(
     startColumn: word.startColumn,
     startLineNumber: position.lineNumber,
   };
+}
+
+/**
+ * Built-in Blade live-template snippets (`@if`, `@foreach`, `bvar`, …) offered
+ * alongside the controller's directive/view completions. Blade directive
+ * prefixes carry a leading `@` that `getWordUntilPosition` strips, so the typed
+ * abbreviation is reconstructed from the line content (including the `@` when
+ * the word is directly preceded by one) and the replace range is widened to
+ * cover it. Sorted into the shared `2_` bucket so snippets sit below the live
+ * directive/view list, matching the PHP/JS-TS wiring.
+ */
+function bladeSnippetSuggestions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number; word?: string },
+): Monaco.languages.CompletionItem[] {
+  const typedWord = typeof word.word === "string" ? word.word : "";
+  const line = model.getLineContent?.(position.lineNumber) ?? "";
+  const hasLeadingAt = line[word.startColumn - 2] === "@";
+  const typed = hasLeadingAt ? `@${typedWord}` : typedWord;
+  const startColumn = hasLeadingAt
+    ? Math.max(1, word.startColumn - 1)
+    : word.startColumn;
+  const range = {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn,
+    startLineNumber: position.lineNumber,
+  };
+
+  return snippetCompletionSuggestions(
+    monaco,
+    "blade",
+    typed,
+    range,
+    contextUserSnippets(context),
+  ) as Monaco.languages.CompletionItem[];
 }
 
 /**
@@ -1015,6 +1324,7 @@ async function provideReferences(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1024,6 +1334,7 @@ async function provideReferences(
     "references",
     (rootPath, requestPosition) =>
       context.featuresGateway.references(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1032,6 +1343,7 @@ async function provideDeclaration(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1041,6 +1353,7 @@ async function provideDeclaration(
     "declaration",
     (rootPath, requestPosition) =>
       context.featuresGateway.declaration(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1049,6 +1362,7 @@ async function provideDefinition(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   if (await provideLaravelStringLiteralDefinition(context, model, position)) {
     return null;
@@ -1062,6 +1376,7 @@ async function provideDefinition(
     "definition",
     (rootPath, requestPosition) =>
       context.featuresGateway.definition(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1129,6 +1444,7 @@ async function provideImplementation(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1138,6 +1454,7 @@ async function provideImplementation(
     "implementation",
     (rootPath, requestPosition) =>
       context.featuresGateway.implementation(rootPath, requestPosition),
+    token,
   );
 }
 
@@ -1146,6 +1463,7 @@ async function provideTypeDefinition(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   return provideNavigationLocations(
     monaco,
@@ -1155,14 +1473,17 @@ async function provideTypeDefinition(
     "typeDefinition",
     (rootPath, requestPosition) =>
       context.featuresGateway.typeDefinition(rootPath, requestPosition),
+    token,
   );
 }
 
 async function provideDocumentHighlights(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
+  tracker: DocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>,
   model: MonacoModel,
   position: MonacoPosition,
+  token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
   const request = featureRequestContext(
     context,
@@ -1175,6 +1496,17 @@ async function provideDocumentHighlights(
     return null;
   }
 
+  const word = model.getWordAtPosition(position)?.word ?? null;
+  const version = model.getVersionId();
+
+  if (word !== null) {
+    const cached = tracker.cached(request.path, word, version);
+
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return null;
@@ -1185,13 +1517,23 @@ async function provideDocumentHighlights(
       request.position,
     );
 
+    if (token.isCancellationRequested) {
+      return null;
+    }
+
     if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
-    return highlights.map((highlight) =>
+    const mapped = highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
+
+    if (word !== null) {
+      tracker.remember(request.path, word, version, mapped);
+    }
+
+    return mapped;
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -1691,6 +2033,13 @@ async function provideInlayHints(
   model: MonacoModel,
   range: Monaco.Range,
 ): Promise<Monaco.languages.InlayHintList> {
+  // The PHP inlay-hints toggle gates both the managed phpactor hints and the
+  // TS-domain parameter-name fallback. An unwired toggle defaults to enabled so
+  // existing callers keep producing phpactor hints.
+  if (context.isPhpInlayHintsEnabled && !context.isPhpInlayHintsEnabled()) {
+    return inlayHintList();
+  }
+
   const request = featureDocumentRequestContext(context, model, "inlayHint");
 
   if (!request) {
@@ -1712,21 +2061,114 @@ async function provideInlayHints(
       return inlayHintList();
     }
 
-    return inlayHintList(
-      hints.map((hint) =>
-        toMonacoInlayHint(
-          monaco,
-          request.rootPath,
-          request.path,
-          request.sessionId,
-          hint,
-        ),
+    const monacoHints = hints.map((hint) =>
+      toMonacoInlayHint(
+        monaco,
+        request.rootPath,
+        request.path,
+        request.sessionId,
+        hint,
       ),
+    );
+    const parameterHints = await providePhpParameterNameInlayHints(
+      context,
+      request,
+      model,
+      range,
+    );
+
+    return inlayHintList(
+      mergePhpInlayHints(parameterHints, monacoHints),
     );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return inlayHintList();
   }
+}
+
+/**
+ * Resolves the TS-domain parameter-name fallback hints for the viewport `range`
+ * and converts them into Monaco parameter inlay hints. phpactor parameter hints
+ * are unreliable, so this fallback (built on the signature-resolution flow)
+ * supplies `name:` hints in front of positional arguments. Re-checks the active
+ * request after the resolve await before returning (per-project isolation), and
+ * never throws: a failed fallback leaves the phpactor hints untouched.
+ */
+async function providePhpParameterNameInlayHints(
+  context: LanguageServerMonacoProviderContext,
+  request: { path: string; rootPath: string; sessionId: number },
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<LanguageServerBackedInlayHint[]> {
+  if (!context.providePhpParameterInlayHints) {
+    return [];
+  }
+
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return [];
+  }
+
+  try {
+    const hints = await context.providePhpParameterInlayHints(
+      modelSource(model, documentContext.activeDocument.content),
+      {
+        endLine: Math.max(0, range.endLineNumber - 1),
+        startLine: Math.max(0, range.startLineNumber - 1),
+      },
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return hints.map((hint) => toMonacoParameterNameInlayHint(hint));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
+  }
+}
+
+/**
+ * Converts a domain parameter-name hint (0-based line/character) into a Monaco
+ * `Parameter` inlay hint rendered as `name:` immediately before the argument.
+ */
+function toMonacoParameterNameInlayHint(
+  hint: PhpParameterNameInlayHint,
+): LanguageServerBackedInlayHint {
+  return {
+    label: `${hint.name}:`,
+    paddingLeft: false,
+    paddingRight: true,
+    position: {
+      column: hint.character + 1,
+      lineNumber: hint.line + 1,
+    },
+    kind: 2 as Monaco.languages.InlayHintKind,
+  };
+}
+
+/**
+ * Merges TS-fallback parameter hints with phpactor hints, dropping a fallback
+ * hint when phpactor already emitted a parameter hint at the same position so a
+ * call never shows the parameter name twice. phpactor hints win on overlap.
+ */
+function mergePhpInlayHints(
+  parameterHints: LanguageServerBackedInlayHint[],
+  phpactorHints: LanguageServerBackedInlayHint[],
+): LanguageServerBackedInlayHint[] {
+  const occupied = new Set(
+    phpactorHints.map(
+      (hint) => `${hint.position.lineNumber}:${hint.position.column}`,
+    ),
+  );
+  const fallback = parameterHints.filter(
+    (hint) =>
+      !occupied.has(`${hint.position.lineNumber}:${hint.position.column}`),
+  );
+
+  return [...phpactorHints, ...fallback];
 }
 
 async function resolveInlayHint(
@@ -1815,6 +2257,7 @@ async function provideNavigationLocations(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ) => Promise<LanguageServerLocation[]>,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   const request = featureRequestContext(context, model, position, feature);
 
@@ -1827,7 +2270,17 @@ async function provideNavigationLocations(
       return null;
     }
 
-    const locations = await requestLocations(request.rootPath, request.position);
+    const locations = await raceInteractiveFeatureRequest(
+      requestLocations(request.rootPath, request.position),
+    );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1923,20 +2376,22 @@ async function provideCodeActions(
       return codeActionList([...activePhpActions(), ...localActions]);
     }
 
-    return codeActionList([
-      ...actions.flatMap((action) =>
-        toMonacoCodeAction(
-          monaco,
-          workspaceEditContext(model),
-          request.rootPath,
-          request.sessionId,
-          action,
-          actionContext,
+    return codeActionList(
+      orderCodeActions({
+        languageServerActions: actions.flatMap((action) =>
+          toMonacoCodeAction(
+            monaco,
+            workspaceEditContext(model),
+            request.rootPath,
+            request.sessionId,
+            action,
+            actionContext,
+          ),
         ),
-      ),
-      ...activePhpActions(),
-      ...localActions,
-    ]);
+        localActions,
+        phpActions: activePhpActions(),
+      }),
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
 
@@ -1975,7 +2430,7 @@ async function providePhpSourceCodeActions(
     }
 
     return descriptors.map((descriptor) =>
-      toPhpCodeAction(monaco, model, descriptor),
+      toPhpCodeAction(monaco, context, model, descriptor),
     );
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
@@ -1987,19 +2442,42 @@ async function providePhpSourceCodeActions(
 }
 
 /**
- * The synthesized PHP code actions are class-body refactors ("Implement
- * methods", "Generate constructor/accessors", "Optimize imports", "Create
- * method/property from usage") plus the "Extract variable" refactor. Honour
- * Monaco's `only` filter: an unfiltered request and quickfix/refactor-scoped
- * requests both qualify; any other narrow scope (e.g. `source.organizeImports`)
- * is left to the language server so we never surface an off-context action.
+ * The synthesized PHP code actions span three kind families: contextual
+ * quickfixes ("Create method/property from usage", "Import class", "Remove
+ * unused ...") on the lightbulb, refactors ("Extract ...", "Add type hint",
+ * "Generate constructor/accessors", "Implement/Override methods"), and the
+ * "Optimize imports" organize-imports source action. Honour Monaco's `only`
+ * filter: an unfiltered request qualifies, and a request narrowed to a family we
+ * actually emit - `quickfix`, `refactor`, or the `source.organizeImports`
+ * group - is served. Any other narrow `source.*` scope (e.g. `source.fixAll`)
+ * has no matching action, so it is left to the language server. This keeps us
+ * from ever surfacing an off-context action.
  */
 function phpSourceCodeActionKindRequested(only: string | undefined): boolean {
   if (!only) {
     return true;
   }
 
-  return only.startsWith("quickfix") || only.startsWith("refactor");
+  return (
+    only.startsWith("quickfix") ||
+    only.startsWith("refactor") ||
+    phpOrganizeImportsKindRequested(only)
+  );
+}
+
+/**
+ * True when the `only` scope targets the organize-imports family that our
+ * "Optimize imports" action belongs to: the bare `source` group, or
+ * `source.organizeImports` (and its sub-scopes). A more specific sibling scope
+ * like `source.fixAll` returns false so we do not run for an action we never
+ * emit.
+ */
+function phpOrganizeImportsKindRequested(only: string): boolean {
+  return (
+    only === "source" ||
+    only === "source.organizeImports" ||
+    only.startsWith("source.organizeImports.")
+  );
 }
 
 /**
@@ -2025,30 +2503,152 @@ function phpCodeActionOffsetRange(
 
 function toPhpCodeAction(
   monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
   const versionId = model.getVersionId();
+  const documentEdits: Array<
+    Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
+  > = descriptor.edits.map((edit) => ({
+    resource: model.uri,
+    textEdit: {
+      range: new monaco.Range(
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      text: edit.text,
+    },
+    versionId,
+  }));
+
+  // When the host wires the disk-persisting callback, a new-file action (e.g.
+  // "Extract interface") keeps its document edits out of the eager Monaco bulk
+  // edit. The command writes the file first, then applies those edits, making
+  // the interface real on disk while failing closed if creation is blocked.
+  // Hosts that omit the callback fall back to the legacy in-memory file-create
+  // bulk edit.
+  if (descriptor.newFile && context.applyPhpCodeActionNewFile) {
+    return {
+      command: applyPhpCodeActionNewFileCommand(
+        descriptor.newFile,
+        descriptor.edits,
+        model,
+      ),
+      edit: { edits: [] },
+      isPreferred: descriptor.isPreferred,
+      kind: descriptor.kind ?? "quickfix",
+      title: descriptor.title,
+    };
+  }
 
   return {
     edit: {
-      edits: descriptor.edits.map((edit) => ({
-        resource: model.uri,
-        textEdit: {
-          range: new monaco.Range(
-            edit.range.startLineNumber,
-            edit.range.startColumn,
-            edit.range.endLineNumber,
-            edit.range.endColumn,
-          ),
-          text: edit.text,
-        },
-        versionId,
-      })),
+      edits: [...newFileEdits(monaco, descriptor.newFile), ...documentEdits],
     },
+    isPreferred: descriptor.isPreferred,
     kind: descriptor.kind ?? "quickfix",
     title: descriptor.title,
   };
+}
+
+/**
+ * Builds the monaco command that persists a PHP code action's new file to disk.
+ * The action itself has no eager document edits; this command writes the sibling
+ * file and then applies the captured edits to the original model.
+ */
+function applyPhpCodeActionNewFileCommand(
+  newFile: PhpCodeActionNewFile,
+  edits: PhpCodeActionTextEdit[],
+  model: MonacoModel,
+): Monaco.languages.Command {
+  return {
+    arguments: [
+      {
+        edits,
+        newFile,
+        sourcePath: modelPath(model),
+        versionId:
+          typeof model.getVersionId === "function"
+            ? model.getVersionId()
+            : undefined,
+      } satisfies ApplyPhpCodeActionNewFilePayload,
+    ],
+    id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
+    title: "Create file",
+  };
+}
+
+function applyPhpCodeActionDocumentEdits(
+  monaco: MonacoApi,
+  payload: ApplyPhpCodeActionNewFilePayload,
+): void {
+  const model = monaco.editor
+    .getModels()
+    .find((candidate) => modelPath(candidate) === payload.sourcePath);
+
+  if (!model || payload.edits.length === 0) {
+    return;
+  }
+
+  if (
+    payload.versionId !== undefined &&
+    typeof model.getVersionId === "function" &&
+    model.getVersionId() !== payload.versionId
+  ) {
+    return;
+  }
+
+  model.pushEditOperations(
+    [],
+    payload.edits.map((edit) => ({
+      range: new monaco.Range(
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      text: edit.text,
+    })),
+    () => null,
+  );
+}
+
+/**
+ * Maps a code action's optional new-file payload to a monaco file-create
+ * resource edit followed by a content insertion into the new model. The create
+ * edit uses `ignoreIfExists` so re-applying (or an already-present sibling)
+ * never clobbers an existing file; the content is inserted at the start of the
+ * (empty) new model. Returns an empty list when the action creates no file.
+ */
+function newFileEdits(
+  monaco: MonacoApi,
+  newFile: PhpCodeActionNewFile | undefined,
+): Array<
+  Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
+> {
+  if (!newFile) {
+    return [];
+  }
+
+  const resource = monaco.Uri.file(newFile.path);
+
+  return [
+    {
+      newResource: resource,
+      options: { ignoreIfExists: true },
+    },
+    {
+      resource,
+      textEdit: {
+        range: new monaco.Range(1, 1, 1, 1),
+        text: newFile.content,
+      },
+      versionId: undefined,
+    },
+  ];
 }
 
 async function resolveCodeAction(
@@ -2205,6 +2805,100 @@ function codeActionList(
     actions,
     dispose: () => undefined,
   };
+}
+
+function orderCodeActions({
+  languageServerActions,
+  localActions,
+  phpActions,
+}: {
+  languageServerActions: Monaco.languages.CodeAction[];
+  localActions: Monaco.languages.CodeAction[];
+  phpActions: Monaco.languages.CodeAction[];
+}): Monaco.languages.CodeAction[] {
+  const safeCreateTypeNames = new Set(
+    phpActions.flatMap((action) => {
+      const name = phpCreateTypeActionName(action.title);
+      return name ? [name] : [];
+    }),
+  );
+  const seenLanguageServerActions = new Set<string>();
+  const filteredLanguageServerActions = languageServerActions.filter(
+    (action) => {
+      const phpactorCreateTypeName = phpactorCreateTypeVariantName(action);
+      if (
+        phpactorCreateTypeName &&
+        safeCreateTypeNames.has(phpactorCreateTypeName)
+      ) {
+        return false;
+      }
+
+      const key = codeActionDedupeKey(action);
+
+      if (seenLanguageServerActions.has(key)) {
+        return false;
+      }
+
+      seenLanguageServerActions.add(key);
+      return true;
+    },
+  );
+
+  return [...phpActions, ...filteredLanguageServerActions, ...localActions];
+}
+
+function phpCreateTypeActionName(title: string): string | null {
+  const match = /^Create (?:class|interface|trait|enum) ([A-Za-z_\\][A-Za-z0-9_\\]*)$/.exec(
+    title,
+  );
+
+  return match ? phpTypeShortName(match[1] ?? "") : null;
+}
+
+function phpactorCreateTypeVariantName(
+  action: Monaco.languages.CodeAction,
+): string | null {
+  const backedAction = action as LanguageServerBackedCodeAction;
+
+  if (!backedAction.__languageServerAction) {
+    return null;
+  }
+
+  return (
+    phpactorCreateFileActionName(action.title) ??
+    phpCreateTypeActionName(action.title)
+  );
+}
+
+function phpactorCreateFileActionName(title: string): string | null {
+  const quoted = /^Create (?:default|class|interface|trait|enum) file for "([^"]+)"$/i.exec(
+    title,
+  );
+
+  if (quoted) {
+    return phpTypeShortName(quoted[1] ?? "");
+  }
+
+  const bare = /^Create (?:default|class|interface|trait|enum) file\b\s*(?:for\s+)?(.+)$/i.exec(
+    title,
+  );
+
+  if (!bare) {
+    return null;
+  }
+
+  return phpTypeShortName((bare[1] ?? "").replace(/\.php$/i, "").trim());
+}
+
+function phpTypeShortName(name: string): string {
+  const normalized = name.replace(/^\\+/, "").trim();
+  const segments = normalized.split("\\").filter(Boolean);
+
+  return segments.length > 0 ? segments[segments.length - 1] ?? normalized : normalized;
+}
+
+function codeActionDedupeKey(action: Monaco.languages.CodeAction): string {
+  return [action.kind ?? "", action.title].join("\0");
 }
 
 function documentLinkList(
@@ -2461,6 +3155,21 @@ function toMonacoCodeAction(
             action.title,
           ),
         }
+      : !action.edit && action.data != null && !action.disabled
+        ? {
+            command: {
+              arguments: [
+                {
+                  action,
+                  editContext,
+                  rootPath,
+                  sessionId,
+                } satisfies ResolveAndApplyCodeActionPayload,
+              ],
+              id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
+              title: action.title,
+            },
+          }
       : {}),
     ...(action.edit
       ? {
@@ -3145,6 +3854,7 @@ async function provideHover(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Hover | null> {
   const request = featureRequestContext(context, model, position, "hover");
 
@@ -3157,10 +3867,18 @@ async function provideHover(
       return null;
     }
 
-    const hover = await context.featuresGateway.hover(
-      request.rootPath,
-      request.position,
+    const hover = await raceInteractiveFeatureRequest(
+      context.featuresGateway.hover(request.rootPath, request.position),
+      HOVER_FEATURE_REQUEST_TIMEOUT_MS,
     );
+
+    if (hover === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -3184,6 +3902,8 @@ async function provideCompletionItems(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  _completionContext?: Monaco.languages.CompletionContext,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionList> {
   const documentContext = activePhpDocumentContext(context, model);
 
@@ -3205,6 +3925,14 @@ async function provideCompletionItems(
     return { suggestions: postfixSuggestions };
   }
 
+  // Kick off the language-server completion before awaiting the (potentially
+  // framework-backed) method collectors so the two run concurrently instead of
+  // adding their latencies serially on every keystroke.
+  const lspCompletion = requestPhpLanguageServerCompletion(
+    context,
+    model,
+    position,
+  );
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
@@ -3215,6 +3943,7 @@ async function provideCompletionItems(
   );
 
   if (!isPhpDocumentContextActive(context, documentContext)) {
+    void lspCompletion.catch(() => undefined);
     return { suggestions: [] };
   }
 
@@ -3247,72 +3976,147 @@ async function provideCompletionItems(
           range,
           sortText: `0_${String(index).padStart(4, "0")}`,
         }));
-  const suggestions = [...methodSuggestions, ...variableSuggestions];
+  // Built-in live-template snippets (nclass/dd/route/…) only make sense as
+  // free-standing statements typed from an abbreviation, never after `->`/`::`,
+  // inside a Laravel scoped string, or while framework-backed method/Laravel
+  // completions are driving the list. They are suppressed in those contexts just
+  // like local variables.
+  const snippetSuggestions =
+    methodSuggestions.length > 0 || isScopedCompletion
+      ? []
+      : phpSnippetSuggestions(
+          monaco,
+          context,
+          documentContext.activeDocument.language,
+          word,
+          range,
+        );
+  const localSuggestions = [...methodSuggestions, ...variableSuggestions];
+  const suggestions = [...localSuggestions, ...snippetSuggestions];
+
+  const resolution = await lspCompletion;
+
+  // The locally-computed method/postfix/variable/snippet suggestions are
+  // returned as a graceful fallback when the language server is missing,
+  // mid-index or slow, so completion is never empty while phpactor warms up.
+  if (resolution.kind === "noRequest") {
+    return { suggestions };
+  }
+
+  if (resolution.kind === "timedOut") {
+    return { suggestions };
+  }
+
+  if (token?.isCancellationRequested) {
+    return { suggestions: [] };
+  }
+
+  if (resolution.kind === "inactive") {
+    return { suggestions: [] };
+  }
+
+  if (resolution.kind === "error") {
+    context.reportError(resolution.error);
+    return { suggestions };
+  }
+
+  const completion = resolution.completion;
+  const lspSuggestions = completion.items.flatMap((item, index) => {
+    const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+
+    if (
+      isMemberOrStaticAccessCompletion &&
+      !phpLspCompletionAllowedInMemberContext(
+        monaco,
+        item,
+        kind,
+        Boolean(staticAccessCompletionContext),
+      )
+    ) {
+      return [];
+    }
+
+    const insert = lspCompletionInsert(monaco, item, kind);
+
+    return [{
+      detail: item.detail || undefined,
+      documentation: item.documentation || undefined,
+      insertText: insert.insertText,
+      ...(insert.command ? { command: insert.command } : {}),
+      ...(insert.insertTextRules
+        ? { insertTextRules: insert.insertTextRules }
+        : {}),
+      kind,
+      label: item.label,
+      range,
+      sortText: `1_${String(index).padStart(4, "0")}`,
+    }];
+  });
+
+  // Ordering for dedupe: locally-computed method/variable suggestions first,
+  // then language-server items, then snippets last. On a dedupe-key collision
+  // the LSP item wins over a like-named snippet (relevant for callable-shaped
+  // snippets such as `dd`). Monaco still orders the visible list by `sortText`,
+  // which keeps snippets (`2_`) below LSP (`1_`).
+  return {
+    ...(completion.isIncomplete ? { incomplete: true } : {}),
+    suggestions: dedupeCompletionItems(monaco, [
+      ...localSuggestions,
+      ...lspSuggestions,
+      ...snippetSuggestions,
+    ]),
+  };
+}
+
+type PhpLanguageServerCompletionResolution =
+  | { kind: "noRequest" }
+  | { kind: "timedOut" }
+  | { kind: "inactive" }
+  | { kind: "error"; error: unknown }
+  | { kind: "completion"; completion: LanguageServerCompletionList };
+
+/**
+ * Runs the PHP language-server completion request behind the shared interactive
+ * timeout and the per-workspace root/session guard, mirroring the hardening
+ * already applied to hover/navigation. Returning a discriminated result lets the
+ * caller decide between a graceful local fallback (timeout/no-request/error) and
+ * dropping a stale response (inactive root/session).
+ */
+async function requestPhpLanguageServerCompletion(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<PhpLanguageServerCompletionResolution> {
   const request = featureRequestContext(context, model, position, "completion");
 
   if (!request) {
-    return { suggestions };
+    return { kind: "noRequest" };
   }
 
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
-      return { suggestions: [] };
+      return { kind: "inactive" };
     }
 
-    const completion = await context.featuresGateway.completion(
-      request.rootPath,
-      request.position,
+    const completion = await raceInteractiveFeatureRequest(
+      context.featuresGateway.completion(request.rootPath, request.position),
     );
 
-    if (!isFeatureRequestActive(context, request)) {
-      return { suggestions: [] };
+    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+      return { kind: "timedOut" };
     }
 
-    const lspSuggestions = completion.items.flatMap((item, index) => {
-      const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+    if (!isFeatureRequestActive(context, request)) {
+      return { kind: "inactive" };
+    }
 
-      if (
-        isMemberOrStaticAccessCompletion &&
-        !phpLspCompletionAllowedInMemberContext(
-          monaco,
-          item,
-          kind,
-          Boolean(staticAccessCompletionContext),
-        )
-      ) {
-        return [];
-      }
-
-      const insert = lspCompletionInsert(monaco, item, kind);
-
-      return [{
-        detail: item.detail || undefined,
-        documentation: item.documentation || undefined,
-        insertText: insert.insertText,
-        ...(insert.command ? { command: insert.command } : {}),
-        ...(insert.insertTextRules
-          ? { insertTextRules: insert.insertTextRules }
-          : {}),
-        kind,
-        label: item.label,
-        range,
-        sortText: `1_${String(index).padStart(4, "0")}`,
-      }];
-    });
-
-    return {
-      suggestions: dedupeCompletionItems(monaco, [
-        ...suggestions,
-        ...lspSuggestions,
-      ]),
-    };
+    return { kind: "completion", completion };
   } catch (error) {
     if (isFeatureRequestActive(context, request)) {
-      context.reportError(error);
-      return { suggestions };
+      return { kind: "error", error };
     }
 
-    return { suggestions: [] };
+    return { kind: "inactive" };
   }
 }
 
@@ -3349,6 +4153,45 @@ function phpPostfixCompletionSuggestions(
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
   }));
+}
+
+/**
+ * Builds language-scoped live-template snippet completion items for the typed
+ * `word`. The snippet registry is a GLOBAL built-in (no workspace state), so it
+ * carries no per-project isolation risk; the surrounding completion flow keeps
+ * its root/session/token guards. Bodies are emitted with `InsertAsSnippet` so
+ * Monaco expands the `$1`/`${1:default}`/`$0` tab-stops natively, and sort with
+ * the `2_` bucket so they appear after language-server suggestions.
+ */
+function phpSnippetSuggestions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  language: string,
+  word: { word?: string },
+  range: ReturnType<typeof completionRange>,
+): Monaco.languages.CompletionItem[] {
+  const typed = typeof word.word === "string" ? word.word : "";
+
+  return snippetCompletionSuggestions(
+    monaco,
+    language,
+    typed,
+    range,
+    contextUserSnippets(context),
+  ) as Monaco.languages.CompletionItem[];
+}
+
+/**
+ * Reads the GLOBAL user snippets from the provider context, tolerating a host
+ * that wires no `getUserSnippets` callback (returns an empty list so only the
+ * built-in registry is offered). The list is normalized here so a half-edited
+ * or malformed in-session snippet (empty body, untrimmed prefix, no language)
+ * never reaches completion, matching the persisted/reload path.
+ */
+function contextUserSnippets(
+  context: LanguageServerMonacoProviderContext,
+): readonly UserSnippet[] {
+  return normalizeUserSnippets(context.getUserSnippets?.() ?? []);
 }
 
 async function phpMethodSuggestions(
@@ -4342,6 +5185,32 @@ function runningRuntimeStatusForRoot(
   }
 
   return null;
+}
+
+/**
+ * Races `request` against a timeout (defaulting to
+ * {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}). Resolves to
+ * {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins, letting the caller
+ * tear down the Monaco "Loading…" widget (returning a "no result") instead of
+ * waiting on a cold language server forever. Hover passes the shorter
+ * {@link HOVER_FEATURE_REQUEST_TIMEOUT_MS} budget. The timer is always cleared
+ * so a settled request never leaks a pending timeout.
+ */
+function raceInteractiveFeatureRequest<T>(
+  request: Promise<T>,
+  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
+): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve(FEATURE_REQUEST_TIMED_OUT),
+      timeoutMs,
+    );
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    clearTimeout(timeoutHandle);
+  });
 }
 
 function isFeatureRequestActive(

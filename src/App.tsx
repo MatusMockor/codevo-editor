@@ -22,10 +22,15 @@ import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
+import { FileHistoryPanel } from "./components/FileHistoryPanel";
+import { GitBranchPanel } from "./components/GitBranchPanel";
+import { GitStashPanel } from "./components/GitStashPanel";
+import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitDiffPreview } from "./components/GitDiffPreview";
 import { GitHistoryPanel } from "./components/GitHistoryPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { NoticeToastHost } from "./components/NoticeToastHost";
@@ -33,6 +38,8 @@ import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
+import { RecentLocationsPanel } from "./components/RecentLocationsPanel";
+import { SearchEverywhere } from "./components/SearchEverywhere";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
@@ -103,6 +110,7 @@ import {
   TauriGitGateway,
   TauriGitHistoryGateway,
 } from "./infrastructure/tauriGitGateway";
+import { TauriLocalHistoryGateway } from "./infrastructure/tauriLocalHistoryGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -133,6 +141,7 @@ const phpSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
 const gitGateway = new TauriGitGateway();
 const gitHistoryGateway = new TauriGitHistoryGateway();
+const localHistoryGateway = new TauriLocalHistoryGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const javaScriptTypeScriptLanguageServerRuntimeGateway =
@@ -226,6 +235,7 @@ function App() {
     phpFileOutlineGateway,
     phpTreeGateway,
     gitGateway,
+    localHistoryGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
@@ -328,6 +338,12 @@ function App() {
       ),
     [navigationHistoryPathsKey],
   );
+  // Depend on the inputs editorChangeHunks actually reads (baseline + current
+  // content strings) rather than the whole activeDocument object. A cursor move
+  // hands down a new activeDocument identity with identical content, so keying
+  // on the strings keeps this array reference stable and stops the downstream
+  // change-hunk decoration effect from re-running when nothing changed. When the
+  // content genuinely changes (a keystroke) the hunks recompute as expected.
   const activeEditorChangeHunks = useMemo(
     () =>
       workbench.activeDocument
@@ -337,7 +353,11 @@ function App() {
             workbench.activeDocument.content,
           )
         : [],
-    [workbench.activeDocument, workbench.activeDocumentGitBaseline],
+    [
+      workbench.activeDocument?.content,
+      workbench.activeDocument?.savedContent,
+      workbench.activeDocumentGitBaseline,
+    ],
   );
   const activeBookmarkedLineNumbers = useMemo(() => {
     const activePath = workbench.activeDocument?.path;
@@ -596,6 +616,9 @@ function App() {
   const showProblemsPanel = useCallback(() => {
     workbench.showBottomPanelView("problems");
   }, [workbench.showBottomPanelView]);
+  const showGoToLine = useCallback(() => {
+    editorMenuCommandRunner?.("gotoLine");
+  }, [editorMenuCommandRunner]);
   const closeActiveTab = useCallback(() => {
     if (workbench.activeDocument) {
       workbench.closeDocument(workbench.activeDocument.path);
@@ -616,6 +639,9 @@ function App() {
     },
     [workbench.goToImplementationAt],
   );
+  const goToSuperMethod = useCallback(() => {
+    void workbench.goToSuperMethod();
+  }, [workbench.goToSuperMethod]);
   const markActiveFileRevealSignal = useCallback(() => {
     setActiveFileRevealSignal((current) => current + 1);
   }, []);
@@ -982,18 +1008,45 @@ function App() {
           previewPath={workbench.previewPath}
         />
         {shouldShowGitDiff ? (
-          <GitDiffPreview
-            diff={gitDiffPreview}
-            isLoading={gitDiffLoading}
-            monacoTheme={monacoTheme}
-            editorFontFamily={workbench.appSettings.editorFontFamily}
-            editorFontLigatures={workbench.appSettings.editorFontLigatures}
-            editorFontSize={workbench.appSettings.editorFontSize}
-            onClose={closeGitDiff}
-          />
+          <ErrorBoundary
+            title="Could not render this diff"
+            onReset={closeGitDiff}
+            resetKeys={[
+              gitDiffPreview?.change.relativePath ?? null,
+              gitDiffPreview?.change.isStaged ?? false,
+            ]}
+          >
+            <GitDiffPreview
+              diff={gitDiffPreview}
+              isLoading={gitDiffLoading}
+              monacoTheme={monacoTheme}
+              editorFontFamily={workbench.appSettings.editorFontFamily}
+              editorFontLigatures={workbench.appSettings.editorFontLigatures}
+              editorFontSize={workbench.appSettings.editorFontSize}
+              gitOperationLoading={
+                isShowingGitHistoryDiff ? false : workbench.gitOperationLoading
+              }
+              loadFileHunks={
+                isShowingGitHistoryDiff ? undefined : workbench.loadGitFileHunks
+              }
+              onClose={closeGitDiff}
+              onRevertFile={
+                isShowingGitHistoryDiff
+                  ? undefined
+                  : (change) => workbench.revertGitChanges([change])
+              }
+              onStageHunk={
+                isShowingGitHistoryDiff ? undefined : workbench.stageGitHunk
+              }
+              onUnstageHunk={
+                isShowingGitHistoryDiff ? undefined : workbench.unstageGitHunk
+              }
+            />
+          </ErrorBoundary>
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            editorConfig={workbench.activeEditorConfig}
             editorFontFamily={workbench.appSettings.editorFontFamily}
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
@@ -1001,8 +1054,12 @@ function App() {
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
             }
+            applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
             applyPhpLanguageServerWorkspaceEdit={
               workbench.applyPhpLanguageServerWorkspaceEdit
+            }
+            clearLanguageServerDiagnosticsForPath={
+              workbench.clearLanguageServerDiagnosticsForPath
             }
             bookmarkedLineNumbers={activeBookmarkedLineNumbers}
             changeHunks={activeEditorChangeHunks}
@@ -1014,6 +1071,7 @@ function App() {
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
             formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            gitBlameEnabled={workbench.isActiveDocumentGitBlameEnabled}
             isActiveDocumentPhpTest={workbench.isActiveDocumentPhpTest}
             isLanguageServerDocumentSynced={
               workbench.isLanguageServerDocumentSynced
@@ -1054,8 +1112,12 @@ function App() {
             onGoForward={goForward}
             onGoToDefinition={goToDefinition}
             onGoToImplementationAt={goToImplementationAt}
+            onGoToSuperMethod={goToSuperMethod}
             onRunTestAt={workbench.runTestAt}
             onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
+            onToggleGitBlame={workbench.toggleGitBlame}
+            provideGitBlame={workbench.provideGitBlame}
+            readWorkspaceFile={workbench.readWorkspaceFile}
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}
@@ -1069,8 +1131,13 @@ function App() {
             provideBladeDefinition={workbench.provideBladeDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
+            phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}
+            providePhpParameterInlayHints={
+              workbench.providePhpParameterInlayHints
+            }
+            userSnippets={workbench.appSettings.userSnippets}
             workspaceRoot={workbench.workspaceRoot}
           />
         )}
@@ -1103,11 +1170,15 @@ function App() {
       <StatusBar
         activeLanguage={activeLanguage}
         activePath={workbench.activePath}
+        cursorPosition={workbench.activeEditorPosition}
         dirtyCount={workbench.dirtyCount}
         errorCount={workbench.diagnosticsSummary.errors}
+        gitBranch={workbench.gitStatus?.branch ?? null}
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
+        onShowGitBranches={workbench.openGitBranchPanel}
+        onShowGoToLine={showGoToLine}
         onShowProblems={showProblemsPanel}
         statusBar={workbench.workspaceSettings.statusBar}
         warningCount={workbench.diagnosticsSummary.warnings}
@@ -1154,6 +1225,13 @@ function App() {
         onOpen={workbench.openRecentFile}
       />
 
+      <RecentLocationsPanel
+        isOpen={workbench.recentLocationsPanelOpen}
+        locations={workbench.recentLocations}
+        onClose={() => workbench.setRecentLocationsPanelOpen(false)}
+        onOpen={workbench.openRecentLocation}
+      />
+
       <ClassOpen
         isLoading={workbench.classOpenLoading}
         isOpen={workbench.classOpenOpen}
@@ -1174,13 +1252,30 @@ function App() {
         results={workbench.workspaceSymbolsResults}
       />
 
+      <SearchEverywhere
+        isLoading={workbench.searchEverywhereLoading}
+        isOpen={workbench.searchEverywhereOpen}
+        model={workbench.searchEverywhereModel}
+        onActivate={workbench.activateSearchEverywhereItem}
+        onChangeQuery={workbench.setSearchEverywhereQuery}
+        onClose={() => workbench.setSearchEverywhereOpen(false)}
+        query={workbench.searchEverywhereQuery}
+      />
+
       <TextSearch
         isLoading={workbench.textSearchLoading}
         isOpen={workbench.textSearchOpen}
+        onChangeOptions={workbench.setTextSearchOptions}
         onChangeQuery={workbench.setTextSearchQuery}
+        onChangeReplacement={workbench.setTextReplacement}
         onClose={() => workbench.setTextSearchOpen(false)}
         onOpen={workbench.openTextSearchResult}
+        onReplaceAll={workbench.replaceAllInPath}
+        onReplaceInFile={workbench.replaceInFile}
+        options={workbench.textSearchOptions}
         query={workbench.textSearchQuery}
+        replaceBusy={workbench.textReplaceBusy}
+        replacement={workbench.textReplacement}
         results={workbench.textSearchResults}
       />
 
@@ -1249,6 +1344,69 @@ function App() {
           void workbench.openBookmark(bookmark);
         }}
         workspaceRoot={workbench.workspaceRoot}
+      />
+
+      <FileHistoryPanel
+        commits={workbench.fileHistoryCommits}
+        commitsLoading={workbench.fileHistoryLoading}
+        diff={workbench.fileHistoryDiff}
+        diffLoading={workbench.fileHistoryDiffLoading}
+        editorFontFamily={workbench.appSettings.editorFontFamily}
+        editorFontLigatures={workbench.appSettings.editorFontLigatures}
+        editorFontSize={workbench.appSettings.editorFontSize}
+        isOpen={workbench.fileHistoryPanelOpen}
+        monacoTheme={monacoTheme}
+        onClose={workbench.closeFileHistory}
+        onSelectCommit={(sha) => void workbench.selectFileHistoryCommit(sha)}
+        relativePath={workbench.fileHistoryRelativePath}
+        selectedSha={workbench.fileHistorySelectedSha}
+      />
+
+      <LocalHistoryPanel
+        diff={workbench.localHistoryDiff}
+        diffLoading={workbench.localHistoryDiffLoading}
+        editorFontFamily={workbench.appSettings.editorFontFamily}
+        editorFontLigatures={workbench.appSettings.editorFontLigatures}
+        editorFontSize={workbench.appSettings.editorFontSize}
+        isOpen={workbench.localHistoryPanelOpen}
+        monacoTheme={monacoTheme}
+        onClose={workbench.closeLocalHistory}
+        onRevertVersion={(versionId) =>
+          void workbench.revertLocalHistoryVersion(versionId)
+        }
+        onSelectVersion={(versionId) =>
+          void workbench.selectLocalHistoryVersion(versionId)
+        }
+        relativePath={workbench.localHistoryRelativePath}
+        selectedVersionId={workbench.localHistorySelectedId}
+        versions={workbench.localHistoryVersions}
+        versionsLoading={workbench.localHistoryLoading}
+      />
+
+      <GitStashPanel
+        diff={workbench.gitStashDiff}
+        diffLoading={workbench.gitStashDiffLoading}
+        isLoading={workbench.gitStashLoading}
+        isOpen={workbench.gitStashPanelOpen}
+        message={workbench.gitStashMessage}
+        onApply={(index) => void workbench.applyGitStash(index)}
+        onClose={workbench.closeGitStashPanel}
+        onDrop={(index) => void workbench.dropGitStash(index)}
+        onMessageChange={workbench.setGitStashMessage}
+        onPop={(index) => void workbench.popGitStash(index)}
+        onSave={(message) => void workbench.saveGitStash(message)}
+        onSelect={(index) => void workbench.selectGitStash(index)}
+        selectedIndex={workbench.gitStashSelectedIndex}
+        stashes={workbench.gitStashEntries}
+      />
+
+      <GitBranchPanel
+        branches={workbench.gitBranchEntries}
+        isLoading={workbench.gitBranchLoading}
+        isOpen={workbench.gitBranchPanelOpen}
+        onClose={workbench.closeGitBranchPanel}
+        onCreate={() => void workbench.createGitBranch()}
+        onSwitch={(name) => void workbench.switchGitBranch(name)}
       />
 
       <LanguageServerSetup

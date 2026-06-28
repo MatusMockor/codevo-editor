@@ -23,6 +23,90 @@ export interface OrganizedPhpImports {
   removed: string[];
 }
 
+/**
+ * A single unused class import located in the source, with the exact character
+ * span of its `use ...;` statement (suitable for a diagnostic range and a
+ * remove quick-fix). The span covers the statement text only - the `use`
+ * keyword through the terminating `;` - not the surrounding line whitespace.
+ */
+export interface UnusedPhpImport {
+  /** End character offset (exclusive) of the `use ...;` statement. */
+  end: number;
+  /** Display label, e.g. `App\Foo` or `App\Foo as Bar`. */
+  label: string;
+  /** Start character offset of the `use` keyword. */
+  start: number;
+}
+
+/**
+ * Reuses {@link organizePhpImports}'s conservative usage analysis to report
+ * UNUSED single-symbol class imports together with their precise source spans,
+ * for the lightweight "unused import" inspection + remove quick-fix.
+ *
+ * Conservative by construction - it only reports a statement when ALL of these
+ * hold, so a remove edit can never silently drop a used or sibling import:
+ *  - the statement is a single, non-grouped, non-comma-list class import
+ *    (grouped `use A\{B, C};` and comma lists `use A, B;` are skipped: their
+ *    span covers multiple symbols, so removing the line would delete siblings);
+ *  - the imported short name / alias is not referenced anywhere in the masked
+ *    code or harvested PHPDoc type tags (the same `shouldKeep` test the
+ *    optimizer uses to decide removal).
+ *
+ * `use function` / `use const` imports are out of scope (never reported), same
+ * as the optimizer.
+ */
+export function phpUnusedClassImports(source: string): UnusedPhpImport[] {
+  const masked = maskPhpStringsAndComments(source);
+  const statements = parseTopLevelUseStatements(masked);
+
+  if (statements.length === 0) {
+    return [];
+  }
+
+  const usageHaystack = [
+    blankUseStatements(masked, statements),
+    phpDocTypeHaystack(source),
+  ].join("\n");
+  const unused: UnusedPhpImport[] = [];
+
+  for (const statement of statements) {
+    const parsed = parseUseStatement(statement.body);
+    const single = soleRemovableClassImport(parsed);
+
+    if (!single || shouldKeep(single, usageHaystack)) {
+      continue;
+    }
+
+    unused.push({
+      end: statement.end,
+      label: removedLabel(single),
+      start: statement.start,
+    });
+  }
+
+  return unused;
+}
+
+/**
+ * Returns the lone class import a statement resolves to, or `null` when the
+ * statement is anything but a single removable class import (grouped use,
+ * comma list / verbatim, `use function` / `use const`). Multi-symbol forms are
+ * excluded so a per-statement remove never deletes a sibling import.
+ */
+function soleRemovableClassImport(parsed: ParsedUse[]): ParsedUse | null {
+  if (parsed.length !== 1) {
+    return null;
+  }
+
+  const [use] = parsed;
+
+  if (use.verbatim || use.kind !== "class") {
+    return null;
+  }
+
+  return use;
+}
+
 type UseKind = "class" | "function" | "const";
 
 interface ParsedUse {
@@ -35,6 +119,12 @@ interface ParsedUse {
   statement: string;
   /** Sort key: FQN, lower-cased. */
   sortKey: string;
+  /**
+   * When true the statement is reproduced verbatim and never removed - used for
+   * non-grouped comma lists (`use A, B;`) where splitting risks dropping a used
+   * member, so we conservatively keep the whole statement untouched.
+   */
+  verbatim?: boolean;
 }
 
 export function organizePhpImports(source: string): OrganizedPhpImports | null {
@@ -77,7 +167,107 @@ export function organizePhpImports(source: string): OrganizedPhpImports | null {
   };
 }
 
+/**
+ * Applies "Optimize imports" to a whole PHP source string and returns the
+ * rewritten source, or `null` when nothing should change.
+ *
+ * Reuses {@link organizePhpImports} for the analysis and replaces the exact span
+ * of the existing top-level `use` block with the organized block. Conservative:
+ * returns `null` when there is no top-level `use` block, when the rewrite would
+ * not change anything, or when any non-whitespace content sits between the `use`
+ * statements or trails the last one on its line (e.g. a stray comment) - so no
+ * unrelated content is ever swallowed or relocated.
+ *
+ * This is the content-in / content-out variant used by format-on-save; the
+ * Monaco-range variant lives next to the code-action provider.
+ */
+export function optimizePhpImportsSource(source: string): string | null {
+  const organized = organizePhpImports(source);
+
+  if (!organized) {
+    return null;
+  }
+
+  const range = topLevelUseBlockRange(source);
+
+  if (!range) {
+    return null;
+  }
+
+  const optimized =
+    source.slice(0, range.start) +
+    organized.organizedUseBlock +
+    source.slice(range.end);
+
+  // Reordering alone (no removals) leaves `organized.changed` false, so compare
+  // the rewritten source against the original to also catch sort-only changes -
+  // a no-op when the block is already clean and sorted.
+  if (optimized === source) {
+    return null;
+  }
+
+  return optimized;
+}
+
+/**
+ * Locates the contiguous span covering the existing top-level `use` statements:
+ * from the start of the first `use` to the end of the last one (before the first
+ * type body opens). Returns `null` when no top-level `use` is found or when the
+ * gaps between statements are not whitespace-only (conservative guard).
+ */
+function topLevelUseBlockRange(
+  source: string,
+): { end: number; start: number } | null {
+  const masked = maskPhpStringsAndComments(source);
+  const statements = parseTopLevelUseStatements(masked);
+
+  if (statements.length === 0) {
+    return null;
+  }
+
+  for (let index = 1; index < statements.length; index += 1) {
+    const gap = source.slice(statements[index - 1].end, statements[index].start);
+
+    if (gap.trim().length > 0) {
+      return null;
+    }
+  }
+
+  const lastEnd = statements[statements.length - 1].end;
+
+  // The block end stops at the final `use;` terminator, so anything trailing on
+  // that same physical line (e.g. `use App\Foo; // note`) sits in the
+  // after-block tail and would be re-attached to the wrong import. Bail out
+  // rather than relocate it - conservative no-op over corruption.
+  if (!trailingLineIsBlank(source, lastEnd)) {
+    return null;
+  }
+
+  return {
+    end: lastEnd,
+    start: statements[0].start,
+  };
+}
+
+/**
+ * True when the remainder of the physical line starting at `offset` (up to the
+ * next newline or end of source) holds nothing but whitespace.
+ */
+function trailingLineIsBlank(source: string, offset: number): boolean {
+  const newlineIndex = source.indexOf("\n", offset);
+  const lineRemainder =
+    newlineIndex === -1
+      ? source.slice(offset)
+      : source.slice(offset, newlineIndex);
+
+  return lineRemainder.trim().length === 0;
+}
+
 function shouldKeep(use: ParsedUse, usageHaystack: string): boolean {
+  if (use.verbatim) {
+    return true;
+  }
+
   if (use.kind !== "class") {
     return true;
   }
@@ -122,8 +312,13 @@ function escapeRegExp(value: string): string {
  *  - "signature" tags (`@property`, `@property-read`, `@property-write`,
  *    `@method`, `@mixin`, `@see`) where class references can appear ANYWHERE in
  *    the tag body - e.g. `@property Type $x`, `@method Ret name(Arg $y)`,
- *    `@mixin Trait`, `@see Class::method`. For these, every identifier-looking
- *    token in the whole tag body is harvested.
+ *    `@mixin Trait`, `@see Class::method`. The same family also covers the
+ *    generic / static-analysis tags (`@template`/`@template-covariant`/
+ *    `@template-contravariant` bounds, `@extends`/`@implements`/`@use` generic
+ *    parents, and the `@phpstan-*` / `@psalm-*` type aliases) where the class
+ *    likewise sits anywhere in the body, often inside `Foo<int, Bar>` generics.
+ *    For these, every identifier-looking token in the whole tag body is
+ *    harvested.
  *
  * Both are conservative: harvesting can only ADD survivors (keep imports), never
  * remove one - in IDE/Laravel mode Eloquent magic `@property`/`@method`/`@mixin`
@@ -158,14 +353,19 @@ function leadingTypeTagHaystack(source: string): string {
 
 /**
  * Harvests EVERY identifier-looking token from `@property*`/`@method`/`@mixin`/
- * `@see` tag bodies, since a class reference can sit anywhere in those tags
- * (return type, parameter type in a `@method` signature, mixin/see target).
+ * `@see` and the generic / static-analysis tag bodies, since a class reference
+ * can sit anywhere in those tags (return type, parameter type in a `@method`
+ * signature, mixin/see target, `@template T of Class` bound, `@extends`/
+ * `@implements`/`@use` generic parent like `Class<int, Other>`, or a
+ * `@phpstan-*` / `@psalm-*` type alias). Harvesting the whole body can only ADD
+ * survivors (keep imports), so an import used solely inside a generic / static
+ * analysis docblock is never reported unused nor stripped by optimize-imports.
  */
 function signatureTagHaystack(source: string): string {
   const tokens: string[] = [];
 
   for (const match of source.matchAll(
-    /@(?:property(?:-read|-write)?|method|mixin|see)\b([^\r\n*]*)/g,
+    /@(?:property(?:-read|-write)?|method|mixin|see|template(?:-covariant|-contravariant)?|extends|implements|use|(?:phpstan|psalm)-(?:param|return|var))\b([^\r\n*]*)/g,
   )) {
     for (const token of (match[1] ?? "").matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
       tokens.push(token[0]);
@@ -310,9 +510,59 @@ function parseUseStatement(body: string): ParsedUse[] {
     return parseGroupedUse(withoutKeyword, kind);
   }
 
+  // A non-grouped comma list (`use A\B, A\C;`) is reproduced verbatim and never
+  // dropped: splitting it would risk silently removing a USED member (the old
+  // single-parse path baked the whole tail into one symbol whose alias was just
+  // the last segment, so a used leading member could vanish). Conservative
+  // no-op over corruption.
+  if (hasTopLevelComma(withoutKeyword)) {
+    return [verbatimUse(trimmed, kind)];
+  }
+
   const single = parseSymbol(withoutKeyword, kind);
 
   return single ? [single] : [];
+}
+
+/** True when `body` contains a comma that is not nested inside `{...}`. */
+function hasTopLevelComma(body: string): boolean {
+  let depth = 0;
+
+  for (const character of body) {
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Builds an opaque, always-kept entry whose statement reproduces the original
+ * `use` body verbatim. Carries a sort key so it still orders alongside the
+ * single-symbol survivors without being mangled.
+ */
+function verbatimUse(bodyWithoutSurroundingSpace: string, kind: UseKind): ParsedUse {
+  const statement = `use ${bodyWithoutSurroundingSpace};`;
+
+  return {
+    alias: "",
+    fqn: bodyWithoutSurroundingSpace,
+    kind,
+    sortKey: bodyWithoutSurroundingSpace.toLowerCase(),
+    statement,
+    verbatim: true,
+  };
 }
 
 function useKind(body: string): UseKind {

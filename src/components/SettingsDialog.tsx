@@ -1,4 +1,4 @@
-import { Settings2, X } from "lucide-react";
+import { Search, Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultShortcutForCommand,
@@ -24,6 +24,7 @@ import {
   type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
+import type { UserSnippet } from "../domain/snippets";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type {
@@ -64,8 +65,16 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "keymap", label: "Keymap" },
   { id: "php", label: "PHP" },
   { id: "index", label: "Index" },
+  { id: "snippets", label: "Snippets" },
   { id: "appearance", label: "Appearance" },
 ];
+
+const newUserSnippet = (): UserSnippet => ({
+  prefix: "",
+  body: "",
+  description: "",
+  languages: ["php"],
+});
 
 export function SettingsDialog({
   appSettings,
@@ -246,6 +255,12 @@ export function SettingsDialog({
                       formatOnSave,
                     })
                   }
+                  onChangeOptimizeImportsOnSave={(optimizeImportsOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      optimizeImportsOnSave,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptService={(
                     javaScriptTypeScriptService,
                   ) =>
@@ -345,6 +360,12 @@ export function SettingsDialog({
                       phpBackend,
                     })
                   }
+                  onChangePhpInlayHints={(phpInlayHints) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      phpInlayHints,
+                    })
+                  }
                   onChangePhpVersionOverride={(phpVersionOverride) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -374,6 +395,18 @@ export function SettingsDialog({
                       extraIgnorePatterns: settingsIgnorePatternsFromText(value),
                     });
                   }}
+                />
+              ) : null}
+
+              {activeSection === "snippets" ? (
+                <SnippetsSettings
+                  userSnippets={draftAppSettings.userSnippets}
+                  onChangeUserSnippets={(userSnippets) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      userSnippets,
+                    })
+                  }
                 />
               ) : null}
 
@@ -425,6 +458,7 @@ interface GeneralSettingsProps {
   onChangeAutoSave(autoSave: boolean): void;
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
+  onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
@@ -454,6 +488,7 @@ function GeneralSettings({
   onChangeAutoSave,
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
+  onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptCodeLens,
@@ -633,6 +668,18 @@ function GeneralSettings({
 
       <label className="settings-toggle">
         <input
+          checked={workspaceSettings.optimizeImportsOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeOptimizeImportsOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Optimize imports on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
           checked={workspaceSettings.formatOnPaste}
           disabled={!hasWorkspace}
           onChange={(event) =>
@@ -712,9 +759,39 @@ function KeymapSettingsPanel({
   appSettings,
   onChangeShortcut,
 }: KeymapSettingsPanelProps) {
+  const [filter, setFilter] = useState("");
+
+  const visibleCommands = useMemo(() => {
+    const normalizedFilter = filter.trim().toLowerCase();
+
+    if (!normalizedFilter) {
+      return keymapCommands;
+    }
+
+    return keymapCommands.filter((command) => {
+      const haystack = `${command.label} ${command.category} ${command.id}`;
+      return haystack.toLowerCase().includes(normalizedFilter);
+    });
+  }, [filter]);
+
   return (
     <div className="settings-group">
-      {keymapCommands.map((command) => (
+      <div className="palette-search keymap-search">
+        <Search aria-hidden="true" size={16} />
+        <input
+          aria-label="Filter shortcuts"
+          onChange={(event) => setFilter(event.currentTarget.value)}
+          placeholder="Filter shortcuts"
+          spellCheck={false}
+          value={filter}
+        />
+      </div>
+
+      {visibleCommands.length === 0 ? (
+        <div className="keymap-empty">No matching shortcuts</div>
+      ) : null}
+
+      {visibleCommands.map((command) => (
         <label className="settings-field keymap-field" key={command.id}>
           <span>
             <strong>{command.label}</strong>
@@ -743,6 +820,7 @@ interface PhpSettingsProps {
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceSettings: WorkspaceSettings;
   onChangePhpBackend(backend: PhpBackendPreference): void;
+  onChangePhpInlayHints(enabled: boolean): void;
   onChangePhpVersionOverride(version: string): void;
   onChangeToolPath(
     key: "phpactorPath" | "intelephensePath",
@@ -753,6 +831,7 @@ interface PhpSettingsProps {
 function PhpSettings({
   hasWorkspace,
   onChangePhpBackend,
+  onChangePhpInlayHints,
   onChangePhpVersionOverride,
   onChangeToolPath,
   phpTools,
@@ -818,6 +897,18 @@ function PhpSettings({
         />
       </label>
 
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.phpInlayHints}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangePhpInlayHints(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>PHP inlay hints</span>
+      </label>
+
       <div className="settings-readout">
         <span>Composer PHP</span>
         <code>{detectedPhpVersion || "Not declared"}</code>
@@ -880,6 +971,139 @@ function IndexSettings({
         <span>Built-in ignores</span>
         <code>.git, node_modules, vendor, target, dist, build</code>
       </div>
+    </div>
+  );
+}
+
+const snippetLanguageOptions: Array<{ id: string; label: string }> = [
+  { id: "php", label: "PHP" },
+  { id: "blade", label: "Blade" },
+  { id: "javascript", label: "JavaScript" },
+  { id: "typescript", label: "TypeScript" },
+  { id: "javascriptreact", label: "JavaScript React" },
+  { id: "typescriptreact", label: "TypeScript React" },
+];
+
+interface SnippetsSettingsProps {
+  userSnippets: UserSnippet[];
+  onChangeUserSnippets(snippets: UserSnippet[]): void;
+}
+
+function SnippetsSettings({
+  userSnippets,
+  onChangeUserSnippets,
+}: SnippetsSettingsProps) {
+  const updateSnippetAt = (index: number, patch: Partial<UserSnippet>) => {
+    onChangeUserSnippets(
+      userSnippets.map((snippet, position) =>
+        position === index ? { ...snippet, ...patch } : snippet,
+      ),
+    );
+  };
+
+  const removeSnippetAt = (index: number) => {
+    onChangeUserSnippets(
+      userSnippets.filter((_snippet, position) => position !== index),
+    );
+  };
+
+  const toggleLanguage = (index: number, language: string, on: boolean) => {
+    const current = userSnippets[index].languages;
+    const next = on
+      ? Array.from(new Set([...current, language]))
+      : current.filter((id) => id !== language);
+
+    updateSnippetAt(index, { languages: next });
+  };
+
+  return (
+    <div className="settings-group">
+      <p className="settings-hint">
+        Live templates expand a typed prefix using Monaco snippet syntax
+        (<code>$1</code>, <code>${"{1:default}"}</code>, <code>$0</code>). User
+        snippets are shared across every project and override a built-in with the
+        same prefix and language.
+      </p>
+
+      <div className="settings-actions">
+        <button
+          onClick={() => onChangeUserSnippets([...userSnippets, newUserSnippet()])}
+          type="button"
+        >
+          Add snippet
+        </button>
+      </div>
+
+      {userSnippets.length === 0 ? (
+        <div className="settings-readout">
+          <span>No user snippets yet</span>
+        </div>
+      ) : null}
+
+      {userSnippets.map((snippet, index) => (
+        <div className="settings-subgroup snippet-editor" key={index}>
+          <label className="settings-field">
+            <span>Prefix</span>
+            <input
+              data-snippet-field="prefix"
+              onChange={(event) =>
+                updateSnippetAt(index, { prefix: event.currentTarget.value })
+              }
+              placeholder="myhelper"
+              spellCheck={false}
+              value={snippet.prefix}
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>Description</span>
+            <input
+              data-snippet-field="description"
+              onChange={(event) =>
+                updateSnippetAt(index, {
+                  description: event.currentTarget.value,
+                })
+              }
+              value={snippet.description}
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>Body</span>
+            <textarea
+              data-snippet-field="body"
+              onChange={(event) =>
+                updateSnippetAt(index, { body: event.currentTarget.value })
+              }
+              rows={5}
+              spellCheck={false}
+              value={snippet.body}
+            />
+          </label>
+
+          <div className="settings-subgroup">
+            <span>Languages</span>
+            {snippetLanguageOptions.map((option) => (
+              <label className="settings-toggle" key={option.id}>
+                <input
+                  checked={snippet.languages.includes(option.id)}
+                  onChange={(event) =>
+                    toggleLanguage(index, option.id, event.currentTarget.checked)
+                  }
+                  type="checkbox"
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="settings-actions">
+            <button onClick={() => removeSnippetAt(index)} type="button">
+              Delete snippet
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

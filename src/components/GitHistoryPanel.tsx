@@ -198,7 +198,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     commits: false,
     details: false,
   });
-  const [branchesError, setBranchesError] = useState<HistoryError>(null);
+  const [, setBranchesError] = useState<HistoryError>(null);
   const [commitsError, setCommitsError] = useState<HistoryError>(null);
   const [detailsError, setDetailsError] = useState<HistoryError>(null);
   const [localExpanded, setLocalExpanded] = useState(true);

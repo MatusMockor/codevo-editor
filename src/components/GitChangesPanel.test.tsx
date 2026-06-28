@@ -78,6 +78,26 @@ describe("GitChangesPanel", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("previews a worktree README modification with the plain single-click path", async () => {
+    const change = gitChange("modified", "README.md", false);
+    const onPreviewChange = vi.fn();
+    const onOpenChange = vi.fn();
+    await renderPanel({
+      includedChangePaths: new Set(),
+      onOpenChange,
+      onPreviewChange,
+      status: gitStatus([change]),
+    });
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>(".git-change-row")?.click();
+    });
+
+    expect(onPreviewChange).toHaveBeenCalledTimes(1);
+    expect(onPreviewChange).toHaveBeenCalledWith(change);
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
   it("pins a diff when a change row is double clicked", async () => {
     const change = gitChange("modified", "src/User.php", true);
     const onPreviewChange = vi.fn();
@@ -188,6 +208,51 @@ describe("GitChangesPanel", () => {
     });
 
     expect(onStageChanges).toHaveBeenCalledWith([untracked]);
+  });
+
+  it("renders the stage toolbar button with a lucide Plus icon, not bare text", async () => {
+    await renderPanel({
+      status: gitStatus([gitChange("untracked", "notes.txt", false)]),
+    });
+
+    const stageButton = host.querySelector<HTMLButtonElement>(
+      '[title="Stage selected files"]',
+    );
+
+    expect(stageButton).not.toBeNull();
+    // The bare "+" glyph is replaced by an inline SVG icon.
+    expect(stageButton?.querySelector("svg")).not.toBeNull();
+    expect(stageButton?.textContent?.trim()).toBe("");
+  });
+
+  it("labels the change checkboxes as Stage/Unstage rather than Include/Exclude", async () => {
+    const staged = gitChange("modified", "src/Alpha.php", false);
+    const unstaged = gitChange("modified", "src/Beta.php", false);
+    await renderPanel({
+      includedChangePaths: new Set([gitChangeKey(staged)]),
+      status: gitStatus([staged, unstaged]),
+    });
+
+    const labelFor = (relativePath: string) =>
+      Array.from(
+        host.querySelectorAll<HTMLInputElement>(".git-change-checkbox input"),
+      )
+        .map((input) => input.getAttribute("aria-label") ?? "")
+        .find((label) => label.includes(relativePath)) ?? "";
+
+    // An included (checked) file offers to Unstage it; an excluded one to Stage.
+    expect(labelFor("src/Alpha.php")).toBe("Unstage src/Alpha.php");
+    expect(labelFor("src/Beta.php")).toBe("Stage src/Beta.php");
+
+    // The group header checkbox uses the same Stage/Unstage vocabulary.
+    const groupLabel = host
+      .querySelector<HTMLInputElement>(
+        ".git-change-group-header .git-themed-checkbox input",
+      )
+      ?.getAttribute("aria-label");
+
+    expect(groupLabel).toMatch(/Stage|Unstage/);
+    expect(groupLabel).not.toMatch(/Include|Exclude/);
   });
 
   it("does not open rows or collapse groups while a Git operation is running", async () => {
@@ -349,6 +414,84 @@ describe("GitChangesPanel", () => {
     expect(groupSpy).toHaveBeenCalledTimes(1);
 
     groupSpy.mockRestore();
+  });
+
+  it("does not re-render unrelated change rows when another row's inclusion toggles", async () => {
+    // Distinct statuses let us attribute gitStatusTitle calls to a specific
+    // row: the unchanged row's memoized component should not recompute its
+    // path split / status title when only another row's inclusion flips.
+    const first = gitChange("modified", "src/First.php", false);
+    const second = gitChange("added", "src/Second.php", false);
+    const status = gitStatus([first, second]);
+    const titleSpy = vi.spyOn(gitDomain, "gitStatusTitle");
+
+    // The real workbench passes referentially stable useCallback handlers, so
+    // only includedChangePaths identity flips when a row toggles. Mirror that
+    // here so the test exercises the memoization rather than recreated props.
+    const handlers = {
+      onCommit: vi.fn(),
+      onCommitAndPush: vi.fn(),
+      onCommitMessageChange: vi.fn(),
+      onOpenChange: vi.fn(),
+      onPreviewChange: vi.fn(),
+      onRefresh: vi.fn(),
+      onRevertChanges: vi.fn(),
+      onStageChanges: vi.fn(),
+      onToggleChangeIncluded: vi.fn(),
+      onUnstageChanges: vi.fn(),
+    };
+
+    let toggleFirst: () => void = () => undefined;
+
+    function Parent() {
+      const [included, setIncluded] = useState<Set<string>>(new Set());
+      toggleFirst = () =>
+        setIncluded((current) => {
+          const next = new Set(current);
+          const key = gitChangeKey(first);
+          next.has(key) ? next.delete(key) : next.add(key);
+          return next;
+        });
+
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          commitMessage="feat: update"
+          gitOperationLoading={false}
+          includedChangePaths={included}
+          isLoading={false}
+          rootPath="/workspace"
+          status={status}
+          {...handlers}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    const secondRowTitleCallsBefore = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === "added",
+    ).length;
+
+    expect(secondRowTitleCallsBefore).toBeGreaterThan(0);
+
+    await act(async () => {
+      toggleFirst();
+      await Promise.resolve();
+    });
+
+    const secondRowTitleCallsAfter = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === "added",
+    ).length;
+
+    // The second row's inclusion is unchanged, so its memoized GitChangeRow
+    // bails out and never recomputes its status title / path split.
+    expect(secondRowTitleCallsAfter).toBe(secondRowTitleCallsBefore);
+
+    titleSpy.mockRestore();
   });
 
   async function renderPanel(

@@ -4,6 +4,7 @@ import {
   normalizeKeymapSettings,
   type KeymapSettings,
 } from "./keymap";
+import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export const appThemeOptions = [
@@ -50,6 +51,7 @@ export type SettingsSection =
   | "keymap"
   | "php"
   | "index"
+  | "snippets"
   | "appearance";
 
 export const defaultEditorFontFamily =
@@ -103,6 +105,11 @@ export interface AppSettings {
   recentWorkspacePath: string | null;
   runtimePolicy: BackgroundRuntimePolicy;
   theme: AppTheme;
+  /**
+   * User-authored live templates, GLOBAL (app-level, not per-workspace) like
+   * PhpStorm's snippets. Merged with the built-in registry at completion time.
+   */
+  userSnippets: UserSnippet[];
   workspaceTabs: string[];
 }
 
@@ -120,7 +127,14 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
+  /**
+   * Reorganizes PHP `use` imports (drops unused, sorts) right before a PHP file
+   * is written on save. Off by default, mirroring PhpStorm's opt-in "Optimize
+   * imports on the fly / on save".
+   */
+  optimizeImportsOnSave: boolean;
   phpBackend: PhpBackendPreference;
+  phpInlayHints: boolean;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
   revealActiveFileInTree: boolean;
@@ -137,7 +151,9 @@ export interface WorkspaceSessionState {
 
 export interface StatusBarItemVisibility {
   activePath: boolean;
+  cursorPosition: boolean;
   dirtyCount: boolean;
+  gitBranch: boolean;
   index: boolean;
   language: boolean;
   languageServer: boolean;
@@ -166,6 +182,7 @@ export function defaultAppSettings(): AppSettings {
     recentWorkspacePath: null,
     runtimePolicy: "keepAlive",
     theme: "dark",
+    userSnippets: [],
     workspaceTabs: [],
   };
 }
@@ -228,7 +245,9 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
+    optimizeImportsOnSave: false,
     phpBackend: "auto",
+    phpInlayHints: true,
     phpVersionOverride: null,
     phpactorPath: null,
     revealActiveFileInTree: true,
@@ -249,7 +268,9 @@ export function defaultWorkspaceSessionState(): WorkspaceSessionState {
 export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
   return {
     activePath: true,
+    cursorPosition: true,
     dirtyCount: true,
+    gitBranch: true,
     index: true,
     language: true,
     languageServer: true,
@@ -288,6 +309,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     ? value.runtimePolicy
     : defaults.runtimePolicy;
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
+  const userSnippets = normalizeUserSnippets(value.userSnippets);
   const workspaceTabs = normalizeWorkspaceTabs(
     value.workspaceTabs,
     recentWorkspacePath,
@@ -301,6 +323,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     recentWorkspacePath,
     runtimePolicy,
     theme,
+    userSnippets,
     workspaceTabs,
   };
 }
@@ -360,9 +383,17 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     )
       ? value.javaScriptTypeScriptVersion
       : defaults.javaScriptTypeScriptVersion,
+    optimizeImportsOnSave: normalizeBoolean(
+      value.optimizeImportsOnSave,
+      defaults.optimizeImportsOnSave,
+    ),
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,
+    phpInlayHints: normalizeBoolean(
+      value.phpInlayHints,
+      defaults.phpInlayHints,
+    ),
     phpVersionOverride: normalizeNullableString(
       value.phpVersionOverride,
       defaults.phpVersionOverride,
@@ -413,7 +444,12 @@ export function normalizeStatusBarItemVisibility(
 
   return {
     activePath: normalizeBoolean(value.activePath, defaults.activePath),
+    cursorPosition: normalizeBoolean(
+      value.cursorPosition,
+      defaults.cursorPosition,
+    ),
     dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
+    gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),
     index: normalizeBoolean(value.index, defaults.index),
     language: normalizeBoolean(value.language, defaults.language),
     languageServer: normalizeBoolean(

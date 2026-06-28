@@ -152,7 +152,7 @@ describe("renderGetter", () => {
       [
         "  public function getName(): string",
         "  {",
-        "    return $this->name;",
+        "      return $this->name;",
         "  }",
       ].join("\n"),
     );
@@ -229,7 +229,7 @@ describe("renderSetter", () => {
       [
         "  public function setName(string $name): void",
         "  {",
-        "    $this->name = $name;",
+        "      $this->name = $name;",
         "  }",
       ].join("\n"),
     );

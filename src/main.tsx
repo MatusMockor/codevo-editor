@@ -53,30 +53,42 @@ function showStartupError(error: unknown): void {
   appRoot.append(container);
 }
 
-function handleGlobalError(error: unknown): void {
+// Before startup completes a failure means the app never mounted, so show the
+// full-screen startup error. After startup we hand off to the global safety net
+// (installed during bootstrap), which surfaces a dismissible recoverable notice
+// for any error a React ErrorBoundary cannot catch (event handlers, async work,
+// or a crash outside a boundary) WITHOUT ever blanking the running app.
+window.addEventListener("error", (event) => {
   if (startupComplete) {
-    console.error("Unhandled Mockor Editor runtime error", error);
     return;
   }
 
-  showStartupError(error);
-}
-
-window.addEventListener("error", (event) => {
-  handleGlobalError(event.error ?? event.message);
+  showStartupError(event.error ?? event.message);
 });
 window.addEventListener("unhandledrejection", (event) => {
-  handleGlobalError(event.reason);
+  if (startupComplete) {
+    return;
+  }
+
+  showStartupError(event.reason);
 });
 
 async function bootstrap(): Promise<void> {
-  const [{ default: React }, ReactDOM, { default: App }, monacoEnvironment] =
-    await Promise.all([
-      import("react"),
-      import("react-dom/client"),
-      import("./App"),
-      import("./infrastructure/monacoEnvironment"),
-    ]);
+  const [
+    { default: React },
+    ReactDOM,
+    { default: App },
+    { ErrorBoundary },
+    monacoEnvironment,
+    { installGlobalErrorSafetyNet },
+  ] = await Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("./App"),
+    import("./components/ErrorBoundary"),
+    import("./infrastructure/monacoEnvironment"),
+    import("./infrastructure/globalErrorSafetyNet"),
+  ]);
 
   monacoEnvironment.configureMonacoEnvironment();
   appRoot.replaceChildren();
@@ -84,10 +96,19 @@ async function bootstrap(): Promise<void> {
     React.createElement(
       React.StrictMode,
       null,
-      React.createElement(App),
+      // Root-level boundary: ANY render/lifecycle crash anywhere in the app
+      // (not just inside the git diff view) now renders a recoverable fallback
+      // instead of unmounting the whole tree to a blank screen.
+      React.createElement(ErrorBoundary, {
+        title: "Mockor Editor hit an unexpected error",
+        children: React.createElement(App),
+      }),
     ),
   );
   startupComplete = true;
+  // From here on, async/event crashes that escape React are caught globally and
+  // shown as a dismissible notice rather than silently swallowed.
+  installGlobalErrorSafetyNet();
 }
 
 void bootstrap().catch(showStartupError);

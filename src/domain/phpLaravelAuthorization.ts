@@ -138,6 +138,12 @@ export function phpLaravelGateAbilityDefinitions(
   return definitions;
 }
 
+export function phpLaravelGateAbilityCompletionInsertText(
+  ability: string,
+): string {
+  return ability;
+}
+
 export function isUsableLaravelGateAbilityName(ability: string): boolean {
   return (
     ability.length > 0 &&

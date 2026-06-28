@@ -116,7 +116,8 @@ describe("GitHistoryPanel", () => {
       rowByText(host, ".git-history-branch-row", "feature").click();
     });
 
-    const lastCommitCall = gateway.getCommitLog.mock.calls.at(-1);
+    const commitLogCalls = vi.mocked(gateway.getCommitLog).mock.calls;
+    const lastCommitCall = commitLogCalls[commitLogCalls.length - 1];
     expect(lastCommitCall?.[1]?.branch).toBe("feature");
     expect(gateway.getCommitLog).toHaveBeenCalledTimes(2);
 
@@ -270,7 +271,9 @@ describe("GitHistoryPanel", () => {
 
     expect(host.textContent).toContain("Failed to load selected commit data.");
 
-    gateway.setCommitDetails(commitDetailsFixture(commit, "Recovered"));
+    gateway.setCommitDetails(
+      commitDetailsFixture({ ...commit, subject: "Recovered" }),
+    );
 
     act(() => {
       host
@@ -552,7 +555,7 @@ function createGateway(seed: {
       originalContent: "",
       oldPath: null,
       path: "",
-      status: "M",
+      status: "M" as const,
     })),
     setCommitLog(next) {
       currentCommitLog = next;

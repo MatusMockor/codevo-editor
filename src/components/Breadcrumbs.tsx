@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, memo } from "react";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 
 interface BreadcrumbsProps {
@@ -8,7 +8,7 @@ interface BreadcrumbsProps {
   onNavigate(symbol: LanguageServerDocumentSymbol): void;
 }
 
-export function Breadcrumbs({ fileName, path, onNavigate }: BreadcrumbsProps) {
+function BreadcrumbsComponent({ fileName, path, onNavigate }: BreadcrumbsProps) {
   return (
     <nav aria-label="Breadcrumbs" className="breadcrumbs">
       <span className="breadcrumb-segment breadcrumb-file">{fileName}</span>
@@ -31,3 +31,9 @@ export function Breadcrumbs({ fileName, path, onNavigate }: BreadcrumbsProps) {
     </nav>
   );
 }
+
+// Memoised so a re-render of the editor surface (e.g. a cursor move that does not
+// change the breadcrumb path) does not re-render the bar. The parent hands a
+// stable memoised `path` and the `onNavigate` reference only changes when the
+// editor instance does, so the shallow compare holds across cursor moves.
+export const Breadcrumbs = memo(BreadcrumbsComponent);

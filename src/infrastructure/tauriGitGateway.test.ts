@@ -55,6 +55,116 @@ describe("TauriGitGateway", () => {
     });
   });
 
+  it("invokes the blame command in Tauri", async () => {
+    const invoke = vi.fn(async () => [
+      { author: "Alice", lineNumber: 1, sha: "1a2b3c4", timestamp: 1700000000 },
+      { author: "Bob", lineNumber: 2, sha: "f0e1d2c", timestamp: 1700100000 },
+    ]);
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const blame = await gateway.blame("/workspace", "src/User.php");
+
+    expect(invoke).toHaveBeenCalledWith("get_git_blame", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
+    expect(blame).toHaveLength(2);
+    expect(blame[0].author).toBe("Alice");
+    expect(blame[0].sha).toBe("1a2b3c4");
+    expect(blame[1].lineNumber).toBe(2);
+  });
+
+  it("returns no blame lines outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.blame("/workspace", "src/User.php")).resolves.toEqual(
+      [],
+    );
+  });
+
+  it("invokes the file history command in Tauri", async () => {
+    const invoke = vi.fn(async () => [
+      {
+        author: "Alice",
+        sha: "1a2b3c4",
+        subject: "Add user model",
+        timestamp: 1700000000,
+      },
+      {
+        author: "Bob",
+        sha: "f0e1d2c",
+        subject: "Refactor user model",
+        timestamp: 1700100000,
+      },
+    ]);
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const history = await gateway.fileHistory("/workspace", "src/User.php");
+
+    expect(invoke).toHaveBeenCalledWith("get_git_file_history", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
+    expect(history).toHaveLength(2);
+    expect(history[0].subject).toBe("Add user model");
+    expect(history[0].sha).toBe("1a2b3c4");
+    expect(history[1].author).toBe("Bob");
+  });
+
+  it("returns no file history outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(
+      gateway.fileHistory("/workspace", "src/User.php"),
+    ).resolves.toEqual([]);
+  });
+
+  it("invokes the file commit diff command in Tauri", async () => {
+    const invoke = vi.fn(async () => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: "/workspace/src/User.php",
+        relativePath: "src/User.php",
+        status: "modified",
+      },
+      language: "php",
+      modifiedContent: "<?php changed",
+      originalContent: "<?php",
+    }));
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const diff = await gateway.fileCommitDiff(
+      "/workspace",
+      "src/User.php",
+      "1a2b3c4",
+    );
+
+    expect(invoke).toHaveBeenCalledWith("get_git_file_commit_diff", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+      sha: "1a2b3c4",
+    });
+    expect(diff.modifiedContent).toBe("<?php changed");
+    expect(diff.language).toBe("php");
+  });
+
+  it("returns an empty diff for file commit diff outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    const diff = await gateway.fileCommitDiff(
+      "/workspace",
+      "src/User.php",
+      "1a2b3c4",
+    );
+
+    expect(diff.originalContent).toBe("");
+    expect(diff.modifiedContent).toBe("");
+    expect(diff.change.relativePath).toBe("src/User.php");
+  });
+
   it("invokes local Git operation commands in Tauri", async () => {
     const change: GitChangedFile = {
       isStaged: false,
@@ -197,6 +307,190 @@ describe("TauriGitGateway", () => {
     expect(invoke).toHaveBeenCalledWith("get_git_repo_status", {
       rootPath: "/workspace",
     });
+  });
+
+  it("invokes the hunk-level commands in Tauri", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "get_git_file_hunks") {
+        return [
+          { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+        ];
+      }
+
+      return {
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath: "/workspace",
+      };
+    });
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const hunks = await gateway.getFileHunks("/workspace", "src/User.php", false);
+    await gateway.stageHunk("/workspace", "src/User.php", 0);
+    await gateway.unstageHunk("/workspace", "src/User.php", 1);
+
+    expect(hunks).toEqual([
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+    ]);
+    expect(invoke).toHaveBeenCalledWith("get_git_file_hunks", {
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+      staged: false,
+    });
+    expect(invoke).toHaveBeenCalledWith("stage_git_hunk", {
+      hunkIndex: 0,
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("unstage_git_hunk", {
+      hunkIndex: 1,
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
+  });
+
+  it("returns empty hunks and status for hunk operations outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(
+      gateway.getFileHunks("/workspace", "src/User.php", false),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.stageHunk("/workspace", "src/User.php", 0),
+    ).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(
+      gateway.unstageHunk("/workspace", "src/User.php", 0),
+    ).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+  });
+
+  it("invokes the stash commands in Tauri", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "get_git_stash_list") {
+        return [
+          { branch: "main", index: 0, message: "WIP on main: x", timestamp: 1700000000 },
+          { branch: null, index: 1, message: "On feature: y", timestamp: 1700100000 },
+        ];
+      }
+
+      if (command === "get_git_stash_diff") {
+        return "diff --git a/file.txt b/file.txt\n+two";
+      }
+
+      return undefined;
+    });
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    await gateway.stashSave("/workspace", "work in progress");
+    const stashes = await gateway.stashList("/workspace");
+    await gateway.stashApply("/workspace", 0);
+    await gateway.stashPop("/workspace", 1);
+    const diff = await gateway.stashShow("/workspace", 0);
+    await gateway.stashDrop("/workspace", 1);
+
+    expect(invoke).toHaveBeenCalledWith("save_git_stash", {
+      message: "work in progress",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_stash_list", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_apply_git", {
+      index: "0",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_pop_git", {
+      index: "1",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_stash_diff", {
+      index: "0",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("stash_drop_git", {
+      index: "1",
+      rootPath: "/workspace",
+    });
+    expect(stashes).toHaveLength(2);
+    expect(stashes[0].message).toBe("WIP on main: x");
+    expect(diff).toContain("+two");
+  });
+
+  it("returns no stashes and empty diff outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.stashList("/workspace")).resolves.toEqual([]);
+    await expect(gateway.stashShow("/workspace", 0)).resolves.toBe("");
+    // Safe no-ops that never invoke a command.
+    await expect(gateway.stashSave("/workspace", "x")).resolves.toBeUndefined();
+    await expect(gateway.stashApply("/workspace", 0)).resolves.toBeUndefined();
+    await expect(gateway.stashPop("/workspace", 0)).resolves.toBeUndefined();
+    await expect(gateway.stashDrop("/workspace", 0)).resolves.toBeUndefined();
+  });
+
+  it("invokes the branch commands in Tauri", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_git_branches") {
+        return [
+          { isCurrent: true, name: "main" },
+          { isCurrent: false, name: "feature/login" },
+        ];
+      }
+
+      if (command === "get_git_current_branch") {
+        return "main";
+      }
+
+      return undefined;
+    });
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const branches = await gateway.branchList("/workspace");
+    const current = await gateway.currentBranch("/workspace");
+    await gateway.createBranch("/workspace", "feature/new");
+    await gateway.switchBranch("/workspace", "feature/login");
+
+    expect(invoke).toHaveBeenCalledWith("list_git_branches", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_git_current_branch", {
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("create_git_branch", {
+      name: "feature/new",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("switch_git_branch", {
+      name: "feature/login",
+      rootPath: "/workspace",
+    });
+    expect(branches).toHaveLength(2);
+    expect(branches[0]).toEqual({ isCurrent: true, name: "main" });
+    expect(current).toBe("main");
+  });
+
+  it("returns no branches and null current outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.branchList("/workspace")).resolves.toEqual([]);
+    await expect(gateway.currentBranch("/workspace")).resolves.toBeNull();
+    // Safe no-ops that never invoke a command.
+    await expect(
+      gateway.createBranch("/workspace", "x"),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.switchBranch("/workspace", "x"),
+    ).resolves.toBeUndefined();
   });
 
   it("returns empty status for local Git operations outside Tauri", async () => {

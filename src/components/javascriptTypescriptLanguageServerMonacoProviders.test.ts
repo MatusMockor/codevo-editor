@@ -25,40 +25,40 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       providerContext(),
     );
 
-    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDeclarationProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDeclarationProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentRangeFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerOnTypeFormattingEditProvider,
-    ).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(5);
     expect(monaco.languages.registerWorkspaceSymbolProvider).toHaveBeenCalledTimes(1);
-    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(4);
-    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(5);
+    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentSemanticTokensProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       monaco.languages.registerDocumentRangeSemanticTokensProvider,
-    ).toHaveBeenCalledTimes(4);
+    ).toHaveBeenCalledTimes(5);
     expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls.map(
         ([language]: [string]) => language,
@@ -68,6 +68,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       "typescript",
       "javascriptreact",
       "typescriptreact",
+      "vue",
     ]);
     expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls[0][1]
@@ -90,7 +91,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(94);
+    expect(monaco.dispose).toHaveBeenCalledTimes(117);
   });
 
   it("registers advertised on-type formatting trigger characters", () => {
@@ -555,6 +556,82 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
+  it("drops TypeScript completion when the Monaco cancellation token is cancelled after the response", async () => {
+    const monaco = createMonaco();
+    const completion =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const token = { isCancellationRequested: false };
+    const completionPromise = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      undefined,
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "function",
+          documentation: null,
+          insertText: "loadUser",
+          kind: 3,
+          label: "loadUser",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
+  it("resolves TypeScript completion to empty when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const completion =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.completion).mockImplementationOnce(
+        async () => completion.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const completionProvider = (
+        monaco.languages.registerCompletionItemProvider as any
+      ).mock.calls[0][1];
+      const completionPromise = completionProvider.provideCompletionItems(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not use a TypeScript runtime status from another project tab", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway();
@@ -660,6 +737,190 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       line: 1,
       path: "/project/src/user.ts",
     });
+  });
+
+  it("drops TypeScript hover when the Monaco cancellation token is cancelled after the response", async () => {
+    const monaco = createMonaco();
+    const hover =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[0][1];
+    const token = { isCancellationRequested: false };
+    const hoverPromise = hoverProvider.provideHover(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    hover.resolve({ contents: "type User = { id: string }" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+  });
+
+  it("resolves TypeScript hover to null when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const hover =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+        .calls[0][1];
+      const token = { isCancellationRequested: false };
+      const hoverPromise = hoverProvider.provideHover(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves TypeScript hover to null within the shorter hover timeout budget", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const hover =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+        .calls[0][1];
+      const token = { isCancellationRequested: false };
+      const hoverPromise = hoverProvider.provideHover(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the full navigation timeout budget for TypeScript definition (still pending at the hover timeout)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const definition =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => definition.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const definitionProvider = (
+        monaco.languages.registerDefinitionProvider as any
+      ).mock.calls[0][1];
+      const token = { isCancellationRequested: false };
+      const definitionPromise = definitionProvider.provideDefinition(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      let settled = false;
+      void definitionPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns TypeScript hover when the server responds before the timeout and the token stays active", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockResolvedValueOnce({
+      contents: "type User = { id: string }",
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[0][1];
+    const token = { isCancellationRequested: false };
+
+    await expect(
+      hoverProvider.provideHover(textModel(), { column: 4, lineNumber: 2 }, token),
+    ).resolves.toEqual({
+      contents: [{ value: "type User = { id: string }" }],
+    });
+  });
+
+  it("resolves TypeScript definition to null when the server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const definition =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => definition.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ featuresGateway: gateway }),
+      );
+      const definitionProvider = (
+        monaco.languages.registerDefinitionProvider as any
+      ).mock.calls[0][1];
+      const token = { isCancellationRequested: false };
+      const definitionPromise = definitionProvider.provideDefinition(
+        textModel(),
+        { column: 4, lineNumber: 2 },
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("drops in-flight TypeScript code actions after switching project tabs", async () => {
@@ -1626,10 +1887,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const highlightProvider = (
       monaco.languages.registerDocumentHighlightProvider as any
     ).mock.calls[0][1];
-    const highlights = await highlightProvider.provideDocumentHighlights(model, {
-      column: 9,
-      lineNumber: 4,
-    });
+    const highlights = await highlightProvider.provideDocumentHighlights(
+      model,
+      {
+        column: 9,
+        lineNumber: 4,
+      },
+      { isCancellationRequested: false },
+    );
 
     expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
       character: 8,
@@ -1690,6 +1955,134 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
     ]);
+  });
+
+  it("drops superseded TypeScript document highlights when the Monaco cancellation token is cancelled", async () => {
+    const monaco = createMonaco();
+    const highlights =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(
+      async () => highlights.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const token = { isCancellationRequested: false };
+    const promise = highlightProvider.provideDocumentHighlights(
+      textModel(),
+      { column: 9, lineNumber: 4 },
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    highlights.resolve([
+      {
+        kind: 2,
+        range: range(0, 6, 0, 10),
+      },
+    ]);
+
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("applies TypeScript document highlights when the Monaco cancellation token stays active", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(0, 6, 0, 10),
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const token = { isCancellationRequested: false };
+    const highlights = await highlightProvider.provideDocumentHighlights(
+      textModel(),
+      { column: 9, lineNumber: 4 },
+      token,
+    );
+
+    expect(highlights).toEqual([
+      {
+        kind: monaco.languages.DocumentHighlightKind.Read,
+        range: expect.objectContaining({
+          endColumn: 11,
+          endLineNumber: 1,
+          startColumn: 7,
+          startLineNumber: 1,
+        }),
+      },
+    ]);
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips repeated TypeScript document highlight requests for the same word under the cursor", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(0, 6, 0, 10),
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+
+    const wordModel = (word: string) => ({
+      ...textModel(),
+      getWordAtPosition: vi.fn(() => ({
+        endColumn: 5,
+        startColumn: 1,
+        word,
+      })),
+    });
+    const token = { isCancellationRequested: false };
+    const userModel = wordModel("user");
+
+    const first = await highlightProvider.provideDocumentHighlights(
+      userModel,
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+    const second = await highlightProvider.provideDocumentHighlights(
+      userModel,
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+
+    await highlightProvider.provideDocumentHighlights(
+      wordModel("account"),
+      { column: 3, lineNumber: 1 },
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
   });
 
   it("drops in-flight TypeScript selection ranges after switching project tabs", async () => {
@@ -3042,6 +3435,154 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       }),
     );
+  });
+
+  it("offers JS/TS live-template snippets after language-server suggestions", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: "clamp",
+            kind: 3,
+            label: "clamp",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("clg"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const clg = result.suggestions.find((item: any) => item.label === "clg");
+
+    expect(clg).toEqual(
+      expect.objectContaining({
+        insertTextRules:
+          monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        label: "clg",
+      }),
+    );
+    expect(clg.sortText.startsWith("2_")).toBe(true);
+    expect(clg.insertText).toContain("$");
+  });
+
+  it("offers a user-defined JS/TS snippet from the context", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: featuresGateway({
+          completion: { isIncomplete: false, items: [] },
+        }),
+        getUserSnippets: () => [
+          {
+            prefix: "mylog",
+            body: "myLogger($0);",
+            description: "Log via my logger",
+            languages: ["typescript"],
+          },
+        ],
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("myl"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const snippet = result.suggestions.find(
+      (item: any) => item.label === "mylog",
+    );
+
+    expect(snippet).toBeDefined();
+    expect(snippet.insertText).toBe("myLogger($0);");
+    expect(snippet.insertTextRules).toBe(
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    );
+  });
+
+  it("does not offer PHP snippets inside a TypeScript document", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("ncl"),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.map((item: any) => item.label),
+    ).not.toContain("nclass");
+  });
+
+  it("suppresses snippets after a member-access dot", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("clg", {
+        endColumn: 8,
+        lineContent: "foo.clg",
+        startColumn: 5,
+      }),
+      { column: 8, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some((item: any) => item.label === "clg"),
+    ).toBe(false);
+  });
+
+  it("does not offer snippets without a typed prefix", async () => {
+    const monaco = createMonaco();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext(),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      snippetWordModel("", { startColumn: 4, endColumn: 4 }),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some(
+        (item: any) =>
+          item.kind === monaco.languages.CompletionItemKind.Snippet,
+      ),
+    ).toBe(false);
   });
 
   it("maps TypeScript completion commands through the guarded language server executor", async () => {
@@ -4652,6 +5193,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: overrides.getActiveDocument ?? (() => document()),
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runningStatus()),
+    getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
@@ -4903,6 +5445,35 @@ function textModel() {
       fsPath: "/project/src/user.ts",
       path: "/project/src/user.ts",
     },
+  };
+}
+
+/**
+ * A text model whose word-under-cursor and line content are controllable, so
+ * snippet-completion tests can drive the typed prefix and the member-access
+ * suppression path (character before the word).
+ */
+function snippetWordModel(
+  word: string,
+  options: {
+    endColumn?: number;
+    lineContent?: string;
+    startColumn?: number;
+  } = {},
+) {
+  const startColumn = options.startColumn ?? 1;
+  const endColumn = options.endColumn ?? startColumn + word.length;
+  const lineContent = options.lineContent ?? word;
+
+  return {
+    ...textModel(),
+    getLineContent: vi.fn(() => lineContent),
+    getValue: vi.fn(() => lineContent),
+    getWordUntilPosition: vi.fn(() => ({
+      endColumn,
+      startColumn,
+      word,
+    })),
   };
 }
 

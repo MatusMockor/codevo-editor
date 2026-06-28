@@ -37,8 +37,17 @@ import {
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
+import {
+  createDocumentHighlightRequestTracker,
+  type DocumentHighlightRequestTracker,
+} from "../domain/documentHighlightRequestTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  normalizeUserSnippets,
+  snippetCompletionSuggestions,
+  type UserSnippet,
+} from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -149,12 +158,36 @@ const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
   "typescript",
   "javascriptreact",
   "typescriptreact",
+  // `.vue` single-file components are routed through the same tsserver, which
+  // gains `<script>` block intelligence via `@vue/typescript-plugin`. When the
+  // plugin is unavailable the server simply returns no results, so registering
+  // the providers here stays safe (highlighting-only fallback, no crash).
+  "vue",
 ];
 const JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET = new Set<string>(
   JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS,
 );
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
+/**
+ * Upper bound (ms) for an interactive hover / navigation request before the
+ * provider gives up and resolves to "no result", so a stuck cold language
+ * server never leaves the Monaco hover widget showing "Loading…" forever. A
+ * warm server answers well under this budget, so the timeout never cancels a
+ * legitimate (slower-but-valid) result.
+ */
+const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
+/**
+ * Shorter upper bound (ms) for a hover request. Hover is passive information,
+ * so the worse outcome is leaving the Monaco "Loading…" placeholder on screen
+ * for the full {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS} budget when a cold
+ * language server is slow. A warm server answers a hover in well under this
+ * budget, so the only behavioural change is that a stuck cold hover tears down
+ * its "Loading…" widget in ~700ms instead of 2.5s. Actionable
+ * navigation/references/completion requests keep the longer budget.
+ */
+const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
+const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
 const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -200,6 +233,12 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  /**
+   * Returns the GLOBAL (app-level) user-authored live templates merged with the
+   * built-in JS/TS snippet registry at completion time. Omitted when the host
+   * wires no user snippets; the provider then offers built-ins only.
+   */
+  getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
   refreshGateway?: LanguageServerRefreshGateway;
@@ -245,6 +284,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
+  const documentHighlightTracker =
+    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
   const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -413,8 +454,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerHoverProvider) {
       disposables.push(
         registry.registerHoverProvider(language, {
-          provideHover: (model, position) =>
-            provideHover(monaco, context, model, position),
+          provideHover: (model, position, token) =>
+            provideHover(monaco, context, model, position, token),
         }),
       );
     }
@@ -423,13 +464,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       disposables.push(
         registry.registerCompletionItemProvider(language, {
           triggerCharacters: [".", "'", "\"", "`", "/", "@", "<", "#"],
-          provideCompletionItems: (model, position, completionContext) =>
+          provideCompletionItems: (model, position, completionContext, token) =>
             provideCompletionItems(
               monaco,
               context,
               model,
               position,
               completionContext,
+              token,
             ),
           resolveCompletionItem: (item) =>
             resolveCompletionItem(monaco, context, item),
@@ -457,8 +499,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDefinitionProvider) {
       disposables.push(
         registry.registerDefinitionProvider(language, {
-          provideDefinition: (model, position) =>
-            provideDefinition(monaco, context, model, position),
+          provideDefinition: (model, position, token) =>
+            provideDefinition(monaco, context, model, position, token),
         }),
       );
     }
@@ -466,8 +508,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDeclarationProvider) {
       disposables.push(
         registry.registerDeclarationProvider(language, {
-          provideDeclaration: (model, position) =>
-            provideDeclaration(monaco, context, model, position),
+          provideDeclaration: (model, position, token) =>
+            provideDeclaration(monaco, context, model, position, token),
         }),
       );
     }
@@ -475,8 +517,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerImplementationProvider) {
       disposables.push(
         registry.registerImplementationProvider(language, {
-          provideImplementation: (model, position) =>
-            provideImplementation(monaco, context, model, position),
+          provideImplementation: (model, position, token) =>
+            provideImplementation(monaco, context, model, position, token),
         }),
       );
     }
@@ -484,8 +526,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerTypeDefinitionProvider) {
       disposables.push(
         registry.registerTypeDefinitionProvider(language, {
-          provideTypeDefinition: (model, position) =>
-            provideTypeDefinition(monaco, context, model, position),
+          provideTypeDefinition: (model, position, token) =>
+            provideTypeDefinition(monaco, context, model, position, token),
         }),
       );
     }
@@ -493,8 +535,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerReferenceProvider) {
       disposables.push(
         registry.registerReferenceProvider(language, {
-          provideReferences: (model, position) =>
-            provideReferences(monaco, context, model, position),
+          provideReferences: (model, position, _referenceContext, token) =>
+            provideReferences(monaco, context, model, position, token),
         }),
       );
     }
@@ -608,8 +650,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDocumentHighlightProvider) {
       disposables.push(
         registry.registerDocumentHighlightProvider(language, {
-          provideDocumentHighlights: (model, position) =>
-            provideDocumentHighlights(monaco, context, model, position),
+          provideDocumentHighlights: (model, position, token) =>
+            provideDocumentHighlights(
+              monaco,
+              context,
+              documentHighlightTracker,
+              model,
+              position,
+              token,
+            ),
         }),
       );
     }
@@ -694,6 +743,7 @@ async function provideHover(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Hover | null> {
   const request = featureRequestContext(context, model, position, "hover");
 
@@ -706,10 +756,18 @@ async function provideHover(
       return null;
     }
 
-    const hover = await context.featuresGateway.hover(
-      request.rootPath,
-      request.position,
+    const hover = await raceInteractiveFeatureRequest(
+      context.featuresGateway.hover(request.rootPath, request.position),
+      HOVER_FEATURE_REQUEST_TIMEOUT_MS,
     );
+
+    if (hover === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -728,6 +786,7 @@ async function provideCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
   completionContext?: Monaco.languages.CompletionContext,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionList> {
   const request = featureRequestContext(context, model, position, "completion");
 
@@ -742,16 +801,26 @@ async function provideCompletionItems(
 
     const languageServerContext =
       toLanguageServerCompletionContext(completionContext);
-    const completion = languageServerContext
-      ? await context.featuresGateway.completion(
-          request.rootPath,
-          request.position,
-          languageServerContext,
-        )
-      : await context.featuresGateway.completion(
-          request.rootPath,
-          request.position,
-        );
+    const completion = await raceInteractiveFeatureRequest(
+      languageServerContext
+        ? context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+            languageServerContext,
+          )
+        : context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+          ),
+    );
+
+    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+      return { suggestions: [] };
+    }
+
+    if (token?.isCancellationRequested) {
+      return { suggestions: [] };
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return { suggestions: [] };
@@ -764,25 +833,122 @@ async function provideCompletionItems(
       startColumn: word.startColumn,
       startLineNumber: position.lineNumber,
     };
+    const lspSuggestions = completion.items.map((item, index) =>
+      toMonacoCompletionItem(
+        monaco,
+        item,
+        request.rootPath,
+        request.sessionId,
+        request.path,
+        range,
+        `0_${String(index).padStart(4, "0")}`,
+      ),
+    );
+    const snippetSuggestions = javaScriptTypeScriptSnippetSuggestions(
+      monaco,
+      context,
+      model,
+      position,
+      word,
+      range,
+      context.getActiveDocument()?.language,
+    );
 
     return {
       ...(completion.isIncomplete ? { incomplete: true } : {}),
-      suggestions: completion.items.map((item, index) => {
-        return toMonacoCompletionItem(
-          monaco,
-          item,
-          request.rootPath,
-          request.sessionId,
-          request.path,
-          range,
-          `0_${String(index).padStart(4, "0")}`,
-        );
-      }),
+      suggestions: dedupeJavaScriptTypeScriptCompletionItems([
+        ...lspSuggestions,
+        ...snippetSuggestions,
+      ]),
     };
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return { suggestions: [] };
   }
+}
+
+/**
+ * Built-in JS/TS live-template snippets (`clg`, `fn`, `imp`, …) appended after
+ * the language-server suggestions. Mirrors the PHP wiring: snippets only make
+ * sense as free-standing statements typed from an abbreviation, never after a
+ * `.`/`?.` member-access dot, so they are suppressed in that context. Bodies are
+ * emitted with `InsertAsSnippet`, sort into the shared `2_` bucket (below LSP),
+ * and the snippet registry is a global built-in carrying no isolation risk.
+ */
+function javaScriptTypeScriptSnippetSuggestions(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { startColumn: number; word?: string },
+  range: Monaco.IRange,
+  language: string | undefined,
+): Monaco.languages.CompletionItem[] {
+  if (!language) {
+    return [];
+  }
+
+  if (isMemberAccessCompletion(model, position, word)) {
+    return [];
+  }
+
+  const typed = typeof word.word === "string" ? word.word : "";
+
+  return snippetCompletionSuggestions(
+    monaco,
+    language,
+    typed,
+    range,
+    // Normalize so a half-edited in-session snippet never reaches completion,
+    // matching the persisted/reload path.
+    normalizeUserSnippets(context.getUserSnippets?.() ?? []),
+  ) as Monaco.languages.CompletionItem[];
+}
+
+/**
+ * Detects whether the cursor sits in a member-access position (`foo.bar`,
+ * `foo?.bar`) by inspecting the character(s) immediately before the word start.
+ * Tolerates a model without `getLineContent` (returns `false`) so snippets still
+ * surface when the line text is unavailable.
+ */
+function isMemberAccessCompletion(
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { startColumn: number },
+): boolean {
+  const line = model.getLineContent?.(position.lineNumber);
+
+  if (typeof line !== "string") {
+    return false;
+  }
+
+  return line[word.startColumn - 2] === ".";
+}
+
+function dedupeJavaScriptTypeScriptCompletionItems(
+  items: Monaco.languages.CompletionItem[],
+): Monaco.languages.CompletionItem[] {
+  const seen = new Set<string>();
+  const unique: Monaco.languages.CompletionItem[] = [];
+
+  for (const item of items) {
+    const key = `${item.kind}:${completionItemLabelKey(item.label)}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
+function completionItemLabelKey(
+  label: Monaco.languages.CompletionItem["label"],
+): string {
+  return typeof label === "string" ? label : label.label;
 }
 
 function toLanguageServerCompletionContext(
@@ -864,6 +1030,7 @@ async function provideDefinition(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Definition | null> {
   const request = featureRequestContext(context, model, position, "definition");
 
@@ -876,10 +1043,17 @@ async function provideDefinition(
       return null;
     }
 
-    const locations = await context.featuresGateway.definition(
-      request.rootPath,
-      request.position,
+    const locations = await raceInteractiveFeatureRequest(
+      context.featuresGateway.definition(request.rootPath, request.position),
     );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -902,6 +1076,7 @@ async function provideDeclaration(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Definition | null> {
   const request = featureRequestContext(context, model, position, "declaration");
 
@@ -914,10 +1089,17 @@ async function provideDeclaration(
       return null;
     }
 
-    const locations = await context.featuresGateway.declaration(
-      request.rootPath,
-      request.position,
+    const locations = await raceInteractiveFeatureRequest(
+      context.featuresGateway.declaration(request.rootPath, request.position),
     );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -940,6 +1122,7 @@ async function provideImplementation(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Definition | null> {
   const request = featureRequestContext(
     context,
@@ -957,10 +1140,17 @@ async function provideImplementation(
       return null;
     }
 
-    const locations = await context.featuresGateway.implementation(
-      request.rootPath,
-      request.position,
+    const locations = await raceInteractiveFeatureRequest(
+      context.featuresGateway.implementation(request.rootPath, request.position),
     );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -983,6 +1173,7 @@ async function provideTypeDefinition(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Definition | null> {
   const request = featureRequestContext(context, model, position, "typeDefinition");
 
@@ -995,10 +1186,17 @@ async function provideTypeDefinition(
       return null;
     }
 
-    const locations = await context.featuresGateway.typeDefinition(
-      request.rootPath,
-      request.position,
+    const locations = await raceInteractiveFeatureRequest(
+      context.featuresGateway.typeDefinition(request.rootPath, request.position),
     );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1141,6 +1339,7 @@ async function provideReferences(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
   const request = featureRequestContext(context, model, position, "references");
 
@@ -1153,10 +1352,17 @@ async function provideReferences(
       return null;
     }
 
-    const locations = await context.featuresGateway.references(
-      request.rootPath,
-      request.position,
+    const locations = await raceInteractiveFeatureRequest(
+      context.featuresGateway.references(request.rootPath, request.position),
     );
+
+    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+      return null;
+    }
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1172,8 +1378,10 @@ async function provideReferences(
 async function provideDocumentHighlights(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
+  tracker: DocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>,
   model: MonacoModel,
   position: MonacoPosition,
+  token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
   const request = featureRequestContext(
     context,
@@ -1186,6 +1394,17 @@ async function provideDocumentHighlights(
     return null;
   }
 
+  const word = model.getWordAtPosition(position)?.word ?? null;
+  const version = model.getVersionId();
+
+  if (word !== null) {
+    const cached = tracker.cached(request.path, word, version);
+
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
     if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
       return null;
@@ -1196,13 +1415,23 @@ async function provideDocumentHighlights(
       request.position,
     );
 
+    if (token.isCancellationRequested) {
+      return null;
+    }
+
     if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
-    return highlights.map((highlight) =>
+    const mapped = highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
+
+    if (word !== null) {
+      tracker.remember(request.path, word, version, mapped);
+    }
+
+    return mapped;
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -2217,6 +2446,31 @@ async function flushPendingDocumentChangeForStoredPayload(
   await context.flushPendingDocumentChange(path);
 
   return isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
+}
+
+/**
+ * Races `request` against a timeout (defaulting to
+ * {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}), resolving to
+ * {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins so the caller can tear
+ * down the Monaco "Loading…" widget instead of waiting on a cold language
+ * server forever. Hover passes the shorter
+ * {@link HOVER_FEATURE_REQUEST_TIMEOUT_MS} budget. The timer is always cleared.
+ */
+function raceInteractiveFeatureRequest<T>(
+  request: Promise<T>,
+  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
+): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve(FEATURE_REQUEST_TIMED_OUT),
+      timeoutMs,
+    );
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    clearTimeout(timeoutHandle);
+  });
 }
 
 function isFeatureRequestActive(

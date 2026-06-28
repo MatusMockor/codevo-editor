@@ -112,11 +112,7 @@ pub struct LocalWorkspaceFileRepository;
 
 impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
     fn create_directory(&self, path: &Path) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        fs::create_dir(path)
+        fs::create_dir_all(path)
     }
 
     fn create_text_file(&self, path: &Path) -> io::Result<()> {
@@ -524,6 +520,23 @@ mod tests {
             .delete_path(&root.join("src"))
             .expect("delete directory tree");
         assert!(!directory_path.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn create_directory_is_idempotent_when_directory_already_exists() {
+        let root = create_temp_dir("workspace-existing-directory");
+        let directory_path = root.join("app").join("Services");
+        let repository = LocalWorkspaceFileRepository;
+
+        repository
+            .create_directory(&directory_path)
+            .expect("create directory");
+        repository
+            .create_directory(&directory_path)
+            .expect("ensure existing directory");
+
+        assert!(directory_path.is_dir());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

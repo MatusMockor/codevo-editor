@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createLanguageServerTextDocument,
   fileUriFromPath,
+  isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
   languageServerDocumentSyncKey,
   languageServerLanguageIdForDocument,
@@ -28,7 +29,40 @@ describe("createLanguageServerTextDocument", () => {
   });
 });
 
+describe("isJavaScriptTypeScriptLanguageServerDocument", () => {
+  it("routes JavaScript, TypeScript and Vue documents through the JS/TS server", () => {
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(document("javascript")),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(document("typescript")),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(
+        document("vue", "/project/src/App.vue"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not route PHP or plaintext documents through the JS/TS server", () => {
+    expect(isJavaScriptTypeScriptLanguageServerDocument(document("php"))).toBe(
+      false,
+    );
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(document("plaintext")),
+    ).toBe(false);
+  });
+});
+
 describe("languageServerLanguageIdForDocument", () => {
+  it("maps Vue single file components to the vue language id", () => {
+    expect(
+      languageServerLanguageIdForDocument(
+        document("vue", "/project/src/App.vue"),
+      ),
+    ).toBe("vue");
+  });
+
   it("uses VS Code language ids for JavaScript and TypeScript React files", () => {
     expect(
       languageServerLanguageIdForDocument(

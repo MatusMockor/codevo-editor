@@ -1,3 +1,5 @@
+import type { EditorDocument } from "./workspace";
+
 export type WorkspaceFileChangeUnsubscribeFn = () => void;
 
 export type WorkspaceFileChangeKind =
@@ -34,4 +36,15 @@ export interface WorkspaceFileChangeGateway {
   subscribeFileChanges(
     listener: (event: WorkspaceFileChangeEvent) => void,
   ): Promise<WorkspaceFileChangeUnsubscribeFn>;
+}
+
+/**
+ * Clean editor documents can be refreshed from an external file watcher event.
+ * Dirty documents must be left alone so disk changes never clobber in-editor
+ * work that has not been saved yet.
+ */
+export function canRefreshDocumentFromExternalFileChange(
+  document: Pick<EditorDocument, "content" | "savedContent"> | null | undefined,
+): boolean {
+  return document ? document.content === document.savedContent : false;
 }

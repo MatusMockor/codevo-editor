@@ -1,7 +1,16 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { RotateCcw, X } from "lucide-react";
-import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MutableRefObject,
+} from "react";
 import type * as Monaco from "monaco-editor";
 import type {
   EditorChangeHunk,
@@ -27,6 +36,11 @@ import {
   breadcrumbPathFromCursorAndSymbols,
 } from "../domain/breadcrumbs";
 import {
+  BackgroundTokenizer,
+  idleCallbackScheduler,
+  type BackgroundTokenizableModel,
+} from "../domain/backgroundTokenizer";
+import {
   detectKeymapPlatform,
   parseShortcut,
   shortcutForCommand,
@@ -47,10 +61,16 @@ import {
 } from "../domain/surroundWith";
 import { completePhpStatement } from "../domain/phpCompleteStatement";
 import {
+  advanceHippieSession,
+  startHippieSession,
+  type HippieSession,
+} from "../domain/hippieCompletion";
+import {
   phpMoveStatement,
   type MoveStatementDirection,
 } from "../domain/phpMoveStatement";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { gitBlameAnnotation, type GitBlameLine } from "../domain/git";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
@@ -60,16 +80,26 @@ import type {
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
+import type { PhpInspectionDiagnostic } from "../domain/phpInspections";
+import { phpInspectionDiagnostics } from "../domain/phpInspections";
+import { useDebouncedPhpEditTick } from "./useDebouncedPhpEditTick";
 import type {
   PhpMethodCompletion,
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  editorConfigEol,
+  editorConfigFormattingOptions,
+  type ResolvedEditorConfig,
+} from "../domain/editorConfig";
+import type { UserSnippet } from "../domain/snippets";
 import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
@@ -85,6 +115,7 @@ import {
   registerLanguageServerMonacoProviders,
   type BladeCompletion,
   type PhpCodeActionDescriptor,
+  type PhpCodeActionNewFile,
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
@@ -94,6 +125,7 @@ import {
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
 import { setupEmmet } from "../infrastructure/emmetSetup";
+import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
@@ -105,6 +137,13 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  /**
+   * Resolved `.editorconfig` settings for the active document. Empty `{}` (the
+   * default) means no `.editorconfig` matched, so the editor keeps its own
+   * defaults. When indent / EOL are set they override the editor defaults for
+   * the active model only.
+   */
+  editorConfig?: ResolvedEditorConfig;
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
@@ -113,10 +152,12 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
   ): Promise<void>;
+  applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyPhpLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
   ): Promise<void>;
+  clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
@@ -125,6 +166,7 @@ interface EditorSurfaceProps {
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   formatOnPaste?: boolean;
+  gitBlameEnabled?: boolean;
   isLanguageServerDocumentSynced?(path: string): boolean;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
@@ -139,8 +181,10 @@ interface EditorSurfaceProps {
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
+  phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+  userSnippets?: readonly UserSnippet[];
   workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
@@ -149,8 +193,18 @@ interface EditorSurfaceProps {
   onGoForward(): void;
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
+  onGoToSuperMethod(): void;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
+  onToggleGitBlame?(): void;
+  provideGitBlame?(path: string): Promise<GitBlameLine[]>;
+  /**
+   * Reads a file's text from disk by absolute path. Used to load a local JSON
+   * Schema referenced by an open JSON document's `$schema` so Monaco validates
+   * it inline. Defaults to a no-op so callers that do not need JSON schema
+   * loading (e.g. tests) can omit it; without it JSON simply goes unvalidated.
+   */
+  readWorkspaceFile?(path: string): Promise<string>;
   isActiveDocumentPhpTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
@@ -185,22 +239,30 @@ interface EditorSurfaceProps {
     source: string,
     position: EditorPosition,
   ): Promise<PhpMethodSignature | null>;
+  providePhpParameterInlayHints?(
+    source: string,
+    range: { endLine: number; startLine: number },
+  ): Promise<PhpParameterNameInlayHint[]>;
 }
 
 function EditorSurfaceComponent({
   activeDocument,
+  editorConfig,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
+  applyPhpCodeActionNewFile = async () => false,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
+  clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   formatOnPaste = false,
+  gitBlameEnabled = false,
   isActiveDocumentPhpTest = false,
   isLanguageServerDocumentSynced,
   languageServerDiagnosticsByPath,
@@ -216,8 +278,10 @@ function EditorSurfaceComponent({
   monacoTheme,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
+  phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
+  userSnippets = EMPTY_USER_SNIPPETS,
   workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
@@ -226,8 +290,12 @@ function EditorSurfaceComponent({
   onGoForward,
   onGoToDefinition,
   onGoToImplementationAt,
+  onGoToSuperMethod,
   onRunTestAt,
   onToggleBookmarkAtLine,
+  onToggleGitBlame,
+  provideGitBlame,
+  readWorkspaceFile,
   onEditorFocused,
   onOpenClass,
   onOpenFile,
@@ -243,6 +311,7 @@ function EditorSurfaceComponent({
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
   providePhpMethodSignature,
+  providePhpParameterInlayHints = async () => [],
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
@@ -250,6 +319,17 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  // Warms TextMate tokens for the active model on idle, off the synchronous
+  // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
+  // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
+  // One instance per surface; `start()` cancels the previous model's pending
+  // warming, so only the active model is ever warmed (per-tab isolation).
+  const backgroundTokenizerRef = useRef<BackgroundTokenizer | null>(null);
+  if (!backgroundTokenizerRef.current) {
+    backgroundTokenizerRef.current = new BackgroundTokenizer(
+      idleCallbackScheduler(),
+    );
+  }
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const javaScriptTypeScriptRuntimeStatusRef = useRef(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -263,10 +343,21 @@ function EditorSurfaceComponent({
   );
   const applyPhpWorkspaceEditRef = useRef(applyPhpLanguageServerWorkspaceEdit);
   const errorReporterRef = useRef(onLanguageServerError);
+  // Holds the latest parent onChange so the Editor can receive a single stable
+  // handler (see handleEditorChange) without the closure ever going stale.
+  const onChangeRef = useRef(onChange);
   const isLanguageServerDocumentSyncedRef = useRef(
     isLanguageServerDocumentSynced,
   );
   const changeDecorationIdsRef = useRef<string[]>([]);
+  // Tracks whether persistent column-selection mode is on so the toggle action
+  // flips it. Per-editor state (one EditorSurface instance per tab), so it never
+  // leaks between open project tabs.
+  const columnSelectionEnabledRef = useRef(false);
+  // Active cyclic-expand-word (hippie) session. Per-editor state (one
+  // EditorSurface per tab) so completion candidates never leak between project
+  // tabs. Reset whenever the caret/buffer no longer matches the last expansion.
+  const hippieSessionRef = useRef<HippieSession | null>(null);
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   // The path whose glyphs currently occupy implementationGutterDecorationIdsRef.
@@ -304,6 +395,20 @@ function EditorSurfaceComponent({
   // Right=test-run) so they never collide with those glyphs or their click
   // handlers, and work on every language (not just PHP).
   const bookmarkDecorationIdsRef = useRef<string[]>([]);
+  // Git blame annotations. Rendered as inline `before` injected text at the start
+  // of each line (the content area), so they occupy NONE of the four gutter lanes
+  // (glyph margin Left=git, Center=impl, Right=test-run; lines-decorations=
+  // bookmark) - no collision with those glyphs or their click handlers. PhpStorm
+  // shows author+date in a column beside the line numbers; Monaco has no native
+  // line-annotation column, so inline injected text is the closest non-colliding
+  // equivalent and matches how GitLens annotates in VS Code.
+  const gitBlameDecorationIdsRef = useRef<string[]>([]);
+  // The path whose annotations currently occupy gitBlameDecorationIdsRef. null
+  // means none are applied. Used to drop the previous file's annotations on a
+  // switch (per-tab isolation) and to ignore a stale async blame result whose
+  // requested path no longer matches the active document.
+  const gitBlameDecoratedPathRef = useRef<string | null>(null);
+  const provideGitBlameRef = useRef(provideGitBlame);
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   // Tracks the diagnostics map seen on the previous run and the set of model
   // objects already given language-server markers, so the marker effect can
@@ -317,12 +422,26 @@ function EditorSurfaceComponent({
   const markedLanguageServerModelsRef = useRef<
     WeakSet<Monaco.editor.ITextModel>
   >(new WeakSet());
+  // Tracks the active document's path + total diagnostic count from the previous
+  // diagnostics-decoration run, so a stale content hover can be dismissed when
+  // that count drops (markers removed/cleared) for the same document.
+  const previousActiveDiagnosticCountRef = useRef<{
+    count: number;
+    path: string;
+  } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
+  const clearLanguageServerDiagnosticsForPathRef = useRef(
+    clearLanguageServerDiagnosticsForPath,
+  );
   const bladeCompletionsRef = useRef(provideBladeCompletions);
   const bladeDefinitionRef = useRef(provideBladeDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
+  const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
+  const phpInlayHintsEnabledRef = useRef(phpInlayHintsEnabled);
+  const userSnippetsRef = useRef<readonly UserSnippet[]>(userSnippets);
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
@@ -347,9 +466,11 @@ function EditorSurfaceComponent({
 
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
-  // changes.
+  // changes. The cyclic-expand-word (hippie) session is dropped for the same
+  // reason: its anchor offset and candidate list belong to the previous file.
   useEffect(() => {
     setSurroundWithRequest(null);
+    hippieSessionRef.current = null;
   }, [activeDocument]);
 
   useEffect(() => {
@@ -405,6 +526,46 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
+  // Registers the local JSON Schema declared by the active document's `$schema`
+  // (e.g. `.phpactor.json`) with Monaco so it validates inline. Without this,
+  // Monaco's JSON worker tries to fetch the schema, finds no request service,
+  // and reports a 768 "No schema request service available" error on the
+  // `$schema` line. The schema content is read off-disk via the Tauri gateway.
+  //
+  // Per-workspace isolation: the requested document path is captured up front;
+  // the loader re-checks `isStale()` after the async schema read and drops the
+  // result when the active document has since changed. Switching project tabs
+  // also switches the active document, so this single check covers a mid-read
+  // tab switch - one project's schema can never be registered while the user is
+  // already looking at another.
+  useEffect(() => {
+    if (
+      !monacoApi ||
+      !activeDocument ||
+      activeDocument.language !== "json" ||
+      !readWorkspaceFile
+    ) {
+      return;
+    }
+
+    const requestedPath = activeDocument.path;
+    const readTextFile = readWorkspaceFile;
+    const document = {
+      path: activeDocument.path,
+      content: activeDocument.content,
+      language: activeDocument.language,
+    };
+
+    void loadJsonSchemaForDocument(monacoApi, document, {
+      readTextFile,
+      isStale: () => activeDocumentRef.current?.path !== requestedPath,
+    }).catch(() => {
+      // Loading a JSON schema is best-effort: a failure must never break JSON
+      // editing or surface an overlay. The loader already swallows expected
+      // failures; this guard covers anything unexpected.
+    });
+  }, [activeDocument, monacoApi, readWorkspaceFile]);
+
   useEffect(() => {
     flushPendingRef.current = flushPendingLanguageServerDocument;
   }, [flushPendingLanguageServerDocument]);
@@ -428,12 +589,25 @@ function EditorSurfaceComponent({
   }, [onLanguageServerError]);
 
   useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
     isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
   }, [isLanguageServerDocumentSynced]);
 
   useEffect(() => {
     phpCodeActionsRef.current = providePhpCodeActions;
   }, [providePhpCodeActions]);
+
+  useEffect(() => {
+    applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
+  }, [applyPhpCodeActionNewFile]);
+
+  useEffect(() => {
+    clearLanguageServerDiagnosticsForPathRef.current =
+      clearLanguageServerDiagnosticsForPath;
+  }, [clearLanguageServerDiagnosticsForPath]);
 
   useEffect(() => {
     bladeCompletionsRef.current = provideBladeCompletions;
@@ -454,6 +628,22 @@ function EditorSurfaceComponent({
   useEffect(() => {
     phpMethodSignatureRef.current = providePhpMethodSignature;
   }, [providePhpMethodSignature]);
+
+  useEffect(() => {
+    phpParameterInlayHintsRef.current = providePhpParameterInlayHints;
+  }, [providePhpParameterInlayHints]);
+
+  useEffect(() => {
+    phpInlayHintsEnabledRef.current = phpInlayHintsEnabled;
+  }, [phpInlayHintsEnabled]);
+
+  useEffect(() => {
+    userSnippetsRef.current = userSnippets;
+  }, [userSnippets]);
+
+  useEffect(() => {
+    provideGitBlameRef.current = provideGitBlame;
+  }, [provideGitBlame]);
 
   useEffect(() => {
     if (!activeDocument || activeDocument.language !== "php") {
@@ -539,16 +729,22 @@ function EditorSurfaceComponent({
     }
 
     const disposable = registerLanguageServerMonacoProviders(monacoApi, {
+      applyPhpCodeActionNewFile: (newFile) =>
+        applyPhpCodeActionNewFileRef.current(newFile),
       applyWorkspaceEdit: (edit, editContext) =>
         applyPhpWorkspaceEditRef.current(edit, editContext),
+      clearLanguageServerDiagnosticsForPath: (path) =>
+        clearLanguageServerDiagnosticsForPathRef.current(path),
       featuresGateway: languageServerFeaturesGateway,
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
+      getUserSnippets: () => userSnippetsRef.current,
       getWorkspaceRoot: () => workspaceRoot,
       isDocumentSynced: (rootPath, path) =>
         workspaceRootKeysEqual(rootPath, workspaceRoot) &&
         Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
+      isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
       limitNavigationResultsToOpenModels: true,
       provideBladeCompletions: (source, position) =>
         bladeCompletionsRef.current(source, position),
@@ -562,6 +758,8 @@ function EditorSurfaceComponent({
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
         phpMethodSignatureRef.current(source, position),
+      providePhpParameterInlayHints: (source, range) =>
+        phpParameterInlayHintsRef.current(source, range),
       refreshGateway: languageServerRefreshGateway,
       reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
@@ -591,6 +789,7 @@ function EditorSurfaceComponent({
           flushPendingJavaScriptTypeScriptRef.current(path),
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
+        getUserSnippets: () => userSnippetsRef.current,
         getWorkspaceRoot: () => workspaceRoot,
         limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -609,10 +808,10 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
-  const handleMount: OnMount = (_editor, monaco) => {
+  const handleMount: OnMount = useCallback((_editor, monaco) => {
     setEditorApi(_editor);
     setMonacoApi(monaco);
-  };
+  }, []);
 
   useEffect(() => {
     if (!editorApi) {
@@ -626,6 +825,45 @@ function EditorSurfaceComponent({
     });
   }, [editorApi, editorFontFamily, monacoFontLigatures, editorFontSize]);
 
+  // Apply resolved `.editorconfig` indent + EOL to the ACTIVE model only, so a
+  // file with a matching `.editorconfig` mirrors VS Code / PhpStorm. Guarded by
+  // `modelPath === activeDocument.path` (per-tab isolation): during a switch the
+  // editor may still hold the previous model for a frame, and applying then
+  // would mutate the wrong file. When EditorConfig sets no indent / EOL we leave
+  // Monaco's own detection (`detectIndentation`) and the file's existing EOL
+  // untouched, preserving the no-`.editorconfig` default behaviour.
+  useEffect(() => {
+    if (!editorApi || !monacoApi || !activeDocument) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const resolved: ResolvedEditorConfig = editorConfig ?? {};
+    const formattingOptions = editorConfigFormattingOptions(resolved);
+
+    if (formattingOptions) {
+      model.updateOptions({
+        insertSpaces: formattingOptions.insertSpaces,
+        tabSize: formattingOptions.tabSize,
+      });
+    }
+
+    const eol = editorConfigEol(resolved);
+
+    if (eol) {
+      model.setEOL(
+        eol === "\r\n"
+          ? monacoApi.editor.EndOfLineSequence.CRLF
+          : monacoApi.editor.EndOfLineSequence.LF,
+      );
+    }
+  }, [activeDocument, editorApi, editorConfig, monacoApi]);
+
   useEffect(() => {
     if (!editorApi) {
       return;
@@ -633,23 +871,53 @@ function EditorSurfaceComponent({
 
     const disposable = editorApi.onDidChangeCursorPosition((event) => {
       onCursorPositionChange(event.position);
-      setCursorPosition({
-        column: event.position.column,
-        lineNumber: event.position.lineNumber,
-      });
+      setCursorPosition((previous) =>
+        nextCursorPosition(previous, event.position),
+      );
     });
     const position = editorApi.getPosition();
 
     if (position) {
       onCursorPositionChange(position);
-      setCursorPosition({
-        column: position.column,
-        lineNumber: position.lineNumber,
-      });
+      setCursorPosition((previous) => nextCursorPosition(previous, position));
     }
 
     return () => disposable.dispose();
   }, [editorApi, onCursorPositionChange]);
+
+  // Eagerly warm the active model's TextMate tokens on idle after open/switch.
+  // @monaco-editor/react swaps the model when `path` changes, so this re-runs on
+  // every document switch: it adopts the new active model and (inside `start`)
+  // cancels any pending warming for the previous one, so a stale tab's model can
+  // never keep tokenizing. The cleanup stops warming on unmount/switch, and the
+  // tokenizer re-checks `model.isDisposed()` before each idle slice.
+  useEffect(() => {
+    const tokenizer = backgroundTokenizerRef.current;
+
+    if (!editorApi || !activeDocument || !tokenizer) {
+      return;
+    }
+
+    const requestedPath = activeDocument.path;
+    const model = editorApi.getModel();
+
+    // Only warm the model that actually backs the requested document. During a
+    // switch the editor can still hold the previous model for a frame; warming
+    // it would tokenize the wrong file, so we wait for the next effect run.
+    if (!model || modelPath(model) !== requestedPath) {
+      return;
+    }
+
+    tokenizer.start(model as unknown as BackgroundTokenizableModel);
+
+    return () => tokenizer.stop();
+  }, [activeDocument, editorApi]);
+
+  // Permanent teardown so a disposed surface leaves no pending idle slice.
+  useEffect(() => {
+    const tokenizer = backgroundTokenizerRef.current;
+    return () => tokenizer?.dispose();
+  }, []);
 
   useEffect(() => {
     if (!activeDocument || !workspaceRoot) {
@@ -846,6 +1114,14 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.goToSuperMethod",
+        label: "Go to Super Method",
+        keybindings: keybinding("editor.goToSuperMethod"),
+        run: () => {
+          onGoToSuperMethod();
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.openClass",
         label: "Open Class",
         keybindings: keybinding("class.quickOpen"),
@@ -864,6 +1140,27 @@ function EditorSurfaceComponent({
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
+        id: "mockor.gotoLine",
+        label: "Go to Line/Column",
+        keybindings: keybinding("editor.gotoLine"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.gotoLine"),
+      }),
+      editorApi.addAction({
+        id: "mockor.rename",
+        label: "Rename Symbol",
+        keybindings: keybinding("editor.rename"),
+        run: () => triggerEditorAction(editorApi, "editor.action.rename"),
+      }),
+      editorApi.addAction({
+        id: "mockor.toggleGitBlame",
+        label: "Annotate with Git Blame",
+        keybindings: keybinding("editor.toggleGitBlame"),
+        run: () => {
+          onToggleGitBlame?.();
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.formatDocument",
         label: "Format Document",
         keybindings: keybinding("editor.formatDocument"),
@@ -878,6 +1175,13 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.formatSelection",
+        label: "Format Selection",
+        keybindings: keybinding("editor.formatSelection"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.formatSelection"),
+      }),
+      editorApi.addAction({
         id: "mockor.quickFix",
         label: "Show Context Actions",
         keybindings: keybinding("editor.quickFix"),
@@ -886,19 +1190,6 @@ function EditorSurfaceComponent({
           const position = editorApi.getPosition();
 
           if (!model || !position) {
-            return;
-          }
-
-          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
-            editorApi.trigger("keyboard", "editor.action.quickFix", {});
-            return;
-          }
-
-          const markers = monacoApi.editor.getModelMarkers({
-            resource: model.uri,
-          });
-
-          if (!markers.some((marker) => isFixableQuickFixMarkerAt(marker, position))) {
             return;
           }
 
@@ -915,6 +1206,49 @@ function EditorSurfaceComponent({
           }
 
           editorApi.trigger("keyboard", "editor.action.smartSelect.expand", {});
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.shrinkSelection",
+        label: "Shrink Selection",
+        keybindings: keybinding("editor.shrinkSelection"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.smartSelect.shrink"),
+      }),
+      editorApi.addAction({
+        id: "mockor.insertCursorAbove",
+        label: "Add Caret Above",
+        keybindings: keybinding("editor.insertCursorAbove"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.insertCursorAbove"),
+      }),
+      editorApi.addAction({
+        id: "mockor.insertCursorBelow",
+        label: "Add Caret Below",
+        keybindings: keybinding("editor.insertCursorBelow"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.insertCursorBelow"),
+      }),
+      editorApi.addAction({
+        id: "mockor.selectAllOccurrences",
+        label: "Select All Occurrences",
+        keybindings: keybinding("editor.selectAllOccurrences"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.selectHighlights"),
+      }),
+      editorApi.addAction({
+        id: "mockor.toggleColumnSelection",
+        label: "Toggle Column Selection Mode",
+        keybindings: keybinding("editor.toggleColumnSelection"),
+        run: () => {
+          if (!editorApi.getModel()) {
+            return;
+          }
+
+          columnSelectionEnabledRef.current = !columnSelectionEnabledRef.current;
+          editorApi.updateOptions({
+            columnSelection: columnSelectionEnabledRef.current,
+          });
         },
       }),
       editorApi.addAction({
@@ -986,6 +1320,64 @@ function EditorSurfaceComponent({
           triggerEditorAction(editorApi, "editor.action.deleteLines"),
       }),
       editorApi.addAction({
+        id: "mockor.joinLines",
+        label: "Join Lines",
+        keybindings: keybinding("editor.joinLines"),
+        run: () => triggerEditorAction(editorApi, "editor.action.joinLines"),
+      }),
+      editorApi.addAction({
+        id: "mockor.foldAll",
+        label: "Fold All",
+        keybindings: keybinding("editor.foldAll"),
+        run: () => triggerEditorAction(editorApi, "editor.foldAll"),
+      }),
+      editorApi.addAction({
+        id: "mockor.unfoldAll",
+        label: "Unfold All",
+        keybindings: keybinding("editor.unfoldAll"),
+        run: () => triggerEditorAction(editorApi, "editor.unfoldAll"),
+      }),
+      editorApi.addAction({
+        id: "mockor.foldRecursively",
+        label: "Fold Recursively",
+        keybindings: keybinding("editor.foldRecursively"),
+        run: () => triggerEditorAction(editorApi, "editor.foldRecursively"),
+      }),
+      editorApi.addAction({
+        id: "mockor.unfoldRecursively",
+        label: "Unfold Recursively",
+        keybindings: keybinding("editor.unfoldRecursively"),
+        run: () => triggerEditorAction(editorApi, "editor.unfoldRecursively"),
+      }),
+      editorApi.addAction({
+        id: "mockor.sortLinesAscending",
+        label: "Sort Lines Ascending",
+        keybindings: keybinding("editor.sortLinesAscending"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.sortLinesAscending"),
+      }),
+      editorApi.addAction({
+        id: "mockor.sortLinesDescending",
+        label: "Sort Lines Descending",
+        keybindings: keybinding("editor.sortLinesDescending"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.sortLinesDescending"),
+      }),
+      editorApi.addAction({
+        id: "mockor.toggleCase",
+        label: "Toggle Case",
+        keybindings: keybinding("editor.toggleCase"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.transformToUppercase"),
+      }),
+      editorApi.addAction({
+        id: "mockor.transformToLowercase",
+        label: "Transform to Lowercase",
+        keybindings: keybinding("editor.transformToLowercase"),
+        run: () =>
+          triggerEditorAction(editorApi, "editor.action.transformToLowercase"),
+      }),
+      editorApi.addAction({
         id: "mockor.surroundWith",
         label: "Surround With",
         keybindings: keybinding("editor.surroundWith"),
@@ -1012,6 +1404,14 @@ function EditorSurfaceComponent({
         },
       }),
       editorApi.addAction({
+        id: "mockor.cyclicExpandWord",
+        label: "Cyclic Expand Word",
+        keybindings: keybinding("editor.cyclicExpandWord"),
+        run: () => {
+          applyCyclicExpandWord(monacoApi, editorApi, hippieSessionRef);
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
@@ -1029,6 +1429,20 @@ function EditorSurfaceComponent({
         keybindings: keybinding("navigation.forward"),
         run: onGoForward,
       }),
+      editorApi.addAction({
+        id: "mockor.nextChange",
+        label: "Go to Next Change",
+        keybindings: keybinding("editor.nextChange"),
+        run: () =>
+          jumpToChangeHunk(editorApi, changeHunksRef.current, "next"),
+      }),
+      editorApi.addAction({
+        id: "mockor.previousChange",
+        label: "Go to Previous Change",
+        keybindings: keybinding("editor.previousChange"),
+        run: () =>
+          jumpToChangeHunk(editorApi, changeHunksRef.current, "previous"),
+      }),
     ];
 
     return () => {
@@ -1043,9 +1457,11 @@ function EditorSurfaceComponent({
     onGoForward,
     onGoToDefinition,
     onGoToImplementationAt,
+    onGoToSuperMethod,
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
+    onToggleGitBlame,
     setSurroundWithRequest,
   ]);
 
@@ -1054,8 +1470,45 @@ function EditorSurfaceComponent({
       return;
     }
 
+    const mouseDownPlatform = detectKeymapPlatform();
+
     const disposable = editorApi.onMouseDown((event) => {
       const targetType = event.target.type;
+
+      // Cmd+click (macOS) / Ctrl+click (Windows/Linux) on code text mirrors the
+      // Cmd+B go-to-definition command instead of Monaco's built-in gesture,
+      // which has no cross-file opener wired and skips the Laravel/PHP
+      // contextual definition cascade. We set the caret first (onMouseDown fires
+      // before the selection settles, and the controller reads the active
+      // editor position), then run the same callback as the keyboard shortcut
+      // and suppress the native gesture so navigation does not fire twice.
+      //
+      // The gesture must be a primary (left) click only. On macOS Ctrl+click is
+      // the OS secondary/context click, so we navigate solely on Cmd (metaKey)
+      // and explicitly bail when Ctrl is held - otherwise a Mac user opening the
+      // context menu would be yanked to the definition instead.
+      const isContentText =
+        targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
+      const isLeftClick = event.event.leftButton === true;
+      const definitionModifierPressed =
+        mouseDownPlatform === "mac"
+          ? event.event.metaKey === true && event.event.ctrlKey !== true
+          : event.event.ctrlKey === true;
+      const contentPosition = event.target.position;
+
+      if (
+        isContentText &&
+        isLeftClick &&
+        definitionModifierPressed &&
+        contentPosition
+      ) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        editorApi.setPosition(contentPosition);
+        onGoToDefinition();
+        return;
+      }
+
       const isGlyphMargin =
         targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
       const isLineDecorations =
@@ -1126,10 +1579,58 @@ function EditorSurfaceComponent({
   }, [
     editorApi,
     monacoApi,
+    onGoToDefinition,
     onGoToImplementationAt,
     onRunTestAt,
     onToggleBookmarkAtLine,
   ]);
+
+  // Monaco ships a built-in "go to definition on Cmd/Ctrl" gesture
+  // (`editor.contrib.gotodefinitionatposition`). With `multiCursorModifier: "alt"`
+  // Cmd/Ctrl is the trigger modifier for that contribution, so it navigates on
+  // ITS OWN terms: it fires on mouse-UP whenever Cmd was held at mouse-down on
+  // the same line (a Cmd-hover that registers the faintest tap), it ignores the
+  // primary-button / CONTENT_TEXT guards the onMouseDown handler above enforces,
+  // and it reveals the definition through Monaco's own opener - bypassing the
+  // Laravel/PHP contextual cascade entirely. The net effect a user feels is
+  // being yanked to the definition merely by hovering a symbol with Cmd held.
+  //
+  // Do NOT dispose the contribution. Disposing it tears down the editor mouse /
+  // key listeners it registered while the contribution object stays in Monaco's
+  // contribution map (it is registered `BeforeFirstInteraction`, so reading it
+  // here force-instantiates it); the editor later re-enters and double-disposes
+  // it, leaving Monaco's event delivery in an inconsistent state that surfaces as
+  // a runtime crash ("undefined is not an object") on the next interaction.
+  //
+  // Instead neutralize ONLY the navigation: replace the contribution's
+  // `gotoDefinition` method (the one its onExecute path calls to reveal the
+  // target) with a no-op. Every listener stays wired, the link-hover underline
+  // decorations still render, and Monaco's event system is left fully intact.
+  // Go-to-definition then fires ONLY through the two explicit, guarded paths: the
+  // Cmd+left-click handler above and the Cmd+B keybinding (both run the
+  // controller's onGoToDefinition cascade).
+  //
+  // Per-tab isolation: @monaco-editor/react reuses one editor instance across
+  // document switches, so patching once at mount covers every tab; the effect
+  // re-runs if the editor instance itself changes.
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const gotoDefinitionGesture = editorApi.getContribution(
+      "editor.contrib.gotodefinitionatposition",
+    ) as { gotoDefinition?: (...args: unknown[]) => unknown } | null;
+
+    if (
+      !gotoDefinitionGesture ||
+      typeof gotoDefinitionGesture.gotoDefinition !== "function"
+    ) {
+      return;
+    }
+
+    gotoDefinitionGesture.gotoDefinition = () => Promise.resolve();
+  }, [editorApi]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1153,7 +1654,12 @@ function EditorSurfaceComponent({
         [],
       );
     };
-  }, [activeDocument, changeHunks, editorApi, monacoApi]);
+    // Depend on the active document path (not its full identity) so typing does
+    // not re-run this effect every keystroke. The body reads only the path (for
+    // the per-tab stale guard) plus changeHunks, so the path covers file
+    // switches and changeHunks covers actual hunk changes. Mirrors the
+    // bookmark / diagnostic-overview / gutter path-gated effects.
+  }, [activeDocument?.path, changeHunks, editorApi, monacoApi]);
 
   // Renders a bookmark marker in the lines-decorations margin plus an overview
   // ruler tick for each bookmarked line of the active document. The stale-guard
@@ -1190,6 +1696,86 @@ function EditorSurfaceComponent({
     // file switches and bookmarkedLineNumbers covers bookmark toggles.
   }, [activeDocument?.path, bookmarkedLineNumbers, editorApi, monacoApi]);
 
+  // Git blame annotations (PhpStorm "Annotate with Git Blame"). When enabled for
+  // the active document, fetch per-line blame off the parent gateway and render
+  // an inline author + relative-date annotation at the start of each line. The
+  // request captures the requested path up front and re-checks the active /
+  // model path AFTER the await before mutating decorations, so a tab switch in
+  // flight drops the stale result (per-tab + per-document isolation). Disabling
+  // (or switching away) clears the annotations synchronously.
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const clearAnnotations = () => {
+      gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
+        gitBlameDecorationIdsRef.current,
+        [],
+      );
+      gitBlameDecoratedPathRef.current = null;
+    };
+
+    const provider = provideGitBlameRef.current;
+
+    if (!gitBlameEnabled || !provider) {
+      clearAnnotations();
+      return;
+    }
+
+    // Capture the requested path BEFORE the await so a switch can be detected.
+    const requestedPath = activeDocument.path;
+    let cancelled = false;
+
+    void provider(requestedPath)
+      .then((blameLines) => {
+        // Re-check AFTER the await: drop stale results from a switched-away tab,
+        // an effect cleanup (cancelled), a disposed model, or a document whose
+        // path no longer matches the request.
+        if (cancelled || model.isDisposed?.()) {
+          return;
+        }
+
+        const currentModel = editorApi.getModel();
+
+        if (
+          !currentModel ||
+          modelPath(currentModel) !== requestedPath ||
+          activeDocumentRef.current?.path !== requestedPath
+        ) {
+          return;
+        }
+
+        const now = Date.now();
+        gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
+          gitBlameDecorationIdsRef.current,
+          blameLines.map((line) =>
+            toGitBlameDecoration(monacoApi, line, now),
+          ),
+        );
+        gitBlameDecoratedPathRef.current = requestedPath;
+      })
+      .catch(() => {
+        // Blame is best-effort decoration; a gateway failure leaves the editor
+        // untouched rather than surfacing an error.
+      });
+
+    return () => {
+      cancelled = true;
+      clearAnnotations();
+    };
+    // Keyed on the active path + the enabled flag (not the document identity), so
+    // typing does not refetch blame every keystroke; a file switch or a toggle
+    // re-runs it. Blame is anchored to committed lines and need not track live
+    // edits between toggles.
+  }, [activeDocument?.path, editorApi, gitBlameEnabled, monacoApi]);
+
   useEffect(() => {
     if (!changePreview) {
       return;
@@ -1207,6 +1793,23 @@ function EditorSurfaceComponent({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [changePreview]);
 
+  // ONE debounced snapshot of the active PHP file's content, shared by the
+  // implementation gutter, the test gutter and the syntax diagnostics. Each of
+  // those used to arm its own independent 160ms `setTimeout` on every keystroke,
+  // so a single edit fired three timers that each re-snapshotted the same
+  // content and scheduled a redundant full-file parse on the main thread. Now a
+  // single timer per edit publishes one snapshot and all three consumers react
+  // to it. Gated to PHP documents (the union of the three consumers); the test
+  // gutter applies its own narrower `isActiveDocumentPhpTest` gate downstream.
+  const phpEditTick = useDebouncedPhpEditTick(
+    activeDocument && activeDocument.language === "php"
+      ? activeDocument.path
+      : null,
+    activeDocument && activeDocument.language === "php"
+      ? activeDocument.content
+      : null,
+  );
+
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
       return;
@@ -1222,7 +1825,7 @@ function EditorSurfaceComponent({
     // document is no longer PHP) so a switch never leaves stale glyphs while the
     // debounced recompute is pending. A same-path keystroke does not clear, so
     // the existing glyphs stay put (and track edits via stickiness) until the
-    // debounce flushes - no flicker.
+    // shared debounce tick flushes - no flicker.
     const decoratedPath = implementationGutterDecoratedPathRef.current;
     const isPathSwitch =
       decoratedPath !== null && decoratedPath !== activeDocument.path;
@@ -1235,68 +1838,59 @@ function EditorSurfaceComponent({
       );
       implementationGutterDecoratedPathRef.current = null;
     }
+  }, [activeDocument, editorApi, monacoApi]);
 
-    if (activeDocument.language !== "php") {
+  // The debounced full-file parse + decoration replace. Driven by the shared
+  // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
+  // consumers) instead of arming its own timer per keystroke. The glyphs do not
+  // need to track typing in real time - their stickiness keeps existing glyphs
+  // anchored to the right lines while typing, and the recompute catches up once
+  // the user pauses. The live-model path guard re-checks isolation AFTER the
+  // debounce so a stale tab's snapshot can never decorate the active model.
+  useEffect(() => {
+    if (!phpEditTick || !editorApi || !monacoApi) {
       return;
     }
 
-    // Debounce the full-file parse + decoration replace. `activeDocument` gets a
-    // fresh `{ ...doc, content }` on every keystroke, which re-ran this effect
-    // (cache miss on changed content -> full re-parse + deltaDecorations) per
-    // character typed. The glyphs do not need to track typing in real time -
-    // their stickiness keeps existing glyphs anchored to the right lines while
-    // typing, and the recompute catches up ~160ms after the user pauses. This
-    // mirrors the syntax-diagnostics debounce. The cleanup only clears the
-    // pending timer so rapid keystrokes coalesce into a single parse without
-    // clearing the glyphs in between (no flicker).
-    const targetDocumentPath = activeDocument.path;
-    const targetDocumentContent = activeDocument.content;
-    const timeout = window.setTimeout(() => {
-      const liveModel = editorApi.getModel();
+    const liveModel = editorApi.getModel();
 
-      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
-        return;
-      }
+    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+      return;
+    }
 
-      const targets = implementationGutterTargetsCacheRef.current.resolve(
-        targetDocumentPath,
-        targetDocumentContent,
-      );
-      implementationGutterTargetsRef.current = new Map(
-        targets.map((target) => [target.position.lineNumber, target.position]),
-      );
-      implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        implementationGutterDecorationIdsRef.current,
-        targets.map((target) => ({
-          options: {
-            glyphMargin: {
-              position: monacoApi.editor.GlyphMarginLane.Center,
-            },
-            glyphMarginClassName: "implementation-gutter-glyph",
-            glyphMarginHoverMessage: {
-              value: "Go to implementation",
-            },
-            isWholeLine: false,
-            stickiness:
-              monacoApi.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-            zIndex: 20,
+    const targets = implementationGutterTargetsCacheRef.current.resolve(
+      phpEditTick.path,
+      phpEditTick.content,
+    );
+    implementationGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target.position]),
+    );
+    implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      implementationGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Center,
           },
-          range: new monacoApi.Range(
-            target.position.lineNumber,
-            1,
-            target.position.lineNumber,
-            1,
-          ),
-        })),
-      );
-      implementationGutterDecoratedPathRef.current = targetDocumentPath;
-    }, 160);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [activeDocument, editorApi, monacoApi]);
+          glyphMarginClassName: "implementation-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: "Go to implementation",
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+    implementationGutterDecoratedPathRef.current = phpEditTick.path;
+  }, [editorApi, monacoApi, phpEditTick]);
 
   // Renders the green "run test" play glyph on the Right glyph-margin lane for
   // each parsed test target in the active PHP test file. Gated to PHP test
@@ -1317,7 +1911,7 @@ function EditorSurfaceComponent({
 
     // Synchronously drop the previous file's glyphs on a path switch (or when the
     // document stops being a PHP test) so a switch never leaves stale glyphs while
-    // the debounced recompute is pending. Mirrors the implementation-gutter
+    // the shared debounce tick is pending. Mirrors the implementation-gutter
     // effect; see its comment for the no-flicker rationale.
     const decoratedPath = testGutterDecoratedPathRef.current;
     const isPathSwitch =
@@ -1333,59 +1927,56 @@ function EditorSurfaceComponent({
       );
       testGutterDecoratedPathRef.current = null;
     }
+  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
 
-    if (!isApplicable) {
+  // The debounced test-gutter parse + decoration replace, driven by the shared
+  // `phpEditTick`. Re-applies the `isActiveDocumentPhpTest` gate (the tick only
+  // knows the document is PHP) and re-checks the live model path AFTER the
+  // debounce so a stale tab's snapshot can never decorate the active model.
+  useEffect(() => {
+    if (!phpEditTick || !editorApi || !monacoApi || !isActiveDocumentPhpTest) {
       return;
     }
 
-    const targetDocumentPath = activeDocument.path;
-    const targetDocumentContent = activeDocument.content;
-    const timeout = window.setTimeout(() => {
-      const liveModel = editorApi.getModel();
+    const liveModel = editorApi.getModel();
 
-      if (!liveModel || modelPath(liveModel) !== targetDocumentPath) {
-        return;
-      }
+    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+      return;
+    }
 
-      const targets = testGutterTargetsCacheRef.current.resolve(
-        targetDocumentPath,
-        targetDocumentContent,
-      );
-      testGutterTargetsRef.current = new Map(
-        targets.map((target) => [target.position.lineNumber, target]),
-      );
-      testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        testGutterDecorationIdsRef.current,
-        targets.map((target) => ({
-          options: {
-            glyphMargin: {
-              position: monacoApi.editor.GlyphMarginLane.Right,
-            },
-            glyphMarginClassName: "test-run-gutter-glyph",
-            glyphMarginHoverMessage: {
-              value: target.label,
-            },
-            isWholeLine: false,
-            stickiness:
-              monacoApi.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-            zIndex: 20,
+    const targets = testGutterTargetsCacheRef.current.resolve(
+      phpEditTick.path,
+      phpEditTick.content,
+    );
+    testGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target]),
+    );
+    testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      testGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Right,
           },
-          range: new monacoApi.Range(
-            target.position.lineNumber,
-            1,
-            target.position.lineNumber,
-            1,
-          ),
-        })),
-      );
-      testGutterDecoratedPathRef.current = targetDocumentPath;
-    }, 160);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
+          glyphMarginClassName: "test-run-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: target.label,
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+    testGutterDecoratedPathRef.current = phpEditTick.path;
+  }, [editorApi, isActiveDocumentPhpTest, monacoApi, phpEditTick]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -1418,11 +2009,53 @@ function EditorSurfaceComponent({
       return;
     }
 
+    // A reveal is a programmatic jump (Back/Forward, go-to-definition, breadcrumb,
+    // etc). Monaco's content hover widget is mouse/keyboard driven and is NOT
+    // dismissed by setPosition/reveal, so a hover that was still resolving when the
+    // jump fired (e.g. the 700ms "Loading…" placeholder over a method) would stay
+    // pinned to the old spot and never update - looking permanently stuck. Hide it
+    // before the jump so navigation always lands on a clean surface.
+    editorApi.trigger("navigation", "editor.action.hideHover", {});
     editorApi.setPosition(editorRevealTarget.position);
     editorApi.revealPositionInCenter(editorRevealTarget.position);
     editorApi.focus();
     onRevealTargetHandled();
   }, [activeDocument, editorApi, editorRevealTarget, onRevealTargetHandled]);
+
+  // Deterministic content sync: guarantee the live model buffer matches the
+  // active document's content after every open / content change.
+  //
+  // @monaco-editor/react applies the `value` prop in an effect keyed on the
+  // value identity, and swaps the model in a separate effect keyed on the `path`
+  // identity. When a file's model already exists (we keep models alive for
+  // Back/Forward navigation) and the path swaps to it without the value effect
+  // re-running for this commit, Monaco shows that model's stale/empty buffer and
+  // the freshly read content is never applied - the editor renders blank until an
+  // unrelated edit nudges the value effect (the Quick Open "empty tab" race the
+  // user hit). Reconcile here so content is shown the moment a file opens, with
+  // no dependency on @monaco-editor/react's effect ordering.
+  //
+  // Isolation: only the model that currently belongs to the active document is
+  // touched (path match), so a stale async commit can never write one file's
+  // content into another's buffer. Idempotent: typing keeps content equal to the
+  // model value, so this never re-applies during editing or fights live input.
+  useEffect(() => {
+    if (!editorApi || !activeDocument) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    if (model.getValue() === activeDocument.content) {
+      return;
+    }
+
+    model.setValue(activeDocument.content);
+  }, [activeDocument, editorApi]);
 
   useEffect(() => {
     if (!monacoApi) {
@@ -1574,6 +2207,35 @@ function EditorSurfaceComponent({
       activeDocument.language === "php"
         ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
         : [];
+
+    // Monaco's content hover widget is mouse-driven and is NOT dismissed when its
+    // markers are removed, so a hover left open over a diagnostic (error/warning
+    // message) stays pinned showing now-invalid text after the file is fixed or
+    // re-validated and the diagnostic disappears. When the active document's total
+    // diagnostic count drops for the *same* path, dismiss the open hover so it can
+    // never linger as stale info; the next mouse hover re-opens it with fresh
+    // content. Comparison is keyed on path (not a switch to another file) and on a
+    // real count *decrease* (not a no-op keystroke), so the hover is never hidden
+    // gratuitously. Isolation: only the model that belongs to the active document
+    // is touched (the path match above), so a stale tab can never dismiss the
+    // active editor's hover.
+    const activeDiagnosticCount =
+      languageServerDiagnostics.length + syntaxDiagnostics.length;
+    const previousActiveDiagnostics = previousActiveDiagnosticCountRef.current;
+    const diagnosticsClearedForActivePath =
+      previousActiveDiagnostics !== null &&
+      previousActiveDiagnostics.path === activeDocument.path &&
+      activeDiagnosticCount < previousActiveDiagnostics.count;
+
+    if (diagnosticsClearedForActivePath) {
+      editorApi.trigger("diagnostics", "editor.action.hideHover", {});
+    }
+
+    previousActiveDiagnosticCountRef.current = {
+      count: activeDiagnosticCount,
+      path: activeDocument.path,
+    };
+
     diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
       diagnosticOverviewDecorationIdsRef.current,
       [
@@ -1608,6 +2270,9 @@ function EditorSurfaceComponent({
     syntaxDiagnosticsByPath,
   ]);
 
+  // Synchronously clears the PHP syntax markers + cached diagnostics when the
+  // active document is not (or stops being) PHP. The debounced re-validation for
+  // PHP documents is driven by the shared `phpEditTick` below.
   useEffect(() => {
     if (!monacoApi) {
       return;
@@ -1617,86 +2282,121 @@ function EditorSurfaceComponent({
       return;
     }
 
+    if (activeDocument.language === "php") {
+      return;
+    }
+
     const model = modelForPath(monacoApi, activeDocument.path);
 
     if (!model) {
       return;
     }
 
-    if (activeDocument.language !== "php") {
-      monacoApi.editor.setModelMarkers(model, "php-syntax", []);
-      setSyntaxDiagnosticsByPath((current) => {
-        if (!current[activeDocument.path]) {
-          return current;
-        }
+    monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+    setSyntaxDiagnosticsByPath((current) => {
+      if (!current[activeDocument.path]) {
+        return current;
+      }
 
-        const next = { ...current };
-        delete next[activeDocument.path];
-        return next;
-      });
+      const next = { ...current };
+      delete next[activeDocument.path];
+      return next;
+    });
+  }, [activeDocument, monacoApi]);
+
+  // The debounced PHP syntax validation, driven by the shared `phpEditTick` (one
+  // 160ms timer per edit for all PHP gutter/diagnostics consumers). The `active`
+  // flag drops a resolved validation whose tick has since changed or unmounted,
+  // and the model is re-resolved from the tick's path so a stale tab's snapshot
+  // can never mark the active model.
+  useEffect(() => {
+    if (!monacoApi || !phpEditTick) {
+      return;
+    }
+
+    const model = modelForPath(monacoApi, phpEditTick.path);
+
+    if (!model) {
       return;
     }
 
     let active = true;
-    const timeout = window.setTimeout(() => {
-      phpSyntaxDiagnosticsGateway
-        .validate(activeDocument.content)
-        .then((diagnostics) => {
-          if (!active) {
-            return;
-          }
+    phpSyntaxDiagnosticsGateway
+      .validate(phpEditTick.content)
+      .then((diagnostics) => {
+        if (!active) {
+          return;
+        }
 
-          const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
-            activeDocument.content,
-          );
-          const allDiagnostics = [...diagnostics, ...localDiagnostics];
-          setSyntaxDiagnosticsByPath((current) => ({
-            ...current,
-            [activeDocument.path]: allDiagnostics,
-          }));
-          monacoApi.editor.setModelMarkers(
-            model,
-            "php-syntax",
-            allDiagnostics.map((diagnostic) =>
-              toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
-            ),
-          );
-        })
-        .catch((error) => errorReporterRef.current(error));
-    }, 160);
+        const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
+          phpEditTick.content,
+        );
+        const allDiagnostics = [...diagnostics, ...localDiagnostics];
+        // Lightweight inspections (unused import / unused private method) are
+        // text/AST-only, so they run in light AND IDE mode. They carry their own
+        // warning severity + "Unnecessary" tag and share the `php-syntax` marker
+        // owner so the existing clear/coalesce logic disposes them too.
+        const inspectionDiagnostics = phpInspectionDiagnostics(
+          phpEditTick.content,
+        );
+        setSyntaxDiagnosticsByPath((current) => ({
+          ...current,
+          [phpEditTick.path]: allDiagnostics,
+        }));
+        monacoApi.editor.setModelMarkers(model, "php-syntax", [
+          ...allDiagnostics.map((diagnostic) =>
+            toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
+          ),
+          ...inspectionDiagnostics.map((diagnostic) =>
+            toMonacoInspectionMarker(monacoApi, diagnostic),
+          ),
+        ]);
+      })
+      .catch((error) => errorReporterRef.current(error));
 
     return () => {
       active = false;
-      window.clearTimeout(timeout);
     };
-  }, [
-    activeDocument,
-    monacoApi,
-    phpSyntaxDiagnosticsGateway,
-  ]);
+  }, [monacoApi, phpEditTick, phpSyntaxDiagnosticsGateway]);
 
   const breadcrumbSymbols = activeDocument
-    ? breadcrumbSymbolsByPath[activeDocument.path] ?? []
-    : [];
-  const breadcrumbPath =
-    activeDocument && cursorPosition
-      ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
-      : [];
+    ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS
+    : EMPTY_BREADCRUMB_SYMBOLS;
+  // Recomputed only when the cursor actually moves (line OR column) or the
+  // symbols change, so a re-render that leaves all three stable hands the same
+  // path array to the memo'd Breadcrumbs and skips its render. Keyed on the raw
+  // line/column rather than the cursorPosition object so the gate above does not
+  // need to share identity for the memo to hold.
+  const breadcrumbPath = useMemo(
+    () =>
+      activeDocument && cursorPosition
+        ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+        : EMPTY_BREADCRUMB_PATH,
+    [
+      activeDocument,
+      breadcrumbSymbols,
+      cursorPosition?.lineNumber,
+      cursorPosition?.column,
+    ],
+  );
 
-  const navigateToBreadcrumbSymbol = (symbol: LanguageServerDocumentSymbol) => {
-    if (!editorApi) {
-      return;
-    }
+  const navigateToBreadcrumbSymbol = useCallback(
+    (symbol: LanguageServerDocumentSymbol) => {
+      if (!editorApi) {
+        return;
+      }
 
-    const position: EditorPosition = {
-      lineNumber: symbol.selectionRange.start.line + 1,
-      column: symbol.selectionRange.start.character + 1,
-    };
+      const position: EditorPosition = {
+        lineNumber: symbol.selectionRange.start.line + 1,
+        column: symbol.selectionRange.start.character + 1,
+      };
 
-    editorApi.setPosition(position);
-    editorApi.revealPositionInCenter(position);
-    editorApi.focus();
-  };
+      editorApi.setPosition(position);
+      editorApi.revealPositionInCenter(position);
+      editorApi.focus();
+    },
+    [editorApi],
+  );
 
   const changePreviewStyle =
     activeDocument && changePreview && editorApi
@@ -1714,6 +2414,85 @@ function EditorSurfaceComponent({
   // and cover it with an overlay, instead of replacing the editor with a plain
   // div.
   const isReadOnly = activeDocument?.readOnly === true;
+
+  // Stable handler identity for the wrapped @monaco-editor/react Editor. It reads
+  // the latest parent onChange through a ref so the Editor never receives a fresh
+  // reference (which would dispose/recreate its model-content listener on every
+  // re-render) while still routing to the current handler (no stale closure).
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    onChangeRef.current(value || "");
+  }, []);
+
+  // beforeMount only depends on the theme, so a cursor move keeps the same
+  // reference and never re-runs Monaco's first-frame theme/feature setup.
+  const handleBeforeMount = useCallback(
+    (monaco: typeof Monaco) => beforeMonacoMount(monaco, monacoTheme),
+    [monacoTheme],
+  );
+
+  // The Editor options object is rebuilt ONLY when a value Monaco actually reads
+  // changes (read-only/format-on-paste flags and the three font settings). Every
+  // other option is a static literal. Holding the identity stable across cursor
+  // moves keeps @monaco-editor/react's memo intact, so it stops calling
+  // editor.updateOptions (deep clone + ~170 comparisons) on each cursor event,
+  // while a genuine settings/font change still recomputes and is applied.
+  const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
+    () => ({
+      autoIndent: "full",
+      automaticLayout: true,
+      bracketPairColorization: { enabled: true },
+      detectIndentation: true,
+      domReadOnly: isReadOnly,
+      formatOnPaste,
+      fontFamily: editorFontFamily,
+      fontLigatures: monacoFontLigatures,
+      fontSize: editorFontSize,
+      glyphMargin: true,
+      insertSpaces: true,
+      // Skip memory- and CPU-intensive features (including per-line
+      // tokenization) on extreme lines. Monaco's default, kept explicit so the
+      // scroll-performance guards live together.
+      largeFileOptimizations: true,
+      lineHeight: 20,
+      // Lines longer than this are not tokenized. Monaco tokenizes the visible
+      // viewport synchronously while scrolling, so a viewport full of very long
+      // lines blows the frame budget and makes fast scrolling lag. Mirrors the
+      // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
+      maxTokenizationLineLength: 2000,
+      minimap: { enabled: false },
+      // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
+      // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
+      // toggle persistent column/box selection with the `editor.toggleColumnSelection`
+      // action below.
+      multiCursorModifier: "alt",
+      padding: { top: 14, bottom: 14 },
+      parameterHints: { enabled: true, cycle: true },
+      quickSuggestions: { other: true, comments: false, strings: true },
+      quickSuggestionsDelay: 10,
+      readOnly: isReadOnly,
+      scrollBeyondLastLine: false,
+      "semanticHighlighting.enabled": true,
+      // Smooth scrolling animates every fling into many onDidScrollChange
+      // events, each driving a synchronous viewport tokenization pass. Disabling
+      // it keeps fast scrolling of large files responsive (trade-off: the scroll
+      // animation is gone, but the lag is too).
+      smoothScrolling: false,
+      stickyScroll: { enabled: true },
+      // Stop rendering a line after this many characters. Monaco's default, kept
+      // explicit alongside the other large-file scroll guards.
+      stopRenderingLineAfter: 10000,
+      suggestOnTriggerCharacters: true,
+      tabSize: 2,
+    }),
+    [
+      editorFontFamily,
+      editorFontSize,
+      formatOnPaste,
+      isReadOnly,
+      monacoFontLigatures,
+    ],
+  );
+
   const overlay = activeDocument ? null : isOpeningFile ? (
     <div className="editor-empty-overlay" data-testid="editor-opening">
       <p>Opening file…</p>
@@ -1741,38 +2520,13 @@ function EditorSurfaceComponent({
         />
       ) : null}
       <Editor
-        beforeMount={(monaco) => beforeMonacoMount(monaco, monacoTheme)}
+        beforeMount={handleBeforeMount}
         height="100%"
         language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
-        loading={<EditorLoadingPlaceholder />}
-        onChange={(value) => onChange(value || "")}
+        loading={EDITOR_LOADING_PLACEHOLDER}
+        onChange={handleEditorChange}
         onMount={handleMount}
-        options={{
-          autoIndent: "full",
-          automaticLayout: true,
-          bracketPairColorization: { enabled: true },
-          detectIndentation: true,
-          domReadOnly: isReadOnly,
-          formatOnPaste,
-          fontFamily: editorFontFamily,
-          fontLigatures: monacoFontLigatures,
-          fontSize: editorFontSize,
-          glyphMargin: true,
-          insertSpaces: true,
-          lineHeight: 20,
-          minimap: { enabled: false },
-          padding: { top: 14, bottom: 14 },
-          parameterHints: { enabled: true, cycle: true },
-          quickSuggestions: { other: true, comments: false, strings: true },
-          quickSuggestionsDelay: 10,
-          readOnly: isReadOnly,
-          scrollBeyondLastLine: false,
-          "semanticHighlighting.enabled": true,
-          smoothScrolling: true,
-          stickyScroll: { enabled: true },
-          suggestOnTriggerCharacters: true,
-          tabSize: 2,
-        }}
+        options={editorOptions}
         path={activeDocument ? activeDocument.path : PLACEHOLDER_PATH}
         theme={monacoTheme}
         value={activeDocument ? activeDocument.content : ""}
@@ -1855,6 +2609,8 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
       return "editor.action.clipboardCopyAction";
     case "cut":
       return "editor.action.clipboardCutAction";
+    case "gotoLine":
+      return "editor.action.gotoLine";
     case "paste":
       return "editor.action.clipboardPasteAction";
     case "redo":
@@ -1996,6 +2752,122 @@ function precedingLinesSource(
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+// Word characters for the hippie prefix under the caret. Mirrors the domain
+// module's WORD_CHAR set (PHP `$user`, JS `foo_bar2`) so the prefix we slice and
+// the candidates we match agree.
+const HIPPIE_WORD_CHAR = /[A-Za-z0-9_$]/;
+
+// Cyclic Expand Word (PhpStorm "Cyclic Expand Word" / Emacs hippie, Alt+/).
+// Expands the word prefix before the caret to the nearest matching buffer word;
+// pressing again immediately cycles through the remaining candidates and wraps
+// back to the typed prefix. Pure text from the live buffer only - no LSP/disk.
+function applyCyclicExpandWord(
+  monaco: typeof Monaco,
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  sessionRef: MutableRefObject<HippieSession | null>,
+): void {
+  const model = editor.getModel();
+  const position = editor.getPosition();
+
+  if (!model || !position) {
+    sessionRef.current = null;
+    return;
+  }
+
+  const documentText = model.getValue();
+  const cursorOffset = model.getOffsetAt(position);
+  const session = continueOrStartHippieSession(
+    sessionRef.current,
+    documentText,
+    cursorOffset,
+  );
+
+  if (!session) {
+    sessionRef.current = null;
+    return;
+  }
+
+  const replaceEndOffset = currentHippieEndOffset(sessionRef.current, session);
+  const startPosition = model.getPositionAt(session.anchorOffset);
+  const endPosition = model.getPositionAt(replaceEndOffset);
+
+  editor.executeEdits("mockor.cyclicExpandWord", [
+    {
+      forceMoveMarkers: true,
+      range: new monaco.Range(
+        startPosition.lineNumber,
+        startPosition.column,
+        endPosition.lineNumber,
+        endPosition.column,
+      ),
+      text: session.word,
+    },
+  ]);
+
+  const caretPosition = model.getPositionAt(
+    session.anchorOffset + session.word.length,
+  );
+  editor.setPosition(caretPosition);
+  sessionRef.current = session;
+}
+
+// Decides whether the previous expansion is still live (same anchor, and the
+// buffer at the anchor still holds exactly the last inserted word ending at the
+// caret). If so we cycle to the next candidate; otherwise we start a fresh
+// expansion from the prefix currently under the caret.
+function continueOrStartHippieSession(
+  previous: HippieSession | null,
+  documentText: string,
+  cursorOffset: number,
+): HippieSession | null {
+  if (previous && isLiveHippieSession(previous, documentText, cursorOffset)) {
+    return advanceHippieSession(previous);
+  }
+
+  const prefix = hippiePrefixBefore(documentText, cursorOffset);
+  return startHippieSession(documentText, prefix, cursorOffset);
+}
+
+function isLiveHippieSession(
+  session: HippieSession,
+  documentText: string,
+  cursorOffset: number,
+): boolean {
+  const expectedEnd = session.anchorOffset + session.word.length;
+
+  if (cursorOffset !== expectedEnd) {
+    return false;
+  }
+
+  return (
+    documentText.slice(session.anchorOffset, expectedEnd) === session.word
+  );
+}
+
+// The offset where the text being replaced ends. On a fresh expansion the caret
+// sits at the end of the typed prefix (anchor + prefix length); when cycling we
+// replace the previously inserted word (anchor + previous word length).
+function currentHippieEndOffset(
+  previous: HippieSession | null,
+  session: HippieSession,
+): number {
+  if (previous && previous.anchorOffset === session.anchorOffset) {
+    return previous.anchorOffset + previous.word.length;
+  }
+
+  return session.anchorOffset + session.prefix.length;
+}
+
+function hippiePrefixBefore(documentText: string, cursorOffset: number): string {
+  let start = cursorOffset;
+
+  while (start > 0 && HIPPIE_WORD_CHAR.test(documentText[start - 1])) {
+    start -= 1;
+  }
+
+  return documentText.slice(start, cursorOffset);
 }
 
 // Moves the whole statement (or brace block) under the caret up or down past its
@@ -2322,6 +3194,11 @@ function currentEditorTextRange(
 // caller actually changes the path set.
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
+const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
+// Stable empty identities so an absent breadcrumb symbol set / path does not
+// produce a fresh array each render and break the breadcrumb path memo.
+const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];
+const EMPTY_BREADCRUMB_PATH: LanguageServerDocumentSymbol[] = [];
 
 // Stable placeholder model identity used while no document is open, so Monaco
 // keeps a single mounted instance instead of remounting when the first file
@@ -2334,6 +3211,31 @@ const PLACEHOLDER_LANGUAGE = "plaintext";
 // first Monaco chunk load does not flash white.
 function EditorLoadingPlaceholder() {
   return <div className="editor-loading-placeholder" aria-hidden="true" />;
+}
+
+// A single stable element identity for Monaco's `loading` prop. Recreating it on
+// every render would feed @monaco-editor/react a fresh reference and break its
+// memo, defeating the cursor-move stabilisation below.
+const EDITOR_LOADING_PLACEHOLDER = <EditorLoadingPlaceholder />;
+
+// Returns the previous cursor position unchanged when the incoming position is
+// identical, so a duplicate Monaco cursor event (e.g. clicking the current spot)
+// preserves referential identity and skips a re-render. A real move on either
+// line or column produces a fresh object so breadcrumbs (keyed on line+column)
+// stay correct.
+function nextCursorPosition(
+  previous: EditorPosition | null,
+  next: EditorPosition,
+): EditorPosition {
+  if (
+    previous &&
+    previous.lineNumber === next.lineNumber &&
+    previous.column === next.column
+  ) {
+    return previous;
+  }
+
+  return { column: next.column, lineNumber: next.lineNumber };
 }
 
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
@@ -2359,15 +3261,6 @@ function isJavaScriptTypeScriptRuntimeActiveForWorkspace(
     Boolean(workspaceRoot) &&
     Boolean(status.rootPath) &&
     workspaceRootKeysEqual(status.rootPath, workspaceRoot)
-  );
-}
-
-function isTypescriptJavascriptDocument(
-  document: EditorDocument | null,
-): boolean {
-  return (
-    document?.language === "typescript" ||
-    document?.language === "javascript"
   );
 }
 
@@ -2602,6 +3495,33 @@ function toBookmarkDecoration(
   };
 }
 
+function toGitBlameDecoration(
+  monaco: typeof Monaco,
+  line: GitBlameLine,
+  now: number,
+): Monaco.editor.IModelDeltaDecoration {
+  const annotation = gitBlameAnnotation(line, now);
+
+  return {
+    options: {
+      before: {
+        content: annotation,
+        // A non-breaking space pads the annotation from the code without
+        // injecting selectable spaces into the document text.
+        inlineClassName: "git-blame-annotation",
+      },
+      // Full commit detail on hover (short SHA + author + relative date), the
+      // PhpStorm annotation tooltip equivalent.
+      hoverMessage: {
+        value: `\`${line.sha}\` ${annotation}`,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+    range: new monaco.Range(line.lineNumber, 1, line.lineNumber, 1),
+  };
+}
+
 function findChangeHunkAtLine(
   hunks: EditorChangeHunk[],
   lineNumber: number,
@@ -2613,6 +3533,58 @@ function findChangeHunkAtLine(
         lineNumber <= hunk.endLineNumber,
     ) ?? null
   );
+}
+
+// Moves the caret to the next/previous gutter change hunk in the active editor,
+// mirroring VS Code's "Go to Next/Previous Change". The hunks come from the live
+// editorChangeMarkers (the same ranges that render the gutter glyphs), so the
+// jump always lands on a real change. The list wraps around (last -> first and
+// first -> last) so repeated presses cycle every change without dead-ending.
+function jumpToChangeHunk(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  hunks: EditorChangeHunk[],
+  direction: "next" | "previous",
+): void {
+  if (!hunks.length || !editor.getModel()) {
+    return;
+  }
+
+  const ordered = [...hunks].sort(
+    (left, right) => left.startLineNumber - right.startLineNumber,
+  );
+  const currentLine = editor.getPosition()?.lineNumber ?? 1;
+  const target = nextChangeHunk(ordered, currentLine, direction);
+
+  if (!target) {
+    return;
+  }
+
+  const position = { column: 1, lineNumber: target.startLineNumber };
+  editor.setPosition(position);
+  editor.revealPositionInCenter(position);
+  editor.focus();
+}
+
+function nextChangeHunk(
+  ordered: EditorChangeHunk[],
+  currentLine: number,
+  direction: "next" | "previous",
+): EditorChangeHunk | null {
+  if (direction === "next") {
+    return (
+      ordered.find((hunk) => hunk.startLineNumber > currentLine) ??
+      ordered[0] ??
+      null
+    );
+  }
+
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    if (ordered[index].startLineNumber < currentLine) {
+      return ordered[index];
+    }
+  }
+
+  return ordered[ordered.length - 1] ?? null;
 }
 
 function glyphMarginLaneFromMouseEvent(
@@ -2820,23 +3792,6 @@ function diagnosticOverviewColor(
   return "#d98b8b";
 }
 
-function isFixableQuickFixMarkerAt(
-  marker: Monaco.editor.IMarkerData,
-  position: EditorPosition,
-): boolean {
-  if (
-    marker.source !== "PHP Syntax" ||
-    !/^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
-  ) {
-    return false;
-  }
-
-  return (
-    position.lineNumber >= marker.startLineNumber &&
-    position.lineNumber <= marker.endLineNumber
-  );
-}
-
 function diagnosticSeverity(
   monaco: typeof Monaco,
   diagnostic: LanguageServerDiagnostic,
@@ -2896,6 +3851,34 @@ function syntaxDiagnosticEndColumn(diagnostic: PhpSyntaxDiagnostic): number {
   }
 
   return diagnostic.endCharacter + 1;
+}
+
+/**
+ * Marker for a lightweight PHP inspection (unused import / unused private
+ * method). Rendered as a Warning with Monaco's `Unnecessary` tag so the editor
+ * fades the span (PhpStorm's greyed-out "never used" look). Tagged with the
+ * `PHP Inspection` source so quick-fix discovery and code-action matching can
+ * recognise it.
+ */
+function toMonacoInspectionMarker(
+  monaco: typeof Monaco,
+  diagnostic: PhpInspectionDiagnostic,
+): Monaco.editor.IMarkerData {
+  const endColumn =
+    diagnostic.endLine === diagnostic.line
+      ? Math.max(diagnostic.endCharacter + 1, diagnostic.character + 2)
+      : diagnostic.endCharacter + 1;
+
+  return {
+    endColumn,
+    endLineNumber: diagnostic.endLine + 1,
+    message: diagnostic.message,
+    severity: monaco.MarkerSeverity.Warning,
+    source: "PHP Inspection",
+    startColumn: diagnostic.character + 1,
+    startLineNumber: diagnostic.line + 1,
+    tags: [monaco.MarkerTag.Unnecessary],
+  };
 }
 
 function pruneClosedPaths<Value>(
@@ -3000,6 +3983,9 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
 
   const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
     ",": "Comma",
+    "-": "Minus",
+    "/": "Slash",
+    "=": "Equal",
     "`": "Backquote",
     "[": "BracketLeft",
     "]": "BracketRight",
@@ -3009,6 +3995,8 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
     arrowup: "UpArrow",
     enter: "Enter",
     escape: "Escape",
+    f2: "F2",
+    f5: "F5",
   };
   const keyCodeName = specialKeyCodes[key];
 

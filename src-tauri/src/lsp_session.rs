@@ -341,6 +341,15 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // Apply per-command environment (e.g. `PHPRC=<managed.ini>` for managed
+        // PHPactor). Env vars are inherited by child processes the server spawns,
+        // so this isolates the whole PHPactor process tree from a noisy user
+        // `php.ini` — unlike the `-c <ini>` CLI argument, which children do not
+        // inherit.
+        for (key, value) in &command.env {
+            command_builder.env(key, value);
+        }
+
         #[cfg(unix)]
         {
             command_builder.process_group(0);
@@ -1536,8 +1545,19 @@ fn reset_runtime_log(
         .chain(command.args.iter().cloned())
         .collect::<Vec<_>>()
         .join(" ");
+    let env_lines = command
+        .env
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let env_block = if env_lines.is_empty() {
+        "env: (none)".to_string()
+    } else {
+        format!("env:\n{env_lines}")
+    };
     let header = format!(
-        "{server_label} session {session_id} started at {timestamp}\nworking directory: {}\ncommand: {command_line}\n\n",
+        "{server_label} session {session_id} started at {timestamp}\nworking directory: {}\ncommand: {command_line}\n{env_block}\n\n",
         command.working_directory,
     );
 
@@ -1910,6 +1930,7 @@ fn clone_command(command: &LanguageServerCommand) -> LanguageServerCommand {
         executable: command.executable.clone(),
         args: command.args.clone(),
         working_directory: command.working_directory.clone(),
+        env: command.env.clone(),
     }
 }
 
@@ -2823,12 +2844,13 @@ fn is_capability_enabled(value: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        cancellable_backoff, parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
-        LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
-        LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        NoopRefreshSink, NoopWorkspaceEditSink, ProcessKiller, RefreshSink, RestartController,
-        RestartDecision, RestartOutcome, RestartPolicy, SemanticTokensLegend, ServerProcessSpawner,
-        SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
+        cancellable_backoff, parse_capabilities, ChildServerProcessSpawner, DiagnosticsSink,
+        LanguageServerCapabilities, LanguageServerRefreshEvent, LanguageServerRefreshFeature,
+        LanguageServerRegistry, LanguageServerRuntimeStatus, LanguageServerSupervisor,
+        LanguageServerWorkspaceEditEvent, NoopRefreshSink, NoopWorkspaceEditSink, ProcessKiller,
+        RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
+        SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
+        WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -2836,12 +2858,43 @@ mod tests {
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
     use std::fs;
-    use std::io::{self, PipeWriter, Write};
+    use std::io::{self, PipeWriter, Read, Write};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[cfg(unix)]
+    #[test]
+    fn child_server_process_spawner_applies_phpactor_isolation_env() {
+        let command = LanguageServerCommand {
+            executable: "env".to_string(),
+            args: Vec::new(),
+            working_directory: "/tmp".to_string(),
+            env: vec![
+                ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "/managed/empty-php-conf.d".to_string(),
+                ),
+            ],
+        };
+
+        let spawner = ChildServerProcessSpawner;
+        let mut spawned = spawner.spawn(&command).expect("spawn env");
+        drop(spawned.stdin);
+
+        let mut stdout = String::new();
+        spawned
+            .stdout
+            .read_to_string(&mut stdout)
+            .expect("read env stdout");
+        spawned.killer.terminate().expect("terminate env");
+
+        assert!(stdout.contains("PHPRC=/managed/codevo-php.ini\n"));
+        assert!(stdout.contains("PHP_INI_SCAN_DIR=/managed/empty-php-conf.d\n"));
+    }
 
     #[test]
     fn successful_handshake_reports_running_and_sends_initialized() {
@@ -2897,6 +2950,47 @@ mod tests {
 
         assert!(log.contains("TypeScript language server session 1 started"));
         assert!(log.contains("tsserver warning"));
+    }
+
+    #[test]
+    fn captures_language_server_launch_env_in_runtime_log() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("PHPactor language server");
+        let mut command = command();
+        command.executable = "/usr/bin/php".to_string();
+        command.args = vec![
+            "-n".to_string(),
+            "-c".to_string(),
+            "/managed/codevo-php.ini".to_string(),
+            "/managed/vendor/bin/phpactor".to_string(),
+            "language-server".to_string(),
+        ];
+        command.env = vec![
+            ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+            (
+                "PHP_INI_SCAN_DIR".to_string(),
+                "/managed/empty-php-conf.d".to_string(),
+            ),
+        ];
+
+        supervisor
+            .start(
+                &command,
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let log = supervisor.log();
+
+        assert!(log.contains(
+            "command: /usr/bin/php -n -c /managed/codevo-php.ini /managed/vendor/bin/phpactor language-server"
+        ));
+        assert!(log.contains("PHPRC=/managed/codevo-php.ini"));
+        assert!(log.contains("PHP_INI_SCAN_DIR=/managed/empty-php-conf.d"));
     }
 
     #[test]
@@ -5089,6 +5183,7 @@ mod tests {
             executable: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/tmp/workspace-a".to_string(),
+            env: Vec::new(),
         };
 
         supervisor
@@ -5839,6 +5934,7 @@ mod tests {
             executable: "phpactor".to_string(),
             args: vec!["language-server".to_string()],
             working_directory: ".".to_string(),
+            env: Vec::new(),
         }
     }
 
@@ -5847,6 +5943,7 @@ mod tests {
             executable: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: root_path.to_string(),
+            env: Vec::new(),
         }
     }
 

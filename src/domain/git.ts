@@ -99,18 +99,92 @@ export interface GitFileDiff {
   originalContent: string;
 }
 
+/**
+ * A single hunk from `git diff` (or `git diff --cached`) for one file. `index`
+ * is the hunk's position within that file's diff and is the stable id sent back
+ * to stage/unstage exactly that hunk. `header` is the `@@ ... @@` line; `lines`
+ * are the body lines with their leading `-`/`+`/` ` markers preserved.
+ */
+export interface GitDiffHunk {
+  header: string;
+  index: number;
+  lines: string[];
+  isStaged: boolean;
+}
+
+export interface GitBlameLine {
+  author: string;
+  lineNumber: number;
+  sha: string;
+  timestamp: number;
+}
+
+export interface GitFileHistoryEntry {
+  author: string;
+  sha: string;
+  subject: string;
+  timestamp: number;
+}
+
+export interface GitStashEntry {
+  branch: string | null;
+  index: number;
+  message: string;
+  timestamp: number;
+}
+
+export interface GitBranch {
+  isCurrent: boolean;
+  name: string;
+}
+
 export interface GitGateway {
+  blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
     rootPath: string,
     message: string,
     changes: GitChangedFile[],
   ): Promise<GitStatus>;
+  fileCommitDiff(
+    rootPath: string,
+    relativePath: string,
+    sha: string,
+  ): Promise<GitFileDiff>;
+  fileHistory(
+    rootPath: string,
+    relativePath: string,
+  ): Promise<GitFileHistoryEntry[]>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
+  getFileHunks(
+    rootPath: string,
+    relativePath: string,
+    staged: boolean,
+  ): Promise<GitDiffHunk[]>;
   push(rootPath: string): Promise<GitStatus>;
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  stageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus>;
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  unstageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus>;
+  stashSave(rootPath: string, message: string): Promise<void>;
+  stashList(rootPath: string): Promise<GitStashEntry[]>;
+  stashApply(rootPath: string, index: number): Promise<void>;
+  stashPop(rootPath: string, index: number): Promise<void>;
+  stashShow(rootPath: string, index: number): Promise<string>;
+  stashDrop(rootPath: string, index: number): Promise<void>;
+  branchList(rootPath: string): Promise<GitBranch[]>;
+  currentBranch(rootPath: string): Promise<string | null>;
+  createBranch(rootPath: string, name: string): Promise<void>;
+  switchBranch(rootPath: string, name: string): Promise<void>;
 }
 
 export interface GitHistoryGateway {
@@ -221,4 +295,53 @@ export function groupGitChanges(changes: GitChangedFile[]): GitChangeGroup[] {
 
 export function hasStagedGitChanges(changes: GitChangedFile[]): boolean {
   return changes.some((change) => change.isStaged);
+}
+
+const UNCOMMITTED_BLAME_SHA = /^0+$/;
+
+export function isUncommittedBlameLine(line: GitBlameLine): boolean {
+  return UNCOMMITTED_BLAME_SHA.test(line.sha);
+}
+
+export function gitBlameAnnotation(
+  line: GitBlameLine,
+  now: number = Date.now(),
+): string {
+  const author = line.author.trim() || "Unknown";
+
+  if (isUncommittedBlameLine(line)) {
+    return author;
+  }
+
+  return `${author}, ${gitBlameRelativeDate(line.timestamp, now)}`;
+}
+
+export function gitBlameRelativeDate(
+  timestampSeconds: number,
+  now: number = Date.now(),
+): string {
+  const elapsedSeconds = Math.max(0, Math.floor(now / 1000) - timestampSeconds);
+
+  if (elapsedSeconds < 60) {
+    return "just now";
+  }
+
+  const units: Array<{ label: string; seconds: number }> = [
+    { label: "year", seconds: 365 * 86400 },
+    { label: "month", seconds: 30 * 86400 },
+    { label: "week", seconds: 7 * 86400 },
+    { label: "day", seconds: 86400 },
+    { label: "hour", seconds: 3600 },
+    { label: "minute", seconds: 60 },
+  ];
+
+  for (const unit of units) {
+    const value = Math.floor(elapsedSeconds / unit.seconds);
+
+    if (value >= 1) {
+      return `${value} ${unit.label}${value === 1 ? "" : "s"} ago`;
+    }
+  }
+
+  return "just now";
 }

@@ -39,6 +39,41 @@ describe("phpFileOutline", () => {
     expect(isNavigablePhpFileOutlineNode(root)).toBe(true);
     expect(isNavigablePhpFileOutlineNode({ ...root, path: null })).toBe(false);
   });
+
+  it("carries optional signature metadata on member nodes", () => {
+    const method: PhpFileOutlineNode = {
+      ...outlineNode("method:store", "store", "method", []),
+      isStatic: true,
+      parameters: [
+        { name: "$request", type: "Request" },
+        { name: "$id" },
+      ],
+      returnType: "?User",
+      visibility: "protected",
+    };
+
+    expect(method.visibility).toBe("protected");
+    expect(method.isStatic).toBe(true);
+    expect(method.returnType).toBe("?User");
+    expect(method.parameters).toEqual([
+      { name: "$request", type: "Request" },
+      { name: "$id" },
+    ]);
+  });
+
+  it("treats signature metadata as optional for backward compatibility", () => {
+    const legacy: PhpFileOutlineNode = outlineNode(
+      "method:legacy",
+      "legacy",
+      "method",
+      [],
+    );
+
+    expect(legacy.visibility).toBeUndefined();
+    expect(legacy.parameters).toBeUndefined();
+    expect(legacy.returnType).toBeUndefined();
+    expect(legacy.isStatic).toBeUndefined();
+  });
 });
 
 function file(name: string): FileEntry {

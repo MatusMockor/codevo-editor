@@ -15,6 +15,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
@@ -31,7 +32,9 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      optimizeImportsOnSave: false,
       phpBackend: "auto",
+      phpInlayHints: true,
       phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
@@ -43,7 +46,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,
@@ -70,6 +75,14 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call helper",
+          languages: ["php"],
+        },
+      ],
       workspaceTabs: ["/project", "/another-project"],
     });
     await gateway.saveWorkspaceSettings("/project", {
@@ -86,7 +99,9 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      optimizeImportsOnSave: true,
       phpBackend: "phpactor",
+      phpInlayHints: true,
       phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
@@ -98,7 +113,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,
@@ -120,6 +137,14 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
+      userSnippets: [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call helper",
+          languages: ["php"],
+        },
+      ],
       workspaceTabs: ["/project", "/another-project"],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
@@ -136,7 +161,9 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      optimizeImportsOnSave: true,
       phpBackend: "phpactor",
+      phpInlayHints: true,
       phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
@@ -148,7 +175,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: false,
         language: true,
         languageServer: true,
@@ -175,6 +204,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
+      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
@@ -191,7 +221,9 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      optimizeImportsOnSave: false,
       phpBackend: "auto",
+      phpInlayHints: true,
       phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
@@ -203,7 +235,9 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        cursorPosition: true,
         dirtyCount: true,
+        gitBranch: true,
         index: true,
         language: true,
         languageServer: true,

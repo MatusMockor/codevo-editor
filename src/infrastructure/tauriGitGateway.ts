@@ -1,7 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyGitStatus,
+  type GitBlameLine,
+  type GitBranch,
   type GitChangedFile,
+  type GitDiffHunk,
   type GitFileDiff,
   type Commit,
   type CommitDetails,
@@ -13,6 +16,8 @@ import {
   type GitHistoryGateway,
   type GitRepoStatus,
   type GitCommitFilters,
+  type GitFileHistoryEntry,
+  type GitStashEntry,
   type GitStatus,
 } from "../domain/git";
 
@@ -30,6 +35,60 @@ export class TauriGitGateway implements GitGateway {
     private readonly invokeCommand: InvokeGitCommand = invokeGitCommand,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
   ) {}
+
+  async blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_blame", {
+      relativePath,
+      rootPath,
+    }) as Promise<GitBlameLine[]>;
+  }
+
+  async fileHistory(
+    rootPath: string,
+    relativePath: string,
+  ): Promise<GitFileHistoryEntry[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_file_history", {
+      relativePath,
+      rootPath,
+    }) as Promise<GitFileHistoryEntry[]>;
+  }
+
+  async fileCommitDiff(
+    rootPath: string,
+    relativePath: string,
+    sha: string,
+  ): Promise<GitFileDiff> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified",
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      };
+    }
+
+    return this.invokeCommand("get_git_file_commit_diff", {
+      relativePath,
+      rootPath,
+      sha,
+    }) as Promise<GitFileDiff>;
+  }
 
   async getStatus(rootPath: string): Promise<GitStatus> {
     if (!this.isRuntimeAvailable()) {
@@ -56,6 +115,54 @@ export class TauriGitGateway implements GitGateway {
       change,
       rootPath,
     }) as Promise<GitFileDiff>;
+  }
+
+  async getFileHunks(
+    rootPath: string,
+    relativePath: string,
+    staged: boolean,
+  ): Promise<GitDiffHunk[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_file_hunks", {
+      relativePath,
+      rootPath,
+      staged,
+    }) as Promise<GitDiffHunk[]>;
+  }
+
+  async stageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("stage_git_hunk", {
+      hunkIndex,
+      relativePath,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async unstageHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("unstage_git_hunk", {
+      hunkIndex,
+      relativePath,
+      rootPath,
+    }) as Promise<GitStatus>;
   }
 
   async stageFiles(
@@ -234,6 +341,113 @@ export class TauriGitGateway implements GitGateway {
       path,
       rootPath,
     }) as Promise<DiffPayload>;
+  }
+
+  async stashSave(rootPath: string, message: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("save_git_stash", {
+      message,
+      rootPath,
+    });
+  }
+
+  async stashList(rootPath: string): Promise<GitStashEntry[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("get_git_stash_list", {
+      rootPath,
+    }) as Promise<GitStashEntry[]>;
+  }
+
+  async stashApply(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_apply_git", {
+      index: String(index),
+      rootPath,
+    });
+  }
+
+  async stashPop(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_pop_git", {
+      index: String(index),
+      rootPath,
+    });
+  }
+
+  async stashShow(rootPath: string, index: number): Promise<string> {
+    if (!this.isRuntimeAvailable()) {
+      return "";
+    }
+
+    return this.invokeCommand("get_git_stash_diff", {
+      index: String(index),
+      rootPath,
+    }) as Promise<string>;
+  }
+
+  async stashDrop(rootPath: string, index: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("stash_drop_git", {
+      index: String(index),
+      rootPath,
+    });
+  }
+
+  async branchList(rootPath: string): Promise<GitBranch[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("list_git_branches", {
+      rootPath,
+    }) as Promise<GitBranch[]>;
+  }
+
+  async currentBranch(rootPath: string): Promise<string | null> {
+    if (!this.isRuntimeAvailable()) {
+      return null;
+    }
+
+    return this.invokeCommand("get_git_current_branch", {
+      rootPath,
+    }) as Promise<string | null>;
+  }
+
+  async createBranch(rootPath: string, name: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("create_git_branch", {
+      name,
+      rootPath,
+    });
+  }
+
+  async switchBranch(rootPath: string, name: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("switch_git_branch", {
+      name,
+      rootPath,
+    });
   }
 }
 

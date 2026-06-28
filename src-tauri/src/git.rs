@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    io,
     collections::BTreeMap,
+    io,
     path::{Component, Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -55,6 +55,20 @@ pub struct GitRepoStatus {
     pub is_repository: bool,
 }
 
+/// A single hunk from `git diff` (or `git diff --cached`) for one file. The
+/// `index` is the hunk's position within that file's diff and is the stable
+/// identifier the front-end sends back to stage/unstage exactly that hunk. The
+/// `header`/`lines` mirror the unified-diff text verbatim so the preview can
+/// render the change without re-deriving it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffHunk {
+    pub header: String,
+    pub index: u32,
+    pub lines: Vec<String>,
+    pub is_staged: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranches {
@@ -98,12 +112,39 @@ pub struct GitCommitDetails {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitBlameLine {
+    pub author: String,
+    pub line_number: u32,
+    pub sha: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileHistoryEntry {
+    pub author: String,
+    pub sha: String,
+    pub subject: String,
+    pub timestamp: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitFileChange {
     pub is_rename: bool,
     pub old_path: Option<String>,
     pub new_path: Option<String>,
     pub path: String,
     pub status: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStashEntry {
+    pub branch: Option<String>,
+    pub index: u32,
+    pub message: String,
+    pub timestamp: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -129,7 +170,26 @@ pub struct CommitDiffPayload {
     pub status: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub is_current: bool,
+    pub name: String,
+}
+
 pub trait GitRepositoryGateway {
+    fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
+    fn file_commit_diff(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        sha: &str,
+    ) -> io::Result<GitFileDiff>;
+    fn file_history(
+        &self,
+        root: &Path,
+        relative_path: &str,
+    ) -> io::Result<Vec<GitFileHistoryEntry>>;
     fn commit(
         &self,
         root: &Path,
@@ -142,11 +202,165 @@ pub trait GitRepositoryGateway {
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
     fn unstage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
+    fn file_hunks(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        staged: bool,
+    ) -> io::Result<Vec<GitDiffHunk>>;
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus>;
+    fn unstage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus>;
+    fn stash_save(&self, root: &Path, message: &str) -> io::Result<()>;
+    fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>>;
+    fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn stash_show(&self, root: &Path, index: u32) -> io::Result<String>;
+    fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()>;
+    fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>>;
+    fn current_branch(&self, root: &Path) -> io::Result<Option<String>>;
+    fn create_branch(&self, root: &Path, name: &str) -> io::Result<()>;
+    fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()>;
 }
 
 pub struct CommandGitRepositoryGateway;
 
+impl CommandGitRepositoryGateway {
+    /// Stages (`reverse == false`) or unstages (`reverse == true`) exactly one
+    /// hunk by re-running `git diff` for the file, slicing out the hunk at
+    /// `hunk_index`, and feeding that minimal patch to `git apply --cached`.
+    ///
+    /// The patch is assembled from `git`'s own diff output (never hand-built
+    /// from line numbers), so EOL style, "no newline at EOF" markers, and
+    /// context all stay byte-exact. `git apply --cached` is atomic: a stale or
+    /// non-applicable patch exits non-zero and leaves the index untouched, so a
+    /// failure is a safe no-op rather than index corruption.
+    fn apply_single_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+        reverse: bool,
+    ) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        // Unstaging reads the staged diff; staging reads the worktree diff. The
+        // patch must come from the same view we will apply against.
+        let raw = file_diff_text(&root, &relative, reverse)?;
+        let patch = single_hunk_patch(&raw, hunk_index).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "Requested hunk no longer matches the file diff.",
+            )
+        })?;
+
+        let mut args = vec!["apply", "--cached", "--unidiff-zero", "--recount"];
+
+        if reverse {
+            args.push("--reverse");
+        }
+
+        run_git_with_stdin(&root, &args, patch.as_bytes())?;
+        self.status(&root)
+    }
+}
+
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
+    fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("blame")
+            .arg("--porcelain")
+            .arg("--")
+            .arg(&relative)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        parse_blame_porcelain(&output.stdout)
+    }
+
+    fn file_commit_diff(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        sha: &str,
+    ) -> io::Result<GitFileDiff> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+        let sha = safe_commit_sha(sha)?;
+
+        let original_content = commit_blob_content(&root, &format!("{sha}^"), &relative)?;
+        let modified_content = commit_blob_content(&root, &sha, &relative)?;
+        let status = commit_file_change_status(&original_content, &modified_content);
+
+        Ok(GitFileDiff {
+            change: GitChangedFile {
+                is_staged: false,
+                is_unversioned: false,
+                old_path: None,
+                old_relative_path: None,
+                path: root.join(&relative).to_string_lossy().to_string(),
+                relative_path: relative.clone(),
+                status,
+            },
+            language: language_for_path(&relative),
+            modified_content,
+            original_content,
+        })
+    }
+
+    fn file_history(
+        &self,
+        root: &Path,
+        relative_path: &str,
+    ) -> io::Result<Vec<GitFileHistoryEntry>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("log")
+            .arg("--follow")
+            .arg(format!("--format={FILE_HISTORY_FORMAT}"))
+            .arg("--")
+            .arg(&relative)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_file_history(&String::from_utf8_lossy(&output.stdout)))
+    }
+
     fn commit(
         &self,
         root: &Path,
@@ -284,6 +498,199 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         self.status(&root)
+    }
+
+    fn file_hunks(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        staged: bool,
+    ) -> io::Result<Vec<GitDiffHunk>> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+
+        let raw = file_diff_text(&root, &relative, staged)?;
+        Ok(parse_diff_hunks(&raw, staged))
+    }
+
+    fn stage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus> {
+        self.apply_single_hunk(root, relative_path, hunk_index, false)
+    }
+
+    fn unstage_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+    ) -> io::Result<GitStatus> {
+        self.apply_single_hunk(root, relative_path, hunk_index, true)
+    }
+
+    fn stash_save(&self, root: &Path, message: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let message = message.trim();
+
+        if message.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Stash message is required.",
+            ));
+        }
+
+        // `--include-untracked` mirrors PhpStorm's "stash changes" (untracked
+        // working-tree files are part of WIP). When the working tree is clean,
+        // `git stash push` exits 0 and prints "No local changes to save" rather
+        // than failing; surface that as an error so the UI never reports a
+        // phantom stash.
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("push")
+            .arg("--include-untracked")
+            .arg("-m")
+            .arg(message)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if stdout.contains("No local changes to save") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "No local changes to stash.",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>> {
+        let root = root.canonicalize()?;
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("list")
+            .arg(format!("--format={STASH_LIST_FORMAT}"))
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_stash_list(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "apply", reference.as_str()])
+    }
+
+    fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "pop", reference.as_str()])
+    }
+
+    fn stash_show(&self, root: &Path, index: u32) -> io::Result<String> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("stash")
+            .arg("show")
+            .arg("-p")
+            .arg(&reference)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let reference = stash_reference(index);
+
+        run_git(&root, ["stash", "drop", reference.as_str()])
+    }
+
+    fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>> {
+        let root = root.canonicalize()?;
+
+        // `for-each-ref` over `refs/heads/` lists only LOCAL branches (no remote
+        // tracking refs leak in). `%(HEAD)` is `*` for the checked-out branch and
+        // a space otherwise; fields are joined with the ASCII Unit Separator so a
+        // branch name can never be confused with the current-flag column.
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("for-each-ref")
+            .arg(format!("--format={BRANCH_LIST_FORMAT}"))
+            .arg("refs/heads/")
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_branch_list(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn current_branch(&self, root: &Path) -> io::Result<Option<String>> {
+        let root = root.canonicalize()?;
+
+        current_branch(&root)
+    }
+
+    fn create_branch(&self, root: &Path, name: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let name = safe_branch_name(name)?;
+
+        // `git branch <name>` creates the branch WITHOUT switching to it, so the
+        // working tree is never touched. `--` terminates option parsing so a name
+        // can never be read as a flag (defence in depth atop `safe_branch_name`).
+        run_git(&root, ["branch", "--", name.as_str()])
+    }
+
+    fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let name = safe_branch_name(name)?;
+
+        // `git switch <name>` (no `-f`/`--discard`) refuses when local changes
+        // would be overwritten, surfacing git's "commit or stash" error verbatim.
+        // Work is never discarded; the front end turns the failure into a notice.
+        run_git(&root, ["switch", "--", name.as_str()])
     }
 }
 
@@ -697,6 +1104,366 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
     Ok(changes)
 }
 
+struct BlameCommitMeta {
+    author: String,
+    timestamp: i64,
+}
+
+impl BlameCommitMeta {
+    fn empty() -> Self {
+        Self {
+            author: String::new(),
+            timestamp: 0,
+        }
+    }
+}
+
+fn parse_blame_porcelain(output: &[u8]) -> io::Result<Vec<GitBlameLine>> {
+    let text = String::from_utf8_lossy(output);
+    let mut commits: std::collections::HashMap<String, BlameCommitMeta> =
+        std::collections::HashMap::new();
+    let mut lines = Vec::new();
+    let mut current: Option<(String, u32)> = None;
+
+    for line in text.lines() {
+        // The single `\t`-prefixed line per group is the source line; it closes
+        // the in-flight group, resolving its metadata from the per-SHA cache.
+        if line.starts_with('\t') {
+            if let Some((sha, final_line)) = current.take() {
+                lines.push(blame_line_from(&commits, &sha, final_line));
+            }
+            continue;
+        }
+
+        if let Some((sha, final_line)) = parse_blame_header(line) {
+            commits.entry(sha.clone()).or_insert_with(BlameCommitMeta::empty);
+            current = Some((sha, final_line));
+            continue;
+        }
+
+        // Metadata line (author/author-time/...) for the in-flight commit.
+        if let Some((sha, _)) = current.as_ref() {
+            apply_blame_commit_meta(&mut commits, sha, line);
+        }
+    }
+
+    // Surface a final group whose closing content line was missing (truncated
+    // porcelain) so the line we already identified is not silently dropped.
+    if let Some((sha, final_line)) = current.take() {
+        lines.push(blame_line_from(&commits, &sha, final_line));
+    }
+
+    Ok(lines)
+}
+
+fn blame_line_from(
+    commits: &std::collections::HashMap<String, BlameCommitMeta>,
+    sha: &str,
+    final_line: u32,
+) -> GitBlameLine {
+    let meta = commits.get(sha);
+
+    GitBlameLine {
+        author: meta.map(|meta| meta.author.clone()).unwrap_or_default(),
+        line_number: final_line,
+        sha: short_sha(sha),
+        timestamp: meta.map(|meta| meta.timestamp).unwrap_or_default(),
+    }
+}
+
+fn parse_blame_header(line: &str) -> Option<(String, u32)> {
+    let mut parts = line.split(' ');
+    let sha = parts.next()?;
+
+    if sha.len() != 40 || !sha.chars().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let _original_line = parts.next()?;
+    let final_line = parts.next()?.parse::<u32>().ok()?;
+
+    Some((sha.to_string(), final_line))
+}
+
+fn apply_blame_commit_meta(
+    commits: &mut std::collections::HashMap<String, BlameCommitMeta>,
+    sha: &str,
+    line: &str,
+) {
+    let Some(meta) = commits.get_mut(sha) else {
+        return;
+    };
+
+    if let Some(author) = line.strip_prefix("author ") {
+        meta.author = author.to_string();
+        return;
+    }
+
+    if let Some(timestamp) = line.strip_prefix("author-time ") {
+        meta.timestamp = timestamp.trim().parse::<i64>().unwrap_or_default();
+    }
+}
+
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(7).collect()
+}
+
+/// `git log` record layout for file history. Fields are joined with the ASCII
+/// Unit Separator (`%x1f`) so commit subjects, author names, and timestamps are
+/// parsed unambiguously even when a subject contains spaces or tabs. Records are
+/// newline-delimited (one commit per line).
+const FILE_HISTORY_FORMAT: &str = "%H%x1f%an%x1f%at%x1f%s";
+
+fn parse_file_history(output: &str) -> Vec<GitFileHistoryEntry> {
+    output
+        .lines()
+        .filter_map(parse_file_history_record)
+        .collect()
+}
+
+fn parse_file_history_record(line: &str) -> Option<GitFileHistoryEntry> {
+    let mut fields = line.split('\u{1f}');
+    let sha = fields.next()?;
+
+    if sha.len() != 40 || !sha.chars().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let author = fields.next()?.to_string();
+    let timestamp = fields.next()?.trim().parse::<i64>().ok()?;
+    let subject = fields.next().unwrap_or_default().to_string();
+
+    Some(GitFileHistoryEntry {
+        author,
+        sha: short_sha(sha),
+        subject,
+        timestamp,
+    })
+}
+
+/// `git stash list` record layout. Fields are joined with the ASCII Unit
+/// Separator (`%x1f`) so a stash message containing spaces, tabs, or colons is
+/// parsed unambiguously. `%gd` is the stash selector (`stash@{N}`), `%ct` the
+/// committer timestamp, `%gs` the reflog subject (the stash message). Records
+/// are newline-delimited (one stash per line).
+const STASH_LIST_FORMAT: &str = "%gd%x1f%ct%x1f%gs";
+
+fn parse_stash_list(output: &str) -> Vec<GitStashEntry> {
+    output
+        .lines()
+        .filter_map(parse_stash_list_record)
+        .collect()
+}
+
+fn parse_stash_list_record(line: &str) -> Option<GitStashEntry> {
+    let mut fields = line.split('\u{1f}');
+    let index = parse_stash_selector_index(fields.next()?)?;
+    let timestamp = fields.next()?.trim().parse::<i64>().ok()?;
+    let raw_message = fields.next().unwrap_or_default();
+    let (branch, message) = split_stash_branch_and_message(raw_message);
+
+    Some(GitStashEntry {
+        branch,
+        index,
+        message: message.to_string(),
+        timestamp,
+    })
+}
+
+/// Extracts the numeric index from a `stash@{N}` selector. Any other shape is
+/// rejected so a malformed reflog line is skipped instead of mis-indexed.
+fn parse_stash_selector_index(selector: &str) -> Option<u32> {
+    let inner = selector.strip_prefix("stash@{")?.strip_suffix('}')?;
+
+    inner.parse::<u32>().ok()
+}
+
+/// Splits the reflog subject (e.g. `WIP on main: 1a2b3c4 ...` or
+/// `On feature/x: ...`) into its branch (when present) and the full message.
+/// The message is preserved verbatim so colons inside it are never lost.
+fn split_stash_branch_and_message(raw_message: &str) -> (Option<String>, &str) {
+    let after_prefix = raw_message
+        .strip_prefix("WIP on ")
+        .or_else(|| raw_message.strip_prefix("On "));
+
+    let Some(after_prefix) = after_prefix else {
+        return (None, raw_message);
+    };
+
+    let Some((branch, _)) = after_prefix.split_once(':') else {
+        return (None, raw_message);
+    };
+
+    (Some(branch.to_string()), raw_message)
+}
+
+/// Builds the `stash@{N}` selector from a validated numeric index. The index is
+/// a `u32`, so it can never inject a git option or escape the selector braces
+/// (no path/SHA-style sanitization is needed at this layer).
+fn stash_reference(index: u32) -> String {
+    format!("stash@{{{index}}}")
+}
+
+/// `git for-each-ref` record layout for the local branch list. `%(HEAD)` is a
+/// single column: `*` for the checked-out branch, a space otherwise, immediately
+/// followed by the short ref name (`for-each-ref` does NOT expand `%x1f`/`%x09`
+/// the way `git log` does, so a fixed one-char prefix is the unambiguous join).
+/// Records are newline-delimited (one branch per line).
+const BRANCH_LIST_FORMAT: &str = "%(HEAD)%(refname:short)";
+
+fn parse_branch_list(output: &str) -> Vec<GitBranch> {
+    let mut branches: Vec<GitBranch> = output.lines().filter_map(parse_branch_record).collect();
+
+    // Pin the current branch to the top (PhpStorm parity); the remaining branches
+    // keep git's alphabetical `for-each-ref` order. A stable sort preserves that
+    // relative order among the non-current entries.
+    branches.sort_by_key(|branch| !branch.is_current);
+    branches
+}
+
+fn parse_branch_record(line: &str) -> Option<GitBranch> {
+    let mut chars = line.chars();
+    let head_flag = chars.next()?;
+
+    // The first column is always `*` (current) or a space (other). Anything else
+    // is a malformed record and is skipped rather than mis-parsed.
+    if head_flag != '*' && head_flag != ' ' {
+        return None;
+    }
+
+    let name = chars.as_str().trim();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(GitBranch {
+        is_current: head_flag == '*',
+        name: name.to_string(),
+    })
+}
+
+/// Validates a branch name supplied by the front end before it reaches a `git`
+/// subprocess. Delegates to `git check-ref-format --branch`, the authoritative
+/// rule set git itself applies (rejects names with spaces, `..`, control chars,
+/// leading `-`, `~^:?*[\`, trailing `.lock`, etc.). This blocks both invalid
+/// refs and option/shell injection without re-implementing git's grammar.
+fn safe_branch_name(name: &str) -> io::Result<String> {
+    let trimmed = name.trim();
+
+    if trimmed.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is required.",
+        ));
+    }
+
+    // A leading `-` would still be read as an option by `check-ref-format` itself,
+    // so reject it up front; valid branch names never start with a dash.
+    if trimmed.starts_with('-') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    // `check-ref-format --branch` expands the `@{...}` "branch shortcut" syntax
+    // (e.g. `@{-1}` = previous branch) against the current repo, so it would both
+    // accept a repo-relative reference and depend on repo state. Reject any name
+    // containing it: a real branch name never needs `@{`.
+    if trimmed.contains("@{") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    let valid = Command::new("git")
+        .arg("check-ref-format")
+        .arg("--branch")
+        .arg(trimmed)
+        .output()?
+        .status
+        .success();
+
+    if !valid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git branch name is invalid.",
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// Validates a stash index string supplied by the front end. Only ASCII digits
+/// are accepted (parsed into a `u32`), so a crafted argument can neither inject
+/// a git option nor escape the `stash@{...}` selector into another revision.
+pub fn safe_stash_index(index: &str) -> io::Result<u32> {
+    let trimmed = index.trim();
+
+    if trimmed.is_empty() || !trimmed.chars().all(|byte| byte.is_ascii_digit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git stash index is invalid.",
+        ));
+    }
+
+    trimmed.parse::<u32>().map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "Git stash index is invalid.")
+    })
+}
+
+/// Validates a commit revision supplied by the front end before it reaches a
+/// `git` subprocess. Accepts the abbreviated SHAs surfaced by file history
+/// (hex digits only) so a crafted argument can neither inject git options nor
+/// escape into another revision (e.g. `HEAD`, ranges, or flags).
+fn safe_commit_sha(sha: &str) -> io::Result<String> {
+    let trimmed = sha.trim();
+
+    if trimmed.len() < 4
+        || trimmed.len() > 40
+        || !trimmed.chars().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git commit SHA is invalid.",
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// Reads a file's blob at a given revision. A missing path at that revision
+/// (the file did not exist yet, e.g. the parent of its first commit) is not an
+/// error: it yields empty content so the diff renders as a pure addition.
+fn commit_blob_content(root: &Path, revision: &str, relative_path: &str) -> io::Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("show")
+        .arg(format!("{revision}:{relative_path}"))
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn commit_file_change_status(original: &str, modified: &str) -> GitChangeStatus {
+    if original.is_empty() && !modified.is_empty() {
+        return GitChangeStatus::Added;
+    }
+
+    if !original.is_empty() && modified.is_empty() {
+        return GitChangeStatus::Deleted;
+    }
+
+    GitChangeStatus::Modified
+}
+
 fn git_change_is_staged(status: &str) -> bool {
     status
         .chars()
@@ -784,6 +1551,134 @@ fn git_output_vec_with_env<S: AsRef<str>>(
 
 fn run_git_vec_with_env(root: &Path, args: Vec<&str>, index_file: Option<&Path>) -> io::Result<()> {
     git_output_vec_with_env(root, args, index_file).map(|_| ())
+}
+
+/// Runs `git <args>` with `stdin` piped in (used for `git apply --cached`).
+/// A non-zero exit becomes an error so callers can treat a rejected patch as a
+/// safe no-op; `git apply` does not mutate the index when it fails.
+fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("Failed to open git stdin."))?
+        .write_all(stdin)?;
+
+    let output = child.wait_with_output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(io::Error::other(
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
+}
+
+/// Returns the raw `git diff` text for a single file. `staged` selects the
+/// index-vs-HEAD diff (used when unstaging); otherwise the worktree-vs-index
+/// diff (used when staging). `-U0` keeps each logical change in its own hunk so
+/// the front-end can target a single hunk; the `--` guard scopes the diff to
+/// one path so the patch only ever touches that file.
+fn file_diff_text(root: &Path, relative_path: &str, staged: bool) -> io::Result<String> {
+    let mut args = vec!["diff", "-U0", "--no-color"];
+
+    if staged {
+        args.push("--cached");
+    }
+
+    args.push("--");
+    args.push(relative_path);
+
+    git_output_vec(root, args)
+}
+
+/// Splits a single-file `git diff` into its preamble (everything up to and
+/// including the `+++` line) and the per-hunk blocks (each `@@ ... @@` and the
+/// `-`/`+`/` `/`\` lines that follow it).
+fn split_diff(raw: &str) -> Option<(Vec<&str>, Vec<Vec<&str>>)> {
+    let lines: Vec<&str> = raw.split('\n').collect();
+    let first_hunk = lines.iter().position(|line| line.starts_with("@@"))?;
+    let preamble = lines[..first_hunk].to_vec();
+
+    let mut hunks: Vec<Vec<&str>> = Vec::new();
+
+    for line in &lines[first_hunk..] {
+        if line.starts_with("@@") {
+            hunks.push(vec![*line]);
+            continue;
+        }
+
+        // Trailing empty element from the final newline is not part of a hunk.
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(current) = hunks.last_mut() {
+            current.push(*line);
+        }
+    }
+
+    Some((preamble, hunks))
+}
+
+/// Parses a single-file `git diff` into structured hunks for the front-end. The
+/// `header` is the `@@ ... @@` line; `lines` are the body lines (with their
+/// leading `-`/`+`/` ` markers preserved) so the preview renders without
+/// re-deriving the change.
+fn parse_diff_hunks(raw: &str, is_staged: bool) -> Vec<GitDiffHunk> {
+    let Some((_, hunks)) = split_diff(raw) else {
+        return Vec::new();
+    };
+
+    hunks
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let (header, body) = block.split_first()?;
+            Some(GitDiffHunk {
+                header: (*header).to_string(),
+                index: index as u32,
+                lines: body.iter().map(|line| (*line).to_string()).collect(),
+                is_staged,
+            })
+        })
+        .collect()
+}
+
+/// Builds a minimal, valid unified-diff patch containing only the hunk at
+/// `hunk_index`, reusing `git`'s own preamble and hunk text verbatim so the
+/// result stays byte-exact (EOL, "no newline at EOF", binary detection are all
+/// inherited from git). Returns `None` when the index is out of range, in which
+/// case the caller treats the request as a stale no-op.
+fn single_hunk_patch(raw: &str, hunk_index: u32) -> Option<String> {
+    let (preamble, hunks) = split_diff(raw)?;
+    let hunk = hunks.get(hunk_index as usize)?;
+
+    let mut patch = String::new();
+
+    for line in preamble {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+
+    for line in hunk {
+        patch.push_str(line);
+        patch.push('\n');
+    }
+
+    Some(patch)
 }
 
 fn commit_selected_staged_changes(
@@ -1073,15 +1968,22 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_porcelain_status, safe_relative_path, CommandGitRepositoryGateway, GitChangeStatus,
-        GitChangedFile, GitRepositoryGateway,
+        parse_blame_porcelain, parse_branch_list, parse_diff_hunks, parse_file_history,
+        parse_porcelain_status, parse_stash_list, safe_branch_name, safe_commit_sha,
+        safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitRepositoryGateway,
     };
     use std::{
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    /// Guarantees a distinct temp-repo path for every `TestGitRepo`, even when
+    /// the platform clock is too coarse to disambiguate concurrent tests.
+    static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn parses_porcelain_status_changes() {
@@ -1114,6 +2016,257 @@ mod tests {
         assert!(safe_relative_path("../secret.php").is_err());
         assert!(safe_relative_path("/secret.php").is_err());
         assert!(safe_relative_path("src/User.php").is_ok());
+    }
+
+    #[test]
+    fn parses_blame_porcelain_into_per_line_records() {
+        // Two commits, the second reusing the first commit's metadata via a bare
+        // SHA header line (the porcelain format omits author/time on repeats).
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 1 1 2\n",
+            "author Alice Example\n",
+            "author-mail <alice@example.com>\n",
+            "author-time 1700000000\n",
+            "author-tz +0100\n",
+            "committer Alice Example\n",
+            "committer-mail <alice@example.com>\n",
+            "committer-time 1700000000\n",
+            "committer-tz +0100\n",
+            "summary first commit\n",
+            "filename src/User.php\n",
+            "\tfirst line\n",
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 2 2\n",
+            "\tsecond line\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d 3 3 1\n",
+            "author Bob Example\n",
+            "author-mail <bob@example.com>\n",
+            "author-time 1700100000\n",
+            "author-tz +0000\n",
+            "committer Bob Example\n",
+            "committer-mail <bob@example.com>\n",
+            "committer-time 1700100000\n",
+            "committer-tz +0000\n",
+            "summary third commit\n",
+            "filename src/User.php\n",
+            "\tthird line\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Alice Example");
+        assert_eq!(lines[0].sha, "1a2b3c4");
+        assert_eq!(lines[0].timestamp, 1700000000);
+        // The repeated SHA inherits the metadata captured on its first appearance.
+        assert_eq!(lines[1].line_number, 2);
+        assert_eq!(lines[1].author, "Alice Example");
+        assert_eq!(lines[1].sha, "1a2b3c4");
+        assert_eq!(lines[2].line_number, 3);
+        assert_eq!(lines[2].author, "Bob Example");
+        assert_eq!(lines[2].sha, "f0e1d2c");
+        assert_eq!(lines[2].timestamp, 1700100000);
+    }
+
+    #[test]
+    fn keeps_the_final_line_when_porcelain_output_lacks_a_trailing_content_line() {
+        // Defensive: a truncated porcelain stream that ends mid-group (no `\t`
+        // content line) must still surface the line we already identified.
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b 1 1 1\n",
+            "author Alice Example\n",
+            "author-time 1700000000\n",
+            "summary only commit\n",
+            "filename a.php\n",
+            "\tfirst line\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d 2 2 1\n",
+            "author Bob Example\n",
+            "author-time 1700100000\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].line_number, 2);
+        assert_eq!(lines[1].author, "Bob Example");
+        assert_eq!(lines[1].sha, "f0e1d2c");
+    }
+
+    #[test]
+    fn marks_uncommitted_lines_with_the_not_committed_yet_author() {
+        let output = concat!(
+            "0000000000000000000000000000000000000000 1 1 1\n",
+            "author Not Committed Yet\n",
+            "author-mail <not.committed.yet>\n",
+            "author-time 1700200000\n",
+            "author-tz +0000\n",
+            "summary Version of staged changes\n",
+            "filename new.php\n",
+            "\tpending line\n",
+        );
+
+        let lines = parse_blame_porcelain(output.as_bytes()).expect("parse blame");
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].author, "Not Committed Yet");
+        assert_eq!(lines[0].sha, "0000000");
+    }
+
+    #[test]
+    fn blame_reports_authors_for_committed_lines() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "blame@example.com"]);
+        repo.run(["config", "user.name", "Blame Author"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let lines = gateway.blame(repo.path(), "file.txt").expect("blame");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Blame Author");
+        assert!(!lines[0].sha.is_empty());
+        assert_eq!(lines[1].line_number, 2);
+    }
+
+    #[test]
+    fn blame_rejects_paths_outside_workspace() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.blame(repo.path(), "../secret.txt").is_err());
+    }
+
+    #[test]
+    fn parses_file_history_records_separated_by_unit_separator() {
+        let output = concat!(
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\u{1f}Alice Example\u{1f}1700000000\u{1f}Add user model\n",
+            "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d\u{1f}Bob Example\u{1f}1700100000\u{1f}Refactor: split helpers\n",
+        );
+
+        let entries = parse_file_history(output);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].sha, "1a2b3c4");
+        assert_eq!(entries[0].author, "Alice Example");
+        assert_eq!(entries[0].timestamp, 1700000000);
+        assert_eq!(entries[0].subject, "Add user model");
+        assert_eq!(entries[1].sha, "f0e1d2c");
+        // A subject containing the delimiter-like text (colon, spaces) survives.
+        assert_eq!(entries[1].subject, "Refactor: split helpers");
+    }
+
+    #[test]
+    fn skips_malformed_file_history_records() {
+        let output = concat!(
+            "not-a-sha\u{1f}Author\u{1f}1700000000\u{1f}subject\n",
+            "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\u{1f}Alice\u{1f}1700000000\u{1f}ok\n",
+            "\n",
+        );
+
+        let entries = parse_file_history(output);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].subject, "ok");
+    }
+
+    #[test]
+    fn safe_commit_sha_rejects_non_hex_and_options() {
+        assert!(safe_commit_sha("HEAD").is_err());
+        assert!(safe_commit_sha("--output=/etc/passwd").is_err());
+        assert!(safe_commit_sha("1a2").is_err());
+        assert!(safe_commit_sha("deadBEEF").is_ok());
+    }
+
+    #[test]
+    fn file_history_lists_commits_that_touched_the_file() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "history@example.com"]);
+        repo.run(["config", "user.name", "History Author"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first commit"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second commit"]);
+        repo.write("other.txt", "unrelated\n");
+        repo.run(["add", "other.txt"]);
+        repo.run(["commit", "-m", "unrelated commit"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let entries = gateway.file_history(repo.path(), "file.txt").expect("history");
+
+        assert_eq!(entries.len(), 2);
+        // Newest commit first (git log default ordering).
+        assert_eq!(entries[0].subject, "second commit");
+        assert_eq!(entries[1].subject, "first commit");
+        assert_eq!(entries[0].author, "History Author");
+        assert!(!entries[0].sha.is_empty());
+    }
+
+    #[test]
+    fn file_history_rejects_paths_outside_workspace() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.file_history(repo.path(), "../secret.txt").is_err());
+    }
+
+    #[test]
+    fn file_commit_diff_reports_blob_contents_for_a_commit() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first"]);
+        repo.write("file.txt", "one\ntwo\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second"]);
+
+        let second_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let gateway = CommandGitRepositoryGateway;
+        let diff = gateway
+            .file_commit_diff(repo.path(), "file.txt", &second_sha)
+            .expect("diff");
+
+        assert_eq!(diff.original_content, "one\n");
+        assert_eq!(diff.modified_content, "one\ntwo\n");
+        assert_eq!(diff.change.relative_path, "file.txt");
+        assert_eq!(diff.change.status, GitChangeStatus::Modified);
+        assert_eq!(diff.language, "plaintext");
+    }
+
+    #[test]
+    fn file_commit_diff_treats_first_commit_as_addition() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("file.txt", "hello\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "create"]);
+
+        let first_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let gateway = CommandGitRepositoryGateway;
+        let diff = gateway
+            .file_commit_diff(repo.path(), "file.txt", &first_sha)
+            .expect("diff");
+
+        assert_eq!(diff.original_content, "");
+        assert_eq!(diff.modified_content, "hello\n");
+        assert_eq!(diff.change.status, GitChangeStatus::Added);
+    }
+
+    #[test]
+    fn file_commit_diff_rejects_invalid_sha() {
+        let repo = TestGitRepo::new();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway
+            .file_commit_diff(repo.path(), "file.txt", "HEAD")
+            .is_err());
     }
 
     #[test]
@@ -1219,6 +2372,614 @@ mod tests {
         assert_eq!(repo.git_output(["status", "--porcelain"]), "");
     }
 
+    fn hunk_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "hunk@example.com"]);
+        repo.run(["config", "user.name", "Hunk Author"]);
+        repo
+    }
+
+    // --- patch generation (corruption-prone; assert on git's own output) ---
+
+    #[test]
+    fn splits_two_change_diff_into_separate_hunks_with_zero_context() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 9405325..084d8dd 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+            "@@ -5 +5 @@ d\n",
+            "-e\n",
+            "+E\n",
+        );
+
+        let hunks = parse_diff_hunks(raw, false);
+
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].index, 0);
+        assert_eq!(hunks[0].header, "@@ -1 +1 @@");
+        assert_eq!(hunks[0].lines, vec!["-a", "+A"]);
+        assert_eq!(hunks[1].index, 1);
+        assert_eq!(hunks[1].header, "@@ -5 +5 @@ d");
+        assert_eq!(hunks[1].lines, vec!["-e", "+E"]);
+    }
+
+    #[test]
+    fn single_hunk_patch_keeps_preamble_and_only_the_selected_hunk() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 9405325..084d8dd 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+            "@@ -5 +5 @@ d\n",
+            "-e\n",
+            "+E\n",
+        );
+
+        let first = single_hunk_patch(raw, 0).expect("first hunk patch");
+        assert_eq!(
+            first,
+            concat!(
+                "diff --git a/f.txt b/f.txt\n",
+                "index 9405325..084d8dd 100644\n",
+                "--- a/f.txt\n",
+                "+++ b/f.txt\n",
+                "@@ -1 +1 @@\n",
+                "-a\n",
+                "+A\n",
+            )
+        );
+
+        let second = single_hunk_patch(raw, 1).expect("second hunk patch");
+        assert!(second.contains("@@ -5 +5 @@ d\n-e\n+E\n"));
+        assert!(!second.contains("+A"));
+    }
+
+    #[test]
+    fn single_hunk_patch_preserves_no_newline_marker() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "index 54d55bf..a9beb14 100644\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -3 +3 @@ two\n",
+            "-three\n",
+            "\\ No newline at end of file\n",
+            "+THREE\n",
+            "\\ No newline at end of file\n",
+        );
+
+        let patch = single_hunk_patch(raw, 0).expect("patch");
+
+        assert!(patch.contains("\\ No newline at end of file"));
+        assert!(patch.contains("-three"));
+        assert!(patch.contains("+THREE"));
+    }
+
+    #[test]
+    fn single_hunk_patch_rejects_out_of_range_index() {
+        let raw = concat!(
+            "diff --git a/f.txt b/f.txt\n",
+            "--- a/f.txt\n",
+            "+++ b/f.txt\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+A\n",
+        );
+
+        assert!(single_hunk_patch(raw, 5).is_none());
+    }
+
+    // --- stage_hunk / unstage_hunk round trips through real git ---
+
+    #[test]
+    fn stage_hunk_stages_only_the_selected_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\nc\nd\nE\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let hunks = gateway.file_hunks(repo.path(), "f.txt", false).expect("hunks");
+        assert_eq!(hunks.len(), 2, "expected one hunk per change, got {hunks:?}");
+
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage hunk");
+
+        // The first line is staged; the last line is still only in the worktree.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "A\nb\nc\nd\ne\n");
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+    }
+
+    #[test]
+    fn unstage_hunk_unstages_only_the_selected_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\nc\nd\nE\n");
+        // Stage everything, then unstage just the first hunk.
+        repo.run(["add", "f.txt"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let staged = gateway.file_hunks(repo.path(), "f.txt", true).expect("staged hunks");
+        assert_eq!(staged.len(), 2, "expected two staged hunks, got {staged:?}");
+        assert!(staged.iter().all(|hunk| hunk.is_staged));
+
+        gateway.unstage_hunk(repo.path(), "f.txt", 0).expect("unstage hunk");
+
+        // First line reverts to HEAD in the index; last line stays staged.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\nd\nE\n");
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_pure_addition_at_end_of_file() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nb\nc\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage addition");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_pure_deletion() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nc\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage deletion");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nc\n");
+    }
+
+    #[test]
+    fn stage_hunk_handles_missing_newline_at_end_of_file() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "one\ntwo\nthree");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "one\nTWO\nthree");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage no-eol hunk");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "one\nTWO\nthree");
+    }
+
+    #[test]
+    fn stage_hunk_handles_crlf_line_endings() {
+        let repo = hunk_repo();
+        // Pin EOL handling so the test does not depend on the host's global
+        // `core.autocrlf`; this keeps the CRLF bytes intact in the blob.
+        repo.run(["config", "core.autocrlf", "false"]);
+        repo.write("f.txt", "a\r\nb\r\nc\r\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\r\nB\r\nc\r\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage crlf hunk");
+
+        // Staging one CRLF hunk via git's own diff is byte-exact: the staged
+        // blob carries the changed line and the surrounding CRLF endings.
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\r\nB\r\nc\r\n");
+        // The whole change was staged, so nothing is left for the worktree diff.
+        assert_eq!(repo.git_output(["diff", "--name-only"]), "");
+    }
+
+    #[test]
+    fn stage_hunk_handles_first_line_change() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "first\nsecond\nthird\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "FIRST\nsecond\nthird\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage first line");
+
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "FIRST\nsecond\nthird\n");
+    }
+
+    #[test]
+    fn stage_hunk_out_of_range_index_is_safe_no_op() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let result = gateway.stage_hunk(repo.path(), "f.txt", 9);
+
+        assert!(result.is_err(), "stale hunk index must error");
+        // Index untouched: nothing staged.
+        assert_eq!(repo.git_output(["diff", "--cached", "--name-only"]), "");
+    }
+
+    #[test]
+    fn stage_hunk_rejects_paths_outside_workspace() {
+        let repo = hunk_repo();
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.stage_hunk(repo.path(), "../escape.txt", 0).is_err());
+        assert!(gateway.unstage_hunk(repo.path(), "/etc/passwd", 0).is_err());
+    }
+
+    #[test]
+    fn parses_stash_list_into_entries() {
+        // Layout is `%gd%x1f%ct%x1f%gs`: selector, timestamp, reflog subject.
+        let output = concat!(
+            "stash@{0}\u{1f}1700000000\u{1f}WIP on main: 1a2b3c4 Add feature\n",
+            "stash@{1}\u{1f}1700100000\u{1f}On feature/x: tweak parser\n",
+        );
+
+        let entries = parse_stash_list(output);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].index, 0);
+        assert_eq!(entries[0].timestamp, 1700000000);
+        // The branch is derived from the reflog subject prefix.
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert_eq!(entries[0].message, "WIP on main: 1a2b3c4 Add feature");
+        assert_eq!(entries[1].index, 1);
+        assert_eq!(entries[1].branch.as_deref(), Some("feature/x"));
+        // A message containing colons survives unit-separator parsing.
+        assert_eq!(entries[1].message, "On feature/x: tweak parser");
+    }
+
+    #[test]
+    fn skips_malformed_stash_list_records() {
+        let output = concat!(
+            "not-a-stash-ref\u{1f}1700000000\u{1f}message\n",
+            "stash@{2}\u{1f}1700000000\u{1f}good one\n",
+            "\n",
+        );
+
+        let entries = parse_stash_list(output);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 2);
+        assert_eq!(entries[0].message, "good one");
+    }
+
+    #[test]
+    fn safe_stash_index_rejects_injection_and_accepts_numeric() {
+        assert!(safe_stash_index("0").is_ok());
+        assert!(safe_stash_index("12").is_ok());
+        // Anything non-numeric could escape `stash@{...}` into another revision
+        // or a git option; reject it.
+        assert!(safe_stash_index("0} --force; rm -rf /").is_err());
+        assert!(safe_stash_index("-1").is_err());
+        assert!(safe_stash_index("HEAD").is_err());
+        assert!(safe_stash_index("").is_err());
+        assert!(safe_stash_index("1.0").is_err());
+    }
+
+    #[test]
+    fn stash_save_then_list_reports_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .stash_save(repo.path(), "work in progress")
+            .expect("stash save");
+
+        // The working tree is clean after stashing.
+        assert_eq!(repo.git_output(["status", "--porcelain"]), "");
+        assert_eq!(repo.read("file.txt"), "one\n");
+
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 0);
+        assert!(entries[0].message.contains("work in progress"));
+    }
+
+    #[test]
+    fn stash_apply_restores_changes_and_keeps_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_apply(repo.path(), 0).expect("stash apply");
+
+        assert_eq!(repo.read("file.txt"), "two\n");
+        // apply keeps the stash entry.
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn stash_pop_restores_changes_and_drops_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_pop(repo.path(), 0).expect("stash pop");
+
+        assert_eq!(repo.read("file.txt"), "two\n");
+        // pop removes the stash entry.
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn stash_show_returns_a_diff_for_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "one\ntwo\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        let diff = gateway.stash_show(repo.path(), 0).expect("stash show");
+
+        assert!(diff.contains("file.txt"));
+        assert!(diff.contains("+two"));
+    }
+
+    #[test]
+    fn stash_drop_removes_the_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.stash_save(repo.path(), "wip").expect("stash save");
+        gateway.stash_drop(repo.path(), 0).expect("stash drop");
+
+        let entries = gateway.stash_list(repo.path()).expect("stash list");
+        assert!(entries.is_empty());
+        // The working tree was not touched by drop (still clean from the save).
+        assert_eq!(repo.read("file.txt"), "one\n");
+    }
+
+    #[test]
+    fn stash_save_rejects_when_there_is_nothing_to_stash() {
+        let repo = stash_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.stash_save(repo.path(), "wip").is_err());
+    }
+
+    #[test]
+    fn parses_branch_list_marking_the_current_branch() {
+        // Layout is `%(HEAD)%(refname:short)`: a one-char flag (`*` for current,
+        // a space otherwise) immediately followed by the short name.
+        let output = concat!("*main\n", " feature/login\n", " release-1.0\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches.len(), 3);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].is_current);
+        assert_eq!(branches[1].name, "feature/login");
+        assert!(!branches[1].is_current);
+        assert_eq!(branches[2].name, "release-1.0");
+        assert!(!branches[2].is_current);
+    }
+
+    #[test]
+    fn branch_list_pins_the_current_branch_first_keeping_other_order() {
+        // git lists refs alphabetically, so the current branch can appear in the
+        // middle; the switcher pins it to the top, leaving the rest in order.
+        let output = concat!(" alpha\n", "*middle\n", " omega\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches[0].name, "middle");
+        assert!(branches[0].is_current);
+        assert_eq!(branches[1].name, "alpha");
+        assert_eq!(branches[2].name, "omega");
+    }
+
+    #[test]
+    fn skips_malformed_branch_records() {
+        // Blank lines and records whose first column is neither `*` nor space are
+        // skipped (defensive against unexpected `for-each-ref` output).
+        let output = concat!("\n", "*main\n", "Xbad-flag\n");
+
+        let branches = parse_branch_list(output);
+
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].is_current);
+    }
+
+    #[test]
+    fn safe_branch_name_rejects_injection_and_accepts_valid() {
+        assert!(safe_branch_name("feature/login").is_ok());
+        assert!(safe_branch_name("release-1.0").is_ok());
+        assert!(safe_branch_name("fix_bug").is_ok());
+        // Empty / whitespace-only is rejected.
+        assert!(safe_branch_name("").is_err());
+        assert!(safe_branch_name("   ").is_err());
+        // Option/shell injection and invalid ref shapes are rejected.
+        assert!(safe_branch_name("--force").is_err());
+        assert!(safe_branch_name("-D main").is_err());
+        assert!(safe_branch_name("foo; rm -rf /").is_err());
+        assert!(safe_branch_name("foo bar").is_err());
+        assert!(safe_branch_name("foo..bar").is_err());
+        assert!(safe_branch_name("foo~1").is_err());
+        assert!(safe_branch_name("foo^").is_err());
+        assert!(safe_branch_name("foo:bar").is_err());
+        assert!(safe_branch_name("foo?").is_err());
+        assert!(safe_branch_name("foo*").is_err());
+        assert!(safe_branch_name("foo\\bar").is_err());
+        assert!(safe_branch_name("@{-1}").is_err());
+    }
+
+    #[test]
+    fn branch_list_reports_local_branches_with_current_flag() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["branch", "feature"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let branches = gateway.branch_list(repo.path()).expect("branch list");
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+
+        assert!(names.contains(&"feature"));
+        let current = branches.iter().find(|branch| branch.is_current).expect("current");
+        // The initial checkout is the default branch (the only one with content).
+        assert!(!current.name.is_empty());
+        // Exactly one branch is flagged current.
+        assert_eq!(branches.iter().filter(|branch| branch.is_current).count(), 1);
+    }
+
+    #[test]
+    fn current_branch_returns_the_checked_out_branch() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["checkout", "-b", "work"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+
+        assert_eq!(current.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn create_branch_adds_a_branch_without_switching() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        let before = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.create_branch(repo.path(), "feature/new").expect("create branch");
+
+        // The branch now exists.
+        let branches = gateway.branch_list(repo.path()).expect("branch list");
+        assert!(branches.iter().any(|branch| branch.name == "feature/new"));
+        // HEAD did not move: create must never switch.
+        let after = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn create_branch_rejects_invalid_name() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.create_branch(repo.path(), "--force").is_err());
+        assert!(gateway.create_branch(repo.path(), "bad name").is_err());
+    }
+
+    #[test]
+    fn switch_branch_moves_head_when_the_working_tree_is_clean() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["branch", "feature"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway.switch_branch(repo.path(), "feature").expect("switch branch");
+
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+        assert_eq!(current.as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn switch_branch_refuses_when_local_changes_would_be_overwritten() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("file.txt", "feature\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "feature change"]);
+        repo.run(["checkout", "main"]);
+        // A dirty local change that conflicts with the feature branch content.
+        repo.write("file.txt", "dirty local\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        let result = gateway.switch_branch(repo.path(), "feature");
+
+        // Switch must FAIL (no `-f`/`--discard`); work is never lost.
+        assert!(result.is_err());
+        // The working tree change survives the rejected switch.
+        assert_eq!(repo.read("file.txt"), "dirty local\n");
+        let current = gateway.current_branch(repo.path()).expect("current branch");
+        assert_eq!(current.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn switch_branch_rejects_invalid_name() {
+        let repo = branch_repo();
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let gateway = CommandGitRepositoryGateway;
+
+        assert!(gateway.switch_branch(repo.path(), "--orphan").is_err());
+        assert!(gateway.switch_branch(repo.path(), "no/such/branch nope").is_err());
+    }
+
+    fn branch_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "branch@example.com"]);
+        repo.run(["config", "user.name", "Branch Author"]);
+        // Pin the initial (still unborn) branch name to `main` so tests do not
+        // depend on the host's `init.defaultBranch` (could be `master`).
+        // `symbolic-ref` is idempotent whether or not `main` is already current.
+        repo.run(["symbolic-ref", "HEAD", "refs/heads/main"]);
+        repo
+    }
+
+    fn stash_repo() -> TestGitRepo {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "stash@example.com"]);
+        repo.run(["config", "user.name", "Stash Author"]);
+        repo
+    }
+
     fn git_changed_file(
         relative_path: &str,
         is_staged: bool,
@@ -1245,8 +3006,13 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system time")
                 .as_nanos();
+            // A process-global atomic counter guarantees uniqueness across
+            // parallel tests; the macOS clock only resolves to microseconds,
+            // so `nanos` alone collides when tests start in the same tick and
+            // both `git init` the same dir (templates/info/exclude clash).
+            let unique = TEST_REPO_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "mockor-editor-git-test-{}-{nanos}",
+                "mockor-editor-git-test-{}-{nanos}-{unique}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("create temp repo");

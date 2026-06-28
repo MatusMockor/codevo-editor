@@ -6,11 +6,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
+import type {
+  LocalHistoryGateway,
+  LocalHistoryVersion,
+} from "../domain/localHistory";
 import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
   useWorkbenchController,
+  type PhpCodeActionDescriptor,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
 import type {
@@ -34,6 +39,7 @@ import {
 } from "../domain/languageServerDocumentSync";
 import type {
   EditorPosition,
+  LanguageServerCodeAction,
   LanguageServerFeaturesGateway,
   LanguageServerRange,
   LanguageServerTextEdit,
@@ -59,13 +65,16 @@ import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
-import type {
-  FileEntry,
-  FileSearchResult,
-  ManagedPhpactorInstallCompletionEvent,
-  PhpProjectDescriptor,
-  TextSearchResult,
-  WorkspaceDescriptor,
+import {
+  defaultTextSearchOptions,
+  type FileEntry,
+  type FileSearchResult,
+  type ManagedPhpactorInstallCompletionEvent,
+  type PhpProjectDescriptor,
+  type ReplaceInPathResult,
+  type TextSearchOptions,
+  type TextSearchResult,
+  type WorkspaceDescriptor,
 } from "../domain/workspace";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
@@ -73,6 +82,7 @@ type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 interface ControllerDependencies {
   documentSyncGateway: LanguageServerDocumentSyncGateway;
   gitGateway: GitGateway;
+  localHistoryGateway: LocalHistoryGateway;
   indexProgressGateway: IndexProgressGateway;
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
@@ -267,7 +277,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
-    expect(getWorkbench().activePath).toContain(file.path);
+    expect(getWorkbench().activePath).toBe(file.path);
 
     await act(async () => {
       getWorkbench().closeGitDiffPreview();
@@ -279,9 +289,663 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activePath).toBe(file.path);
   });
 
+  it("opens file history for the active document and loads a commit diff", async () => {
+    const commits = [
+      {
+        author: "Alice",
+        sha: "1a2b3c4",
+        subject: "Add user model",
+        timestamp: 1700000000,
+      },
+      {
+        author: "Bob",
+        sha: "f0e1d2c",
+        subject: "Refactor user model",
+        timestamp: 1700100000,
+      },
+    ];
+    const fileHistory = vi.fn(async () => commits);
+    const fileCommitDiff = vi.fn(async (_rootPath, relativePath, sha) => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: `/workspace/${relativePath}`,
+        relativePath,
+        status: "modified" as const,
+      },
+      language: "php",
+      modifiedContent: `<?php // ${sha}\n`,
+      originalContent: "<?php\n",
+    }));
+    const gitGateway = fileHistoryGitGateway({ fileCommitDiff, fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    await act(async () => {
+      await getWorkbench().openFileHistory();
+    });
+
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(true);
+    expect(getWorkbench().fileHistoryRelativePath).toBe("src/User.php");
+    expect(getWorkbench().fileHistoryCommits).toHaveLength(2);
+    expect(fileHistory).toHaveBeenCalledWith("/workspace", "src/User.php");
+
+    await act(async () => {
+      await getWorkbench().selectFileHistoryCommit("f0e1d2c");
+    });
+
+    expect(fileCommitDiff).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      "f0e1d2c",
+    );
+    expect(getWorkbench().fileHistorySelectedSha).toBe("f0e1d2c");
+    expect(getWorkbench().fileHistoryDiff?.modifiedContent).toContain(
+      "f0e1d2c",
+    );
+
+    await act(async () => {
+      getWorkbench().closeFileHistory();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+    expect(getWorkbench().fileHistorySelectedSha).toBeNull();
+    expect(getWorkbench().fileHistoryDiff).toBeNull();
+  });
+
+  it("drops a stale file history result after the panel is closed", async () => {
+    const historyDeferred = createDeferred<
+      Array<{
+        author: string;
+        sha: string;
+        subject: string;
+        timestamp: number;
+      }>
+    >();
+    const fileHistory = vi.fn(() => historyDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({ fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    let historyPromise: Promise<void> | null = null;
+    act(() => {
+      historyPromise = getWorkbench().openFileHistory();
+    });
+
+    // Close the panel while the history request is still in flight.
+    await act(async () => {
+      getWorkbench().closeFileHistory();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      historyDeferred.resolve([
+        {
+          author: "Alice",
+          sha: "1a2b3c4",
+          subject: "stale",
+          timestamp: 1700000000,
+        },
+      ]);
+      await historyPromise;
+    });
+
+    // The stale result must not repopulate a closed panel.
+    expect(getWorkbench().fileHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+  });
+
+  it("opens the stash panel, lists stashes, and shows a selected stash diff", async () => {
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP on main: a", timestamp: 1700000000 },
+      { branch: null, index: 1, message: "On feature: b", timestamp: 1700100000 },
+    ]);
+    const stashShow = vi.fn(async () => "diff --git a/file b/file\n+two");
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashList = stashList;
+    gitGateway.stashShow = stashShow;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    expect(getWorkbench().gitStashPanelOpen).toBe(true);
+    expect(getWorkbench().gitStashEntries).toHaveLength(2);
+    expect(stashList).toHaveBeenCalledWith("/workspace");
+
+    await act(async () => {
+      await getWorkbench().selectGitStash(1);
+    });
+
+    expect(stashShow).toHaveBeenCalledWith("/workspace", 1);
+    expect(getWorkbench().gitStashSelectedIndex).toBe(1);
+    expect(getWorkbench().gitStashDiff).toContain("+two");
+
+    await act(async () => {
+      getWorkbench().closeGitStashPanel();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().gitStashPanelOpen).toBe(false);
+    expect(getWorkbench().gitStashEntries).toEqual([]);
+    expect(getWorkbench().gitStashDiff).toBeNull();
+  });
+
+  it("saves a stash and refreshes the list", async () => {
+    const stashSave = vi.fn(async () => undefined);
+    let listCalls = 0;
+    const stashList = vi.fn(async () => {
+      listCalls += 1;
+      return listCalls < 2
+        ? []
+        : [{ branch: "main", index: 0, message: "WIP", timestamp: 1700000000 }];
+    });
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashSave = stashSave;
+    gitGateway.stashList = stashList;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().saveGitStash("  work in progress  ");
+    });
+
+    // The message is trimmed before reaching the gateway.
+    expect(stashSave).toHaveBeenCalledWith("/workspace", "work in progress");
+    expect(getWorkbench().gitStashEntries).toHaveLength(1);
+  });
+
+  it("does not drop a stash when the destructive confirmation is declined", async () => {
+    const stashDrop = vi.fn(async () => undefined);
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP", timestamp: 1700000000 },
+    ]);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashDrop = stashDrop;
+    gitGateway.stashList = stashList;
+    const confirm = vi.fn(() => false);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().dropGitStash(0);
+    });
+
+    // Declining the confirmation must leave the (destructive) drop un-run.
+    expect(confirm).toHaveBeenCalled();
+    expect(stashDrop).not.toHaveBeenCalled();
+  });
+
+  it("drops the stash only after the destructive confirmation is accepted", async () => {
+    const stashDrop = vi.fn(async () => undefined);
+    const stashList = vi.fn(async () => [
+      { branch: "main", index: 0, message: "WIP", timestamp: 1700000000 },
+    ]);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashDrop = stashDrop;
+    gitGateway.stashList = stashList;
+    const confirm = vi.fn(() => true);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+
+    await act(async () => {
+      await getWorkbench().dropGitStash(0);
+    });
+
+    expect(confirm).toHaveBeenCalled();
+    expect(stashDrop).toHaveBeenCalledWith("/workspace", 0);
+  });
+
+  it("drops a stale stash list result after the panel is closed", async () => {
+    const stashListDeferred = createDeferred<
+      Array<{
+        branch: string | null;
+        index: number;
+        message: string;
+        timestamp: number;
+      }>
+    >();
+    const stashList = vi.fn(() => stashListDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stashList = stashList;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<void> | null = null;
+    act(() => {
+      openPromise = getWorkbench().openGitStashPanel();
+    });
+
+    // Close the panel while the list request is still in flight.
+    await act(async () => {
+      getWorkbench().closeGitStashPanel();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      stashListDeferred.resolve([
+        { branch: "main", index: 0, message: "stale", timestamp: 1700000000 },
+      ]);
+      await openPromise;
+    });
+
+    // The stale result must not repopulate a closed panel.
+    expect(getWorkbench().gitStashPanelOpen).toBe(false);
+    expect(getWorkbench().gitStashEntries).toEqual([]);
+  });
+
+  it("drops a stale file history result after switching tabs", async () => {
+    const historyDeferred = createDeferred<
+      Array<{
+        author: string;
+        sha: string;
+        subject: string;
+        timestamp: number;
+      }>
+    >();
+    const fileHistory = vi.fn(() => historyDeferred.promise);
+    const gitGateway = fileHistoryGitGateway({ fileHistory });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    const fileA = fileEntry("/workspace/src/A.php", "A.php");
+    const fileB = fileEntry("/workspace/src/B.php", "B.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileA);
+    });
+
+    let historyPromise: Promise<void> | null = null;
+    act(() => {
+      historyPromise = getWorkbench().openFileHistory();
+    });
+
+    // Switch to a different document while A's history is still in flight.
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileB);
+    });
+
+    await act(async () => {
+      historyDeferred.resolve([
+        {
+          author: "Alice",
+          sha: "1a2b3c4",
+          subject: "stale A history",
+          timestamp: 1700000000,
+        },
+      ]);
+      await historyPromise;
+    });
+
+    // The history for A must not populate the panel now that B is active.
+    expect(getWorkbench().fileHistoryCommits).toEqual([]);
+    expect(fileHistory).toHaveBeenCalledWith("/workspace", "src/A.php");
+  });
+
+  it("captures a Local History snapshot of the active document on save", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // edited\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    expect(localHistoryGateway.recordSnapshot).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      "<?php // edited\n",
+    );
+
+    const versions = await localHistoryGateway.listVersions(
+      "/workspace",
+      "src/User.php",
+    );
+    expect(versions).toHaveLength(1);
+  });
+
+  it("dedupes a Local History snapshot when saved content is unchanged", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // edited\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    // Two saves, but the second is identical content: still a single retained
+    // version (dedupe).
+    const versions = await localHistoryGateway.listVersions(
+      "/workspace",
+      "src/User.php",
+    );
+    expect(versions).toHaveLength(1);
+  });
+
+  it("opens the Local History panel, lists versions, and diffs a version against current content", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    // Save two distinct versions.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v1\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v2\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openLocalHistory();
+    });
+
+    expect(getWorkbench().localHistoryPanelOpen).toBe(true);
+    expect(getWorkbench().localHistoryRelativePath).toBe("src/User.php");
+    expect(getWorkbench().localHistoryVersions).toHaveLength(2);
+
+    const oldest =
+      getWorkbench().localHistoryVersions[
+        getWorkbench().localHistoryVersions.length - 1
+      ];
+
+    await act(async () => {
+      await getWorkbench().selectLocalHistoryVersion(oldest.id);
+    });
+
+    expect(getWorkbench().localHistorySelectedId).toBe(oldest.id);
+    expect(getWorkbench().localHistoryDiff?.originalContent).toBe(
+      "<?php // v1\n",
+    );
+    expect(getWorkbench().localHistoryDiff?.modifiedContent).toBe(
+      "<?php // v2\n",
+    );
+
+    await act(async () => {
+      getWorkbench().closeLocalHistory();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().localHistoryPanelOpen).toBe(false);
+    expect(getWorkbench().localHistoryVersions).toEqual([]);
+    expect(getWorkbench().localHistoryDiff).toBeNull();
+  });
+
+  it("reverts the active document to a selected Local History version", async () => {
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v1\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php // v2\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openLocalHistory();
+    });
+
+    const oldest =
+      getWorkbench().localHistoryVersions[
+        getWorkbench().localHistoryVersions.length - 1
+      ];
+
+    await act(async () => {
+      await getWorkbench().revertLocalHistoryVersion(oldest.id);
+    });
+    await flushAsyncTurns();
+
+    // The reverted content (v1) is written back to disk and reflected in the
+    // open document.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenLastCalledWith("/workspace/src/User.php", "<?php // v1\n");
+    const active = getWorkbench().openDocuments.find(
+      (document) => document.path === "/workspace/src/User.php",
+    );
+    expect(active?.content).toBe("<?php // v1\n");
+    expect(active?.savedContent).toBe("<?php // v1\n");
+  });
+
+  it("drops a stale Local History result after the panel is closed", async () => {
+    const versionsDeferred = createDeferred<
+      Awaited<ReturnType<LocalHistoryGateway["listVersions"]>>
+    >();
+    const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    vi.mocked(localHistoryGateway.listVersions).mockReturnValueOnce(
+      versionsDeferred.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      localHistoryGateway,
+      readTextFile: vi.fn(async () => "<?php // original\n"),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+
+    let openPromise: Promise<void> | null = null;
+    act(() => {
+      openPromise = getWorkbench().openLocalHistory();
+    });
+
+    await act(async () => {
+      getWorkbench().closeLocalHistory();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      versionsDeferred.resolve([
+        { id: "000000000001", sizeBytes: 4, timestampMs: 1700000000000 },
+      ]);
+      await openPromise;
+    });
+
+    // The version list arrived after close, so it must not populate the panel.
+    expect(getWorkbench().localHistoryVersions).toEqual([]);
+    expect(getWorkbench().localHistoryPanelOpen).toBe(false);
+  });
+
   it("opens a Git diff as an active preview tab named for the changed file", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -296,9 +960,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -313,19 +990,79 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().previewGitChange(change);
     });
 
-    expect(getWorkbench().activePath).toContain("assets/spinner.gif");
-    expect(getWorkbench().previewPath).toBe(getWorkbench().activePath);
-    expect(getWorkbench().openDocuments).toEqual([
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
-        name: "Diff: spinner.gif",
-        path: getWorkbench().activePath,
+        change,
       }),
-    ]);
+    );
+  });
+
+  it("surfaces a recoverable notice (never an unhandled crash) when get_git_diff rejects for a README change", async () => {
+    const change = gitChangedFile("README.md", false);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [change],
+      isRepository: true,
+      rootPath,
+    }));
+    // Reproduce the real failure: clicking the changed README triggers the
+    // async `get_git_diff` command, and that command rejects. The controller
+    // must catch it, clear the in-flight diff, and report a notice instead of
+    // letting the rejection escape as an unhandled crash that blanks the app.
+    gitGateway.getDiff = vi.fn(async () => {
+      throw new Error("get_git_diff failed for README.md");
+    });
+
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    await flushAsyncTurns();
+
+    // No diff is left dangling, loading is reset, and the user sees a notice.
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Git Diff" &&
+          notice.message.includes("get_git_diff failed for README.md"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps an existing Git diff preview open when the same change is previewed again", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -340,9 +1077,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -356,26 +1106,40 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
+    const activePath = getWorkbench().activePath;
 
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
 
-    expect(getWorkbench().activePath).toBe(diffPath);
-    expect(getWorkbench().previewPath).toBe(diffPath);
+    expect(getWorkbench().activePath).toBe(activePath);
+    expect(getWorkbench().previewPath).toBeNull();
     expect(getWorkbench().selectedGitChange).toEqual(change);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({ change }),
     );
-    expect(getWorkbench().openDocuments).toEqual([
-      expect.objectContaining({ path: diffPath }),
-    ]);
+    expect(getWorkbench().openDocuments).toEqual([]);
   });
 
   it("clears the Git diff view when its editor tab is closed", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -390,9 +1154,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -406,10 +1183,9 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().previewGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
 
     act(() => {
-      getWorkbench().closeDocument(diffPath);
+      getWorkbench().closeGitDiffPreview();
     });
 
     expect(getWorkbench().selectedGitChange).toBeNull();
@@ -418,10 +1194,26 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().openDocuments).toEqual([]);
   });
 
-  it("loads the next Git diff when closing the active diff tab", async () => {
+  it("replaces the active Git diff preview when opening another changed file", async () => {
     const firstChange = gitChangedFile("src/First.php", false);
     const secondChange = gitChangedFile("src/Second.php", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -436,9 +1228,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -452,18 +1257,6 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(firstChange);
     });
-    const firstDiffPath = getWorkbench().activePath!;
-    await act(async () => {
-      await getWorkbench().openGitChange(secondChange);
-    });
-    const secondDiffPath = getWorkbench().activePath!;
-
-    act(() => {
-      getWorkbench().closeDocument(secondDiffPath);
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().activePath).toBe(firstDiffPath);
     expect(getWorkbench().selectedGitChange).toEqual(firstChange);
     expect(getWorkbench().gitDiffPreview).toEqual(
       expect.objectContaining({
@@ -472,12 +1265,43 @@ describe("useWorkbenchController preview tabs", () => {
         originalContent: "old src/First.php",
       }),
     );
+
+    await act(async () => {
+      await getWorkbench().openGitChange(secondChange);
+    });
+
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().selectedGitChange).toEqual(secondChange);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change: secondChange,
+        modifiedContent: "new src/Second.php",
+        originalContent: "old src/Second.php",
+      }),
+    );
   });
 
-  it("reloads a pinned Git diff when its tab is activated again", async () => {
+  it("keeps Git diff preview separate from active editor documents", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -492,9 +1316,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -508,23 +1345,21 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openGitChange(change);
     });
-    const diffPath = getWorkbench().activePath!;
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({ change }),
+    );
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().openDocuments).toEqual([]);
 
     await act(async () => {
       await getWorkbench().openPinnedFile(file);
     });
     expect(getWorkbench().selectedGitChange).toBeNull();
 
-    act(() => {
-      getWorkbench().setActivePath(diffPath);
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().selectedGitChange).toEqual(change);
-    expect(getWorkbench().gitDiffPreview).toEqual(
-      expect.objectContaining({ change }),
-    );
-    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().activePath).toBe(file.path);
   });
 
   it("switches between persisted project tabs without stopping another project runtime", async () => {
@@ -843,6 +1678,225 @@ describe("useWorkbenchController preview tabs", () => {
       await Promise.resolve();
     });
     await flushAsyncTurns(24);
+  });
+
+  it("force-warms the phpactor index with a documentSymbol request after the first PHP didOpen", async () => {
+    // Cold first-nav lag root cause: the open-time PHP probe only runs
+    // detectPhpTools + planPhpLanguageServer (starts phpactor) but issues NO
+    // real LSP request, so phpactor's index stays cold until the user's first
+    // Cmd+B / hover / completion eats the full cold-index latency. Firing one
+    // low-priority documentSymbol request after the first didOpen forces
+    // phpactor to index, so the first real navigation is already warm.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace", path);
+    });
+  });
+
+  it("force-warms the phpactor index only once per workspace session", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const firstPath = "/workspace/app/Models/User.php";
+    const secondPath = "/workspace/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) =>
+          `<?php\n// ${requestedPath}\nclass Generated {}\n`,
+      ),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(firstPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace", firstPath);
+    });
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls,
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(secondPath, "Account.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path: secondPath }),
+      );
+    });
+
+    // The second PHP didOpen must not trigger another warm-up request: the
+    // index is already warm for this workspace session.
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls,
+    ).toHaveLength(1);
+    expect(
+      vi.mocked(dependencies.languageServerFeaturesGateway.documentSymbols).mock
+        .calls.every(([rootPath]) => rootPath === "/workspace"),
+    ).toBe(true);
+  });
+
+  it("warms the phpactor index per workspace tab without leaking the warm-up across tabs", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: undefined,
+      sessionId: 71,
+    };
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => ({
+        javaScriptTypeScript: null,
+        php: phpProjectDescriptor(),
+        rootPath,
+      })),
+    };
+    const pathA = "/workspace-a/app/Models/User.php";
+    const pathB = "/workspace-b/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) =>
+          `<?php\n// ${requestedPath}\nclass Generated {}\n`,
+      ),
+      runtimeStatus: runningStatus,
+      workspaceDetectionGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(pathA, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", pathA);
+    });
+
+    // Switch to workspace B and open one of its PHP files: a fresh per-tab
+    // warm-up must fire for B, and the warm-up requests must never target the
+    // wrong root (no cross-tab leak).
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(pathB, "Account.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await vi.waitFor(() => {
+      expect(
+        dependencies.languageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-b", pathB);
+    });
+
+    const warmUpCalls = vi.mocked(
+      dependencies.languageServerFeaturesGateway.documentSymbols,
+    ).mock.calls;
+    // Warm-up A targeted /workspace-a/...; warm-up B targeted /workspace-b/...
+    // Never the reverse.
+    expect(
+      warmUpCalls.some(
+        ([rootPath, requestedPath]) =>
+          rootPath === "/workspace-a" && requestedPath === pathA,
+      ),
+    ).toBe(true);
+    expect(
+      warmUpCalls.some(
+        ([rootPath, requestedPath]) =>
+          rootPath === "/workspace-b" && requestedPath === pathB,
+      ),
+    ).toBe(true);
+    expect(
+      warmUpCalls.every(
+        ([rootPath, requestedPath]) =>
+          (rootPath === "/workspace-a" && requestedPath.startsWith("/workspace-a/")) ||
+          (rootPath === "/workspace-b" && requestedPath.startsWith("/workspace-b/")),
+      ),
+    ).toBe(true);
   });
 
   it("does not warm up the PHP probe at open for a PHP project in basic mode", async () => {
@@ -1709,6 +2763,214 @@ describe("useWorkbenchController preview tabs", () => {
     expect(readTextFile).not.toHaveBeenCalledWith(stalePath);
   });
 
+  it("aggregates files, symbols and actions into one Search Everywhere model", async () => {
+    const userSymbol: ProjectSymbolSearchResult = {
+      column: 7,
+      containerName: null,
+      fullyQualifiedName: "App\\Models\\User",
+      kind: "class",
+      lineNumber: 12,
+      name: "User",
+      path: "/workspace/app/Models/User.php",
+      relativePath: "app/Models/User.php",
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [userSymbol],
+      // The file/symbol gateways are already query-filtered upstream; return the
+      // fixtures regardless so this test focuses on aggregation, while the
+      // action section is filtered here by the live query (matches "search").
+      searchFiles: vi.fn(async () => [
+        {
+          name: "User.php",
+          path: "/workspace/app/Models/User.php",
+          relativePath: "app/Models/User.php",
+        },
+      ]),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+      getWorkbench().setSearchEverywhereQuery("search");
+    });
+    await flushSearchEverywhereDebounce();
+
+    const sections = getWorkbench().searchEverywhereModel.sections;
+    expect(sections.map((section) => section.kind)).toEqual([
+      "file",
+      "symbol",
+      "action",
+    ]);
+    expect(sections[0].items[0]).toMatchObject({ kind: "file" });
+    expect(sections[1].items[0]).toMatchObject({ kind: "symbol" });
+    expect(
+      sections[2].items.every((item) => item.kind === "action"),
+    ).toBe(true);
+  });
+
+  it("dispatches Search Everywhere file, symbol and action results correctly", async () => {
+    const symbol: ProjectSymbolSearchResult = {
+      column: 7,
+      containerName: null,
+      fullyQualifiedName: "App\\Models\\User",
+      kind: "class",
+      lineNumber: 12,
+      name: "User",
+      path: "/workspace/app/Models/User.php",
+      relativePath: "app/Models/User.php",
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [symbol],
+      searchFiles: vi.fn(async () => [
+        {
+          name: "User.php",
+          path: "/workspace/app/Models/User.php",
+          relativePath: "app/Models/User.php",
+        },
+      ]),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    // Symbol -> open file + reveal at the symbol position.
+    await act(async () => {
+      await getWorkbench().activateSearchEverywhereItem({
+        id: "symbol:0:/workspace/app/Models/User.php:12:7",
+        kind: "symbol",
+        label: "User",
+        detail: "class · app/Models/User.php:12",
+        symbol,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(false);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: "/workspace/app/Models/User.php",
+      position: { column: 7, lineNumber: 12 },
+    });
+
+    // Action -> runs the command (re-open then activate the action).
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+    });
+    const showCommands = getWorkbench().commands.find(
+      (candidate) => candidate.id === "commands.show",
+    );
+    expect(showCommands).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().activateSearchEverywhereItem({
+        id: "action:0:commands.show",
+        kind: "action",
+        label: showCommands?.title ?? "",
+        detail: "Workbench",
+        shortcut: null,
+        command: showCommands!,
+      });
+    });
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(false);
+    expect(getWorkbench().paletteOpen).toBe(true);
+  });
+
+  it("drops stale Search Everywhere results after switching project tabs", async () => {
+    const slowSearch = createDeferred<FileSearchResult[]>();
+    let firstQuery = true;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      searchFiles: vi.fn(async () => {
+        if (firstQuery) {
+          firstQuery = false;
+          return slowSearch.promise;
+        }
+
+        return [];
+      }),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+      getWorkbench().setSearchEverywhereQuery("user");
+    });
+    // Let the debounce fire so the slow search is in flight against workspace-a.
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    // The stale search now resolves; its results must be dropped.
+    await act(async () => {
+      slowSearch.resolve([
+        {
+          name: "Stale.php",
+          path: "/workspace-a/app/Stale.php",
+          relativePath: "app/Stale.php",
+        },
+      ]);
+      await slowSearch.promise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    const fileItems = getWorkbench()
+      .searchEverywhereModel.sections.flatMap((section) => section.items)
+      .filter((item) => item.kind === "file");
+    expect(fileItems).toHaveLength(0);
+  });
+
+  it("opening Search Everywhere closes the dialogs it aggregates", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+      getWorkbench().setClassOpenOpen(true);
+      getWorkbench().setPaletteOpen(true);
+      getWorkbench().setWorkspaceSymbolsOpen(true);
+    });
+
+    act(() => {
+      getWorkbench().openSearchEverywhere();
+    });
+
+    expect(getWorkbench().searchEverywhereOpen).toBe(true);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().classOpenOpen).toBe(false);
+    expect(getWorkbench().paletteOpen).toBe(false);
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(false);
+  });
+
   it("ignores stale open file errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
@@ -1889,6 +3151,163 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
       expect.objectContaining({ path }),
     );
+  });
+
+  it("populates a Quick Open document immediately when a delayed read resolves", async () => {
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const read = createDeferred<string>();
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      return read.promise;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activeDocument).toBeNull();
+
+    let openPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      openPromise = getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath: "app/Http/Controllers/CommentController.php",
+      });
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().activeDocument).toBeNull();
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      read.resolve("<?php\nfinal class CommentController {}\n");
+      await openPromise;
+    });
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nfinal class CommentController {}\n",
+    );
+  });
+
+  it("refreshes a Quick Open PHP document when the initial read is unexpectedly empty", async () => {
+    const path =
+      "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const source =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+    let readCount = 0;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      readCount += 1;
+      return readCount === 1 ? "" : source;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(documentReadCount(readTextFile)).toBe(2);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(source);
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === path)
+        ?.content,
+    ).toBe(source);
+  });
+
+  it("refreshes an already-open empty Quick Open PHP document without reopening", async () => {
+    const path =
+      "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const source =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+    let readCount = 0;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      expect(requestedPath).toBe(path);
+      readCount += 1;
+      return readCount < 3 ? "" : source;
+    });
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      session: {
+        activePath: path,
+        bottomPanelView: "terminal" as const,
+        openPaths: [path],
+        sidebarView: "files" as const,
+      },
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings,
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(documentReadCount(readTextFile)).toBe(2);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(documentReadCount(readTextFile)).toBe(3);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe(source);
   });
 
   it("reports an in-flight open while reading the file and clears it once visible", async () => {
@@ -3783,6 +5202,156 @@ describe("useWorkbenchController preview tabs", () => {
           notice.message.includes("Invalid class"),
       ),
     ).toBe(false);
+  });
+
+  it("suppresses an UnknownDocument feature error for a document that is not open", async () => {
+    // RACE: a Monaco feature provider (hover/completion/codeAction) reports its
+    // error through onLanguageServerError -> reportLanguageServerError. If the
+    // tab was closed (didClose) between flushing the document change and the
+    // server's reply, phpactor answers with UnknownDocument for a path that is
+    // no longer synced. That is a benign desync, not a real failure, so it must
+    // not surface a false error toast or status message.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 821,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    // The document was never opened on the server (the tab is already closed),
+    // so its path is absent from the synced set.
+    const closedPath = "/workspace/app/Models/User.php";
+    const error = `UnknownDocument: Unknown text document "${fileUriFromPath(
+      closedPath,
+    )}"`;
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("UnknownDocument"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().message).toBeNull();
+  });
+
+  it("still reports a legitimate language server feature error", async () => {
+    // A genuine LSP failure (not UnknownDocument) reported through the Monaco
+    // feature path must continue to surface a notice and status message.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 822,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    const error = "Internal error: completion provider crashed";
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("completion provider crashed"),
+      ),
+    ).toBe(true);
+    expect(getWorkbench().message).toBe(error);
+  });
+
+  it("still reports an UnknownDocument error for an open, synced document", async () => {
+    // An UnknownDocument error for a document that IS still open is a real
+    // desync problem, not the benign close race, so it must remain visible.
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 823,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    const error = `UnknownDocument: Unknown text document "${fileUriFromPath(
+      path,
+    )}"`;
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(error);
+    });
+
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("UnknownDocument"),
+      ),
+    ).toBe(true);
+    expect(getWorkbench().message).toBe(error);
   });
 
   it("drops a phpactor publication older than the last applied diagnostic", async () => {
@@ -6103,6 +7672,574 @@ describe("useWorkbenchController preview tabs", () => {
         vi.mocked(featuresGatewayInstance.formatting).mock
           .invocationCallOrder[0],
       );
+    });
+  });
+
+  describe("optimize imports on save", () => {
+    const phpWithUnusedImport = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "use App\\Services\\UsedService;",
+      "use App\\Services\\UnusedService;",
+      "",
+      "class Foo",
+      "{",
+      "    public function bar(UsedService $service): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    const phpWithOptimizedImport = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "use App\\Services\\UsedService;",
+      "",
+      "class Foo",
+      "{",
+      "    public function bar(UsedService $service): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    it("optimizes PHP imports before writing when optimizeImportsOnSave is enabled", async () => {
+      const path = "/workspace/src/Foo.php";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithOptimizedImport);
+      expect(getWorkbench().activeDocument?.content).toBe(
+        phpWithOptimizedImport,
+      );
+    });
+
+    it("does not change PHP imports on save when optimizeImportsOnSave is disabled", async () => {
+      const path = "/workspace/src/Foo.php";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithUnusedImport);
+    });
+
+    it("leaves non-PHP documents untouched even when optimizeImportsOnSave is enabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const content = "import { used } from './used';\nused();\n";
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile: vi.fn(async () => content),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(content);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, content);
+    });
+
+    it("formats first then optimizes imports on the formatted content", async () => {
+      const path = "/workspace/src/Foo.php";
+      const runningPhpStatus: LanguageServerRuntimeStatus = {
+        capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 91,
+      };
+      const phpFeaturesGateway = featuresGateway();
+      const lines = phpWithUnusedImport.split("\n");
+      // The formatter rewrites the whole document but still leaves the unused
+      // import in place; optimize-imports must then run on that formatted output
+      // and drop it before the file is written.
+      vi.mocked(phpFeaturesGateway.formatting).mockResolvedValue([
+        {
+          newText: phpWithUnusedImport,
+          range: {
+            end: {
+              character: lines[lines.length - 1]?.length ?? 0,
+              line: lines.length - 1,
+            },
+            start: { character: 0, line: 0 },
+          },
+        },
+      ]);
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        languageServerFeaturesGateway: phpFeaturesGateway,
+        runtimeStatus: runningPhpStatus,
+        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+          optimizeImportsOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "Foo.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(phpWithUnusedImport);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(phpFeaturesGateway.formatting).toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, phpWithOptimizedImport);
+    });
+
+    describe("JavaScript/TypeScript via LSP organizeImports", () => {
+      const runningJavaScriptTypeScriptOrganizeStatus =
+        (): LanguageServerRuntimeStatus => ({
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            codeAction: true,
+          },
+          kind: "running",
+          rootPath: "/workspace",
+          sessionId: 940,
+        });
+
+      const tsWithUnsortedImports = [
+        "import { b } from './b';",
+        "import { a } from './a';",
+        "",
+        "a();",
+        "b();",
+        "",
+      ].join("\n");
+
+      const tsWithOrganizedImports = [
+        "import { a } from './a';",
+        "import { b } from './b';",
+        "",
+        "a();",
+        "b();",
+        "",
+      ].join("\n");
+
+      const organizeImportsAction = (
+        path: string,
+        original: string,
+        organized: string,
+      ): LanguageServerCodeAction => {
+        const lines = original.split("\n");
+
+        return {
+          command: null,
+          data: null,
+          edit: {
+            changes: {
+              [fileUriFromPath(path)]: [
+                {
+                  newText: organized,
+                  range: {
+                    end: {
+                      character: lines[lines.length - 1]?.length ?? 0,
+                      line: lines.length - 1,
+                    },
+                    start: { character: 0, line: 0 },
+                  },
+                },
+              ],
+            },
+          },
+          isPreferred: false,
+          kind: "source.organizeImports",
+          title: "Organize Imports",
+        };
+      };
+
+      it("organizes JS/TS imports through the LSP before writing when optimizeImportsOnSave is enabled", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          organizeImportsAction(
+            path,
+            tsWithUnsortedImports,
+            tsWithOrganizedImports,
+          ),
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.organizeImports"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithOrganizedImports);
+        expect(getWorkbench().activeDocument?.content).toBe(
+          tsWithOrganizedImports,
+        );
+      });
+
+      it("does not organize JS/TS imports on save when optimizeImportsOnSave is disabled", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: false,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("still saves the JS/TS document when the organizeImports request throws", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockRejectedValue(
+          new Error("code action crashed"),
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("saves without organizing when the JS/TS server lacks code action support", async () => {
+        const path = "/workspace/src/App.ts";
+        const noCodeActionStatus: LanguageServerRuntimeStatus = {
+          capabilities: emptyLanguageServerCapabilities(),
+          kind: "running",
+          rootPath: "/workspace",
+          sessionId: 941,
+        };
+        const featuresGatewayInstance = featuresGateway();
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus: noCodeActionStatus,
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus: noCodeActionStatus,
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
+      it("does not apply or write organize-imports edits after switching project tabs while the request is pending", async () => {
+        const path = "/workspace-a/src/App.ts";
+        const runningStatus: LanguageServerRuntimeStatus = {
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            codeAction: true,
+          },
+          kind: "running",
+          sessionId: 942,
+        };
+        const codeActionResult = createDeferred<LanguageServerCodeAction[]>();
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async () => codeActionResult.promise,
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace-a",
+            workspaceTabs: ["/workspace-a", "/workspace-b"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus: runningStatus,
+          readTextFile: vi.fn(async (requestedPath: string) =>
+            requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+          ),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        let savePromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          savePromise = getWorkbench().saveActiveDocument();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => {
+          // The organize request must target the root the save started in, not
+          // whatever becomes active later.
+          expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+            "/workspace-a",
+            path,
+            expect.anything(),
+            expect.objectContaining({ only: ["source.organizeImports"] }),
+          );
+        });
+
+        let switchPromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+        });
+        await vi.waitFor(() => {
+          expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        });
+
+        act(() => {
+          codeActionResult.resolve([
+            organizeImportsAction(
+              path,
+              tsWithUnsortedImports,
+              tsWithOrganizedImports,
+            ),
+          ]);
+        });
+        await act(async () => {
+          await Promise.all([savePromise, switchPromise]);
+        });
+        await flushAsyncTurns(24);
+
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).not.toHaveBeenCalledWith(path, tsWithOrganizedImports);
+      });
     });
   });
 
@@ -8449,6 +10586,22 @@ describe("useWorkbenchController preview tabs", () => {
       status: "modified" as const,
     };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8463,9 +10616,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8492,6 +10658,22 @@ describe("useWorkbenchController preview tabs", () => {
     const change = gitChangedFile("src/User.php", false);
     const stagedChange = { ...change, isStaged: true };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8506,6 +10688,7 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => ({
         branch: "main",
@@ -8513,7 +10696,19 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8532,9 +10727,130 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
   });
 
+  it("stages a single hunk through the gateway and applies the refreshed status", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    const stagedChange = { ...change, isStaged: true };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stageHunk = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [stagedChange],
+      isRepository: true,
+      rootPath,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().stageGitHunk("src/User.php", 1);
+    });
+
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 1);
+    expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
+  });
+
+  it("unstages a single hunk through the gateway and applies the refreshed status", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const unstagedChange = { ...change, isStaged: false };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.unstageHunk = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [unstagedChange],
+      isRepository: true,
+      rootPath,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().unstageGitHunk("src/User.php", 0);
+    });
+
+    expect(gitGateway.unstageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    expect(getWorkbench().gitStatus.changes).toEqual([unstagedChange]);
+  });
+
+  it("surfaces hunk-staging gateway failures without throwing (safe no-op)", async () => {
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.stageHunk = vi.fn(async () => {
+      throw new Error("patch does not apply");
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().stageGitHunk("src/User.php", 0);
+    });
+
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    // A rejected patch must not leave the operation spinner stuck.
+    expect(getWorkbench().gitOperationLoading).toBe(false);
+  });
+
+  it("loads a file's hunks through the gateway for the active workspace", async () => {
+    const hunks = [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+    ];
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getFileHunks = vi.fn(async () => hunks);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    let loaded: typeof hunks = [];
+    await act(async () => {
+      loaded = await getWorkbench().loadGitFileHunks("src/User.php", false);
+    });
+
+    expect(gitGateway.getFileHunks).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      false,
+    );
+    expect(loaded).toEqual(hunks);
+  });
+
   it("commits staged Git changes and clears the commit message", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -8554,9 +10870,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8592,6 +10921,22 @@ describe("useWorkbenchController preview tabs", () => {
     const included = gitChangedFile("src/User.php", true);
     const excluded = gitChangedFile("test.txt", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [excluded],
@@ -8611,9 +10956,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8648,6 +11006,22 @@ describe("useWorkbenchController preview tabs", () => {
     const staged = gitChangedFile("src/User.php", true);
     const unstaged = gitChangedFile("src/User.php", false);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8662,9 +11036,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8706,6 +11093,22 @@ describe("useWorkbenchController preview tabs", () => {
       status: "untracked" as const,
     };
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8720,9 +11123,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8758,6 +11174,22 @@ describe("useWorkbenchController preview tabs", () => {
   it("commits included files and pushes the branch", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -8782,9 +11214,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8820,6 +11265,22 @@ describe("useWorkbenchController preview tabs", () => {
   it("resets Git operation UI state when switching workspaces", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
@@ -8834,9 +11295,22 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -8873,6 +11347,22 @@ describe("useWorkbenchController preview tabs", () => {
   it("keeps post-commit status visible and reports when push fails", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
         changes: [],
@@ -8894,9 +11384,22 @@ describe("useWorkbenchController preview tabs", () => {
       push: vi.fn(async () => {
         throw new Error("no upstream configured");
       }),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -14339,6 +16842,98 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.phpFileOutlineGateway.parsePhpFileOutline,
     ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
+  });
+
+  it("uses live-parse signature metadata for PHP file structure even when the index is non-empty", async () => {
+    const path = "/workspace/app/UserService.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(
+        async () => "<?php\nclass UserService { public function handle() {} }\n",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+
+    dependencies.phpFileOutlineGateway.getPhpFileOutline = vi.fn(async () => ({
+      nodes: [
+        {
+          children: [
+            {
+              children: [],
+              column: 5,
+              fullyQualifiedName: "UserService::handle",
+              id: "indexed-handle",
+              kind: "method" as const,
+              label: "handle",
+              lineNumber: 2,
+              path,
+              relativePath: "app/UserService.php",
+            },
+          ],
+          column: 1,
+          fullyQualifiedName: "UserService",
+          id: "indexed-class",
+          kind: "class" as const,
+          label: "UserService",
+          lineNumber: 1,
+          path,
+          relativePath: "app/UserService.php",
+        },
+      ],
+    }));
+    dependencies.phpFileOutlineGateway.parsePhpFileOutline = vi.fn(async () => ({
+      nodes: [
+        {
+          children: [
+            {
+              children: [],
+              column: 5,
+              fullyQualifiedName: "UserService::handle",
+              id: "live-handle",
+              kind: "method" as const,
+              label: "handle",
+              lineNumber: 2,
+              parameters: [{ name: "$request", type: "Request" }],
+              path,
+              relativePath: "app/UserService.php",
+              returnType: "void",
+              visibility: "public" as const,
+            },
+          ],
+          column: 1,
+          fullyQualifiedName: "UserService",
+          id: "live-class",
+          kind: "class" as const,
+          label: "UserService",
+          lineNumber: 1,
+          path,
+          relativePath: "app/UserService.php",
+        },
+      ],
+    }));
+
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.phpFileOutlineGateway.parsePhpFileOutline).toHaveBeenCalledWith(
+      path,
+      expect.stringContaining("UserService"),
+    );
+
+    const method = getWorkbench().fileStructureOutline?.nodes[0]?.children[0];
+    expect(method?.visibility).toBe("public");
+    expect(method?.returnType).toBe("void");
+    expect(method?.parameters).toEqual([{ name: "$request", type: "Request" }]);
   });
 
   it("stops reading stale inherited PHP file structure candidates after switching project tabs", async () => {
@@ -21673,6 +24268,104 @@ class PageRepository
     });
   });
 
+  it("resolves a basic-mode method call instantly without a project-wide file search", async () => {
+    // Performance / Fleet-parity guard for the slow path. Method-call
+    // navigation resolves the receiver's class through
+    // resolvePhpClassSourcePaths. In basic (light) mode that class lives at its
+    // deterministic PSR-4 path, so resolution must come straight from that
+    // verified candidate. It must NOT fall back to the project-wide fuzzy
+    // fileSearch.searchFiles (the cold 5-10s tree walk on large repos like
+    // kontentino) on every Cmd+B. If this regresses, basic-mode method
+    // navigation goes slow again.
+    const controllerPath =
+      "/workspace/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace/app/Services/CommentsService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentsService;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentsService $commentsService,
+    ) {}
+
+    public function store(): void
+    {
+        $this->commentsService->create();
+    }
+}
+`;
+    const serviceSource = `<?php
+namespace App\\Services;
+
+class CommentsService
+{
+    public function create(): void
+    {
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const searchFiles = vi.fn(async () => []);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchFiles,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$this->commentsService->create"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(servicePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: servicePath,
+      position: {
+        column: 21,
+        lineNumber: lineNumberOf(serviceSource, "public function create"),
+      },
+    });
+    expect(searchFiles).not.toHaveBeenCalled();
+  });
+
   it("navigates an interface type-hint to its definition without Smart Index", async () => {
     const servicePath = "/workspace/app/Services/PageService.php";
     const interfacePath =
@@ -23052,6 +25745,24 @@ class Request
         },
       ],
     });
+
+    const inlaySource = controllerSource.replace(
+      "$request->get",
+      "$request->get($id, 5)",
+    );
+    const inlayCallLine = inlaySource
+      .split("\n")
+      .findIndex((line) => line.includes("$request->get("));
+
+    await expect(
+      getWorkbench().providePhpParameterInlayHints(inlaySource, {
+        endLine: inlayCallLine,
+        startLine: inlayCallLine,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ name: "key" }),
+      expect.objectContaining({ name: "default" }),
+    ]);
   });
 
   it("uses semantic types from properties, assignments and static calls", async () => {
@@ -34982,6 +37693,308 @@ Route::post('/comments', [CommentController::class, 'store'])
     ]);
   });
 
+  it("suggests Laravel gate abilities inside Gate::allows strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace/app/Providers/AuthServiceProvider.php";
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function check(): bool
+    {
+        return Gate::allows('upd');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return `<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+Gate::define('delete-post', [PostPolicy::class, 'delete']);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "upd"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Providers/AuthServiceProvider.php",
+        insertText: "update-post",
+        kind: "config",
+        name: "update-post",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel gate abilities inside $user->can strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace/app/Providers/AuthServiceProvider.php";
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function update($user): bool
+    {
+        return $user->can('del');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return `<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+Gate::define('delete-post', [PostPolicy::class, 'delete']);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "del"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Providers/AuthServiceProvider.php",
+        insertText: "delete-post",
+        kind: "config",
+        name: "delete-post",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel middleware aliases inside ->middleware strings", async () => {
+    const routesPath = "/workspace/routes/web.php";
+    const kernelPath = "/workspace/app/Http/Kernel.php";
+    const routesSource = `<?php
+
+Route::get('/admin')->middleware('ver');
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return routesSource;
+        }
+
+        if (path === kernelPath) {
+          return `<?php
+
+class Kernel extends HttpKernel
+{
+    protected $middlewareAliases = [
+        'auth' => Authenticate::class,
+        'verified' => EnsureEmailIsVerified::class,
+    ];
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "middlewareAliases"
+          ? [
+              {
+                column: 5,
+                lineNumber: 5,
+                lineText: "    protected $middlewareAliases = [",
+                path: kernelPath,
+                relativePath: "app/Http/Kernel.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "ver"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "app/Http/Kernel.php",
+        insertText: "verified",
+        kind: "config",
+        name: "verified",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("stops stale Laravel gate ability completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/PostController.php";
+    const providerPath = "/workspace-a/app/Providers/AuthServiceProvider.php";
+    const staleProviderRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class PostController
+{
+    public function check(): bool
+    {
+        return Gate::allows('upd');
+    }
+}
+`;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return staleProviderRead.promise;
+        }
+
+        return "";
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Gate::define"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Gate::define('update-post', ...);",
+                path: providerPath,
+                relativePath: "app/Providers/AuthServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PostController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "upd"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(completionsPromise).not.toBeNull();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleProviderRead.resolve(`<?php
+Gate::define('update-post', [PostPolicy::class, 'update']);
+`);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("suggests Laravel named routes inside named route helper arguments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";
@@ -45158,9 +48171,58 @@ final class InvoiceAdapter
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(documentReadCount(readTextFile)).toBe(1);
     expect(getWorkbench().activePath).toBe(file.path);
     expect(getWorkbench().activeDocument?.content).toContain(file.path);
+  });
+
+  it("re-reads when Quick Open finds empty prefetched content for a non-empty file", async () => {
+    const path = "/workspace/app/Http/Controllers/publicapi/AiHub/CommentController.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry(path, "CommentController.php");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(readTextFile).toHaveBeenCalledWith(path);
+
+    contentsByPath[path] =
+      "<?php\nnamespace App\\Http\\Controllers\\publicapi\\AiHub;\n\nfinal class CommentController {}\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "CommentController.php",
+        path,
+        relativePath:
+          "app/Http/Controllers/publicapi/AiHub/CommentController.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(documentReadCount(readTextFile)).toBe(2);
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toContain(
+      "final class CommentController",
+    );
   });
 
   it("invalidates the prefetch cache for a file after it is saved", async () => {
@@ -45192,7 +48254,7 @@ final class InvoiceAdapter
     });
     await flushAsyncTurns();
 
-    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(documentReadCount(readTextFile)).toBe(1);
 
     await act(async () => {
       getWorkbench().updateActiveDocument("<?php\n// edited\n");
@@ -45392,6 +48454,999 @@ final class InvoiceAdapter
 
     expect(getWorkbench().settingsOpen).toBe(true);
     expect(getWorkbench().settingsInitialSection).toBe("appearance");
+  });
+
+  it("offers an extract-interface code action that creates a sibling interface file and adds implements", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+
+    public function farewell(string $name): string
+    {
+        return "Bye {$name}";
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === "/workspace/app/Services/GreeterInterface.php") {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    expect(extractInterface?.newFile?.path).toBe(
+      "/workspace/app/Services/GreeterInterface.php",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "namespace App\\Services;",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "interface GreeterInterface",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "public function greet(string $name): string;",
+    );
+    expect(extractInterface?.newFile?.content).toContain(
+      "public function farewell(string $name): string;",
+    );
+    expect(extractInterface?.edits[0]?.text).toContain(
+      "implements GreeterInterface",
+    );
+  });
+
+  it("offers a Create class quick fix on a `new UnknownClass()` reference", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new MailDispatcher();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target class does not exist yet on disk.
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("MailDispatcher");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createClass = actions.find(
+      (action) => action.title === "Create class MailDispatcher",
+    );
+    expect(createClass).toBeDefined();
+    expect(createClass?.isPreferred).toBe(true);
+    expect(createClass?.kind).toBe("quickfix");
+    expect(createClass?.edits).toEqual([]);
+    expect(createClass?.newFile?.path).toBe(
+      "/workspace/app/Services/MailDispatcher.php",
+    );
+    expect(createClass?.newFile?.content).toBe(
+      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+    );
+  });
+
+  it("resolves the destination through a use-import alias for Create class", async () => {
+    const classPath = "/workspace/app/Http/Controller.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Services\\Mailer as Sender;
+
+class Controller
+{
+    public function run(): void
+    {
+        $service = new Sender();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Controller.php"));
+    });
+
+    const cursor = classSource.indexOf("new Sender") + "new ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createClass = actions.find((action) =>
+      action.title.startsWith("Create class"),
+    );
+    expect(createClass?.title).toBe("Create class Mailer");
+    expect(createClass?.newFile?.path).toBe(
+      "/workspace/app/Services/Mailer.php",
+    );
+    expect(createClass?.newFile?.content).toContain(
+      "namespace App\\Services;",
+    );
+    expect(createClass?.newFile?.content).toContain("class Mailer");
+  });
+
+  it("offers Create interface on an `implements UnknownInterface` reference", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter implements Greetable
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Greetable");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const createInterface = actions.find((action) =>
+      action.title.startsWith("Create interface"),
+    );
+    expect(createInterface?.title).toBe("Create interface Greetable");
+    expect(createInterface?.newFile?.path).toBe(
+      "/workspace/app/Services/Greetable.php",
+    );
+    expect(createInterface?.newFile?.content).toContain(
+      "interface Greetable",
+    );
+  });
+
+  it("offers no Create class quick fix when the referenced class already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const targetPath = "/workspace/app/Services/Mailer.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new Mailer();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The referenced class already exists at its PSR-4 path.
+        if (path === targetPath) {
+          return "<?php\n\nnamespace App\\Services;\n\nclass Mailer\n{\n}\n";
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("new Mailer") + "new ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create class")),
+    ).toBe(false);
+  });
+
+  it("offers no Create class quick fix for a PHP built-in (\\Exception)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        throw new \\Exception('boom');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : Promise.reject(new Error("ENOENT")),
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Exception");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create")),
+    ).toBe(false);
+  });
+
+  it("offers no Create class quick fix when the PSR-4 destination is unknown (vendor namespace)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $client = new \\Vendor\\Sdk\\Client();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : Promise.reject(new Error("ENOENT")),
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("Vendor");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create class")),
+    ).toBe(false);
+  });
+
+  it("writes the Create class skeleton file with no in-document edit", async () => {
+    const skeletonPath = "/workspace/app/Services/MailDispatcher.php";
+    const skeletonContent =
+      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n";
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        // The skeleton target does not exist yet (existence probe rejects).
+        if (path === skeletonPath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: skeletonContent,
+        path: skeletonPath,
+      });
+    });
+
+    expect(written).toBe(true);
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenCalledWith(skeletonPath, skeletonContent);
+  });
+
+  it("drops a stale Create class offer after switching workspace tabs mid-probe", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const targetPath = "/workspace/app/Services/MailDispatcher.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $service = new MailDispatcher();
+    }
+}
+`;
+    const existenceProbe = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // Block the existence/destination probe so we can switch tabs mid-flight.
+        if (path === targetPath) {
+          return existenceProbe.promise;
+        }
+
+        throw new Error("ENOENT");
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("MailDispatcher");
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: cursor,
+        start: cursor,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(targetPath);
+    });
+
+    // Switch to another workspace before the probe resolves.
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    await act(async () => {
+      existenceProbe.reject(new Error("ENOENT"));
+    });
+    await flushAsyncTurns();
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+    // The stale offer must not write into the now-inactive workspace.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(targetPath, expect.anything());
+  });
+
+  it("offers a remove-unused-import quick-fix on an unused use line", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Used;
+use App\\Models\\Unused;
+
+class Greeter
+{
+    public function greet(Used $used): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("App\\Models\\Unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeImport = actions.find((action) =>
+      action.title.startsWith("Remove unused import"),
+    );
+    expect(removeImport?.title).toBe(
+      "Remove unused import App\\Models\\Unused",
+    );
+
+    const edit = removeImport?.edits[0];
+    expect(edit?.text).toBe("");
+    expect(edit?.range).toEqual({
+      startColumn: 1,
+      startLineNumber: 6,
+      endColumn: 1,
+      endLineNumber: 7,
+    });
+  });
+
+  it("offers no remove-unused-import quick-fix when the cursor sits on a used import", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Used;
+
+class Greeter
+{
+    public function greet(Used $used): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("App\\Models\\Used");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Remove unused import")),
+    ).toBe(false);
+  });
+
+  it("offers a remove-unused-method quick-fix on an unused private method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): void
+    {
+    }
+
+    private function helper(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("function helper") + "function ".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeMethod = actions.find((action) =>
+      action.title.startsWith("Remove unused method"),
+    );
+    expect(removeMethod?.title).toBe("Remove unused method 'helper'");
+    expect(removeMethod?.edits[0]?.text).toBe("");
+  });
+
+  it("offers a remove-unused-variable quick-fix on a side-effect-free unused local", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): int
+    {
+        $unused = 5;
+        return 1;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("$unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    const removeVariable = actions.find((action) =>
+      action.title.startsWith("Remove unused variable"),
+    );
+    expect(removeVariable?.title).toBe("Remove unused variable $unused");
+    expect(removeVariable?.edits[0]?.text).toBe("");
+  });
+
+  it("does not offer a remove-unused-variable quick-fix for a side-effecting assignment", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): int
+    {
+        $unused = $this->compute();
+        return 1;
+    }
+
+    private function compute(): int
+    {
+        return 5;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("$unused");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) =>
+        action.title.startsWith("Remove unused variable"),
+      ),
+    ).toBe(false);
+  });
+
+  it("persists an extract-interface new file to disk and opens it in a tab", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const diskContents = new Map<string, string>();
+    const writeTextFile = vi.fn(async (path: string, content: string) => {
+      diskContents.set(path, content);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        const written = diskContents.get(path);
+
+        if (written !== undefined) {
+          return written;
+        }
+
+        // The interface does not exist yet, so the existence probe must reject
+        // (mirrors the gateway rejecting a missing path) and the write path runs.
+        if (path === interfacePath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFiles: { writeTextFile },
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+    expect(extractInterface?.newFile).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().applyPhpCodeActionNewFile(extractInterface!.newFile!);
+    });
+    await flushAsyncTurns();
+
+    // The interface is a REAL file on disk (written via the gateway), not an
+    // in-memory monaco model that would vanish on reopen.
+    expect(writeTextFile).toHaveBeenCalledWith(
+      interfacePath,
+      expect.stringContaining("interface GreeterInterface"),
+    );
+    // And it is opened in a tab (PhpStorm parity).
+    expect(getWorkbench().activePath).toBe(interfacePath);
+  });
+
+  it("does not offer extract interface when the sibling interface already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The sibling interface already exists: the preflight probe resolves,
+        // so the action must not be offered.
+        if (path === interfacePath) {
+          return "<?php\n\ninterface GreeterInterface\n{\n    // hand-edited\n}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const extractInterface = actions.find(
+      (action) => action.title === "Extract interface",
+    );
+
+    expect(extractInterface).toBeUndefined();
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
+    expect(getWorkbench().activePath).toBe(classPath);
+  });
+
+  it("drops a stale extract-interface disk write after switching workspace tabs", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return "Hi {$name}";
+    }
+}
+`;
+    const existenceProbe = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // Block the existence probe so we can switch workspaces mid-flight.
+        if (path === interfacePath) {
+          return existenceProbe.promise;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("class Greeter");
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: cursor,
+        start: cursor,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.workspaceGateways.files.readTextFile).toHaveBeenCalledWith(
+        interfacePath,
+      );
+    });
+
+    // Switch to another workspace before the preflight probe resolves.
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    await act(async () => {
+      existenceProbe.reject(new Error("ENOENT"));
+    });
+    await flushAsyncTurns();
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+    // The stale creation must not write into the now-inactive workspace.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
+  });
+
+  it("offers no extract-interface code action for an abstract class", async () => {
+    const classPath = "/workspace/app/Services/Base.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+abstract class Base
+{
+    public function run(): void {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Base.php"));
+    });
+
+    const cursor = classSource.indexOf("class Base");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract interface"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-interface code action when the class has no public instance methods", async () => {
+    const classPath = "/workspace/app/Services/OnlyPrivate.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class OnlyPrivate
+{
+    private function secret(): void {}
+
+    public function __construct() {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "OnlyPrivate.php"));
+    });
+
+    const cursor = classSource.indexOf("class OnlyPrivate");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract interface"),
+    ).toBe(false);
   });
 
   it("offers an implement-methods code action for an unimplemented interface", async () => {
@@ -45970,6 +50025,428 @@ class BaseService
     await expect(actionsPromise).resolves.toEqual([]);
   });
 
+  it("navigates from an overriding method to the parent class super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(string $name): string
+    {
+        return parent::handle($name);
+    }
+}
+`;
+    const parentSource = `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return parentSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(parentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: parentPath,
+      position: positionAfter(parentSource, "function "),
+    });
+  });
+
+  it("navigates from an implementing method to the interface declaration", async () => {
+    const classPath = "/workspace/app/Services/FileMailer.php";
+    const interfacePath = "/workspace/app/Contracts/Mailer.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\Mailer;
+
+class FileMailer implements Mailer
+{
+    public function send(string $body): void
+    {
+    }
+}
+`;
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface Mailer
+{
+    public function send(string $body): void;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "FileMailer.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function send"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: positionAfter(interfaceSource, "function "),
+    });
+  });
+
+  it("navigates from a method to the trait that declares it", async () => {
+    const classPath = "/workspace/app/Services/Reporter.php";
+    const traitPath = "/workspace/app/Concerns/FormatsReports.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Concerns\\FormatsReports;
+
+class Reporter
+{
+    use FormatsReports;
+
+    public function format(string $body): string
+    {
+        return $body;
+    }
+}
+`;
+    const traitSource = `<?php
+
+namespace App\\Concerns;
+
+trait FormatsReports
+{
+    public function format(string $body): string
+    {
+        return strtoupper($body);
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === traitPath) {
+          return traitSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Reporter.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function format"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(traitPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: traitPath,
+      position: positionAfter(traitSource, "function "),
+    });
+  });
+
+  it("walks the hierarchy to the nearest ancestor that declares the super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const middlePath = "/workspace/app/Services/MiddleService.php";
+    const basePath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends MiddleService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const middleSource = `<?php
+
+namespace App\\Services;
+
+class MiddleService extends BaseService
+{
+    public function other(): void
+    {
+    }
+}
+`;
+    const baseSource = `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === middlePath) {
+          return middleSource;
+        }
+
+        if (path === basePath) {
+          return baseSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(basePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: basePath,
+      position: positionAfter(baseSource, "function "),
+    });
+  });
+
+  it("shows a notice when the current method does not override a super method", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function uniqueToChild(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function uniqueToChild"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "editor.goToSuperMethod");
+    });
+
+    expect(getWorkbench().activePath).toBe(classPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").toContain("No super method");
+  });
+
+  it("drops stale go to super method targets after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Child.php";
+    const parentPath = "/workspace-a/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+    const parentRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === parentPath) {
+        return parentRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(classSource, "function handle"),
+      );
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = runCommand(getWorkbench(), "editor.goToSuperMethod");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(parentPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    parentRead.resolve(`<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(parentPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").not.toContain("No super method");
+  });
+
   it("offers a generate getters and setters action for properties without accessors", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
@@ -46014,6 +50491,239 @@ class Account
       "public function setName(string $name): void",
     );
     expect(accessorText).toContain("public function getBalance(): int");
+  });
+
+  it("formats generated getters and setters with the class member indentation", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+\tprivate string $name;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const accessorAction = actions.find(
+      (action) => action.title === "Generate getters and setters",
+    );
+    expect(accessorAction).toBeDefined();
+    expect(accessorAction?.edits[0]?.text).toBe(
+      "\n\tpublic function getName(): string\n\t{\n\t    return $this->name;\n\t}\n\n\tpublic function setName(string $name): void\n\t{\n\t    $this->name = $name;\n\t}\n",
+    );
+  });
+
+  it("writes the Extract Interface sibling and authorizes the class edit (no directory create)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const interfaceContent =
+      "<?php\n\nnamespace App\\Services;\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return "hi";
+    }
+}
+`;
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target interface does not exist yet, so the existence probe must
+        // reject (mirrors a missing file on disk).
+        if (path === interfacePath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+    vi.mocked(dependencies.workspaceGateways.files.createDirectory).mockClear();
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: interfaceContent,
+        path: interfacePath,
+      });
+    });
+
+    // The interface file was freshly written, so the command is cleared to
+    // apply the paired `implements` edit.
+    expect(written).toBe(true);
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenCalledWith(interfacePath, interfaceContent);
+    // The sibling directory already exists; the non-idempotent `createDirectory`
+    // (the `File exists (os error 17)` that previously failed the write yet still
+    // edited the class) must never be attempted.
+    expect(
+      dependencies.workspaceGateways.files.createDirectory,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("withholds the Extract Interface class edit when the target already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const interfaceContent =
+      "<?php\n\nnamespace App\\Services;\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return "hi";
+    }
+}
+`;
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target interface ALREADY exists, so the existence probe resolves.
+        if (path === interfacePath) {
+          return "<?php\n\ninterface GreeterInterface\n{\n}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: interfaceContent,
+        path: interfacePath,
+      });
+    });
+
+    // Pre-existing target: never overwritten, and the class edit is withheld so
+    // the class is left unchanged (no partial edit).
+    expect(written).toBe(false);
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).not.toHaveBeenCalledWith(interfacePath, expect.anything());
+  });
+
+  it("withholds the Extract Interface class edit and surfaces a notice when the write fails", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Services/GreeterInterface.php";
+    const interfaceContent =
+      "<?php\n\nnamespace App\\Services;\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return "hi";
+    }
+}
+`;
+    const { getWorkbench, dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        // The target interface does not exist (probe rejects), so the write is
+        // attempted - and then fails.
+        if (path === interfacePath) {
+          throw new Error("ENOENT");
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockRejectedValueOnce(new Error("disk full"));
+
+    let written: boolean | undefined;
+    await act(async () => {
+      written = await getWorkbench().applyPhpCodeActionNewFile({
+        content: interfaceContent,
+        path: interfacePath,
+      });
+    });
+
+    // The write was attempted and failed, so the class edit is withheld (no
+    // partial edit) and a recoverable Extract Interface notice is surfaced.
+    expect(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).toHaveBeenCalledWith(interfacePath, interfaceContent);
+    expect(written).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Extract Interface" &&
+          notice.message.includes("disk full"),
+      ),
+    ).toBe(true);
   });
 
   it("offers no generate getters and setters action when every property has accessors", async () => {
@@ -46533,6 +51243,561 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers an Add parameter code action that appends an optional parameter to a method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("greet(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addParameterAction = actions.find(
+      (action) => action.title === "Add parameter",
+    );
+    expect(addParameterAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addParameterAction!)).toBe(`<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(string $name, $parameter = null): string
+    {
+        return $name;
+    }
+}
+`);
+  });
+
+  it("offers an Add parameter code action on a free function with the cursor in its body", async () => {
+    const filePath = "/workspace/app/helpers.php";
+    const fileSource = `<?php
+
+function add(int $a, int $b): int
+{
+    return $a + $b;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "helpers.php"));
+    });
+
+    const offset = fileSource.indexOf("return $a");
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addParameterAction = actions.find(
+      (action) => action.title === "Add parameter",
+    );
+    expect(addParameterAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(fileSource, addParameterAction!)).toBe(`<?php
+
+function add(int $a, int $b, $parameter = null): int
+{
+    return $a + $b;
+}
+`);
+  });
+
+  it("does not offer Add parameter on an abstract method declaration", async () => {
+    const classPath = "/workspace/app/Contracts/Base.php";
+    const classSource = `<?php
+
+namespace App\\Contracts;
+
+abstract class Base
+{
+    abstract public function handle(string $name): void;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Base.php"));
+    });
+
+    const offset = classSource.indexOf("handle(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add parameter"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add parameter when the cursor is not on any function", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add parameter"),
+    ).toBe(false);
+  });
+
+  it("offers Add return type using the method's PHPDoc @return", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    /**
+     * @return Foo
+     */
+    public function make()
+    {
+        return $this->foo;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addReturnTypeAction!)).toContain(
+      "public function make(): Foo",
+    );
+  });
+
+  it("offers Add return type as void on a free function with no return value", async () => {
+    const filePath = "/workspace/app/helpers.php";
+    const fileSource = `<?php
+
+function log_message($message)
+{
+    error_log($message);
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "helpers.php"));
+    });
+
+    const offset = fileSource.indexOf("error_log");
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(fileSource, addReturnTypeAction!)).toContain(
+      "function log_message($message): void",
+    );
+  });
+
+  it("offers Add return type before the semicolon on an abstract method", async () => {
+    const classPath = "/workspace/app/Contracts/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Contracts;
+
+abstract class Maker
+{
+    /**
+     * @return Foo
+     */
+    abstract public function make();
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addReturnTypeAction = actions.find(
+      (action) => action.title === "Add return type",
+    );
+    expect(addReturnTypeAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addReturnTypeAction!)).toContain(
+      "abstract public function make(): Foo;",
+    );
+  });
+
+  it("does not offer Add return type when the method already declares one", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    public function make(): Foo
+    {
+        return new Foo();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("make(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add return type"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add return type when returns mix types", async () => {
+    const classPath = "/workspace/app/Services/Maker.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Maker
+{
+    public function maybe($flag)
+    {
+        if ($flag) {
+            return 'x';
+        }
+
+        return 123;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Maker.php"));
+    });
+
+    const offset = classSource.indexOf("maybe(");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add return type"),
+    ).toBe(false);
+  });
+
+  it("offers Add type hint using the parameter's PHPDoc @param", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    /**
+     * @param Foo $foo
+     */
+    public function set($foo)
+    {
+        $this->foo = $foo;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo)");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addTypeHintAction = actions.find(
+      (action) => action.title === "Add type hint",
+    );
+    expect(addTypeHintAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addTypeHintAction!)).toContain(
+      "public function set(Foo $foo)",
+    );
+  });
+
+  it("offers Add type hint as array from an empty-array default", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set($items = [])
+    {
+        $this->items = $items;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$items");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const addTypeHintAction = actions.find(
+      (action) => action.title === "Add type hint",
+    );
+    expect(addTypeHintAction).toBeDefined();
+    expect(applyPhpDescriptorEdits(classSource, addTypeHintAction!)).toContain(
+      "public function set(array $items = [])",
+    );
+  });
+
+  it("does not offer Add type hint for a `= null` default", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set($foo = null)
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add type hint"),
+    ).toBe(false);
+  });
+
+  it("does not offer Add type hint when the parameter already has a type", async () => {
+    const classPath = "/workspace/app/Services/Setter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Setter
+{
+    public function set(Foo $foo)
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Setter.php"));
+    });
+
+    const offset = classSource.indexOf("$foo");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Add type hint"),
+    ).toBe(false);
+  });
+
   it("offers an optimize imports action when an import is unused", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
@@ -46699,6 +51964,391 @@ class Account
     expect(optimizeEdit?.text).toBe("");
     expect(optimizeEdit?.range.startLineNumber).toBe(5);
     expect(optimizeEdit?.range.endLineNumber).toBe(5);
+  });
+
+  it("offers an Import class action for an unimported class found in the index", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Models\\Comment;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "Post", 25);
+    const importAction = actions.find(
+      (action) => action.title === "Import App\\Models\\Post",
+    );
+    expect(importAction).toBeDefined();
+    const importEdit = importAction?.edits[0];
+    expect(importEdit?.text).toBe("use App\\Models\\Post;\n");
+    // Inserted before the alphabetically-later `use App\\Models\\Comment;`? No:
+    // Post sorts after Comment, so it lands on the line AFTER Comment (line 6).
+    expect(importEdit?.range.startColumn).toBe(1);
+    expect(importEdit?.range.endColumn).toBe(1);
+    expect(importEdit?.range.startLineNumber).toBe(6);
+    expect(importEdit?.range.endLineNumber).toBe(6);
+  });
+
+  it("offers one Import action per candidate namespace for an ambiguous class", async () => {
+    const classPath = "/workspace/app/Http/UserController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class UserController
+{
+    public function show(): User
+    {
+        return new User();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\User",
+        kind: "class",
+        lineNumber: 5,
+        name: "User",
+        path: "/workspace/app/Models/User.php",
+        relativePath: "app/Models/User.php",
+      },
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Support\\User",
+        kind: "class",
+        lineNumber: 9,
+        name: "User",
+        path: "/workspace/app/Support/User.php",
+        relativePath: "app/Support/User.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "UserController.php"));
+    });
+
+    const offset = classSource.indexOf("User", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const importTitles = actions
+      .map((action) => action.title)
+      .filter((title) => title.startsWith("Import "));
+    expect(importTitles).toEqual([
+      "Import App\\Models\\User",
+      "Import App\\Support\\User",
+    ]);
+  });
+
+  it("does not offer an Import action when the class is already imported", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+use App\\Models\\Post;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("does not offer an Import action when the only candidate is in the current namespace", async () => {
+    const classPath = "/workspace/app/Models/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("does not offer an Import action when no candidate exists in the index", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Import ")),
+    ).toBe(false);
+  });
+
+  it("drops stale Import class actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => symbolSearch.promise);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: offset,
+        start: offset,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      // The Create-class existence probe (limit 50) and/or the Import-class
+      // lookup (limit 25) both query the symbol index for the short name; either
+      // confirms the in-flight search started before we switch tabs.
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "Post", expect.any(Number));
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    symbolSearch.resolve([
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace-a/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
   });
 
   it("drops stale generate-constructor code actions after switching project tabs", async () => {
@@ -46898,6 +52548,621 @@ class Greeter
     expect(
       actions.some((action) => action.title.startsWith("Create method")),
     ).toBe(false);
+  });
+
+  it("marks Create method as the preferred quickfix on an unresolved member", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork(1, 'x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'doWork'",
+    );
+    // PhpStorm Alt+Enter: the contextual fix for the unresolved member is the
+    // single most-likely action - a "quickfix" lightbulb, flagged preferred so
+    // Monaco floats it to the top of the list.
+    expect(createMethod?.kind).toBe("quickfix");
+    expect(createMethod?.isPreferred).toBe(true);
+    // And it leads the returned list (ordering = "most likely first").
+    expect(actions[0]?.title).toBe("Create method 'doWork'");
+  });
+
+  it("offers a static create-method action when the cursor is on a missing self:: call", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): void
+    {
+        self::make('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("make");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'make'",
+    );
+    expect(createMethod).toBeDefined();
+    expect(createMethod?.edits[0]?.text ?? "").toContain(
+      "private static function make(string $arg0)",
+    );
+  });
+
+  it("offers a create-constant action when the cursor is on a missing self::CONST", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): string
+    {
+        return self::DEFAULT_NAME;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("DEFAULT_NAME");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createConstant = actions.find(
+      (action) => action.title === "Create constant 'DEFAULT_NAME'",
+    );
+    expect(createConstant).toBeDefined();
+    expect(createConstant?.edits[0]?.text ?? "").toContain(
+      "private const DEFAULT_NAME = null;",
+    );
+  });
+
+  it("infers the property type from a typed $this assignment", async () => {
+    const classPath = "/workspace/app/Services/Factory.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Factory
+{
+    public function run(): void
+    {
+        $this->client = new HttpClient();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Factory.php"));
+    });
+
+    const offset = classSource.indexOf("client");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createProperty = actions.find(
+      (action) => action.title === "Create property 'client'",
+    );
+    expect(createProperty).toBeDefined();
+    expect(createProperty?.edits[0]?.text ?? "").toContain(
+      "private HttpClient $client;",
+    );
+  });
+
+  it("offers a same-file parent:: create-method action targeting the parent class", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+}
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'handle' in 'Base'",
+    );
+    expect(createMethod).toBeDefined();
+    const insertOffset =
+      classSource.split("\n").slice(0, 6).join("\n").length + 1;
+    // The edit lands inside Base's body (before Child), not at the end of file.
+    const editLine = createMethod?.edits[0]?.range.startLineNumber ?? 0;
+    expect(editLine).toBeLessThan(
+      classSource.slice(0, classSource.indexOf("class Child")).split("\n")
+        .length,
+    );
+    expect(insertOffset).toBeGreaterThan(0);
+  });
+
+  it("does not offer a parent:: action when the same-file parent already has the method", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+    public function handle(string $value): void
+    {
+    }
+}
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
+  it("offers a parent::CONST create-constant action targeting the same-file parent", async () => {
+    const classPath = "/workspace/app/Services/Pair.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Base
+{
+}
+
+class Child extends Base
+{
+    public function run(): string
+    {
+        return parent::DEFAULT_LABEL;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Pair.php"));
+    });
+
+    const offset =
+      classSource.indexOf("parent::DEFAULT_LABEL") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createConstant = actions.find(
+      (action) => action.title === "Create constant 'DEFAULT_LABEL' in 'Base'",
+    );
+    expect(createConstant).toBeDefined();
+    expect(createConstant?.edits[0]?.text ?? "").toContain(
+      "private const DEFAULT_LABEL = null;",
+    );
+  });
+
+  it("does not offer a parent:: action when the parent lives in another file", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends Base
+{
+    public function run(): void
+    {
+        parent::handle('x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const offset = classSource.indexOf("parent::handle") + "parent::".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
+  it("tags an Import class action as a preferred quickfix", async () => {
+    const classPath = "/workspace/app/Http/PostController.php";
+    const classSource = `<?php
+
+namespace App\\Http;
+
+class PostController
+{
+    public function show(): Post
+    {
+        return new Post();
+    }
+}
+`;
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementation(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Post",
+        kind: "class",
+        lineNumber: 5,
+        name: "Post",
+        path: "/workspace/app/Models/Post.php",
+        relativePath: "app/Models/Post.php",
+      },
+    ]);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "PostController.php"));
+    });
+
+    const offset = classSource.indexOf("Post", classSource.indexOf("show()"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const importAction = actions.find(
+      (action) => action.title === "Import App\\Models\\Post",
+    );
+    expect(importAction?.kind).toBe("quickfix");
+    expect(importAction?.isPreferred).toBe(true);
+  });
+
+  it("classifies Generate constructor as a generate-family refactor (not a quickfix)", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    private string $name;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const constructor = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    // Generate-family actions read as "refactor" in the action widget (distinct
+    // icon/group from the quickfix lightbulb), matching PhpStorm's Generate menu.
+    expect(constructor?.kind).toBe("refactor.rewrite");
+    expect(constructor?.isPreferred).not.toBe(true);
+
+    const accessors = actions.find(
+      (action) => action.title === "Generate getters and setters",
+    );
+    expect(accessors?.kind).toBe("refactor.rewrite");
+  });
+
+  it("tags Optimize imports with the organize-imports source kind", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Unused;
+use App\\Models\\Apple;
+
+class Greeter
+{
+    public function run(Apple $apple): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("class Greeter");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const optimize = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimize?.kind).toBe("source.organizeImports");
+  });
+
+  it("orders the contextual quickfix ahead of generate-family refactors", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    // The cursor sits on an unresolved `$this->status`, so the contextual fix
+    // (Create property) must lead - ahead of the class-level generate actions
+    // (constructor / accessors) that are also offered for the same class.
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    private string $name;
+
+    public function run(): void
+    {
+        echo $this->status;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("status");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createIndex = actions.findIndex(
+      (action) => action.title === "Create property 'status'",
+    );
+    const constructorIndex = actions.findIndex(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(constructorIndex).toBeGreaterThanOrEqual(0);
+    // Quickfix before generate-family refactor (PhpStorm "most likely first").
+    expect(createIndex).toBeLessThan(constructorIndex);
+    expect(actions[createIndex]?.isPreferred).toBe(true);
+  });
+
+  it("orders free-function refactors by kind family (extract before rewrite)", async () => {
+    const classPath = "/workspace/app/helpers.php";
+    // A free function (no enclosing class) with a selected expression (so
+    // Extract variable - refactor.extract is offered) and no declared return
+    // type but a literal return (so Add return type - refactor.rewrite fires).
+    const classSource = `<?php
+
+function total()
+{
+    return 42;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "helpers.php"));
+    });
+
+    const exprStart = classSource.indexOf("42");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: exprStart + "42".length,
+      start: exprStart,
+    });
+
+    const extractIndex = actions.findIndex(
+      (action) => action.title === "Extract variable",
+    );
+    const returnTypeIndex = actions.findIndex(
+      (action) => action.title === "Add return type",
+    );
+    expect(extractIndex).toBeGreaterThanOrEqual(0);
+    expect(returnTypeIndex).toBeGreaterThanOrEqual(0);
+    // refactor.extract sorts ahead of refactor.rewrite even in a free function.
+    expect(extractIndex).toBeLessThan(returnTypeIndex);
   });
 
   it("offers an extract-variable code action for a selected expression", async () => {
@@ -47217,6 +53482,278 @@ $greeting = 'Hello world';
     ).toBe(false);
   });
 
+  it("offers an extract-method code action for a whole-statement selection", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(int $seed): void
+    {
+        $base = $seed * 2;
+        $total = $base + 10;
+        echo $total;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const start =
+      classSource.lastIndexOf("\n", classSource.indexOf("$total = $base")) + 1;
+    const end =
+      classSource.indexOf("\n", classSource.indexOf("echo $total;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    const extract = actions.find((action) => action.title === "Extract method");
+    expect(extract).toBeDefined();
+    expect(extract?.kind).toBe("refactor.extract");
+    expect(extract?.edits).toHaveLength(2);
+
+    const applied = applyPhpDescriptorEdits(classSource, extract!);
+    expect(applied).toContain("$this->extracted($base);");
+    expect(applied).toContain("private function extracted($base): void");
+    expect(applied).toContain("$total = $base + 10;");
+    expectBalancedPhp(applied);
+  });
+
+  it("offers no extract-method action when the selection is empty", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $a = 1;
+        echo $a;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("$a = 1;");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-method action outside a class (free function)", async () => {
+    const classPath = "/workspace/app/helpers.php";
+    const classSource = `<?php
+
+function run(): void
+{
+    $a = 1;
+    echo $a;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "helpers.php"));
+    });
+
+    const start = classSource.indexOf("    $a = 1;");
+    const end = classSource.indexOf("\n", classSource.indexOf("echo $a;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it("offers no extract-method action when more than one variable must be returned", async () => {
+    const classPath = "/workspace/app/Services/Calculator.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Calculator
+{
+    public function run(): int
+    {
+        $a = 1;
+        $b = 2;
+        return $a + $b;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Calculator.php"));
+    });
+
+    const start = classSource.lastIndexOf("\n", classSource.indexOf("$a = 1;")) + 1;
+    const end = classSource.indexOf("\n", classSource.indexOf("$b = 2;"));
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract method"),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "selection cutting an if/else boundary",
+      from: "echo 'positive';",
+      to: "} else {",
+      source: `<?php
+
+class Greeter
+{
+    public function run(int $x): void
+    {
+        if ($x > 0) {
+            echo 'positive';
+        } else {
+            echo 'other';
+        }
+    }
+}
+`,
+    },
+    {
+      name: "selection containing a break inside a loop",
+      from: "$double = $item * 2;",
+      to: "break;",
+      source: `<?php
+
+class Greeter
+{
+    public function run(array $items): void
+    {
+        foreach ($items as $item) {
+            $double = $item * 2;
+            break;
+        }
+    }
+}
+`,
+    },
+    {
+      name: "selection containing a closure with use()",
+      from: "$fn = function",
+      to: "};",
+      source: `<?php
+
+class Greeter
+{
+    public function run(): void
+    {
+        $factor = 2;
+        $fn = function ($x) use ($factor) {
+            return $x * $factor;
+        };
+        echo $fn(3);
+    }
+}
+`,
+    },
+  ])(
+    "extract-method adversarial sweep never corrupts: $name",
+    async ({ source, from, to }) => {
+      const classPath = "/workspace/app/Services/Edge.php";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) =>
+          path === classPath ? source : `<?php\n// ${path}\n`,
+        ),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(classPath, "Edge.php"));
+      });
+
+      const start = source.lastIndexOf("\n", source.indexOf(from)) + 1;
+      const toEnd = source.indexOf(to) + to.length;
+      const end = source.indexOf("\n", toEnd);
+      const actions = await getWorkbench().providePhpCodeActions(source, {
+        end: end < 0 ? source.length : end,
+        start,
+      });
+
+      const extract = actions.find(
+        (action) => action.title === "Extract method",
+      );
+
+      // Either the action is withheld (conservative no-op) or, if offered, the
+      // applied edits keep the file syntactically balanced - never corruption.
+      if (!extract) {
+        return;
+      }
+
+      const applied = applyPhpDescriptorEdits(source, extract);
+      expectBalancedPhp(applied);
+    },
+  );
+
   it("drops stale introduce-constant code actions after switching project tabs", async () => {
     const classPath = "/workspace-a/app/Services/Greeter.php";
     const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
@@ -47525,6 +54062,137 @@ interface GreeterContract
     // not be refreshed for an inactive workspace's change.
     expect(getWorkbench().openDocuments).toHaveLength(1);
     expect(readDirectory).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a clean open PHP document when it is modified externally", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const filePath = "/workspace/src/User.php";
+    const files = new Map<string, string>([
+      [filePath, "<?php\nfinal class User {}\n"],
+    ]);
+    const readTextFile = vi.fn(async (path: string) => {
+      const content = files.get(path);
+
+      if (content === undefined) {
+        throw new Error(`missing: ${path}`);
+      }
+
+      return content;
+    });
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(filePath, "User.php"));
+    });
+    expect(getWorkbench().activeDocument?.content).toContain("final class User");
+
+    files.set(filePath, "<?php\nfinal class User\n{\n    public int $id;\n}\n");
+    readTextFile.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: filePath,
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(readTextFile).toHaveBeenCalledWith(filePath);
+    expect(getWorkbench().activeDocument?.content).toContain("public int $id");
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      getWorkbench().activeDocument?.content,
+    );
+    expect(getWorkbench().dirtyCount).toBe(0);
+  });
+
+  it("does not overwrite an open PHP document edited while an external refresh is reading", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const filePath = "/workspace/src/User.php";
+    const externalRead = createDeferred<string>();
+    let externalReadPending = false;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === filePath) {
+        if (externalReadPending) {
+          externalReadPending = false;
+          return externalRead.promise;
+        }
+
+        return "<?php\nfinal class User {}\n";
+      }
+
+      return "";
+    });
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(filePath, "User.php"));
+    });
+
+    await act(async () => {
+      externalReadPending = true;
+      publishFileChange?.({
+        kind: "modified",
+        path: filePath,
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await Promise.resolve();
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// unsaved editor change\n");
+    });
+
+    await act(async () => {
+      externalRead.resolve("<?php\n// external disk change\n");
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// unsaved editor change\n",
+    );
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      "<?php\nfinal class User {}\n",
+    );
+    expect(getWorkbench().dirtyCount).toBe(1);
   });
 
   it("closes the tab for the previous path on an external rename", async () => {
@@ -49087,9 +55755,749 @@ class PostRepository
     ]);
   });
 
+  describe("recent locations", () => {
+    it("records the position the user navigated away from, newest first", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(
+          async (path: string) => `<?php\n// ${path}\nclass Demo {}\n`,
+        ),
+      });
+      await flushAsyncTurns();
+
+      // Opening A with no prior active document records nothing; opening B then
+      // C snapshots the position we left A, then B, at - newest first.
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/A.php", "A.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/B.php", "B.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/C.php", "C.php"),
+        );
+      });
+
+      const locations = getWorkbench().recentLocations;
+      expect(locations.map((entry) => entry.path)).toEqual([
+        "/workspace/B.php",
+        "/workspace/A.php",
+      ]);
+      expect(locations[0]).toMatchObject({
+        line: 1,
+        name: "B.php",
+        relativePath: "B.php",
+        snippet: "<?php",
+      });
+    });
+
+    it("opens the recent locations panel and jumps to the chosen position, closing the panel", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/A.php", "A.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/B.php", "B.php"),
+        );
+      });
+
+      act(() => {
+        getWorkbench().openRecentLocationsPanel();
+      });
+
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(true);
+
+      const target = getWorkbench().recentLocations[0];
+      expect(target?.path).toBe("/workspace/A.php");
+
+      await act(async () => {
+        await getWorkbench().openRecentLocation(target);
+      });
+
+      expect(getWorkbench().activePath).toBe("/workspace/A.php");
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+    });
+
+    it("does not open the panel when no workspace is active", async () => {
+      const { getWorkbench } = renderController();
+      await flushAsyncTurns();
+
+      act(() => {
+        getWorkbench().openRecentLocationsPanel();
+      });
+
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+    });
+
+    it("isolates recent locations per workspace tab without leaking", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/a1.php", "a1.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/a2.php", "a2.php"),
+        );
+      });
+
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-a/a1.php"]);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().recentLocations).toEqual([]);
+      expect(getWorkbench().recentLocationsPanelOpen).toBe(false);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/b1.php", "b1.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/b2.php", "b2.php"),
+        );
+      });
+
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-b/b1.php"]);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-a");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      expect(
+        getWorkbench().recentLocations.map((entry) => entry.path),
+      ).toEqual(["/workspace-a/a1.php"]);
+    });
+  });
+
+  describe("find in path", () => {
+    it("forwards the active filters to the text search gateway", async () => {
+      const searchText = vi.fn(async () => []);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        searchText,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchOptions({
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: true,
+          fileMask: "*.php,!vendor",
+        });
+        getWorkbench().setTextSearchQuery("needle");
+      });
+
+      await vi.waitFor(() => {
+        expect(searchText).toHaveBeenCalledWith("/workspace", "needle", 100, {
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: true,
+          fileMask: "*.php,!vendor",
+        });
+      });
+    });
+
+    it("does not replace when the destructive confirmation is declined", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [],
+        totalReplacements: 0,
+      }));
+      const confirm = vi.fn(() => false);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm, prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceAllInPath();
+      });
+
+      expect(confirm).toHaveBeenCalled();
+      expect(replaceInPath).not.toHaveBeenCalled();
+    });
+
+    it("replaces across files after the confirmation is accepted", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [
+          { path: "/workspace/a.php", relativePath: "a.php", replacements: 2 },
+          { path: "/workspace/b.php", relativePath: "b.php", replacements: 1 },
+        ],
+        totalReplacements: 3,
+      }));
+      const confirm = vi.fn(() => true);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm, prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+          {
+            column: 1,
+            lineNumber: 2,
+            lineText: "and needle again",
+            matchEnd: 10,
+            matchStart: 4,
+            path: "/workspace/b.php",
+            relativePath: "b.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(2);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceAllInPath();
+      });
+      await flushAsyncTurns();
+
+      expect(replaceInPath).toHaveBeenCalledWith(
+        "/workspace",
+        "needle",
+        "thread",
+        expect.objectContaining({ fileMask: "" }),
+        undefined,
+      );
+      expect(getWorkbench().message).toBe(
+        "Replaced 3 occurrences in 2 files",
+      );
+    });
+
+    it("scopes a single-file replace to that exact file out-of-band", async () => {
+      const replaceInPath = vi.fn(async () => ({
+        files: [
+          { path: "/workspace/a.php", relativePath: "a.php", replacements: 1 },
+        ],
+        totalReplacements: 1,
+      }));
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        prompter: { confirm: vi.fn(() => true), prompt: vi.fn(() => null) },
+        searchText: vi.fn(async () => [
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle here",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/a.php",
+            relativePath: "a.php",
+          },
+          {
+            column: 1,
+            lineNumber: 1,
+            lineText: "needle there",
+            matchEnd: 6,
+            matchStart: 0,
+            path: "/workspace/b.php",
+            relativePath: "b.php",
+          },
+        ]),
+        replaceInPath,
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextReplacement("thread");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().textSearchResults.length).toBe(2);
+      });
+
+      await act(async () => {
+        await getWorkbench().replaceInFile("/workspace/a.php");
+      });
+      await flushAsyncTurns();
+
+      // The single-file scope is passed as an exact path (5th arg), never as a
+      // widened file mask, so an active mask cannot escape the chosen file.
+      expect(replaceInPath).toHaveBeenCalledWith(
+        "/workspace",
+        "needle",
+        "thread",
+        expect.anything(),
+        "/workspace/a.php",
+      );
+    });
+
+    it("reveals the match position when a result is opened", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      const result: TextSearchResult = {
+        column: 13,
+        lineNumber: 7,
+        lineText: "final class UserService",
+        matchEnd: 23,
+        matchStart: 12,
+        path: "/workspace/app/Services/UserService.php",
+        relativePath: "app/Services/UserService.php",
+      };
+
+      await act(async () => {
+        await getWorkbench().openTextSearchResult(result);
+      });
+
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: "/workspace/app/Services/UserService.php",
+        position: { column: 13, lineNumber: 7 },
+      });
+      expect(getWorkbench().textSearchOpen).toBe(false);
+    });
+
+    it("resets filters to the default baseline between workspace tabs", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+      });
+      await flushAsyncTurns();
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOptions({
+          ...defaultTextSearchOptions(),
+          isRegex: true,
+          fileMask: "*.php",
+        });
+      });
+
+      expect(getWorkbench().textSearchOptions.isRegex).toBe(true);
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().textSearchOptions).toEqual(
+        defaultTextSearchOptions(),
+      );
+    });
+  });
+
+  describe("EditorConfig (.editorconfig)", () => {
+    // Builds a readTextFile that serves `.editorconfig` content for any
+    // directory listed in `editorConfigs`, the document body for the file
+    // itself, and rejects (file absent) for every other `.editorconfig` lookup.
+    function editorConfigReadTextFile(
+      documents: Record<string, string>,
+      editorConfigs: Record<string, string>,
+    ) {
+      return vi.fn(async (path: string) => {
+        if (path.endsWith("/.editorconfig")) {
+          const directory = path.slice(0, -"/.editorconfig".length);
+
+          if (directory in editorConfigs) {
+            return editorConfigs[directory];
+          }
+
+          throw new Error(`No .editorconfig at ${path}`);
+        }
+
+        if (path in documents) {
+          return documents[path];
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+    }
+
+    it("resolves .editorconfig for the active document and exposes it", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {
+          "/workspace": [
+            "root = true",
+            "[*]",
+            "indent_style = space",
+            "indent_size = 4",
+            "end_of_line = lf",
+          ].join("\n"),
+        },
+      );
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "space",
+        indentSize: 4,
+        tabWidth: 4,
+        endOfLine: "lf",
+      });
+    });
+
+    it("exposes empty settings when no .editorconfig matches", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {},
+      );
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({});
+    });
+
+    it("trims trailing whitespace and inserts a final newline on save", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {
+          "/workspace": [
+            "root = true",
+            "[*]",
+            "trim_trailing_whitespace = true",
+            "insert_final_newline = true",
+          ].join("\n"),
+        },
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php   \nclass User {}   ");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php\nclass User {}\n",
+      );
+    });
+
+    it("normalizes EOL to crlf on save when configured", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        { "/workspace": ["root = true", "[*]", "end_of_line = crlf"].join("\n") },
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php\nclass User {}\n");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php\r\nclass User {}\r\n",
+      );
+    });
+
+    it("does not transform content on save when no .editorconfig matches", async () => {
+      const readTextFile = editorConfigReadTextFile(
+        { "/workspace/app/User.php": "<?php\nclass User {}\n" },
+        {},
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          optimizeImportsOnSave: false,
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/app/User.php", "User.php"),
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("<?php   \nclass User {}   ");
+      });
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns();
+
+      // Trailing whitespace preserved, no final newline added: editor defaults.
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenLastCalledWith(
+        "/workspace/app/User.php",
+        "<?php   \nclass User {}   ",
+      );
+    });
+
+    it("isolates .editorconfig per workspace and never leaks across tabs", async () => {
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === "/workspace-a/.editorconfig") {
+          return ["root = true", "[*]", "indent_style = tab"].join("\n");
+        }
+
+        if (path === "/workspace-b/.editorconfig") {
+          return [
+            "root = true",
+            "[*]",
+            "indent_style = space",
+            "indent_size = 2",
+          ].join("\n");
+        }
+
+        if (path.endsWith("/.editorconfig")) {
+          throw new Error(`No .editorconfig at ${path}`);
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile,
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-a/app/User.php", "User.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "tab",
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace-b/app/Order.php", "Order.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      // Workspace B's file resolves B's config; A's tab indent must not bleed in.
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activeEditorConfig).toEqual({
+        indentStyle: "space",
+        indentSize: 2,
+        tabWidth: 2,
+      });
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
+    localHistoryGateway,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
     indexProgressGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -49104,11 +56512,13 @@ class PostRepository
     languageServerRuntimeGateway,
     phpToolGateway,
     projectSymbols = [],
+    prompter,
     readDirectory,
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
     searchText,
+    replaceInPath,
     settingsGateway,
     smartModeGateway,
     workspaceDetectionGateway,
@@ -49121,6 +56531,7 @@ class PostRepository
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    localHistoryGateway?: LocalHistoryGateway;
     indexProgressGateway?: IndexProgressGateway;
     javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -49135,6 +56546,7 @@ class PostRepository
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
     projectSymbols?: ProjectSymbolSearchResult[];
+    prompter?: WorkbenchPrompter;
     readDirectory?: (path: string) => Promise<FileEntry[]>;
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
@@ -49148,6 +56560,12 @@ class PostRepository
       query: string,
       limit: number,
     ) => Promise<TextSearchResult[]>;
+    replaceInPath?: (
+      root: string,
+      query: string,
+      replacement: string,
+      options?: TextSearchOptions,
+    ) => Promise<ReplaceInPathResult>;
     settingsGateway?: SettingsGateway;
     smartModeGateway?: SmartModeGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
@@ -49162,6 +56580,7 @@ class PostRepository
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      localHistoryGateway,
       indexProgressGateway,
       javaScriptTypeScriptInitialRuntimeStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -49176,11 +56595,13 @@ class PostRepository
       languageServerRuntimeGateway,
       phpToolGateway,
       projectSymbols,
+      prompter,
       readDirectory,
       readTextFile,
       runtimeStatus,
       searchFiles,
       searchText,
+      replaceInPath,
       settingsGateway,
       smartModeGateway,
       workspaceDetectionGateway,
@@ -49381,6 +56802,7 @@ function WorkbenchHarness({
     dependencies.phpFileOutlineGateway,
     dependencies.phpTreeGateway,
     dependencies.gitGateway,
+    dependencies.localHistoryGateway,
     dependencies.languageServerGateway,
     dependencies.languageServerRuntimeGateway,
     dependencies.languageServerDocumentSyncGateway,
@@ -49433,9 +56855,64 @@ const microtaskDiagnosticsFlushScheduler: DiagnosticsFlushScheduler = (() => {
   };
 })();
 
+// In-memory Local History gateway for controller tests: exercises the real
+// dedupe (identical-to-latest is a no-op), newest-first listing, and content
+// read behaviour against real collaborators, with no Tauri/disk involvement.
+function createInMemoryLocalHistoryGateway(): LocalHistoryGateway {
+  const buckets = new Map<string, LocalHistoryVersion[]>();
+  const contents = new Map<string, string>();
+  const lastContent = new Map<string, string>();
+  let sequence = 0;
+
+  const key = (rootPath: string, relativePath: string) =>
+    `${rootPath} ${relativePath}`;
+
+  return {
+    recordSnapshot: vi.fn(
+      async (rootPath: string, relativePath: string, content: string) => {
+        const bucketKey = key(rootPath, relativePath);
+
+        if (lastContent.get(bucketKey) === content) {
+          return null;
+        }
+
+        sequence += 1;
+        const version: LocalHistoryVersion = {
+          id: `${sequence}`.padStart(12, "0"),
+          sizeBytes: content.length,
+          timestampMs: 1_700_000_000_000 + sequence,
+        };
+        const existing = buckets.get(bucketKey) ?? [];
+        existing.push(version);
+        buckets.set(bucketKey, existing);
+        contents.set(`${bucketKey} ${version.id}`, content);
+        lastContent.set(bucketKey, content);
+        return version;
+      },
+    ),
+    listVersions: vi.fn(async (rootPath: string, relativePath: string) => {
+      const bucket = buckets.get(key(rootPath, relativePath)) ?? [];
+      return [...bucket].reverse();
+    }),
+    readVersion: vi.fn(
+      async (rootPath: string, relativePath: string, versionId: string) => {
+        const bucketKey = key(rootPath, relativePath);
+        const content = contents.get(`${bucketKey} ${versionId}`);
+
+        if (content === undefined) {
+          throw new Error(`Unknown local history version: ${versionId}`);
+        }
+
+        return content;
+      },
+    ),
+  };
+}
+
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  localHistoryGateway,
   indexProgressGateway,
   javaScriptTypeScriptInitialRuntimeStatus,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -49450,11 +56927,13 @@ function createControllerDependencies({
   languageServerRuntimeGateway,
   phpToolGateway,
   projectSymbols,
+  prompter,
   readDirectory,
   readTextFile,
   runtimeStatus,
   searchFiles,
   searchText,
+  replaceInPath,
   settingsGateway,
   smartModeGateway,
   workspaceDetectionGateway,
@@ -49467,6 +56946,7 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  localHistoryGateway?: LocalHistoryGateway;
   indexProgressGateway?: IndexProgressGateway;
   javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -49481,6 +56961,7 @@ function createControllerDependencies({
   languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
   projectSymbols: ProjectSymbolSearchResult[];
+  prompter?: WorkbenchPrompter;
   readDirectory?: (path: string) => Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
@@ -49494,6 +56975,12 @@ function createControllerDependencies({
     query: string,
     limit: number,
   ): Promise<TextSearchResult[]>;
+  replaceInPath?(
+    root: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+  ): Promise<ReplaceInPathResult>;
   settingsGateway?: SettingsGateway;
   smartModeGateway?: SmartModeGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
@@ -49553,12 +57040,32 @@ function createControllerDependencies({
     },
     textSearch: {
       searchText: vi.fn(searchText ?? (async () => [])),
+      replaceInPath: vi.fn(
+        replaceInPath ??
+          (async () => ({ files: [], totalReplacements: 0 })),
+      ),
     },
   };
 
   return {
     documentSyncGateway,
     gitGateway: gitGateway ?? {
+      blame: vi.fn(async () => []),
+      fileHistory: vi.fn(async () => []),
+      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
       commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, change) => ({
@@ -49568,10 +57075,24 @@ function createControllerDependencies({
         originalContent: "",
       })),
       getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getFileHunks: vi.fn(async () => []),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stashSave: vi.fn(async () => undefined),
+      stashList: vi.fn(async () => []),
+      stashApply: vi.fn(async () => undefined),
+      stashPop: vi.fn(async () => undefined),
+      stashShow: vi.fn(async () => ""),
+      stashDrop: vi.fn(async () => undefined),
+      branchList: vi.fn(async () => []),
+      currentBranch: vi.fn(async () => null),
+      createBranch: vi.fn(async () => undefined),
+      switchBranch: vi.fn(async () => undefined),
     },
+    localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
     indexProgressGateway:
       indexProgressGateway ?? {
         clearWorkspaceIndex: vi.fn(async (rootPath) => ({
@@ -49667,7 +57188,7 @@ function createControllerDependencies({
     phpTreeGateway: {
       getPhpTree: vi.fn(async () => ({ nodes: [] })),
     },
-    prompter: {
+    prompter: prompter ?? {
       confirm: vi.fn(() => true),
       prompt: vi.fn(() => null),
     },
@@ -49827,6 +57348,17 @@ async function flushAsyncTurns(count = 12): Promise<void> {
 }
 
 async function flushWorkspaceDirectoryRefresh(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  });
+  await flushAsyncTurns();
+}
+
+// Search Everywhere debounces its file/symbol fan-out by 120ms; wait past it
+// then let the resolved searches settle into state.
+async function flushSearchEverywhereDebounce(): Promise<void> {
   await act(async () => {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 150);
@@ -50011,6 +57543,18 @@ function fileEntry(path: string, name: string): FileEntry {
   };
 }
 
+// Counts readTextFile calls for actual document content, excluding the
+// `.editorconfig` cascade probes that the EditorConfig feature performs when a
+// file is opened/saved. Document-prefetch/cache tests assert on this count so
+// they stay focused on document reads, not the orthogonal config lookups.
+function documentReadCount(
+  readTextFile: { mock: { calls: unknown[][] } },
+): number {
+  return readTextFile.mock.calls.filter(
+    ([path]) => typeof path !== "string" || !path.endsWith("/.editorconfig"),
+  ).length;
+}
+
 function directoryEntry(path: string, name: string): FileEntry {
   return {
     kind: "directory",
@@ -50028,6 +57572,56 @@ function gitChangedFile(relativePath: string, isStaged: boolean) {
     path: `/workspace/${relativePath}`,
     relativePath,
     status: "modified" as const,
+  };
+}
+
+function fileHistoryGitGateway(
+  overrides: Pick<Partial<GitGateway>, "fileCommitDiff" | "fileHistory">,
+): GitGateway {
+  return {
+    blame: vi.fn(async () => []),
+    fileHistory: overrides.fileHistory ?? vi.fn(async () => []),
+    fileCommitDiff:
+      overrides.fileCommitDiff ??
+      vi.fn(async (_rootPath, relativePath) => ({
+        change: {
+          isStaged: false,
+          isUnversioned: false,
+          oldPath: null,
+          oldRelativePath: null,
+          path: relativePath,
+          relativePath,
+          status: "modified" as const,
+        },
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+    commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+      change: requestedChange,
+      language: "plaintext",
+      modifiedContent: "",
+      originalContent: "",
+    })),
+    getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    getFileHunks: vi.fn(async () => []),
+    revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    stashSave: vi.fn(async () => undefined),
+    stashList: vi.fn(async () => []),
+    stashApply: vi.fn(async () => undefined),
+    stashPop: vi.fn(async () => undefined),
+    stashShow: vi.fn(async () => ""),
+    stashDrop: vi.fn(async () => undefined),
+    branchList: vi.fn(async () => []),
+    currentBranch: vi.fn(async () => null),
+    createBranch: vi.fn(async () => undefined),
+    switchBranch: vi.fn(async () => undefined),
   };
 }
 
@@ -50067,4 +57661,101 @@ function positionAfter(source: string, needle: string): EditorPosition {
 
 function lineNumberOf(source: string, needle: string): number {
   return positionAfter(source, needle).lineNumber;
+}
+
+/**
+ * Converts a 1-based Monaco (line, column) position into a 0-based character
+ * offset into `source`, mirroring how the editor adapter maps a code-action
+ * edit range back onto the document.
+ */
+function monacoPositionToOffset(
+  source: string,
+  lineNumber: number,
+  column: number,
+): number {
+  const lines = source.split("\n");
+  let offset = 0;
+
+  for (let index = 0; index < lineNumber - 1; index += 1) {
+    offset += (lines[index] ?? "").length + 1;
+  }
+
+  return offset + (column - 1);
+}
+
+/**
+ * Applies a PHP code-action descriptor's edits to `source` so tests can assert
+ * on the resulting document. Edits are non-overlapping and applied highest
+ * offset first, the standard strategy an editor adapter uses.
+ */
+function applyPhpDescriptorEdits(
+  source: string,
+  descriptor: PhpCodeActionDescriptor,
+): string {
+  const edits = descriptor.edits
+    .map((edit) => ({
+      start: monacoPositionToOffset(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      ),
+      end: monacoPositionToOffset(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      text: edit.text,
+    }))
+    .sort((left, right) => right.start - left.start);
+
+  return edits.reduce(
+    (current, edit) =>
+      current.slice(0, edit.start) + edit.text + current.slice(edit.end),
+    source,
+  );
+}
+
+/**
+ * Asserts that brackets/braces/parens in `source` are balanced (ignoring those
+ * inside single/double-quoted strings). A cheap structural corruption tripwire
+ * for the extract-method adversarial sweep.
+ */
+function expectBalancedPhp(source: string): void {
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  const opens = new Set(["(", "[", "{"]);
+  const stack: string[] = [];
+  let quote: string | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+      if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (opens.has(character)) {
+      stack.push(character);
+      continue;
+    }
+
+    const expected = pairs[character];
+
+    if (expected) {
+      expect(stack.pop()).toBe(expected);
+    }
+  }
+
+  expect(stack).toHaveLength(0);
 }

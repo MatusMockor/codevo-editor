@@ -13,18 +13,27 @@ import {
 } from "../domain/languageServerRuntime";
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
+import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
   dispose?: ReturnType<typeof vi.fn>;
   getEOL?: ReturnType<typeof vi.fn>;
+  setEOL?: ReturnType<typeof vi.fn>;
+  updateOptions?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
   getLineCount?: ReturnType<typeof vi.fn>;
   getLineMaxColumn?: ReturnType<typeof vi.fn>;
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
+  setValue?: ReturnType<typeof vi.fn>;
+  isDisposed?: ReturnType<typeof vi.fn>;
+  tokenization?: {
+    forceTokenization: ReturnType<typeof vi.fn>;
+  };
   uri: {
     fsPath: string;
     path: string;
@@ -37,12 +46,25 @@ interface FakeEditor {
   executeEdits: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   getContribution: ReturnType<typeof vi.fn>;
+  gotoDefinitionContributionDispose: ReturnType<typeof vi.fn>;
+  // The built-in gesture contribution. Its `gotoDefinition` method is the one the
+  // surface neutralizes (replaces with a no-op) so a Cmd-hover never navigates.
+  // `gotoDefinitionContributionNavigate` records the ORIGINAL navigation that the
+  // gesture would perform, letting a test assert the surface stopped it without
+  // tearing the contribution down.
+  gotoDefinitionContribution: {
+    gotoDefinition: (...args: unknown[]) => Promise<void>;
+  };
+  gotoDefinitionContributionNavigate: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
   getSelection: ReturnType<typeof vi.fn>;
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
+  cursorPositionHandler:
+    | ((event: { position: EditorPosition }) => void)
+    | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
     | ((
@@ -68,6 +90,10 @@ interface FakeEditor {
 
 interface FakeMouseDownEvent {
   event: {
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    leftButton?: boolean;
+    rightButton?: boolean;
     preventDefault: ReturnType<typeof vi.fn>;
     stopPropagation: ReturnType<typeof vi.fn>;
   };
@@ -84,7 +110,12 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
   monaco: null as ReturnType<typeof createMonaco> | null,
   renderCount: 0,
-  props: null as { options?: Record<string, unknown> } | null,
+  props: null as {
+    options?: Record<string, unknown>;
+    onChange?: (value: string | undefined) => void;
+    beforeMount?: (monaco: unknown) => void;
+    loading?: unknown;
+  } | null,
   registeredContext: null as {
     isDocumentSynced?: (rootPath: string, path: string) => boolean;
     provideBladeCompletions?: (
@@ -216,6 +247,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -233,6 +265,9 @@ describe("EditorSurface", () => {
 
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
+        // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so
+        // Cmd/Ctrl+Click stays bound to go-to-definition.
+        multiCursorModifier: "alt",
         parameterHints: {
           cycle: true,
           enabled: true,
@@ -286,6 +321,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -355,6 +391,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -432,6 +469,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -504,6 +542,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -565,6 +604,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
           onLanguageServerError={vi.fn()}
@@ -673,6 +713,7 @@ describe("EditorSurface", () => {
         onGoForward={vi.fn()}
         onGoToDefinition={vi.fn()}
         onGoToImplementationAt={vi.fn()}
+        onGoToSuperMethod={vi.fn()}
         onEditorFocused={vi.fn()}
         onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
         onLanguageServerError={vi.fn()}
@@ -741,6 +782,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -761,6 +803,69 @@ describe("EditorSurface", () => {
         detectIndentation: true,
       }),
     );
+  });
+
+  // Smart Backspace (VS Code / PhpStorm muscle memory): pressing Backspace while
+  // the cursor sits inside a line's leading whitespace unindents to the previous
+  // tab stop instead of deleting a single space. Monaco provides this natively
+  // via `useTabStops`, whose default is `true`, so the only way the project could
+  // break it is by explicitly disabling the option. This guards that the editor
+  // options never set `useTabStops: false`, preserving the built-in behaviour.
+  it("keeps Monaco's useTabStops default so Backspace unindents to the previous tab stop", async () => {
+    const activeDocument: EditorDocument = {
+      content: "function example() {\n    return 1;\n}\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toBeDefined();
+    expect(editorSurfaceMocks.props?.options?.useTabStops).not.toBe(false);
   });
 
   it("enables the Monaco formatOnPaste option when the setting is enabled", async () => {
@@ -801,6 +906,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -861,6 +967,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -879,6 +986,72 @@ describe("EditorSurface", () => {
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
         formatOnPaste: false,
+      }),
+    );
+  });
+
+  it("passes large-file and scroll guards that keep fast scrolling responsive", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // smoothScrolling animates each fling into many onDidScrollChange events,
+    // each driving a synchronous viewport tokenization pass. Turning it off
+    // keeps fast scrolling of large files responsive. The two length guards cap
+    // per-line tokenization and rendering work on extreme lines.
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({
+        smoothScrolling: false,
+        maxTokenizationLineLength: 2000,
+        stopRenderingLineAfter: 10000,
+        largeFileOptimizations: true,
       }),
     );
   });
@@ -920,6 +1093,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -982,6 +1156,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1056,6 +1231,7 @@ describe("EditorSurface", () => {
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1174,6 +1350,7 @@ interface ParserFactory
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={onGoToImplementationAt}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1289,6 +1466,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onRunTestAt={onRunTestAt}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
@@ -1398,6 +1576,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onToggleBookmarkAtLine={onToggleBookmarkAtLine}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
@@ -1457,6 +1636,687 @@ class InvoiceServiceTest extends TestCase
     expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(3);
   });
 
+  it("routes a Cmd+click on code text through go-to-definition on macOS", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const position = { column: 13, lineNumber: 2 };
+    // The controller reads the active-editor position ref (kept in sync via
+    // onCursorPositionChange) when it resolves a definition. Track the latest
+    // reported caret and snapshot it at the moment onGoToDefinition runs so the
+    // test asserts the caret already points at the clicked symbol by then.
+    let lastReportedPosition: EditorPosition | null = null;
+    let positionAtNavigation: EditorPosition | null = null;
+    const onCursorPositionChange = vi.fn((next: EditorPosition) => {
+      lastReportedPosition = next;
+    });
+    const onGoToDefinition = vi.fn(() => {
+      positionAtNavigation = lastReportedPosition;
+    });
+    // Mirror real Monaco: setPosition synchronously emits onDidChangeCursorPosition
+    // so the active-editor-position consumer observes the new caret before the
+    // call returns (and thus before onGoToDefinition reads it).
+    editor.setPosition.mockImplementation((next: EditorPosition) => {
+      editor.cursorPositionHandler?.({ position: next });
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={onCursorPositionChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith(position);
+    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    // The caret must have settled on the clicked symbol before navigation ran:
+    // a stale (or null) snapshot here would mean setPosition did not propagate
+    // before onGoToDefinition read the position.
+    expect(positionAtNavigation).toEqual(position);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("seeds the status bar's caret indicator on mount and forwards every cursor move", async () => {
+    // The status bar's "Ln X, Col Y" item reads the active editor's caret. On a
+    // tab switch @monaco-editor/react swaps the model and remounts this surface,
+    // so the surface must (a) report the active editor's CURRENT caret on mount
+    // (so the switched-to tab's position shows immediately) and (b) forward
+    // every subsequent move. A new tab's model thus seeds the indicator with its
+    // own caret, never a stale tab's.
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({ column: 5, lineNumber: 3 });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const onCursorPositionChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={onCursorPositionChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // The surface seeded the indicator with the editor's current caret.
+    expect(onCursorPositionChange).toHaveBeenCalledWith({
+      column: 5,
+      lineNumber: 3,
+    });
+
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 9, lineNumber: 12 },
+      });
+    });
+
+    // A later move is forwarded too, so the status bar tracks the live caret.
+    expect(onCursorPositionChange).toHaveBeenLastCalledWith({
+      column: 9,
+      lineNumber: 12,
+    });
+  });
+
+  it("neutralizes Monaco's built-in Cmd-hover definition navigation without disposing the contribution so only explicit Cmd+click / Cmd+B navigate", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    // The reported repro: cursor over a class symbol in a PHP `use` statement.
+    // Monaco's built-in `gotodefinitionatposition` contribution navigates on its
+    // own Cmd interactions (mouseup with Cmd held, independent of leftButton and
+    // of the surface's guarded onMouseDown). Disposing it at mount tore down its
+    // editor listeners while the contribution stayed registered, corrupting
+    // Monaco's event delivery and crashing on the next interaction. The surface
+    // instead neutralizes ONLY the gesture's navigation (replaces its
+    // `gotoDefinition` with a no-op) and leaves the contribution - and every
+    // listener - intact; navigation must only come from the surface's explicit
+    // Cmd+click handler and the Cmd+B keybinding.
+    const activeDocument: EditorDocument = {
+      content:
+        "<?php\n\nuse App\\Http\\Controllers\\Page\\LinkDomainVerificationController;\n",
+      language: "php",
+      name: "Routes.php",
+      path: "/workspace/app/Routes.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.getContribution).toHaveBeenCalledWith(
+      "editor.contrib.gotodefinitionatposition",
+    );
+
+    // The contribution must NOT be disposed - disposing it is what crashed
+    // Monaco's event delivery. It stays alive and registered.
+    expect(editor.gotoDefinitionContributionDispose).not.toHaveBeenCalled();
+
+    // ...but its navigation is neutralized: invoking the (now patched)
+    // gotoDefinition - exactly what the gesture's onExecute does on a Cmd-hover -
+    // must NOT run the original navigation.
+    await editor.gotoDefinitionContribution.gotoDefinition(
+      { lineNumber: 3, column: 5 },
+      false,
+    );
+    expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
+  });
+
+  it("routes a Ctrl+click on code text through go-to-definition on Linux", async () => {
+    stubNavigatorPlatform("Linux x86_64");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    const position = { column: 13, lineNumber: 2 };
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith(position);
+    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("does not navigate on a Ctrl+click on code text on macOS (that gesture is the secondary/context click)", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    // Holding Cmd together with Ctrl is still the secondary/context gesture on
+    // macOS: the Ctrl exclusion must win over the Cmd modifier, so this must not
+    // navigate either (this is the case that proves the `ctrlKey !== true`
+    // clause, since the old metaKey-only check would have navigated here).
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          ctrlKey: true,
+          metaKey: true,
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate on a Cmd+secondary (non-left) click on code text on macOS", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: false,
+          metaKey: true,
+          rightButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate on a plain click on code text without the definition modifier", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "console.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 13, lineNumber: 1 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("leaves the bookmark gutter handler intact for a Cmd+click on the lines-decoration margin", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "constants.ts",
+      path: "/workspace/src/constants.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    const onToggleBookmarkAtLine = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onToggleBookmarkAtLine={onToggleBookmarkAtLine}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 1, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
+        },
+      });
+    });
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(2);
+  });
+
   it("reopens PHP suggestions when IDE readiness changes in member access context", async () => {
     const content = "<?php\n$comment->\n";
     const activeDocument: EditorDocument = {
@@ -1504,6 +2364,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1579,6 +2440,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1665,6 +2527,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -1761,6 +2624,7 @@ class InvoiceServiceTest extends TestCase
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -1875,6 +2739,7 @@ class InvoiceServiceTest extends TestCase
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -1906,6 +2771,176 @@ class InvoiceServiceTest extends TestCase
     await renderWith({ ...activeDocument, content: "const value = 12;\n" });
 
     expect(languageServerMarkerCalls()).toHaveLength(0);
+  });
+
+  it("hides a stale content hover when the active document's diagnostics are cleared", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnosticsWith = (
+      messages: string[],
+    ): Record<string, LanguageServerDiagnostic[]> => ({
+      [activeDocument.path]: messages.map((message, index) => ({
+        character: 6,
+        endCharacter: 11,
+        endLine: 0,
+        line: index,
+        message,
+        severity: "warning" as const,
+        source: "typescript",
+      })),
+    });
+
+    const renderWith = async (
+      diagnostics: Record<string, LanguageServerDiagnostic[]>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    // A warning is present and the user is hovering it (Monaco's content hover
+    // widget is showing the diagnostic message).
+    await renderWith(diagnosticsWith(["unused variable"]));
+
+    const hideHoverCalls = () =>
+      editor.trigger.mock.calls.filter(
+        ([, actionId]) => actionId === "editor.action.hideHover",
+      );
+
+    editor.trigger.mockClear();
+
+    // The diagnostic is fixed / re-validated away: markers are cleared. The
+    // content hover widget is mouse-driven and survives a marker clear, so the
+    // surface must dismiss it or it stays pinned showing the now-invalid message.
+    await renderWith({ [activeDocument.path]: [] });
+
+    expect(hideHoverCalls().length).toBeGreaterThan(0);
+  });
+
+  it("does not hide the hover on a keystroke when the active document's diagnostics are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnostics: Record<string, LanguageServerDiagnostic[]> = {
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused variable",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(activeDocument);
+
+    editor.trigger.mockClear();
+
+    // A keystroke hands a fresh activeDocument object (same path, mutated content)
+    // while the diagnostics map keeps its identity. No diagnostic changed, so the
+    // open hover must NOT be dismissed mid-read.
+    await renderWith({ ...activeDocument, content: "const value = 12;\n" });
+
+    const hideHoverCalls = editor.trigger.mock.calls.filter(
+      ([, actionId]) => actionId === "editor.action.hideHover",
+    );
+    expect(hideHoverCalls).toHaveLength(0);
   });
 
   it("does not reopen PHP suggestions per keystroke when readiness is unchanged", async () => {
@@ -1961,6 +2996,7 @@ class InvoiceServiceTest extends TestCase
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onEditorFocused={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
@@ -2044,6 +3080,7 @@ interface PaymentGateway
               onGoForward={vi.fn()}
               onGoToDefinition={vi.fn()}
               onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
               onEditorFocused={vi.fn()}
               onLanguageServerError={vi.fn()}
               onOpenClass={vi.fn()}
@@ -2106,6 +3143,335 @@ interface PaymentGateway
     }
   });
 
+  it("coalesces the impl gutter, test gutter and syntax diagnostics into a single debounce per edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstContent = `<?php
+
+class InvoiceServiceTest
+{
+    public function testCharges(): void
+    {
+    }
+}
+`;
+      const activeDocument: EditorDocument = {
+        content: firstContent,
+        language: "php",
+        name: "InvoiceServiceTest.php",
+        path: "/workspace/tests/Unit/InvoiceServiceTest.php",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const editor = createEditor(model);
+      const monaco = createMonaco(model);
+      const validate = vi.fn(async () => []);
+      const gateway = { validate };
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
+
+      const renderWith = async (document: EditorDocument) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={document}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              isActiveDocumentPhpTest
+              languageServerDiagnosticsByPath={{}}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={gateway}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      const testGlyphCalls = () =>
+        editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+          (decorations as any[]).some(
+            (decoration) =>
+              decoration.options?.glyphMarginClassName ===
+              "test-run-gutter-glyph",
+          ),
+        );
+      const syntaxMarkerCalls = () =>
+        monaco.editor.setModelMarkers.mock.calls.filter(
+          ([, owner]) => owner === "php-syntax",
+        );
+
+      // Initial mount + flush so all three consumers have rendered once.
+      await renderWith(activeDocument);
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      expect(testGlyphCalls().length).toBeGreaterThan(0);
+      expect(validate).toHaveBeenCalledTimes(1);
+
+      editor.deltaDecorations.mockClear();
+      monaco.editor.setModelMarkers.mockClear();
+      validate.mockClear();
+
+      // Record every 160ms debounce timer armed during the keystroke. With the
+      // shared debounce there is exactly ONE for all three PHP consumers (impl
+      // gutter, test gutter, syntax diagnostics); the pre-refactor code armed
+      // three independent timers. We restore the original setTimeout only AFTER
+      // switching back to real timers (in `finally`) so the spy never corrupts
+      // vitest's fake-timer patching of the global.
+      const debounceDelays: number[] = [];
+      const realSetTimeout = window.setTimeout;
+      const recordingSetTimeout = ((
+        handler: TimerHandler,
+        timeout?: number,
+        ...args: unknown[]
+      ) => {
+        if (timeout === 160) {
+          debounceDelays.push(timeout);
+        }
+        return (realSetTimeout as any)(handler, timeout, ...args);
+      }) as typeof window.setTimeout;
+      window.setTimeout = recordingSetTimeout;
+
+      // A single keystroke (same path, mutated content) must arm exactly ONE
+      // 160ms debounce timer shared by all three consumers, not three
+      // independent timers.
+      const secondContent = `<?php
+
+class InvoiceServiceTest
+{
+    public function testCharges(): void
+    {
+    }
+
+    public function testRefunds(): void
+    {
+    }
+}
+`;
+      await renderWith({ ...activeDocument, content: secondContent });
+
+      window.setTimeout = realSetTimeout;
+
+      expect(debounceDelays).toHaveLength(1);
+
+      // One flush updates all three consumers from the single shared snapshot.
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+
+      // Impl + test gutter re-parsed and re-decorated, syntax re-validated once.
+      expect(testGlyphCalls().length).toBeGreaterThan(0);
+      expect(syntaxMarkerCalls().length).toBeGreaterThan(0);
+      expect(validate).toHaveBeenCalledTimes(1);
+      expect(validate).toHaveBeenCalledWith(secondContent);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders unused-import inspections as warning markers tagged Unnecessary", async () => {
+    const content = `<?php
+
+namespace App;
+
+use App\\Services\\UsedService;
+use App\\Services\\UnusedService;
+
+class Foo
+{
+    public function bar(UsedService $service): void
+    {
+    }
+}
+`;
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "Foo.php",
+      path: "/workspace/app/Foo.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.resolve();
+    });
+
+    const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner]) => owner === "php-syntax",
+    );
+    const lastCall = syntaxMarkerCalls[syntaxMarkerCalls.length - 1];
+    const markers = lastCall?.[2] as any[] | undefined;
+    const inspectionMarker = markers?.find(
+      (marker) => marker.source === "PHP Inspection",
+    );
+
+    expect(inspectionMarker).toBeDefined();
+    expect(inspectionMarker.severity).toBe(monaco.MarkerSeverity.Warning);
+    expect(inspectionMarker.tags).toEqual([monaco.MarkerTag.Unnecessary]);
+    expect(inspectionMarker.message).toBe(
+      "Unused import App\\Services\\UnusedService.",
+    );
+    // The marker sits on line 6 (1-based), the unused `use` statement line.
+    expect(inspectionMarker.startLineNumber).toBe(6);
+  });
+
+  it("renders unused-variable inspections as warning markers tagged Unnecessary", async () => {
+    const content = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function bar(): int
+    {
+        $unused = 5;
+        return 1;
+    }
+}
+`;
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "Foo.php",
+      path: "/workspace/app/Foo.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.resolve();
+    });
+
+    const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner]) => owner === "php-syntax",
+    );
+    const lastCall = syntaxMarkerCalls[syntaxMarkerCalls.length - 1];
+    const markers = lastCall?.[2] as any[] | undefined;
+    const inspectionMarker = markers?.find(
+      (marker) =>
+        marker.source === "PHP Inspection" &&
+        marker.message === 'Unused variable "$unused".',
+    );
+
+    expect(inspectionMarker).toBeDefined();
+    expect(inspectionMarker.severity).toBe(monaco.MarkerSeverity.Warning);
+    expect(inspectionMarker.tags).toEqual([monaco.MarkerTag.Unnecessary]);
+    // The marker sits on line 9 (1-based), the `$unused = 5;` statement line.
+    expect(inspectionMarker.startLineNumber).toBe(9);
+  });
+
   it("does not re-map diagnostic overview decorations per keystroke when diagnostics are unchanged", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
@@ -2159,6 +3525,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2237,6 +3604,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2271,6 +3639,88 @@ interface PaymentGateway
     await renderWith({ ...activeDocument, content: "const one = 12;\nconst two = 2;\nconst three = 3;\n" });
 
     expect(bookmarkDecorationCalls()).toHaveLength(0);
+  });
+
+  it("does not re-map change-hunk decorations per keystroke when hunks are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "diff.ts",
+      path: "/workspace/src/diff.ts",
+      savedContent: "const one = 0;\nconst two = 2;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    // Stable change-hunk identity across renders so the only thing changing is
+    // the activeDocument object identity (a keystroke). The change-hunk effect
+    // must gate on the document path + hunk identity, not the document object.
+    const changeHunks = editorChangeHunks(
+      activeDocument.savedContent ?? "",
+      activeDocument.content,
+    );
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={changeHunks}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    const changeDecorationCalls = () =>
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+        (decorations as any[]).some((decoration) =>
+          decoration.options?.glyphMarginClassName?.startsWith(
+            "editor-change-glyph",
+          ),
+        ),
+      );
+
+    await renderWith(activeDocument);
+
+    expect(changeDecorationCalls().length).toBeGreaterThan(0);
+    editor.deltaDecorations.mockClear();
+
+    // Simulate a keystroke: new activeDocument object, same path + same hunk
+    // identity. Change-hunk decorations must NOT be re-mapped.
+    await renderWith({ ...activeDocument, content: "const one = 11;\nconst two = 2;\n" });
+
+    expect(changeDecorationCalls()).toHaveLength(0);
   });
 
   it("re-maps bookmark gutter decorations when bookmarked lines change", async () => {
@@ -2311,6 +3761,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2397,6 +3848,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2479,6 +3931,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2583,6 +4036,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2686,6 +4140,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2808,6 +4263,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -2916,6 +4372,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -3030,6 +4487,7 @@ interface PaymentGateway
             onGoForward={vi.fn()}
             onGoToDefinition={vi.fn()}
             onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
             onLanguageServerError={vi.fn()}
             onOpenClass={vi.fn()}
             onOpenFile={vi.fn()}
@@ -3098,6 +4556,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3168,6 +4627,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3243,6 +4703,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3333,6 +4794,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -3355,7 +4817,7 @@ interface PaymentGateway
     expect(historyModel.dispose).not.toHaveBeenCalled();
   });
 
-  it("registers guarded Option+Enter quick fix/context actions", async () => {
+  it("registers Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
       language: "php",
@@ -3393,6 +4855,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3421,27 +4884,708 @@ interface PaymentGateway
 
     quickFixAction.run();
 
-    expect(editor.trigger).not.toHaveBeenCalled();
-
-    monaco.editor.getModelMarkers.mockReturnValue([
-      {
-        endColumn: 12,
-        endLineNumber: 1,
-        message: 'Unexpected bare PHP identifier "bad".',
-        severity: monaco.MarkerSeverity.Error,
-        source: "PHP Syntax",
-        startColumn: 9,
-        startLineNumber: 1,
-      },
-    ]);
-
-    quickFixAction.run();
-
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.quickFix",
       {},
     );
+  });
+
+  it("registers Cmd+L go to line that opens Monaco's gotoLine quick access", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const gotoLineAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.gotoLine");
+
+    expect(gotoLineAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
+        label: "Go to Line/Column",
+      }),
+    );
+
+    gotoLineAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.gotoLine",
+      {},
+    );
+  });
+
+  it("registers F2 rename that triggers Monaco's cross-file rename action", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = value;\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const renameAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.rename");
+
+    expect(renameAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyCode.F2],
+        label: "Rename Symbol",
+      }),
+    );
+
+    renameAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.rename",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+
+    renameAction.run();
+
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
+  it("registers fold/unfold actions that trigger Monaco's folding commands", async () => {
+    const activeDocument: EditorDocument = {
+      content: "function outer() {\n  return 1;\n}\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actionById = (id: string) =>
+      editor.addAction.mock.calls
+        .map(([action]) => action)
+        .find((action) => action.id === id);
+
+    const foldAll = actionById("mockor.foldAll");
+    const unfoldAll = actionById("mockor.unfoldAll");
+    const foldRecursively = actionById("mockor.foldRecursively");
+    const unfoldRecursively = actionById("mockor.unfoldRecursively");
+
+    expect(foldAll).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Minus,
+        ],
+        label: "Fold All",
+      }),
+    );
+    expect(unfoldAll).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Equal,
+        ],
+        label: "Unfold All",
+      }),
+    );
+    // Recursively variants are palette-only (no default keybinding).
+    expect(foldRecursively).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Fold Recursively",
+      }),
+    );
+    expect(unfoldRecursively).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Unfold Recursively",
+      }),
+    );
+
+    foldAll.run();
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.foldAll", {});
+
+    editor.trigger.mockClear();
+    unfoldAll.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.unfoldAll",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    foldRecursively.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.foldRecursively",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    unfoldRecursively.run();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.unfoldRecursively",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+    foldAll.run();
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
+  it("registers next/previous change actions that jump between gutter change hunks", async () => {
+    // Two separated change hunks: an edit on line 2 and an edit on line 6.
+    const baseline = [
+      "line1",
+      "line2",
+      "line3",
+      "line4",
+      "line5",
+      "line6",
+      "line7",
+    ].join("\n");
+    const current = [
+      "line1",
+      "line2-edited",
+      "line3",
+      "line4",
+      "line5",
+      "line6-edited",
+      "line7",
+    ].join("\n");
+    const changeHunks = editorChangeHunks(baseline, current);
+
+    expect(changeHunks).toHaveLength(2);
+    const firstHunkLine = changeHunks[0].startLineNumber;
+    const secondHunkLine = changeHunks[1].startLineNumber;
+    expect(firstHunkLine).toBeLessThan(secondHunkLine);
+
+    const activeDocument: EditorDocument = {
+      content: current,
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: baseline,
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={changeHunks}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actionById = (id: string) =>
+      editor.addAction.mock.calls
+        .map(([action]) => action)
+        .find((action) => action.id === id);
+
+    const nextChange = actionById("mockor.nextChange");
+    const previousChange = actionById("mockor.previousChange");
+
+    expect(nextChange).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.F5],
+        label: "Go to Next Change",
+      }),
+    );
+    expect(previousChange).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F5,
+        ],
+        label: "Go to Previous Change",
+      }),
+    );
+
+    // Caret starts on line 1, before both hunks: Next jumps to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 1 });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+
+    // From inside the first hunk, Next advances to the second hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: secondHunkLine }),
+    );
+
+    // From the second (last) hunk, Next wraps around to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.setPosition.mockClear();
+    nextChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+
+    // From the first hunk, Previous wraps around to the last hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.setPosition.mockClear();
+    previousChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: secondHunkLine }),
+    );
+
+    // From the last hunk, Previous steps back to the first hunk.
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.setPosition.mockClear();
+    previousChange.run();
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: firstHunkLine }),
+    );
+  });
+
+  describe("cyclic expand word (hippie completion)", () => {
+    interface HippieHarness {
+      editor: FakeEditor;
+      monaco: ReturnType<typeof createMonaco>;
+      rerender(document: EditorDocument): Promise<void>;
+      run(): void;
+      setBuffer(value: string, cursorOffset: number): void;
+    }
+
+    function offsetToPosition(value: string, offset: number) {
+      const before = value.slice(0, offset);
+      const lines = before.split("\n");
+
+      return {
+        column: lines[lines.length - 1].length + 1,
+        lineNumber: lines.length,
+      };
+    }
+
+    async function renderHippie(
+      initialValue: string,
+      initialOffset: number,
+    ): Promise<HippieHarness> {
+      let modelValue = initialValue;
+      let cursorOffset = initialOffset;
+      const activeDocument: EditorDocument = {
+        content: initialValue,
+        language: "typescript",
+        name: "main.ts",
+        path: "/workspace/main.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        dispose: vi.fn(),
+        getLineMaxColumn: vi.fn((lineNumber: number) => {
+          const lines = modelValue.split("\n");
+          return (lines[lineNumber - 1]?.length ?? 0) + 1;
+        }),
+        getValue: vi.fn(() => modelValue),
+        isDisposed: vi.fn(() => false),
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const extendedModel = model as FakeModel & {
+        getOffsetAt: ReturnType<typeof vi.fn>;
+        getPositionAt: ReturnType<typeof vi.fn>;
+      };
+      extendedModel.getOffsetAt = vi.fn(
+        (position: { column: number; lineNumber: number }) => {
+          const lines = modelValue.split("\n");
+          let offset = 0;
+          for (let index = 0; index < position.lineNumber - 1; index += 1) {
+            offset += lines[index].length + 1;
+          }
+          return offset + position.column - 1;
+        },
+      );
+      extendedModel.getPositionAt = vi.fn((offset: number) =>
+        offsetToPosition(modelValue, offset),
+      );
+      const editor = createEditor(model);
+      const monaco = createMonaco(model);
+      editor.getPosition.mockImplementation(() =>
+        offsetToPosition(modelValue, cursorOffset),
+      );
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
+
+      const renderDocument = async (document: EditorDocument) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={document}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              languageServerDiagnosticsByPath={{}}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      await renderDocument(activeDocument);
+
+      const action = editor.addAction.mock.calls
+        .map(([entry]) => entry)
+        .find((entry) => entry.id === "mockor.cyclicExpandWord");
+
+      if (!action) {
+        throw new Error("Cyclic expand word action was not registered.");
+      }
+
+      return {
+        editor,
+        monaco,
+        rerender: renderDocument,
+        run: () => action.run(),
+        setBuffer: (value: string, nextOffset: number) => {
+          modelValue = value;
+          cursorOffset = nextOffset;
+        },
+      };
+    }
+
+    it("registers the action with the Alt+/ keybinding", async () => {
+      const harness = await renderHippie("calculateTotal\ncalc", "".length);
+      const action = harness.editor.addAction.mock.calls
+        .map(([entry]) => entry)
+        .find((entry) => entry.id === "mockor.cyclicExpandWord");
+
+      expect(action).toEqual(
+        expect.objectContaining({
+          keybindings: [harness.monaco.KeyMod.Alt | harness.monaco.KeyCode.Slash],
+          label: "Cyclic Expand Word",
+        }),
+      );
+    });
+
+    it("expands the prefix to the nearest matching word from the buffer", async () => {
+      const value = "calculateTotal\ncalc";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+
+      // Replaces just the "calc" prefix with the remaining "ulateTotal".
+      expect(harness.editor.executeEdits).toHaveBeenCalledWith(
+        "mockor.cyclicExpandWord",
+        [
+          expect.objectContaining({
+            text: "calculateTotal",
+            range: expect.objectContaining({
+              startLineNumber: 2,
+              startColumn: 1,
+              endLineNumber: 2,
+              endColumn: 5,
+            }),
+          }),
+        ],
+      );
+    });
+
+    it("does nothing when no buffer word matches the prefix", async () => {
+      const value = "alpha beta zz";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+
+      expect(harness.editor.executeEdits).not.toHaveBeenCalled();
+    });
+
+    it("cycles to the next candidate on a back-to-back press, then wraps to the prefix", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      // First Alt+/ -> nearest backward candidate "fooTwo".
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // Reflect the inserted edit + caret at the end of the inserted word, then
+      // press Alt+/ again immediately: it must cycle to "fooOne".
+      harness.setBuffer("fooOne\nfooTwo\nfooTwo", "fooOne\nfooTwo\nfooTwo".length);
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooOne" })],
+      );
+
+      // After the last candidate it wraps back to the originally typed prefix.
+      harness.setBuffer("fooOne\nfooTwo\nfooOne", "fooOne\nfooTwo\nfooOne".length);
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        3,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "foo" })],
+      );
+    });
+
+    it("drops the active session when the document changes (no cross-file cycle)", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // A document switch hands EditorSurface a new activeDocument object. The
+      // hippie session anchor/candidates belong to the previous file, so the
+      // switch must drop the session. We re-render with a new document object so
+      // the reset effect fires, then point the buffer at fresh content.
+      await harness.rerender({
+        content: "fooOne\nfooTwo\nfooTwo",
+        language: "typescript",
+        name: "main.ts",
+        path: "/workspace/main.ts",
+        savedContent: "",
+      });
+
+      // The buffer now shows "fooTwo" at the caret. A stale session would cycle
+      // to its old candidate "fooOne"; a correctly reset session re-expands from
+      // the prefix under the caret. We give the buffer a distinct prefix so the
+      // two outcomes differ: a fresh expansion from "alp" yields "alphaBeta".
+      harness.setBuffer("alphaBeta\nalp", "alphaBeta\nalp".length);
+      harness.run();
+
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "alphaBeta" })],
+      );
+    });
+
+    it("starts a fresh expansion (not a cycle) when the caret moves between presses", async () => {
+      const value = "fooOne\nfooTwo\nfoo";
+      const harness = await renderHippie(value, value.length);
+
+      harness.run();
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        1,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+
+      // The buffer now shows the expansion, but the caret is somewhere else
+      // entirely (user clicked away). The next press must NOT cycle "fooTwo" ->
+      // "fooOne"; it must re-expand from whatever new prefix is under the caret.
+      const moved = "fooOne\nfooTwo\nfooTwo\nfo";
+      harness.setBuffer(moved, moved.length);
+      harness.run();
+
+      // Fresh expansion from prefix "fo": nearest backward word is "fooTwo".
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
+        2,
+        "mockor.cyclicExpandWord",
+        [expect.objectContaining({ text: "fooTwo" })],
+      );
+    });
   });
 
   it("extends selection from identifier to full member call with Option+Up", async () => {
@@ -3492,6 +5636,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3588,6 +5733,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3646,7 +5792,11 @@ interface PaymentGateway
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? editor.gotoDefinitionContribution
+        : snippetController,
+    );
     editor.getSelection.mockReturnValue({
       endColumn: "doStuff();".length + 1,
       endLineNumber: 1,
@@ -3675,6 +5825,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3764,7 +5915,11 @@ interface PaymentGateway
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? editor.gotoDefinitionContribution
+        : snippetController,
+    );
     editor.getPosition.mockReturnValue({ column: 5, lineNumber: 1 });
     editor.getSelection.mockReturnValue({
       endColumn: 5,
@@ -3794,6 +5949,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -3874,7 +6030,11 @@ interface PaymentGateway
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? editor.gotoDefinitionContribution
+        : snippetController,
+    );
     editor.getSelection.mockReturnValue({
       endColumn: "doStuff();".length + 1,
       endLineNumber: 1,
@@ -3903,6 +6063,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4009,6 +6170,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4118,6 +6280,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4222,7 +6385,11 @@ interface PaymentGateway
     const lines = ["if ($ready)"];
     const { editor } = await mountCompleteStatementSurface(root, lines);
     const snippetController = { insert: vi.fn() };
-    editor.getContribution.mockReturnValue(snippetController);
+    editor.getContribution.mockImplementation((id?: string) =>
+      id === "editor.contrib.gotodefinitionatposition"
+        ? editor.gotoDefinitionContribution
+        : snippetController,
+    );
 
     editor.getPosition.mockReturnValue({
       column: lines[0].length + 1,
@@ -4448,6 +6615,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={onGoToDefinition}
           onGoToImplementationAt={onGoToImplementationAt}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4542,6 +6710,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4586,6 +6755,89 @@ interface PaymentGateway
     expect(editor.trigger).not.toHaveBeenCalled();
   });
 
+  it("formats the selected range through the formatting provider with Cmd+Alt+L", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const formatSelectionAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.formatSelection");
+
+    expect(formatSelectionAction).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyL,
+        ],
+        label: "Format Selection",
+      }),
+    );
+
+    formatSelectionAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.formatSelection",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+
+    formatSelectionAction.run();
+
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
   it("wires editor ergonomics actions to their Monaco commands and keybindings", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
@@ -4624,6 +6876,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -4752,6 +7005,328 @@ interface PaymentGateway
     );
   });
 
+  it("wires the line/case utility actions to their Monaco commands and keybindings", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "utilities.ts",
+      path: "/workspace/src/utilities.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
+
+    const joinLines = actionById("mockor.joinLines");
+    const sortLinesAscending = actionById("mockor.sortLinesAscending");
+    const sortLinesDescending = actionById("mockor.sortLinesDescending");
+    const toggleCase = actionById("mockor.toggleCase");
+    const transformToLowercase = actionById("mockor.transformToLowercase");
+
+    expect(joinLines).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
+        ],
+        label: "Join Lines",
+      }),
+    );
+    expect(toggleCase).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
+        ],
+        label: "Toggle Case",
+      }),
+    );
+    expect(sortLinesAscending).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Sort Lines Ascending",
+      }),
+    );
+    expect(sortLinesDescending).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Sort Lines Descending",
+      }),
+    );
+    expect(transformToLowercase).toEqual(
+      expect.objectContaining({
+        keybindings: [],
+        label: "Transform to Lowercase",
+      }),
+    );
+
+    joinLines?.run();
+    sortLinesAscending?.run();
+    sortLinesDescending?.run();
+    toggleCase?.run();
+    transformToLowercase?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.joinLines",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.sortLinesAscending",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.sortLinesDescending",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.transformToUppercase",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.transformToLowercase",
+      {},
+    );
+  });
+
+  it("wires multi-cursor and selection-resize actions to their Monaco commands and keybindings", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "multicursor.ts",
+      path: "/workspace/src/multicursor.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
+
+    const insertCursorAbove = actionById("mockor.insertCursorAbove");
+    const insertCursorBelow = actionById("mockor.insertCursorBelow");
+    const selectAllOccurrences = actionById("mockor.selectAllOccurrences");
+    const shrinkSelection = actionById("mockor.shrinkSelection");
+
+    expect(insertCursorAbove).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
+        ],
+      }),
+    );
+    expect(insertCursorBelow).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
+        ],
+      }),
+    );
+    expect(selectAllOccurrences).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL,
+        ],
+      }),
+    );
+    expect(shrinkSelection).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
+      }),
+    );
+
+    insertCursorAbove?.run();
+    insertCursorBelow?.run();
+    selectAllOccurrences?.run();
+    shrinkSelection?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.insertCursorAbove",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.insertCursorBelow",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.selectHighlights",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.smartSelect.shrink",
+      {},
+    );
+  });
+
+  it("toggles column selection mode on and off via updateOptions", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "column.ts",
+      path: "/workspace/src/column.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("mac")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const toggleColumnSelection = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.toggleColumnSelection");
+
+    expect(toggleColumnSelection).toBeDefined();
+
+    editor.updateOptions.mockClear();
+
+    toggleColumnSelection?.run();
+    expect(editor.updateOptions).toHaveBeenLastCalledWith({
+      columnSelection: true,
+    });
+
+    toggleColumnSelection?.run();
+    expect(editor.updateOptions).toHaveBeenLastCalledWith({
+      columnSelection: false,
+    });
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -4792,6 +7367,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -4872,6 +7448,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -4970,6 +7547,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5069,6 +7647,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5176,6 +7755,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5261,6 +7841,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5382,6 +7963,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5501,6 +8083,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5589,6 +8172,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5655,6 +8239,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5734,6 +8319,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -5793,6 +8379,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -5844,6 +8431,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onEditorFocused={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
@@ -5902,6 +8490,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -5959,6 +8548,7 @@ interface PaymentGateway
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
           onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
           onLanguageServerError={vi.fn()}
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
@@ -6030,6 +8620,45 @@ interface PaymentGateway
     // memo skips the EditorSurface render because every prop is referentially
     // equal, so the unrelated parent update does not re-render the surface.
     expect(editorSurfaceMocks.renderCount).toBe(rendersAfterMount);
+  });
+
+  it("force-syncs the editor model when its value diverges from the active document content so a freshly opened file never renders blank", async () => {
+    // Reproduces the Quick Open empty-tab race: @monaco-editor/react keys its
+    // value-apply effect on the `value` prop identity, and its model swap on the
+    // `path` prop. When a file's model already exists (kept alive for Back/Forward
+    // navigation) and the path swaps to it while the value effect does not re-run,
+    // Monaco shows the model's stale/empty buffer and the freshly read content is
+    // never applied until some later unrelated edit nudges the value effect. The
+    // surface must converge the model deterministically on open.
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass CommentController {}\n",
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/Http/Controllers/CommentController.php",
+      savedContent: "<?php\nclass CommentController {}\n",
+    };
+    let modelValue = ""; // The model exists but its buffer is stale/empty.
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      setValue: vi.fn((next: string) => {
+        modelValue = next;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    } as FakeModel & {
+      getValue: ReturnType<typeof vi.fn>;
+      setValue: ReturnType<typeof vi.fn>;
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // The model's buffer must end up matching the opened document content rather
+    // than the stale empty buffer that left the editor visually blank.
+    expect(modelValue).toBe(activeDocument.content);
   });
 
   it("re-renders the Monaco surface when the active document content changes", async () => {
@@ -6105,6 +8734,837 @@ interface PaymentGateway
 
     expect(onEditorFocused).toHaveBeenCalled();
   });
+
+  it("hides any open hover widget when a reveal target lands so a stuck 'Loading…' hover cannot linger after navigation", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    // Mount with no reveal target: a hover widget could be open here.
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorRevealTarget: null,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // Navigate back / reveal to a position in the same document. This is the
+    // exact gesture that left the Monaco hover widget stuck showing "Loading…".
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorRevealTarget: {
+            path: activeDocument.path,
+            position: { lineNumber: 2, column: 1 },
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const triggeredHideHover = editor.trigger.mock.calls.some(
+      (call) => call[1] === "editor.action.hideHover",
+    );
+
+    expect(triggeredHideHover).toBe(true);
+    // The reveal itself must still happen.
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      lineNumber: 2,
+      column: 1,
+    });
+  });
+
+  it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconst other = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, memoGuardProps(activeDocument)));
+      await Promise.resolve();
+    });
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    const onChangeBefore = editorSurfaceMocks.props?.onChange;
+    const beforeMountBefore = editorSurfaceMocks.props?.beforeMount;
+    const loadingBefore = editorSurfaceMocks.props?.loading;
+    const updateOptionsCallsBefore = editor.updateOptions.mock.calls.length;
+
+    // A real cursor move that lands on a different position must update the
+    // tracked position (breadcrumbs depend on it) without churning the heavy
+    // Monaco props - otherwise @monaco-editor/react re-runs updateOptions and
+    // disposes/recreates the model-content listener on every cursor move.
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 5, lineNumber: 2 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
+    expect(editorSurfaceMocks.props?.onChange).toBe(onChangeBefore);
+    expect(editorSurfaceMocks.props?.beforeMount).toBe(beforeMountBefore);
+    expect(editorSurfaceMocks.props?.loading).toBe(loadingBefore);
+    expect(editor.updateOptions.mock.calls.length).toBe(
+      updateOptionsCallsBefore,
+    );
+  });
+
+  it("recomputes the Monaco options when an editor setting changes so it is applied", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorFontSize: 14,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    expect(optionsBefore).toEqual(
+      expect.objectContaining({ fontSize: 14 }),
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorFontSize: 20,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).not.toBe(optionsBefore);
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ fontSize: 20 }),
+    );
+  });
+
+  it("recomputes the Monaco options when the read-only state changes", async () => {
+    const editableDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const readOnlyDocument: EditorDocument = {
+      ...editableDocument,
+      readOnly: true,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: editableDocument.path, path: editableDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, memoGuardProps(editableDocument)),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ readOnly: false }),
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, memoGuardProps(readOnlyDocument)),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ readOnly: true, domReadOnly: true }),
+    );
+  });
+
+  it("forwards the current parent onChange handler even though the prop identity is stable", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const firstOnChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onChange: firstOnChange,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const stableOnChange = editorSurfaceMocks.props?.onChange;
+
+    const secondOnChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onChange: secondOnChange,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    // The wrapped Editor receives the same stable onChange reference so its memo
+    // is never broken by a fresh handler...
+    expect(editorSurfaceMocks.props?.onChange).toBe(stableOnChange);
+
+    // ...yet invoking it routes to the latest parent handler (no stale closure).
+    act(() => {
+      editorSurfaceMocks.props?.onChange?.("next");
+    });
+
+    expect(firstOnChange).not.toHaveBeenCalled();
+    expect(secondOnChange).toHaveBeenCalledWith("next");
+  });
+
+  it("does not update tracked cursor state when the cursor fires with an unchanged position", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class MyComponent {\n  render() {}\n}\n",
+      language: "typescript",
+      name: "App.tsx",
+      path: "/workspace/src/App.tsx",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({ column: 14, lineNumber: 1 });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbols: LanguageServerDocumentSymbol[] = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "MyComponent",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 2, character: 1 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 13 },
+          end: { line: 0, character: 24 },
+        },
+      },
+    ];
+    gateway.documentSymbols = vi.fn(
+      async () => documentSymbols,
+    ) as unknown as typeof gateway.documentSymbols;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    const labelsBefore = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(labelsBefore).toEqual(["App.tsx", "MyComponent"]);
+
+    const optionsBefore = editorSurfaceMocks.props?.options;
+    const renderCountBefore = editorSurfaceMocks.renderCount;
+
+    // Monaco can fire onDidChangeCursorPosition with the same position (e.g. a
+    // repeated click on the current spot). The gate must skip the duplicate so
+    // the surface does not re-render at all.
+    await act(async () => {
+      editor.cursorPositionHandler?.({
+        position: { column: 14, lineNumber: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.renderCount).toBe(renderCountBefore);
+    expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
+
+    const labelsAfter = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
+  });
+
+  it("warms the active model's tokens progressively on idle after open", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 1200);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // Warming is deferred to idle, never run synchronously on the open path.
+    expect(model.tokenization?.forceTokenization).not.toHaveBeenCalled();
+    expect(idle.pending()).toBe(1);
+
+    await act(async () => {
+      idle.runAll();
+    });
+
+    // The whole model is warmed in chunks; the final call clamps to the last
+    // line and warming then stops re-arming.
+    const calls = (model.tokenization?.forceTokenization.mock.calls ?? []).map(
+      ([lineNumber]) => lineNumber,
+    );
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[calls.length - 1]).toBe(1200);
+    expect(idle.pending()).toBe(0);
+  });
+
+  it("stops warming the model when the surface unmounts", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 5000);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      idle.runNext();
+    });
+    const callsBeforeUnmount =
+      model.tokenization?.forceTokenization.mock.calls.length ?? 0;
+    expect(callsBeforeUnmount).toBeGreaterThan(0);
+
+    await act(async () => {
+      root.unmount();
+    });
+
+    // No pending idle slice survives the unmount, and draining the queue cannot
+    // resurrect warming for the now-gone surface.
+    expect(idle.pending()).toBe(0);
+    await act(async () => {
+      idle.runAll();
+    });
+    expect(model.tokenization?.forceTokenization.mock.calls.length).toBe(
+      callsBeforeUnmount,
+    );
+  });
+
+  it("never warms a disposed model's tokens", async () => {
+    const idle = captureIdleCallbacks();
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 5000);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    // The model is disposed (tab/file/workspace switch) while a slice is queued.
+    model.isDisposed?.mockReturnValue(true);
+
+    await act(async () => {
+      idle.runAll();
+    });
+
+    expect(model.tokenization?.forceTokenization).not.toHaveBeenCalled();
+    expect(idle.pending()).toBe(0);
+  });
+
+  it("renders per-line git blame annotations when enabled", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 2),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const now = Math.floor(Date.now() / 1000);
+    const provideGitBlame = vi.fn(async () => [
+      { author: "Alice", lineNumber: 1, sha: "1a2b3c4", timestamp: now - 86400 },
+      { author: "Bob", lineNumber: 2, sha: "f0e1d2c", timestamp: now - 7200 },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          gitBlameEnabled
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideGitBlame={provideGitBlame}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(provideGitBlame).toHaveBeenCalledWith(activeDocument.path);
+    const blameCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+        ),
+    );
+    expect(blameCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            before: expect.objectContaining({
+              content: expect.stringContaining("Alice"),
+              inlineClassName: "git-blame-annotation",
+            }),
+          }),
+          range: expect.objectContaining({ startLineNumber: 1 }),
+        }),
+      ]),
+    );
+  });
+
+  it("renders no git blame annotations when disabled", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const provideGitBlame = vi.fn(async () => []);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          gitBlameEnabled={false}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideGitBlame={provideGitBlame}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(provideGitBlame).not.toHaveBeenCalled();
+    const blameCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+        ),
+    );
+    expect(blameCall).toBeUndefined();
+  });
+
+  it("drops stale git blame results after the active document switches", async () => {
+    const first: EditorDocument = {
+      content: "const one = 1;\n",
+      language: "typescript",
+      name: "first.ts",
+      path: "/workspace/src/first.ts",
+      savedContent: "",
+    };
+    const second: EditorDocument = {
+      content: "const two = 2;\n",
+      language: "typescript",
+      name: "second.ts",
+      path: "/workspace/src/second.ts",
+      savedContent: "",
+    };
+    // The model reports the SECOND document's path: the surface has already
+    // switched tabs by the time the first document's blame promise resolves.
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => second.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: second.path, path: second.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const now = Math.floor(Date.now() / 1000);
+    const provideGitBlame = vi.fn(async (path: string) =>
+      path === first.path
+        ? [{ author: "Stale", lineNumber: 1, sha: "1111111", timestamp: now - 60 }]
+        : [],
+    );
+
+    const props = (document: EditorDocument) => ({
+      activeDocument: document,
+      changeHunks: [],
+      editorRevealTarget: null,
+      flushPendingLanguageServerDocument: vi.fn(async () => undefined),
+      gitBlameEnabled: true,
+      languageServerDiagnosticsByPath: {},
+      languageServerFeaturesGateway: languageServerFeaturesGateway(),
+      languageServerRuntimeStatus: null,
+      keymap: defaultKeymapSettings(),
+      monacoTheme: "calm-dark" as const,
+      onChange: vi.fn(),
+      onCloseActiveTab: vi.fn(),
+      onCursorPositionChange: vi.fn(),
+      onEditorFocused: vi.fn(),
+      onGoBack: vi.fn(),
+      onGoForward: vi.fn(),
+      onGoToDefinition: vi.fn(),
+      onGoToImplementationAt: vi.fn(),
+      onGoToSuperMethod: vi.fn(),
+      onLanguageServerError: vi.fn(),
+      onOpenClass: vi.fn(),
+      onOpenFile: vi.fn(),
+      onOpenFileStructure: vi.fn(),
+      onRevealTargetHandled: vi.fn(),
+      onRevertChangeHunk: vi.fn(),
+      phpSyntaxDiagnosticsGateway: { validate: vi.fn(async () => []) },
+      provideGitBlame,
+      providePhpMethodCompletions: vi.fn(async () => []),
+      providePhpMethodSignature: vi.fn(async () => null),
+    });
+
+    await act(async () => {
+      root.render(<EditorSurface {...props(first)} />);
+    });
+    await act(async () => {
+      root.render(<EditorSurface {...props(second)} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const staleCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.before?.content?.includes("Stale"),
+        ),
+    );
+    expect(staleCall).toBeUndefined();
+  });
+});
+
+describe("EditorSurface .editorconfig application", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    editorSurfaceMocks.editor = null;
+    editorSurfaceMocks.monaco = null;
+    editorSurfaceMocks.renderCount = 0;
+    editorSurfaceMocks.props = null;
+    editorSurfaceMocks.registeredContext = null;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function editorConfigModel(path: string): FakeModel & {
+    updateOptions: ReturnType<typeof vi.fn>;
+    setEOL: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      updateOptions: vi.fn(),
+      setEOL: vi.fn(),
+      uri: { fsPath: path, path },
+    } as FakeModel & {
+      updateOptions: ReturnType<typeof vi.fn>;
+      setEOL: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  function monacoWithEol(model: FakeModel) {
+    const monaco = createMonaco(model) as ReturnType<typeof createMonaco> & {
+      editor: { EndOfLineSequence: { LF: number; CRLF: number } };
+    };
+    monaco.editor.EndOfLineSequence = { LF: 0, CRLF: 1 };
+    return monaco;
+  }
+
+  async function renderSurface(
+    activeDocument: EditorDocument,
+    editorConfig: ResolvedEditorConfig | undefined,
+  ): Promise<void> {
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          editorConfig={editorConfig}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+  }
+
+  const phpDocument: EditorDocument = {
+    content: "<?php\nclass Example {}\n",
+    language: "php",
+    name: "Example.php",
+    path: "/workspace/app/Example.php",
+    savedContent: "",
+  };
+
+  it("applies space indent_style/indent_size to the active model", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {
+      indentStyle: "space",
+      indentSize: 4,
+      tabWidth: 4,
+    });
+
+    expect(model.updateOptions).toHaveBeenCalledWith({
+      insertSpaces: true,
+      tabSize: 4,
+    });
+  });
+
+  it("applies tab indent_style using tab_width", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {
+      indentStyle: "tab",
+      indentSize: 4,
+      tabWidth: 4,
+    });
+
+    expect(model.updateOptions).toHaveBeenCalledWith({
+      insertSpaces: false,
+      tabSize: 4,
+    });
+  });
+
+  it("sets the model EOL from end_of_line", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    const monaco = monacoWithEol(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await renderSurface(phpDocument, { endOfLine: "crlf" });
+
+    expect(model.setEOL).toHaveBeenCalledWith(
+      monaco.editor.EndOfLineSequence.CRLF,
+    );
+  });
+
+  it("does not override indentation or EOL when editorConfig is empty", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, {});
+
+    expect(model.updateOptions).not.toHaveBeenCalled();
+    expect(model.setEOL).not.toHaveBeenCalled();
+  });
+
+  it("does not override when editorConfig prop is omitted", async () => {
+    const model = editorConfigModel(phpDocument.path);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monacoWithEol(model);
+
+    await renderSurface(phpDocument, undefined);
+
+    expect(model.updateOptions).not.toHaveBeenCalled();
+    expect(model.setEOL).not.toHaveBeenCalled();
+  });
 });
 
 function memoGuardProps(
@@ -6129,6 +9589,7 @@ function memoGuardProps(
     onGoForward: vi.fn(),
     onGoToDefinition: vi.fn(),
     onGoToImplementationAt: vi.fn(),
+    onGoToSuperMethod: vi.fn(),
     onEditorFocused: overrides.onEditorFocused ?? vi.fn(),
     onLanguageServerError: vi.fn(),
     onOpenClass: vi.fn(),
@@ -6209,6 +9670,7 @@ async function mountCompleteStatementSurface(
         onGoForward={vi.fn()}
         onGoToDefinition={vi.fn()}
         onGoToImplementationAt={vi.fn()}
+        onGoToSuperMethod={vi.fn()}
         onEditorFocused={vi.fn()}
         onLanguageServerError={vi.fn()}
         onOpenClass={vi.fn()}
@@ -6256,13 +9718,102 @@ function moveStatementAction(
   return action;
 }
 
+// A FakeModel with the tokenization surface the background warmer drives:
+// getLineCount + isDisposed (public Monaco API) and the runtime-only
+// `tokenization.forceTokenization`.
+function tokenizableModel(path: string, lineCount: number): FakeModel {
+  return {
+    getLineCount: vi.fn(() => lineCount),
+    isDisposed: vi.fn(() => false),
+    tokenization: { forceTokenization: vi.fn() },
+    uri: { fsPath: path, path },
+  };
+}
+
+// Stubs `requestIdleCallback`/`cancelIdleCallback` so the surface's
+// idle-callback scheduler queues warming slices deterministically instead of
+// waiting on real browser idle time (jsdom has neither). Cancelled handles are
+// dropped so a cleared slice never runs. Auto-restored by the suite's
+// `vi.unstubAllGlobals()` in afterEach.
+function captureIdleCallbacks() {
+  const queue = new Map<number, () => void>();
+  let nextHandle = 1;
+
+  vi.stubGlobal("requestIdleCallback", (callback: () => void) => {
+    const handle = nextHandle++;
+    queue.set(handle, callback);
+    return handle;
+  });
+  vi.stubGlobal("cancelIdleCallback", (handle: number) => {
+    queue.delete(handle);
+  });
+
+  return {
+    pending: () => queue.size,
+    runNext: () => {
+      const entry = queue.entries().next().value as
+        | [number, () => void]
+        | undefined;
+      if (!entry) {
+        return;
+      }
+      queue.delete(entry[0]);
+      entry[1]();
+    },
+    runAll() {
+      let guard = 0;
+      while (queue.size > 0) {
+        this.runNext();
+        guard += 1;
+        if (guard > 100000) {
+          throw new Error("idle queue did not drain");
+        }
+      }
+    },
+  };
+}
+
 function createEditor(model: FakeModel): FakeEditor {
+  // A real Monaco ITextModel always exposes getValue/setValue. Backfill them on
+  // any fake model that omits them so the surface's deterministic content sync
+  // can read and reconcile the buffer just as it does in production.
+  if (!model.getValue || !model.setValue) {
+    const existingGetValue = model.getValue as (() => string) | undefined;
+    let buffer = existingGetValue ? existingGetValue() : "";
+    model.getValue = model.getValue ?? vi.fn(() => buffer);
+    model.setValue =
+      model.setValue ??
+      vi.fn((next: string) => {
+        buffer = next;
+      });
+  }
+
   let selection: {
     endColumn: number;
     endLineNumber: number;
     startColumn: number;
     startLineNumber: number;
   } | null = null;
+  // Monaco's built-in Cmd/Ctrl definition gesture lives in the
+  // `editor.contrib.gotodefinitionatposition` contribution. The surface does NOT
+  // dispose it (that crashes Monaco's event delivery); instead it replaces the
+  // contribution's `gotoDefinition` method with a no-op so a Cmd-hover never
+  // navigates while every listener stays wired. Model that here: the live
+  // contribution exposes a `gotoDefinition` that, by default, records a
+  // navigation via `gotoDefinitionContributionNavigate`. After the surface
+  // patches it, invoking the method must NOT record a navigation.
+  const gotoDefinitionContributionDispose = vi.fn();
+  const gotoDefinitionContributionNavigate = vi.fn(
+    (..._args: unknown[]) => Promise.resolve(),
+  );
+  const gotoDefinitionContribution: {
+    dispose: typeof gotoDefinitionContributionDispose;
+    gotoDefinition: (...args: unknown[]) => Promise<void>;
+  } = {
+    dispose: gotoDefinitionContributionDispose,
+    gotoDefinition: (...args: unknown[]) =>
+      gotoDefinitionContributionNavigate(...args),
+  };
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
@@ -6270,7 +9821,16 @@ function createEditor(model: FakeModel): FakeEditor {
     ),
     executeEdits: vi.fn(),
     focus: vi.fn(),
-    getContribution: vi.fn(() => ({ insert: vi.fn() })),
+    getContribution: vi.fn((id?: string) => {
+      if (id === "editor.contrib.gotodefinitionatposition") {
+        return gotoDefinitionContribution;
+      }
+
+      return { insert: vi.fn() };
+    }),
+    gotoDefinitionContribution,
+    gotoDefinitionContributionDispose,
+    gotoDefinitionContributionNavigate,
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
       height: 480,
@@ -6284,9 +9844,16 @@ function createEditor(model: FakeModel): FakeEditor {
     getSelection: vi.fn(() => selection),
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
+    cursorPositionHandler: null,
     mouseDownHandler: null,
     modelContentChangeHandler: null,
-    onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeCursorPosition: vi.fn(
+      (handler: (event: { position: EditorPosition }) => void) => {
+        editor.cursorPositionHandler = handler;
+
+        return { dispose: vi.fn() };
+      },
+    ),
     onDidChangeModelContent: vi.fn(
       (handler: (event: { changes: Array<{ text: string }> }) => void) => {
         editor.modelContentChangeHandler = handler;
@@ -6344,7 +9911,11 @@ function createMonaco(model: FakeModel) {
       getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
       GlyphMarginLane: { Center: 2, Left: 1, Right: 3 },
-      MouseTargetType: { GUTTER_GLYPH_MARGIN: 4, GUTTER_LINE_DECORATIONS: 3 },
+      MouseTargetType: {
+        CONTENT_TEXT: 6,
+        GUTTER_GLYPH_MARGIN: 4,
+        GUTTER_LINE_DECORATIONS: 3,
+      },
       OverviewRulerLane: { Left: 1, Right: 4 },
       setModelMarkers: vi.fn(),
       TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
@@ -6354,16 +9925,24 @@ function createMonaco(model: FakeModel) {
       BracketRight: 6,
       DownArrow: 11,
       Enter: 8,
+      Equal: 86,
+      F2: 60,
+      F5: 63,
       KeyB: 1,
       KeyD: 12,
       KeyF: 10,
       KeyI: 15,
+      KeyJ: 17,
       KeyK: 13,
+      KeyL: 16,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,
       KeyT: 14,
+      KeyU: 18,
       KeyW: 7,
+      Minus: 88,
+      Slash: 90,
       UpArrow: 9,
     },
     KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },

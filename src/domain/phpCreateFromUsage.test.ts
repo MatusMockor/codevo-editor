@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectMissingThisMember,
+  renderCreateConstantStub,
   renderCreateMethodStub,
   renderCreatePropertyStub,
 } from "./phpCreateFromUsage";
@@ -216,6 +217,340 @@ describe("detectMissingThisMember — negative / guard cases", () => {
 
     expect(detectMissingThisMember(source, -1)).toBeNull();
     expect(detectMissingThisMember(source, source.length + 50)).toBeNull();
+  });
+});
+
+describe("detectMissingThisMember — self:: / static:: static members", () => {
+  it("detects a missing self:: method call as a static method in the current class", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        self::§make('x', 123);\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "method",
+      name: "make",
+      argTypes: ["string", "int"],
+      isStatic: true,
+      target: "self",
+    });
+  });
+
+  it("detects a missing static:: method call as a static method in the current class", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        static::§build();\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "method",
+      name: "build",
+      argTypes: [],
+      isStatic: true,
+      target: "self",
+    });
+  });
+
+  it("detects a missing self::CONST access as a constant in the current class", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): string\n    {\n        return self::§DEFAULT_NAME;\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "constant",
+      name: "DEFAULT_NAME",
+      target: "self",
+    });
+  });
+
+  it("returns null when the self:: method already exists on the class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        self::make();",
+      "    }",
+      "",
+      "    private static function make(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("self::make();") + "self::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("returns null when the self::CONST constant already exists on the class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    private const DEFAULT_NAME = 'x';",
+      "",
+      "    public function run(): string",
+      "    {",
+      "        return self::DEFAULT_NAME;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.lastIndexOf("self::DEFAULT_NAME") + "self::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+});
+
+describe("detectMissingThisMember — parent:: cross-class members", () => {
+  it("detects a missing parent:: method call as a method targeting the parent class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Child extends Base",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle('x');",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "method",
+      name: "handle",
+      argTypes: ["string"],
+      target: "parent",
+      parentClass: "Base",
+    });
+  });
+
+  it("detects a non-call parent::CONST as a constant on the parent class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Child extends Base",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return parent::DEFAULT_LABEL;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::DEFAULT_LABEL") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "constant",
+      name: "DEFAULT_LABEL",
+      target: "parent",
+      parentClass: "Base",
+    });
+  });
+
+  it("returns null for parent:: when the class has no extends clause", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Orphan",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+});
+
+describe("detectMissingThisMember — typed property inference on assignment", () => {
+  it("infers the property type from a `= new Foo()` assignment", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§client = new HttpClient();\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "client",
+      propertyType: "HttpClient",
+    });
+  });
+
+  it("infers the property type from a string literal assignment", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§label = 'ready';\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "label",
+      propertyType: "string",
+    });
+  });
+
+  it("infers array for a `= []` assignment", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§items = [];\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "items",
+      propertyType: "array",
+    });
+  });
+
+  it("leaves the property untyped when the assigned expression is uncertain", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§value = $input;\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "value",
+    });
+  });
+
+  it("leaves the property untyped for a plain read (no assignment)", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        return $this->§repository;\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "repository",
+    });
+  });
+
+  it("does not treat an equality comparison as an assignment", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): bool\n    {\n        return $this->§flag == true;\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "flag",
+    });
+  });
+});
+
+describe("detectMissingThisMember — adversarial edges", () => {
+  it("does not mistake `myself::foo` for a self:: receiver", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $obj = Myself::§foo();\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("infers a single string-literal method argument type (regression)", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§handle('only');\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "method",
+      name: "handle",
+      argTypes: ["string"],
+    });
+  });
+
+  it("ignores a `self::` usage inside a string literal", () => {
+    const source =
+      '<?php\n\nclass Service\n{\n    public $note = "self::make()";\n}\n';
+    const offset = source.indexOf("make");
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("treats a `=` with a semicolon inside a string as a single assignment", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $this->§label = 'a;b';\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      kind: "property",
+      name: "label",
+      propertyType: "string",
+    });
+  });
+
+  it("does not offer self:: const when an enum case of that name exists", () => {
+    const source = [
+      "<?php",
+      "",
+      "enum Status",
+      "{",
+      "    case ACTIVE;",
+      "",
+      "    public function label(): string",
+      "    {",
+      "        return self::ACTIVE->name;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("self::ACTIVE") + "self::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("does not offer self:: method when it already exists with extra modifiers", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        self::make();",
+      "    }",
+      "",
+      "    final public static function make(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("self::make();") + "self::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+});
+
+describe("renderCreateConstantStub", () => {
+  it("renders a private constant with a placeholder value", () => {
+    expect(renderCreateConstantStub("DEFAULT_NAME")).toBe(
+      "    private const DEFAULT_NAME = null;",
+    );
+  });
+
+  it("honours custom indent and visibility options", () => {
+    expect(
+      renderCreateConstantStub("LIMIT", { indent: "  ", visibility: "public" }),
+    ).toBe("  public const LIMIT = null;");
+  });
+});
+
+describe("renderCreateMethodStub — static", () => {
+  it("renders a static method when the static option is set", () => {
+    expect(
+      renderCreateMethodStub("make", ["string"], { isStatic: true }),
+    ).toBe(
+      [
+        "    private static function make(string $arg0)",
+        "    {",
+        "    }",
+      ].join("\n"),
+    );
   });
 });
 

@@ -8,7 +8,9 @@ import type {
   ManagedPhpactorInstallUnsubscribeFn,
   PhpToolGateway,
   PhpToolAvailability,
+  ReplaceInPathResult,
   TextSearchGateway,
+  TextSearchOptions,
   TextSearchResult,
   WorkspaceDescriptor,
   WorkspaceDetectionGateway,
@@ -102,8 +104,30 @@ export class TauriWorkspaceGateway
     root: string,
     query: string,
     limit: number,
+    options?: TextSearchOptions,
   ): Promise<TextSearchResult[]> {
-    return invoke<TextSearchResult[]>("search_text", { root, query, limit });
+    return invoke<TextSearchResult[]>("search_text", {
+      root,
+      query,
+      limit,
+      options: options ?? null,
+    });
+  }
+
+  replaceInPath(
+    root: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+    scopePath?: string,
+  ): Promise<ReplaceInPathResult> {
+    return invoke<ReplaceInPathResult>("replace_in_path", {
+      root,
+      query,
+      replacement,
+      options: options ?? null,
+      scopePath: scopePath ?? null,
+    });
   }
 
   writeTextFile(path: string, content: string): Promise<void> {

@@ -20,6 +20,55 @@ export interface TextSearchResult {
   lineNumber: number;
   column: number;
   lineText: string;
+  /**
+   * 0-based char offset of the match start within `lineText`. The backend always
+   * supplies this; it is optional so legacy/internal mock results without a span
+   * still type-check (the preview then renders the line without a highlight).
+   */
+  matchStart?: number;
+  /** 0-based char offset of the match end (exclusive) within `lineText`. */
+  matchEnd?: number;
+}
+
+/** One file changed by a Replace-in-Path run. */
+export interface ReplaceInPathFileResult {
+  path: string;
+  relativePath: string;
+  replacements: number;
+}
+
+/**
+ * Outcome of a Replace-in-Path run: the files actually changed plus the total
+ * number of replacements applied. Files whose content was unchanged are omitted.
+ */
+export interface ReplaceInPathResult {
+  files: ReplaceInPathFileResult[];
+  totalReplacements: number;
+}
+
+/**
+ * Find-in-Path filters. All-default ({@link defaultTextSearchOptions})
+ * reproduces a literal, case-insensitive, unfiltered search so existing callers
+ * (Laravel magic resolution, etc.) keep their original behaviour.
+ */
+export interface TextSearchOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  isRegex: boolean;
+  /**
+   * Comma- or newline-separated glob list. A leading `!` excludes. Examples:
+   * `*.php`, `app/**`, `!vendor`, `*.php,!**\/migrations\/**`.
+   */
+  fileMask: string;
+}
+
+export function defaultTextSearchOptions(): TextSearchOptions {
+  return {
+    caseSensitive: false,
+    wholeWord: false,
+    isRegex: false,
+    fileMask: "",
+  };
 }
 
 export interface WorkspaceDescriptor {
@@ -218,7 +267,15 @@ export interface TextSearchGateway {
     root: string,
     query: string,
     limit: number,
+    options?: TextSearchOptions,
   ): Promise<TextSearchResult[]>;
+  replaceInPath(
+    root: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+    scopePath?: string,
+  ): Promise<ReplaceInPathResult>;
 }
 
 export function getFileName(path: string): string {
@@ -256,6 +313,7 @@ export function detectLanguage(path: string): string {
     rs: "rust",
     ts: "typescript",
     tsx: "typescript",
+    vue: "vue",
     xml: "xml",
     yaml: "yaml",
     yml: "yaml",

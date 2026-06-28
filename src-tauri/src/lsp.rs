@@ -38,6 +38,16 @@ pub struct LanguageServerCommand {
     pub executable: String,
     pub args: Vec<String>,
     pub working_directory: String,
+    /// Extra environment variables applied to the spawned process (and inherited
+    /// by any children it spawns). For managed PHPactor this carries both
+    /// `PHPRC=<managed.ini>` and `PHP_INI_SCAN_DIR=<managed-empty-dir>` so every
+    /// PHP process in the PHPactor tree boots from the clean managed `php.ini`
+    /// and skips noisy user or package scan-dir fragments such as a broken
+    /// `imagick.ini`. Without both, child PHP helpers can print startup warnings
+    /// onto stdout before their JSON, causing PHPactor to surface "Could not
+    /// decode JSON: Warning: PHP Startup...".
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,14 +139,28 @@ impl Default for PhpLanguageServerSettings {
     }
 }
 
+/// PHP's environment variable for the `php.ini` location. Set to the managed
+/// minimal `php.ini` on the PHPactor process so it is inherited by every child
+/// PHP process PHPactor spawns (outsourced code actions, diagnostics, php-lint,
+/// psalm, phpstan, php-cs-fixer). Those children are launched via `PHP_BINARY`
+/// without the parent's `-c <ini>` argument (CLI args are not inherited), so
+/// `PHPRC` is needed to avoid the user's main `php.ini`.
+const PHP_RUN_CONFIG_ENV: &str = "PHPRC";
+/// PHP's additional ini scan directory variable. Pointing it at the managed
+/// empty scan directory disables the normal `conf.d` scan for the managed
+/// PHPactor process tree, preventing extension fragments such as `imagick.ini`
+/// from loading after the clean `PHPRC` main ini.
+const PHP_INI_SCAN_DIR_ENV: &str = "PHP_INI_SCAN_DIR";
+
 /// A resolved isolated PHP launcher for the managed PHPactor engine: an explicit
 /// `php` interpreter plus a minimal `php.ini` that replaces the user's main
-/// `php.ini`. Running `php -c <ini_path> <phpactor> language-server` keeps broken
-/// or noisy user extensions (e.g. `imagick`) out of the LSP handshake on stdout.
+/// `php.ini`. The command env also disables PHP's scan-dir loading so broken or
+/// noisy extension fragments (e.g. `imagick.ini`) stay out of the LSP handshake.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhpLauncher {
     pub php_path: String,
     pub ini_path: String,
+    pub ini_scan_dir_path: String,
 }
 
 /// Resolves an isolated PHP launcher for the managed PHPactor engine. Returning
@@ -157,10 +181,12 @@ impl PhpInterpreterLauncher for ManagedPhpInterpreterLauncher {
     fn resolve(&self) -> Option<PhpLauncher> {
         let php_path = crate::tools::php_executable_path()?;
         let ini_path = crate::managed_phpactor::ensure_managed_php_ini().ok()?;
+        let ini_scan_dir_path = crate::managed_phpactor::ensure_managed_php_ini_scan_dir().ok()?;
 
         Some(PhpLauncher {
             php_path,
             ini_path: ini_path.to_string_lossy().to_string(),
+            ini_scan_dir_path: ini_scan_dir_path.to_string_lossy().to_string(),
         })
     }
 }
@@ -209,9 +235,10 @@ where
     }
 
     /// Builds the PHPactor launch command. When an isolated PHP interpreter is
-    /// available we launch `php -c <managed.ini> <phpactor> language-server` so a
-    /// broken user `php.ini` (imagick warning on stdout) cannot corrupt the LSP
-    /// handshake. Otherwise we fall back to invoking PHPactor directly.
+    /// available we launch `php -n -c <managed.ini> <phpactor> language-server`
+    /// so a broken user/global `php.ini` (imagick warning on stdout) cannot
+    /// corrupt the LSP handshake. Otherwise we fall back to invoking PHPactor
+    /// directly.
     fn phpactor_command(&self, root: &Path, phpactor: &ToolLocation) -> LanguageServerCommand {
         let working_directory = root.to_string_lossy().to_string();
 
@@ -220,18 +247,34 @@ where
                 executable: phpactor.path.clone(),
                 args: vec!["language-server".to_string()],
                 working_directory,
+                env: Vec::new(),
             };
         };
+
+        // `-n -c <managed.ini>` makes the parent PHPactor process ignore every
+        // user/global startup ini and load only the managed file. `PHPRC` and
+        // `PHP_INI_SCAN_DIR` are still required for PHPactor's helper PHP
+        // processes, which are spawned via `PHP_BINARY` without inheriting the
+        // parent's CLI flags.
+        let php_env = vec![
+            (PHP_RUN_CONFIG_ENV.to_string(), launcher.ini_path.clone()),
+            (
+                PHP_INI_SCAN_DIR_ENV.to_string(),
+                launcher.ini_scan_dir_path.clone(),
+            ),
+        ];
 
         LanguageServerCommand {
             executable: launcher.php_path,
             args: vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 launcher.ini_path,
                 phpactor.path.clone(),
                 "language-server".to_string(),
             ],
             working_directory,
+            env: php_env,
         }
     }
 }
@@ -314,6 +357,11 @@ impl InitializeRequestFactory for PhpactorInitializeRequestFactory {
                 // shorten the diagnostics grace window to reduce the publish race.
                 "initializationOptions": {
                     "language_server.diagnostic_outsource": false,
+                    // Run code actions in-process for the same reason as
+                    // diagnostics: avoid extra helper PHP processes in the reduced
+                    // Tauri GUI environment and keep smart features inside the
+                    // already-clean managed-PHP parent.
+                    "language_server.code_action_outsource": false,
                     "language_server.diagnostic_sleep_time": 150,
                     // Keep the Laravel Idea (PhpStorm plugin) IDE-helper stubs out
                     // of the index. They re-declare real `App\Models\*` classes as
@@ -384,12 +432,16 @@ where
         root: &Path,
         server: &ToolLocation,
         typescript_server: Option<&ToolLocation>,
+        vue_typescript_plugin: Option<&ToolLocation>,
         settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
         let mut initialize_request = self.initialize_request_factory.create(root);
 
         if let Some(typescript_server) = typescript_server {
             configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
+        }
+        if let Some(vue_typescript_plugin) = vue_typescript_plugin {
+            configure_vue_typescript_plugin(&mut initialize_request, &vue_typescript_plugin.path);
         }
         configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
@@ -404,6 +456,7 @@ where
                 executable: server.path.clone(),
                 args: vec!["--stdio".to_string()],
                 working_directory: root.to_string_lossy().to_string(),
+                env: Vec::new(),
             }),
             initialize_request: Some(initialize_request),
         }
@@ -427,7 +480,13 @@ where
             );
         };
 
-        self.ready_plan(root, server, tools.typescript_server.as_ref(), settings)
+        self.ready_plan(
+            root,
+            server,
+            tools.typescript_server.as_ref(),
+            tools.vue_typescript_plugin.as_ref(),
+            settings,
+        )
     }
 }
 
@@ -450,6 +509,37 @@ fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
     };
 
     tsserver.insert("path".to_string(), Value::String(path.to_string()));
+}
+
+/// Registers `@vue/typescript-plugin` with the existing tsserver so `.vue`
+/// `<script>` blocks gain TypeScript intelligence without spawning a separate
+/// Volar process. The `languages: ["vue"]` entry tells the language server to
+/// accept `.vue` documents (a language id it does not handle by default). When
+/// no plugin location is available this is never called, so `.vue` files keep
+/// highlighting only.
+fn configure_vue_typescript_plugin(request: &mut JsonRpcRequest, location: &str) {
+    let Some(params) = request.params.as_object_mut() else {
+        return;
+    };
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let Some(initialization_options) = initialization_options.as_object_mut() else {
+        return;
+    };
+
+    let plugins = initialization_options
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(plugins) = plugins.as_array_mut() else {
+        return;
+    };
+
+    plugins.push(json!({
+        "name": "@vue/typescript-plugin",
+        "location": location,
+        "languages": ["vue"],
+    }));
 }
 
 fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool) {
@@ -730,7 +820,8 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "hostInfo": "Mockor Editor",
                     "supportsMoveToFileCodeAction": true,
                     "tsserver": {
-                        "useClientFileWatcher": true
+                        "useClientFileWatcher": true,
+                        "disableAutomaticTypingAcquisition": true
                     },
                     "preferences": {
                         "allowIncompleteCompletions": true,
@@ -995,6 +1086,12 @@ mod tests {
             request.params["initializationOptions"]["language_server.diagnostic_outsource"],
             Value::Bool(false)
         );
+        // Code actions must also run in-process so smart features avoid extra
+        // helper PHP processes in the reduced Tauri GUI environment.
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.code_action_outsource"],
+            Value::Bool(false)
+        );
         assert_eq!(
             request.params["initializationOptions"]["language_server.diagnostic_sleep_time"],
             json!(150)
@@ -1008,9 +1105,14 @@ mod tests {
         let root = create_temp_dir("lsp-phpactor-exclude-stubs");
         let request = PhpactorInitializeRequestFactory.create(&root);
 
-        // The diagnostics options must survive alongside the new indexer config.
+        // The diagnostics and code-action options must survive alongside the new
+        // indexer config.
         assert_eq!(
             request.params["initializationOptions"]["language_server.diagnostic_outsource"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.code_action_outsource"],
             Value::Bool(false)
         );
         assert_eq!(
@@ -1018,8 +1120,7 @@ mod tests {
             json!(150)
         );
 
-        let exclude_patterns = request.params["initializationOptions"]
-            ["indexer.exclude_patterns"]
+        let exclude_patterns = request.params["initializationOptions"]["indexer.exclude_patterns"]
             .as_array()
             .expect("indexer.exclude_patterns must be an array");
         let patterns: Vec<&str> = exclude_patterns
@@ -1246,6 +1347,11 @@ mod tests {
             .ends_with("node_modules/typescript/lib/tsserver.js"));
         assert_eq!(
             request.params["initializationOptions"]["tsserver"]["useClientFileWatcher"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["tsserver"]
+                ["disableAutomaticTypingAcquisition"],
             true
         );
         assert_eq!(
@@ -1517,6 +1623,58 @@ mod tests {
     }
 
     #[test]
+    fn javascript_typescript_plan_registers_vue_typescript_plugin_when_available() {
+        let root = create_temp_dir("lsp-typescript-vue-plugin");
+        fs::write(root.join("package.json"), "{}").expect("write package.json");
+        let plugin_location = root
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin")
+            .to_string_lossy()
+            .to_string();
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            &tools_with_vue_typescript_plugin(&root, &plugin_location),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        let request = plan.initialize_request.expect("initialize request");
+        let plugins = request.params["initializationOptions"]["plugins"]
+            .as_array()
+            .expect("plugins array");
+        let vue_plugin = plugins
+            .iter()
+            .find(|plugin| plugin["name"] == "@vue/typescript-plugin")
+            .expect("vue plugin entry");
+        assert_eq!(vue_plugin["location"], plugin_location);
+        assert_eq!(vue_plugin["languages"], json!(["vue"]));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn javascript_typescript_plan_omits_plugins_when_vue_plugin_missing() {
+        let root = create_temp_dir("lsp-typescript-without-vue-plugin");
+        fs::write(root.join("package.json"), "{}").expect("write package.json");
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
+        let request = plan.initialize_request.expect("initialize request");
+        assert!(request.params["initializationOptions"]["plugins"].is_null());
+        // The JS/TS server itself must still be configured normally.
+        assert!(request.params["initializationOptions"]["tsserver"]["path"]
+            .as_str()
+            .expect("tsserver path")
+            .ends_with("node_modules/typescript/lib/tsserver.js"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn plain_workspace_gets_typescript_inferred_project_plan() {
         let root = create_temp_dir("lsp-typescript-inferred-project");
         let planner = TypeScriptLanguageServerPlanner::new();
@@ -1557,6 +1715,7 @@ mod tests {
     fn planner_with_php(
         php_path: &str,
         ini_path: &str,
+        ini_scan_dir_path: &str,
     ) -> PhpactorLanguageServerPlanner<PhpactorInitializeRequestFactory, StubPhpLauncher> {
         PhpactorLanguageServerPlanner::with_launcher(
             PhpactorInitializeRequestFactory,
@@ -1564,6 +1723,7 @@ mod tests {
                 launcher: Some(PhpLauncher {
                     php_path: php_path.to_string(),
                     ini_path: ini_path.to_string(),
+                    ini_scan_dir_path: ini_scan_dir_path.to_string(),
                 }),
             },
         )
@@ -1580,7 +1740,11 @@ mod tests {
     #[test]
     fn phpactor_launches_through_isolated_php_interpreter_when_available() {
         let root = create_temp_dir("lsp-php-launcher");
-        let planner = planner_with_php("/usr/bin/php", "/managed/codevo-php.ini");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
 
         let plan = planner.plan(
             &root,
@@ -1602,12 +1766,83 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 "/managed/codevo-php.ini".to_string(),
                 phpactor_path,
                 "language-server".to_string(),
             ]
         );
+        // PHPRC must carry the managed ini and PHP_INI_SCAN_DIR must point at the
+        // managed empty scan dir so PHPactor's outsourced child PHP processes
+        // inherit the clean, imagick-free configuration. Unlike `-c`, env vars
+        // propagate to children.
+        assert_eq!(
+            command.env,
+            vec![
+                ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "/managed/empty-php-conf.d".to_string()
+                ),
+            ]
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_isolated_launcher_disables_php_ini_scan_dir_for_child_helpers() {
+        let root = create_temp_dir("lsp-php-launcher-scan-dir");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        let command = plan.command.expect("language server command");
+        assert!(
+            command
+                .env
+                .contains(&("PHPRC".to_string(), "/managed/codevo-php.ini".to_string())),
+            "PHPRC isolates the main php.ini for parent and child PHP processes"
+        );
+        assert!(
+            command.env.contains(&(
+                "PHP_INI_SCAN_DIR".to_string(),
+                "/managed/empty-php-conf.d".to_string()
+            )),
+            "managed empty PHP_INI_SCAN_DIR disables user/package conf.d fragments like imagick.ini"
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_direct_launch_fallback_has_no_php_env() {
+        let root = create_temp_dir("lsp-php-launcher-fallback-env");
+        let planner = planner_without_php();
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        let command = plan.command.expect("language server command");
+        // The direct-launch fallback has no resolved managed ini, so it carries no
+        // PHP env override (the transport-level startup-noise resilience remains
+        // the safety net there).
+        assert!(command.env.is_empty());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1640,7 +1875,11 @@ mod tests {
         fs::write(&configured_phpactor_path, "").expect("write configured phpactor");
         make_executable(&configured_phpactor_path);
         let configured_phpactor = configured_phpactor_path.to_string_lossy().to_string();
-        let planner = planner_with_php("/usr/bin/php", "/managed/codevo-php.ini");
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
 
         let plan = planner.plan(
             &root,
@@ -1660,6 +1899,7 @@ mod tests {
         assert_eq!(
             command.args,
             vec![
+                "-n".to_string(),
                 "-c".to_string(),
                 "/managed/codevo-php.ini".to_string(),
                 configured_phpactor,
@@ -1724,7 +1964,21 @@ mod tests {
                     .to_string(),
                 source: ToolSource::WorkspaceNodeModulesBin,
             }),
+            vue_typescript_plugin: None,
         }
+    }
+
+    fn tools_with_vue_typescript_plugin(
+        root: &Path,
+        plugin_location: &str,
+    ) -> JavaScriptTypeScriptToolAvailability {
+        let mut tools = tools_with_typescript_language_server(root);
+        tools.vue_typescript_plugin = Some(ToolLocation {
+            executable: "typescript-plugin".to_string(),
+            path: plugin_location.to_string(),
+            source: ToolSource::WorkspaceNodeModulesBin,
+        });
+        tools
     }
 
     fn create_temp_dir(prefix: &str) -> std::path::PathBuf {

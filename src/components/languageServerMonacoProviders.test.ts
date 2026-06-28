@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import type {
   LanguageServerCompletionList,
+  LanguageServerCodeAction,
   LanguageServerCodeLens,
   LanguageServerDocumentHighlight,
   LanguageServerDocumentLink,
@@ -23,7 +24,11 @@ import type {
   LanguageServerRuntimeCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
+import type {
+  PhpMethodCompletion,
+  PhpMethodSignature,
+} from "../domain/phpMethodCompletions";
+import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
@@ -359,6 +364,189 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops PHP hover when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const hover = createDeferred<LanguageServerHover | null>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const hoverPromise = registered.hoverProvider.provideHover(
+      model(),
+      position(),
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    hover.resolve({ contents: "**Stale user**" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+  });
+
+  it("resolves PHP hover to null when phpactor does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const hover = createDeferred<LanguageServerHover | null>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const hoverPromise = registered.hoverProvider.provideHover(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves PHP hover to null within the shorter hover timeout budget", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const hover = createDeferred<LanguageServerHover | null>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const hoverPromise = registered.hoverProvider.provideHover(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(hoverPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the full navigation timeout budget for PHP definition (still pending at the hover timeout)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const locations = createDeferred<LanguageServerLocation[]>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => locations.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const definitionPromise = registered.definitionProvider.provideDefinition(
+        model(),
+        position(),
+        token,
+      );
+
+      let settled = false;
+      void definitionPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns PHP hover when phpactor responds before the timeout and the token stays active", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      hover: { contents: "**Warm user**" },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+
+    await expect(
+      registered.hoverProvider.provideHover(model(), position(), token),
+    ).resolves.toEqual({
+      contents: [{ value: "**Warm user**" }],
+    });
+  });
+
+  it("drops PHP definition when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const locations = createDeferred<LanguageServerLocation[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.definition).mockImplementationOnce(
+      async () => locations.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const definitionPromise = registered.definitionProvider.provideDefinition(
+      model(),
+      position(),
+      token,
+    );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    locations.resolve([
+      {
+        range: range(1, 6, 1, 10),
+        uri: "file:///project/src/Models/User.php",
+      },
+    ]);
+
+    await expect(definitionPromise).resolves.toBeNull();
+  });
+
+  it("resolves PHP definition to null when phpactor does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const locations = createDeferred<LanguageServerLocation[]>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.definition).mockImplementationOnce(
+        async () => locations.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const token = { isCancellationRequested: false };
+      const definitionPromise = registered.definitionProvider.provideDefinition(
+        model(),
+        position(),
+        token,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(definitionPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps completion responses to Monaco suggestions", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
@@ -423,6 +611,156 @@ describe("registerLanguageServerMonacoProviders", () => {
         path: "/project/src/User.php",
       },
     );
+  });
+
+  it("forwards the PHP completion incomplete flag so Monaco re-queries while typing", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: true,
+        items: [
+          {
+            detail: "class",
+            documentation: "A user",
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+
+    expect(result.incomplete).toBe(true);
+  });
+
+  it("returns locally-computed PHP suggestions when the language server does not respond before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const source = phpCompletionFixtureSource();
+      const completion = createDeferred<LanguageServerCompletionList>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.completion).mockImplementationOnce(
+        async () => completion.promise,
+      );
+      const context = providerContext({ featuresGateway: gateway });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const completionPromise =
+        registered.completionProvider.provideCompletionItems(
+          model({ content: source }),
+          position(),
+        );
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(completionPromise).resolves.toEqual({
+        suggestions: [
+          {
+            detail: "local variable",
+            insertText: "$user",
+            kind: 6,
+            label: "$user",
+            range: {
+              endColumn: 5,
+              endLineNumber: 11,
+              startColumn: 1,
+              startLineNumber: 11,
+            },
+            sortText: "0_0000",
+          },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops PHP completion when the Monaco cancellation token is cancelled after the response", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+        undefined,
+        token,
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    token.isCancellationRequested = true;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "class",
+          documentation: "A stale user",
+          insertText: "User",
+          kind: 7,
+          label: "User",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
+  it("requests PHP method suggestions and language server completion concurrently", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const method = createDeferred<PhpMethodCompletion[]>();
+    const gateway = featuresGateway();
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpMethodCompletions: vi.fn(async () => method.promise),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      );
+
+    // The language-server completion must be issued while the method collector
+    // is still pending; a serial implementation would not call it until the
+    // method promise resolves.
+    for (
+      let tick = 0;
+      tick < 10 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+
+    expect(gateway.completion).toHaveBeenCalledTimes(1);
+
+    method.resolve([]);
+    await completionPromise;
   });
 
   it("drops in-flight PHP completions when no project tab is active", async () => {
@@ -1665,6 +2003,212 @@ function store($request): void
         (suggestion) => suggestion.label === "$banana",
       ),
     ).toBe(true);
+  });
+
+  it("offers PHP snippet completions for a typed prefix as InsertAsSnippet", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nncl\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "ncl",
+        word: {
+          endColumn: 4,
+          startColumn: 1,
+          word: "ncl",
+        },
+      }),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+    );
+
+    const snippet = (
+      result.suggestions as Array<{
+        insertText: string;
+        insertTextRules?: number;
+        kind: number;
+        label: unknown;
+        sortText?: string;
+      }>
+    ).find((item) => item.label === "nclass");
+
+    expect(snippet).toBeDefined();
+    expect(snippet?.insertTextRules).toBe(4);
+    expect(snippet?.kind).toBe(27);
+    expect(snippet?.insertText).toContain("class ${1:ClassName}");
+  });
+
+  it("offers a user-defined PHP snippet from the context", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nmyh\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      getUserSnippets: () => [
+        {
+          prefix: "myhelper",
+          body: "helper($0);",
+          description: "Call my helper",
+          languages: ["php"],
+        },
+      ],
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "myh",
+        word: {
+          endColumn: 4,
+          startColumn: 1,
+          word: "myh",
+        },
+      }),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+    );
+
+    const snippet = (
+      result.suggestions as Array<{
+        insertText: string;
+        insertTextRules?: number;
+        label: unknown;
+      }>
+    ).find((item) => item.label === "myhelper");
+
+    expect(snippet).toBeDefined();
+    expect(snippet?.insertText).toBe("helper($0);");
+    expect(snippet?.insertTextRules).toBe(4);
+  });
+
+  it("sorts PHP snippet completions after LSP suggestions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\ndd\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [
+            {
+              detail: "function",
+              documentation: null,
+              insertText: "ddd_lsp",
+              kind: 3,
+              label: "ddd_lsp",
+            },
+          ],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "dd",
+        word: {
+          endColumn: 3,
+          startColumn: 1,
+          word: "dd",
+        },
+      }),
+      {
+        column: 3,
+        lineNumber: 2,
+      },
+    );
+
+    const items = result.suggestions as Array<{
+      label: unknown;
+      sortText?: string;
+    }>;
+    const lsp = items.find((item) => item.label === "ddd_lsp");
+    const snippet = items.find((item) => item.label === "dd");
+
+    expect(lsp?.sortText).toBeDefined();
+    expect(snippet?.sortText).toBeDefined();
+    expect(
+      String(snippet?.sortText).localeCompare(String(lsp?.sortText)),
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not offer PHP snippets inside member access completions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = "<?php\nfunction show($user): void\n{\n    $user->dd\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "    $user->dd",
+        word: {
+          endColumn: 14,
+          startColumn: 12,
+          word: "dd",
+        },
+      }),
+      {
+        column: 14,
+        lineNumber: 4,
+      },
+    );
+
+    const snippet = (result.suggestions as Array<{ kind: number }>).find(
+      (item) => item.kind === 27,
+    );
+
+    expect(snippet).toBeUndefined();
   });
 
   it("filters PHP LSP locals and keywords inside member access completions", async () => {
@@ -4658,6 +5202,98 @@ function store($request): void
     );
   });
 
+  it("resolves and applies lazy PHP code actions when their menu command runs", async () => {
+    const registered = createRegisteredProviders();
+    const openPath = "/project/src/User.php";
+    const unresolvedAction = {
+      command: null,
+      data: { id: "add-import" },
+      edit: null,
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    };
+    const resolvedAction = {
+      ...unresolvedAction,
+      edit: workspaceEdit(
+        "file:///project/src/User.php",
+        "use App\\Models\\User;\n",
+      ),
+    };
+    const openModel = {
+      ...model({ path: openPath }),
+      pushEditOperations: vi.fn(),
+    };
+    const gateway = featuresGateway({
+      codeActions: [unresolvedAction],
+      resolvedCodeAction: resolvedAction,
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      openModel,
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const actionCommand = actions.actions[0].command;
+
+    expect(actionCommand).toEqual(
+      expect.objectContaining({
+        id: "mockor.php.resolveAndApplyCodeAction",
+        title: "Import User",
+      }),
+    );
+
+    const runResolveAndApply =
+      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+
+    if (!runResolveAndApply) {
+      throw new Error("PHP resolve-and-apply code action command was not registered");
+    }
+
+    await runResolveAndApply(null, actionCommand.arguments[0]);
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(openPath);
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
+      "/project",
+      unresolvedAction,
+    );
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            startLineNumber: 1,
+          }),
+          text: "use App\\Models\\User;\n",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(resolvedAction.edit, {
+      editedOpenPaths: [openPath],
+      rootPath: "/project",
+    });
+  });
+
   it("returns PHP code actions that already carry an inline edit without requesting a resolve", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -5035,7 +5671,6 @@ function store($request): void
       { end: 6, start: 6 },
     );
     expect(actions.actions).toEqual([
-      expect.objectContaining({ title: "Import User" }),
       expect.objectContaining({
         edit: {
           edits: [
@@ -5060,7 +5695,572 @@ function store($request): void
         kind: "quickfix",
         title: "Implement methods",
       }),
+      expect.objectContaining({ title: "Import User" }),
     ]);
+  });
+
+  it("orders local Create class before external phpactor create-file actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        phpactorCreateTypeAction("Create interface MailDispatcher"),
+        phpactorCreateTypeAction("Create trait MailDispatcher"),
+        phpactorCreateTypeAction("Create enum MailDispatcher"),
+        {
+          command: {
+            arguments: ["App\\Services\\MailDispatcher"],
+            command: "phpactor.import_class",
+            title: "Import class",
+          },
+          data: { id: "import-class" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Import class",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content:
+            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          path: "/project/src/MailDispatcher.php",
+        },
+        title: "Create class MailDispatcher",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\n$service = new MailDispatcher();\n" }),
+      new registered.monaco.Range(2, 16, 2, 30),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create class MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create interface MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create trait MailDispatcher");
+    expect(titles.slice(0, 4)).not.toContain("Create enum MailDispatcher");
+    expect(titles).toContain("Import class");
+  });
+
+  it("hides phpactor create-file variants when a safe local Create class action exists", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction(
+          "Create default file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create interface file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create trait file CodevoQaGeneratedService.php",
+        ),
+        phpactorCreateTypeAction(
+          "Create enum file CodevoQaGeneratedService.php",
+        ),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content: "<?php\n\nclass CodevoQaGeneratedService\n{\n}\n",
+          path: "/project/src/CodevoQaGeneratedService.php",
+        },
+        title: "Create class CodevoQaGeneratedService",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({
+        content: "<?php\n$service = new CodevoQaGeneratedService();\n",
+      }),
+      new registered.monaco.Range(2, 16, 2, 40),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create class CodevoQaGeneratedService");
+    expect(titles).not.toContain(
+      "Create default file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create interface file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create trait file CodevoQaGeneratedService.php",
+    );
+    expect(titles).not.toContain(
+      "Create enum file CodevoQaGeneratedService.php",
+    );
+    expect(titles).toContain("Add missing properties");
+  });
+
+  it("filters duplicate phpactor create class quick fixes while preserving unrelated phpactor actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        phpactorCreateTypeAction("Create class MailDispatcher"),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content:
+            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          path: "/project/src/MailDispatcher.php",
+        },
+        title: "Create class MailDispatcher",
+      },
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\n$service = new MailDispatcher();\n" }),
+      new registered.monaco.Range(2, 16, 2, 30),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(
+      titles.filter(
+        (title: string) => title === "Create class MailDispatcher",
+      ),
+    ).toHaveLength(1);
+    expect(titles[0]).toBe("Create class MailDispatcher");
+    expect(titles).toContain("Add missing properties");
+  });
+
+  it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content:
+            "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Greeter\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    const edits = extractInterface?.edit?.edits ?? [];
+    // First: the file-create resource edit (newResource, no oldResource).
+    expect(edits[0]).toEqual({
+      newResource: {
+        fsPath: "/project/src/GreeterInterface.php",
+        path: "/project/src/GreeterInterface.php",
+      },
+      options: { ignoreIfExists: true },
+    });
+    // Second: the content insertion into the new file's model.
+    expect(edits[1]).toEqual({
+      resource: {
+        fsPath: "/project/src/GreeterInterface.php",
+        path: "/project/src/GreeterInterface.php",
+      },
+      textEdit: {
+        range: expect.objectContaining({
+          endColumn: 1,
+          endLineNumber: 1,
+          startColumn: 1,
+          startLineNumber: 1,
+        }),
+        text: "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+      },
+      versionId: undefined,
+    });
+    // Last: the in-document implements edit on the active model.
+    expect(edits[2]).toEqual(
+      expect.objectContaining({
+        textEdit: expect.objectContaining({
+          text: " implements GreeterInterface",
+        }),
+      }),
+    );
+  });
+
+  it("forwards a PHP code action's isPreferred flag to Monaco", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 9,
+              startColumn: 1,
+              startLineNumber: 9,
+            },
+            text: "\n    private function doWork(): void\n    {\n    }\n",
+          },
+        ],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'doWork'",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const createMethod = actions.actions.find(
+      (action: { title: string }) => action.title === "Create method 'doWork'",
+    );
+    expect(createMethod?.isPreferred).toBe(true);
+    expect(createMethod?.kind).toBe("quickfix");
+  });
+
+  it("routes a PHP code action's newFile through an atomic disk-persisting command when wired", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const newFile = {
+      content:
+        "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+      path: "/project/src/GreeterInterface.php",
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile,
+        title: "Extract interface",
+      },
+    ]);
+    // Resolves `true`: the interface file was freshly written, so the command
+    // applies the paired `implements` edit.
+    const applyPhpCodeActionNewFile = vi.fn(async () => true);
+    const clearLanguageServerDiagnosticsForPath = vi.fn();
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      clearLanguageServerDiagnosticsForPath,
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    expect(extractInterface).toBeDefined();
+    const edits = extractInterface?.edit?.edits ?? [];
+    // The action carries no eager document edit. Its command writes the file
+    // first, then applies the implements edit to the original model.
+    expect(edits).toEqual([]);
+    expect(extractInterface?.command?.id).toBe(
+      "mockor.php.applyCodeActionNewFile",
+    );
+
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    expect(run).toBeDefined();
+    await run(null, extractInterface?.command?.arguments?.[0]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalledWith(newFile);
+    expect(clearLanguageServerDiagnosticsForPath).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(sourceModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 17,
+            endLineNumber: 2,
+            startColumn: 17,
+            startLineNumber: 2,
+          }),
+          text: " implements GreeterInterface",
+        },
+      ],
+      expect.any(Function),
+    );
+  });
+
+  it("does not apply a PHP newFile action's document edits when disk persistence fails", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content: "<?php\n\ninterface GreeterInterface\n{\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    const failure = new Error("EACCES");
+    const applyPhpCodeActionNewFile = vi.fn(async () => {
+      throw failure;
+    });
+    const reportError = vi.fn();
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+
+    await run(null, extractInterface?.command?.arguments?.[0]);
+
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
+    expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(reportError).toHaveBeenCalledWith(failure);
+  });
+
+  it("does not apply a PHP newFile action's document edits when the callback declines the write", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 17,
+              endLineNumber: 2,
+              startColumn: 17,
+              startLineNumber: 2,
+            },
+            text: " implements GreeterInterface",
+          },
+        ],
+        kind: "refactor.extract",
+        newFile: {
+          content: "<?php\n\ninterface GreeterInterface\n{\n}\n",
+          path: "/project/src/GreeterInterface.php",
+        },
+        title: "Extract interface",
+      },
+    ]);
+    // Resolves `false`: the target already exists (or the write failed and the
+    // controller already surfaced it), so the command must NOT apply the
+    // `implements` edit - the class stays untouched and no error is re-reported.
+    const applyPhpCodeActionNewFile = vi.fn(async () => false);
+    const reportError = vi.fn();
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+
+    await run(null, extractInterface?.command?.arguments?.[0]);
+
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
+    expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
   });
 
   it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
@@ -5155,7 +6355,7 @@ function store($request): void
     ]);
   });
 
-  it("omits PHP code actions for an unrelated narrow `only` scope", async () => {
+  it("serves PHP organize-imports actions for a `source.organizeImports` scope", async () => {
     const registered = createRegisteredProviders();
     const providePhpCodeActions = vi.fn(async () => []);
     const context = providerContext({
@@ -5170,6 +6370,31 @@ function store($request): void
       {
         markers: [],
         only: "source.organizeImports",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    // "Optimize imports" is our `source.organizeImports` action, so a request
+    // narrowed to that family must reach the PHP provider.
+    expect(providePhpCodeActions).toHaveBeenCalled();
+  });
+
+  it("omits PHP code actions for an unrelated narrow `only` scope", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpCodeActions = vi.fn(async () => []);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        // A sibling source scope we never emit an action for is left to the LSP.
+        only: "source.fixAll",
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
@@ -6948,6 +8173,7 @@ function store($request): void
       registered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toEqual([
       {
@@ -7021,6 +8247,7 @@ function store($request): void
       disabledRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toBeNull();
     expect(disabledFlush).not.toHaveBeenCalled();
@@ -7053,6 +8280,7 @@ function store($request): void
       mismatchedRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       ),
     ).resolves.toBeNull();
     expect(mismatchedFlush).not.toHaveBeenCalled();
@@ -7083,6 +8311,7 @@ function store($request): void
       sessionRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       );
 
     await Promise.resolve();
@@ -7113,6 +8342,7 @@ function store($request): void
       rootRegistered.documentHighlightProvider.provideDocumentHighlights(
         model(),
         position(),
+        { isCancellationRequested: false },
       );
 
     await Promise.resolve();
@@ -7125,6 +8355,112 @@ function store($request): void
     ]);
 
     await expect(rootPromise).resolves.toBeNull();
+  });
+
+  it("drops superseded PHP document highlights when the Monaco cancellation token is cancelled", async () => {
+    const registered = createRegisteredProviders();
+    const highlights = createDeferred<LanguageServerDocumentHighlight[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(
+      async () => highlights.promise,
+    );
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    const promise =
+      registered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+        token,
+      );
+
+    await Promise.resolve();
+    token.isCancellationRequested = true;
+    highlights.resolve([
+      {
+        kind: 2,
+        range: range(3, 4, 3, 9),
+      },
+    ]);
+
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it("applies PHP document highlights when the Monaco cancellation token stays active", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const token = { isCancellationRequested: false };
+    await expect(
+      registered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+        token,
+      ),
+    ).resolves.toEqual([
+      {
+        kind: 2,
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+      },
+    ]);
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips repeated PHP document highlight requests for the same word under the cursor", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const sameWordModel = model({ word: { endColumn: 5, startColumn: 2, word: "$user" } });
+    const token = { isCancellationRequested: false };
+
+    const first =
+      await registered.documentHighlightProvider.provideDocumentHighlights(
+        sameWordModel,
+        position(),
+        token,
+      );
+    const second =
+      await registered.documentHighlightProvider.provideDocumentHighlights(
+        sameWordModel,
+        position(),
+        token,
+      );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+
+    const otherWordModel = model({ word: { endColumn: 10, startColumn: 5, word: "$account" } });
+    await registered.documentHighlightProvider.provideDocumentHighlights(
+      otherWordModel,
+      position(),
+      token,
+    );
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
   });
 
   it("maps and resolves PHP CodeLens showReferences commands with workspace filtering", async () => {
@@ -7998,6 +9334,118 @@ function store($request): void
     expect(backedHint.kind).toBeUndefined();
   });
 
+  it("adds TS-fallback PHP parameter-name InlayHints alongside phpactor hints", async () => {
+    const registered = createRegisteredProviders();
+    const phpactorHint: LanguageServerInlayHint = {
+      kind: 1,
+      label: ": int",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 12, line: 1 },
+      tooltip: null,
+    };
+    const gateway = featuresGateway({ inlayHints: [phpactorHint] });
+    const providePhpParameterInlayHints = vi.fn(async () => [
+      { character: 6, line: 1, name: "count" },
+      { character: 9, line: 1, name: "label" },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      isPhpInlayHintsEnabled: () => true,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(2, 1, 2, 20),
+    );
+
+    expect(providePhpParameterInlayHints).toHaveBeenCalled();
+    const labels = result.hints.map((hint: any) => hint.label);
+    expect(labels).toContain(": int");
+    expect(labels).toContain("count:");
+    expect(labels).toContain("label:");
+    const parameterHint = result.hints.find(
+      (hint: any) => hint.label === "count:",
+    );
+    expect(parameterHint).toMatchObject({
+      kind: registered.monaco.languages.InlayHintKind.Parameter,
+      paddingRight: true,
+      position: { column: 7, lineNumber: 2 },
+    });
+  });
+
+  it("does not provide any PHP InlayHints when the PHP toggle is disabled", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      inlayHints: [
+        {
+          kind: 1,
+          label: ": int",
+          paddingLeft: true,
+          paddingRight: false,
+          position: { character: 12, line: 1 },
+          tooltip: null,
+        },
+      ],
+    });
+    const providePhpParameterInlayHints = vi.fn(async () => [
+      { character: 6, line: 1, name: "count" },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      isPhpInlayHintsEnabled: () => false,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.inlayHintsProvider.provideInlayHints(
+        model(),
+        new registered.monaco.Range(2, 1, 2, 20),
+      ),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    expect(gateway.inlayHints).not.toHaveBeenCalled();
+    expect(providePhpParameterInlayHints).not.toHaveBeenCalled();
+  });
+
+  it("drops in-flight TS-fallback PHP parameter hints after switching project tabs", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const parameterHints = createDeferred<
+      { character: number; line: number; name: string }[]
+    >();
+    const providePhpParameterInlayHints = vi.fn(async () => parameterHints.promise);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      getWorkspaceRoot: () => activeRoot,
+      isPhpInlayHintsEnabled: () => true,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const hintsPromise = registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(2, 1, 2, 20),
+    );
+
+    // Flush the phpactor inlay-hints await chain so the flow reaches the
+    // TS-fallback resolve, then switch tabs mid-resolution.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await Promise.resolve();
+    }
+
+    expect(providePhpParameterInlayHints).toHaveBeenCalled();
+    activeRoot = null;
+    parameterHints.resolve([{ character: 6, line: 1, name: "count" }]);
+
+    await expect(hintsPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      hints: [],
+    });
+  });
+
   it("provides mapped PHP semantic tokens with the active runtime legend", async () => {
     const registered = createRegisteredProviders();
     const customLegend = {
@@ -8332,6 +9780,89 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     );
   });
 
+  it("offers built-in blade live-template snippets alongside controller completions", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@fore\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "Blade directive",
+        insertText: "foreach",
+        kind: "directive" as const,
+        label: "@foreach",
+        replaceEnd: 5,
+        replaceStart: 1,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    // Monaco's getWordUntilPosition strips the leading `@` (not a word char), so
+    // the provider must reconstruct the `@fore` abbreviation from the line text.
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "@fore",
+        path: "/project/resources/views/show.blade.php",
+        word: { endColumn: 6, startColumn: 2, word: "fore" },
+      }),
+      { column: 6, lineNumber: 1 },
+    );
+
+    const snippet = result.suggestions.find(
+      (item: any) =>
+        item.kind === registered.monaco.languages.CompletionItemKind.Snippet &&
+        item.label === "@foreach",
+    );
+
+    expect(snippet).toEqual(
+      expect.objectContaining({
+        insertTextRules:
+          registered.monaco.languages.CompletionItemInsertTextRule
+            .InsertAsSnippet,
+        kind: registered.monaco.languages.CompletionItemKind.Snippet,
+        label: "@foreach",
+        range: expect.objectContaining({
+          endColumn: 6,
+          startColumn: 1,
+        }),
+      }),
+    );
+    expect(snippet.sortText.startsWith("2_")).toBe(true);
+    expect(snippet.insertText).toContain("$");
+  });
+
+  it("does not offer blade snippets without a typed prefix", async () => {
+    const registered = createRegisteredProviders();
+    const source = "\n";
+    const provideBladeCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        lineContent: "",
+        path: "/project/resources/views/show.blade.php",
+        word: { endColumn: 1, startColumn: 1, word: "" },
+      }),
+      { column: 1, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.some(
+        (item: any) =>
+          item.kind ===
+          registered.monaco.languages.CompletionItemKind.Snippet,
+      ),
+    ).toBe(false);
+  });
+
   it("returns no blade completions for a non-blade active document", async () => {
     const registered = createRegisteredProviders();
     const provideBladeCompletions = vi.fn(async () => [
@@ -8434,6 +9965,10 @@ function createRegisteredProviders() {
     codeLensProvider: any;
     commandDispose: ReturnType<typeof vi.fn>;
     commandRun: ((accessor: unknown, payload?: unknown) => unknown) | null;
+    commandRunsById: Record<
+      string,
+      (accessor: unknown, payload?: unknown) => unknown
+    >;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -8516,6 +10051,7 @@ function createRegisteredProviders() {
     codeLensProvider: null,
     commandDispose,
     commandRun: null,
+    commandRunsById: {},
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -8604,7 +10140,13 @@ function createRegisteredProviders() {
     },
     editor: {
       addCommand: vi.fn((command) => {
-        registered.commandRun = command.run;
+        registered.commandRunsById[command.id] = command.run;
+        // Keep `commandRun` pointing at the LSP execute-command run so the
+        // existing execute-command tests stay valid even though a second command
+        // (the new-file disk-write command) is now registered too.
+        if (command.id === "mockor.php.executeLanguageServerCommand") {
+          registered.commandRun = command.run;
+        }
         return { dispose: commandDispose };
       }),
       getModel: vi.fn(() => null),
@@ -8829,14 +10371,22 @@ function completionLabels(
 function providerContext(
   overrides: Partial<{
     activeDocument: EditorDocument | null;
+    applyPhpCodeActionNewFile: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyPhpCodeActionNewFile"]
+    >;
     applyWorkspaceEdit: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyWorkspaceEdit"]
+    >;
+    clearLanguageServerDiagnosticsForPath: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["clearLanguageServerDiagnosticsForPath"]
     >;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+    getUserSnippets(): UserSnippet[];
     isDocumentSynced(rootPath: string, path: string): boolean;
+    isPhpInlayHintsEnabled(): boolean;
     limitNavigationResultsToOpenModels: boolean;
     provideBladeCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
@@ -8856,6 +10406,9 @@ function providerContext(
     providePhpMethodSignature: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodSignature"]
     >;
+    providePhpParameterInlayHints: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpParameterInlayHints"]
+    >;
     reportError(error: unknown): void;
     refreshGateway: LanguageServerRefreshGateway;
     runtimeStatus: LanguageServerRuntimeStatus | null;
@@ -8866,14 +10419,19 @@ function providerContext(
   const runtimeStatus = overrides.runtimeStatus ?? runningStatus();
 
   return {
+    applyPhpCodeActionNewFile: overrides.applyPhpCodeActionNewFile,
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
+    clearLanguageServerDiagnosticsForPath:
+      overrides.clearLanguageServerDiagnosticsForPath,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
+    getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     isDocumentSynced: overrides.isDocumentSynced,
+    isPhpInlayHintsEnabled: overrides.isPhpInlayHintsEnabled,
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
     provideBladeCompletions: overrides.provideBladeCompletions,
@@ -8882,6 +10440,7 @@ function providerContext(
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
+    providePhpParameterInlayHints: overrides.providePhpParameterInlayHints,
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
@@ -9261,6 +10820,26 @@ function workspaceEdit(uri: string, newText: string) {
         },
       ],
     },
+  };
+}
+
+function phpactorCreateTypeAction(title: string): LanguageServerCodeAction {
+  return {
+    command: {
+      arguments: [],
+      command: "phpactor.class_new",
+      title,
+    },
+    data: { id: title },
+    edit: {
+      changes: {},
+      fileOperations: [
+        { kind: "create", uri: "file:///project/src/MailDispatcher.php" },
+      ],
+    },
+    isPreferred: false,
+    kind: "quickfix",
+    title,
   };
 }
 

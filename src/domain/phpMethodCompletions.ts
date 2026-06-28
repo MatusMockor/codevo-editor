@@ -432,8 +432,7 @@ function phpAttributeNamesBefore(
   const beforeFunction = source
     .slice(0, functionOffset)
     .replace(/\s*(?:(?:abstract|final|private|protected|public|static)\s+)*$/, "");
-  const match = /((?:\s*#\[[\s\S]*?\]\s*)+)$/.exec(beforeFunction);
-  const attributesSource = match?.[1] ?? "";
+  const attributesSource = phpStackedAttributeBlockBefore(beforeFunction);
   const attributeNames: string[] = [];
 
   for (const attributeMatch of attributesSource.matchAll(
@@ -447,6 +446,155 @@ function phpAttributeNamesBefore(
   }
 
   return attributeNames;
+}
+
+// Returns the run of stacked `#[...]` attribute blocks that immediately precede
+// `text` (i.e. sit at its end), as a substring of `text`. The previous
+// `((?:\s*#\[[\s\S]*?\]\s*)+)$` regex combined a quantified group with a lazy
+// `[\s\S]*?` span and an end anchor, which backtracks exponentially when the
+// trailing text is not a closed attribute block (the per-keystroke case while a
+// method's attributes are still being typed). This walks backward instead,
+// matching each `]` to its `#[` via a balanced-bracket scan over a
+// string/comment-masked copy, so a literal `]` inside an attribute string
+// argument never confuses the boundary and the whole pass is linear.
+function phpStackedAttributeBlockBefore(text: string): string {
+  // Mask strings and `//`/`/* */` comments (but NOT `#`, which begins a PHP
+  // attribute `#[...]`) so bracket matching ignores `]`/`[` that live inside
+  // quoted arguments or comments. Offsets are preserved, so boundaries found in
+  // the mask map straight back onto the original text we return.
+  const masked = maskPhpStringsForAttributeScan(text);
+  let blockStart = text.length;
+
+  for (;;) {
+    let cursor = blockStart - 1;
+
+    while (cursor >= 0 && /\s/.test(masked[cursor] ?? "")) {
+      cursor -= 1;
+    }
+
+    if (cursor < 0 || masked[cursor] !== "]") {
+      break;
+    }
+
+    const openOffset = phpAttributeOpenOffsetBefore(masked, cursor);
+
+    if (openOffset === null) {
+      break;
+    }
+
+    blockStart = openOffset;
+  }
+
+  return text.slice(blockStart);
+}
+
+// Given the offset of a `]` that closes an attribute block in a string-masked
+// copy, scan backward to its matching `[`. Returns the offset of the `#` of
+// `#[`, or null when the matched `[` is not preceded by `#` (i.e. not a PHP
+// attribute open). Linear in the size of the block.
+function phpAttributeOpenOffsetBefore(
+  masked: string,
+  closeOffset: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = closeOffset; index >= 0; index -= 1) {
+    const character = masked[index] || "";
+
+    if (character === "]") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== "[") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return masked[index - 1] === "#" ? index - 1 : null;
+    }
+  }
+
+  return null;
+}
+
+// Forward, offset-preserving mask of PHP string literals and `//` / `/* */`
+// comments. Unlike `maskPhpStringsAndComments`, it deliberately leaves `#`
+// untouched so `#[` attribute syntax survives for bracket matching.
+function maskPhpStringsForAttributeScan(source: string): string {
+  let output = "";
+  let quote: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+    const next = source[index + 1] || "";
+
+    if (inLineComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "\n") {
+        inLineComment = false;
+      }
+
+      continue;
+    }
+
+    if (inBlockComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "*" && next === "/") {
+        output += " ";
+        index += 1;
+        inBlockComment = false;
+      }
+
+      continue;
+    }
+
+    if (quote) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "\\" && quote !== "`") {
+        output += next === "\n" ? "\n" : " ";
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      output += "  ";
+      index += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      output += "  ";
+      index += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      output += " ";
+      quote = character;
+      continue;
+    }
+
+    output += character;
+  }
+
+  return output;
 }
 
 function phpHasAttributeName(

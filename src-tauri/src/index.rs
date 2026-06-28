@@ -865,11 +865,19 @@ fn php_file_outline_symbol_record(
         container_kind,
         container_name: row.get(3)?,
         fully_qualified_name: row.get(2)?,
+        // The SQLite symbol index does not yet persist signature metadata
+        // (visibility/parameters/return type/static). Leave these unset so the
+        // indexed outline stays backward compatible; the live tree-sitter parse
+        // path supplies the richer metadata for the file structure palette.
+        is_static: false,
         kind,
         line_number: row.get(6)?,
         name: row.get(1)?,
+        parameters: Vec::new(),
         path: row.get(4)?,
         relative_path: row.get(5)?,
+        return_type: None,
+        visibility: None,
     })
 }
 

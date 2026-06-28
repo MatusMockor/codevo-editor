@@ -9,6 +9,7 @@ pub mod index_update;
 pub mod job_scheduler;
 pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
+pub mod local_history;
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
@@ -33,10 +34,10 @@ mod workspace_runtime;
 
 use git::{
     load_commit_diff, load_commit_details, load_commit_files, load_commit_log,
-    load_git_branches, GitBranches, CommitDiffPayload, CommitFileChange,
-    CommitGraphNode, GitChangedFile, GitCommit, GitCommitDetails, GitRepoStatus,
-    CommandGitRepositoryGateway, GitCommitFilters, GitFileDiff, GitRepositoryGateway,
-    GitStatus,
+    load_git_branches, safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload,
+    CommitFileChange, CommitGraphNode, GitBlameLine, GitBranch, GitBranches, GitChangedFile,
+    GitCommit, GitCommitDetails, GitCommitFilters, GitDiffHunk, GitFileDiff,
+    GitFileHistoryEntry, GitRepoStatus, GitRepositoryGateway, GitStashEntry, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -52,6 +53,7 @@ use index_scan::{
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -94,13 +96,20 @@ use lsp_session::{
     PhpLanguageServerRegistry, RefreshSink, RestartController, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
-    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
+    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineParameter,
+    PhpFileOutlineSymbolRecord, PhpSymbolVisibility as OutlineSymbolVisibility,
 };
 use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
-use php_symbols::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor};
+use php_symbols::{
+    PhpParameter, PhpSymbolExtractor, PhpSymbolKind, PhpSymbolVisibility,
+    TreeSitterPhpSymbolExtractor,
+};
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
-use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
+use search::{
+    ReplaceInPathResult, RipgrepTextReplacer, RipgrepTextSearcher, TextReplacer,
+    TextSearchOptions, TextSearchResult, TextSearcher,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
@@ -109,7 +118,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
@@ -213,8 +222,44 @@ fn quit_application(app: AppHandle) {
     app.exit(0);
 }
 
+/// Process-wide cache of monospace font families. System fonts do not change
+/// for the lifetime of the session, so the expensive `fontdb` system scan is
+/// performed at most once and reused by every later `Settings` dialog open.
+static MONOSPACE_FONT_FAMILIES_CACHE: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Lists the monospace font families exposed to the `Settings` font picker.
+///
+/// The `fontdb` system scan walks every installed font (100ms-1s+ on macOS), so
+/// it must never run on the WebView main thread. The work is handed to Tokio's
+/// blocking pool (same off-main-thread discipline as the index/git commands) and
+/// the result is cached after the first enumeration.
 #[tauri::command]
-fn list_monospace_font_families() -> Vec<String> {
+async fn list_monospace_font_families() -> Vec<String> {
+    run_blocking_command(|| {
+        Ok(cached_monospace_font_families(
+            &MONOSPACE_FONT_FAMILIES_CACHE,
+            enumerate_monospace_font_families,
+        )
+        .clone())
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Returns the cached monospace font families, running `scan` exactly once and
+/// reusing its result on every later call for the given `cache` cell. Both the
+/// cache cell and `scan` are injected so the cache-once behaviour is verifiable
+/// without performing a real system font scan or touching global state.
+fn cached_monospace_font_families<F>(cache: &OnceLock<Vec<String>>, scan: F) -> &Vec<String>
+where
+    F: FnOnce() -> Vec<String>,
+{
+    cache.get_or_init(scan)
+}
+
+/// Performs the raw `fontdb` system scan, collecting de-duplicated, sorted
+/// monospace font family names. This is the expensive, blocking work.
+fn enumerate_monospace_font_families() -> Vec<String> {
     let mut database = fontdb::Database::new();
     database.load_system_fonts();
 
@@ -335,19 +380,31 @@ fn get_workspace_trust(
 }
 
 #[tauri::command]
-fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
+async fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
+    // tree-sitter parsing is CPU-bound; run it on the blocking pool so the Tauri
+    // WebView main thread stays responsive while a project is opening.
+    run_blocking_command(move || parse_php_syntax_blocking(&source)).await
+}
+
+fn parse_php_syntax_blocking(source: &str) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
     let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
-    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    let tree = parser.parse(source).map_err(|error| error.to_string())?;
     Ok(tree.diagnostics())
 }
 
 #[tauri::command]
-fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline, String> {
+async fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline, String> {
+    // tree-sitter parse + symbol extraction is the heaviest per-open command;
+    // keep it off the main thread.
+    run_blocking_command(move || parse_php_file_outline_blocking(&path, &source)).await
+}
+
+fn parse_php_file_outline_blocking(path: &str, source: &str) -> Result<PhpFileOutline, String> {
     let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
-    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    let tree = parser.parse(source).map_err(|error| error.to_string())?;
     let extractor = TreeSitterPhpSymbolExtractor;
-    let symbols = extractor.extract(&tree, &source);
-    let relative_path = path_file_label(&path);
+    let symbols = extractor.extract(&tree, source);
+    let relative_path = path_file_label(path);
     let records: Vec<PhpFileOutlineSymbolRecord> = symbols
         .into_iter()
         .map(|symbol| PhpFileOutlineSymbolRecord {
@@ -355,11 +412,19 @@ fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline
             container_kind: None,
             container_name: symbol.container_name,
             fully_qualified_name: symbol.fully_qualified_name,
+            is_static: symbol.is_static,
             kind: php_file_outline_node_kind_from_symbol(symbol.kind),
             line_number: symbol.range.start_line as i64,
             name: symbol.name,
-            path: path.clone(),
+            parameters: symbol
+                .parameters
+                .into_iter()
+                .map(outline_parameter_from_symbol)
+                .collect(),
+            path: path.to_string(),
             relative_path: relative_path.clone(),
+            return_type: symbol.return_type,
+            visibility: symbol.visibility.map(outline_visibility_from_symbol),
         })
         .collect();
 
@@ -504,6 +569,24 @@ impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
     }
 }
 
+/// Runs a blocking command body on Tokio's dedicated blocking pool so the Tauri
+/// WebView main thread is never stalled by file-system, tree-sitter, or SQLite
+/// work — the same off-main-thread discipline used by the LSP feature commands
+/// (`LanguageServerRegistry::send_request_async`).
+///
+/// The closure must own everything it touches (`'static`); callers capture and
+/// clone their arguments before handing the work off, so nothing borrows across
+/// the `await` and per-workspace isolation is decided by the captured values.
+async fn run_blocking_command<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Command task failed: {error}"))?
+}
+
 fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
     let database_path = workspace_index_database_path(app, root_path)?;
     SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())
@@ -516,6 +599,15 @@ fn workspace_index_database_path(app: &AppHandle, root_path: &Path) -> Result<Pa
         .map_err(|error| error.to_string())?;
 
     Ok(workspace_index_path(&config_dir, root_path))
+}
+
+fn local_history_store(app: &AppHandle) -> Result<LocalHistoryStore, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+
+    Ok(LocalHistoryStore::new(config_dir))
 }
 
 fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
@@ -1156,6 +1248,21 @@ fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutline
     }
 }
 
+fn outline_visibility_from_symbol(visibility: PhpSymbolVisibility) -> OutlineSymbolVisibility {
+    match visibility {
+        PhpSymbolVisibility::Public => OutlineSymbolVisibility::Public,
+        PhpSymbolVisibility::Protected => OutlineSymbolVisibility::Protected,
+        PhpSymbolVisibility::Private => OutlineSymbolVisibility::Private,
+    }
+}
+
+fn outline_parameter_from_symbol(parameter: PhpParameter) -> PhpFileOutlineParameter {
+    PhpFileOutlineParameter {
+        name: parameter.name,
+        type_name: parameter.type_name,
+    }
+}
+
 fn path_file_label(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -1377,19 +1484,29 @@ fn plan_javascript_typescript_language_server(
 }
 
 #[tauri::command]
-fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .read_directory(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
+async fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+    // Directory listing hits the disk; keep it off the main thread so opening a
+    // project (loadDirectory) cannot stall the WebView during index I/O.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .read_directory(&PathBuf::from(path))
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn read_text_file(path: String) -> Result<String, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .read_text_file(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
+async fn read_text_file(path: String) -> Result<String, String> {
+    // File reads (restored tabs at open) hit the disk; keep them off the main
+    // thread to avoid WebView stalls while the indexer contends for disk I/O.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .read_text_file(&PathBuf::from(path))
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1401,66 +1518,137 @@ fn rename_path(from: String, to: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn search_files(
+async fn search_files(
     root: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<FileSearchResult>, String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .search_files(&PathBuf::from(root), &query, limit)
-        .map_err(|error| error.to_string())
+    // File-name search walks the workspace tree; keep it off the main thread.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .search_files(&PathBuf::from(root), &query, limit)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn search_text(root: String, query: String, limit: usize) -> Result<Vec<TextSearchResult>, String> {
-    let searcher = RipgrepTextSearcher;
-    searcher
-        .search(&PathBuf::from(root), &query, limit)
-        .map_err(|error| error.to_string())
+async fn search_text(
+    root: String,
+    query: String,
+    limit: usize,
+    options: Option<TextSearchOptions>,
+) -> Result<Vec<TextSearchResult>, String> {
+    // Full-text search spawns ripgrep and reads its output; keep it off the main
+    // thread so the WebView is not blocked while it runs. `options` is optional so
+    // legacy 3-arg callers (no filters) keep the original literal, case-insensitive
+    // behaviour.
+    let options = options.unwrap_or_default();
+    run_blocking_command(move || {
+        let searcher = RipgrepTextSearcher;
+        searcher
+            .search(&PathBuf::from(root), &query, limit, &options)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn search_project_symbols(
+async fn replace_in_path(
+    root: String,
+    query: String,
+    replacement: String,
+    options: Option<TextSearchOptions>,
+    scope_path: Option<String>,
+) -> Result<ReplaceInPathResult, String> {
+    // Replace-in-Path spawns ripgrep to find the matching files (respecting every
+    // Find-in-Path filter) and then rewrites each file's content off the main
+    // thread, so the WebView never stalls while many files are edited. The
+    // requested `root` is canonicalized and captured up front: every file it
+    // touches is verified to live inside that resolved root, so a replace can
+    // never escape - or leak into - another workspace tab. `scope_path`, when
+    // present, pins a single-file replace to exactly that file regardless of the
+    // user file mask.
+    let options = options.unwrap_or_default();
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let scope = scope_path.map(PathBuf::from);
+        let replacer = RipgrepTextReplacer;
+        replacer
+            .replace(&root, &query, &replacement, &options, scope.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn search_project_symbols(
     app: AppHandle,
     root: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<ProjectSymbolSearchResult>, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let index = open_workspace_index(&app, &root)?;
-    index
-        .search_project_symbols(&query, limit)
-        .map_err(|error| error.to_string())
+    // Opening the per-workspace SQLite index and scanning it (LIKE + ORDER BY)
+    // is blocking and contends with the background indexer; resolve the root and
+    // run the whole round-trip off the main thread. The captured `root` keeps
+    // this request bound to its own workspace database (no cross-root leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let index = open_workspace_index(&app, &root)?;
+        index
+            .search_project_symbols(&query, limit)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let index = open_workspace_index(&app, &root)?;
-    index.load_php_tree().map_err(|error| error.to_string())
+async fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
+    // Loading the full workspace symbol tree is a large SQLite read; resolve the
+    // requested root and run it off the main thread against that root's database
+    // only.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let index = open_workspace_index(&app, &root)?;
+        index.load_php_tree().map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_php_file_outline(
+async fn get_php_file_outline(
     app: AppHandle,
     root: String,
     path: String,
 ) -> Result<PhpFileOutline, String> {
-    let root = canonicalize_workspace_root(&root)?;
-    let path = resolve_workspace_path(&root, &path)?;
-    let index = open_workspace_index(&app, &root)?;
-    index
-        .load_php_file_outline(&path.to_string_lossy())
-        .map_err(|error| error.to_string())
+    // Path resolution + the per-file SQLite read both block; resolve the root
+    // and run them off the main thread, scoped to the requested workspace.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root)?;
+        let path = resolve_workspace_path(&root, &path)?;
+        let index = open_workspace_index(&app, &root)?;
+        index
+            .load_php_file_outline(&path.to_string_lossy())
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_git_status(root_path: String) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .status(&root)
-        .map_err(|error| error.to_string())
+async fn get_git_status(root_path: String) -> Result<GitStatus, String> {
+    // `git status` shells out to a subprocess and, on large Laravel repos, can
+    // take hundreds of milliseconds; it fires on every save and tab switch.
+    // Resolve the requested root and run it off the main thread so the WebView
+    // never stalls. The captured `root_path` keeps the request bound to its own
+    // repository (no cross-root leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .status(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1560,55 +1748,423 @@ fn get_git_commit_diff(
 }
 
 #[tauri::command]
-fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .diff(&root, &change)
-        .map_err(|error| error.to_string())
+async fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
+    // Diffing shells out to `git` and reads file contents; it fires alongside
+    // status on save/switch, so keep it off the main thread, scoped to the
+    // requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .diff(&root, &change)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn stage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .stage(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn get_git_blame(
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<GitBlameLine>, String> {
+    // `git blame` shells out to a subprocess that can take a while on large
+    // files; keep it off the main thread so the WebView never stalls. The
+    // captured `root_path` + `relative_path` bind the request to its own
+    // repository and file (no cross-root or cross-file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .blame(&root, &relative_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn unstage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .unstage(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn get_git_file_history(
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<GitFileHistoryEntry>, String> {
+    // `git log --follow` shells out to a subprocess that can take a while on a
+    // file with deep history; keep it off the main thread so the WebView never
+    // stalls. The captured `root_path` + `relative_path` bind the request to its
+    // own repository and file (no cross-root or cross-file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_history(&root, &relative_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+// Rejects a local-history relative path that is absolute or escapes the
+// workspace via `..`, so a snapshot/version request can never address content
+// outside the requested workspace root (per-workspace isolation).
+fn ensure_local_history_relative_path(relative_path: &str) -> Result<(), String> {
+    // Normalize Windows separators so `..` traversal expressed with backslashes
+    // (which Path::components on Unix would treat as a single filename) is still
+    // detected. The store hashes the same normalized form, so this keeps the
+    // guard and the storage key in agreement.
+    let normalized = relative_path.replace('\\', "/");
+    let path = Path::new(&normalized);
+
+    if path.is_absolute() {
+        return Err("Local history path must be workspace-relative.".to_string());
+    }
+
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("Local history path must stay inside the workspace.".to_string());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
-fn revert_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .revert(&root, &changes)
-        .map_err(|error| error.to_string())
+async fn record_local_history_snapshot(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+    content: String,
+) -> Result<Option<LocalHistoryVersion>, String> {
+    // Writing a snapshot touches disk (index + content file); keep it off the
+    // main thread. The captured `root_path` + `relative_path` bind the snapshot
+    // to its own workspace bucket and file (no cross-root or cross-file leak).
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.record_snapshot(&root_path, &relative_path, &content)
+    })
+    .await
 }
 
 #[tauri::command]
-fn commit_git_changes(
+async fn get_local_history_versions(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<LocalHistoryVersion>, String> {
+    // Reading the version index is cheap but still touches disk; keep it off the
+    // main thread and scope it to the requested workspace + file.
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.list_versions(&root_path, &relative_path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_local_history_version_content(
+    app: AppHandle,
+    root_path: String,
+    relative_path: String,
+    version_id: String,
+) -> Result<String, String> {
+    // Reads one snapshot's stored content off the main thread, scoped to the
+    // requested workspace + file + version.
+    run_blocking_command(move || {
+        ensure_local_history_relative_path(&relative_path)?;
+        let store = local_history_store(&app)?;
+        store.read_version(&root_path, &relative_path, &version_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_file_commit_diff(
+    root_path: String,
+    relative_path: String,
+    sha: String,
+) -> Result<GitFileDiff, String> {
+    // Reading both blob revisions for a historical commit shells out to `git
+    // show` twice; keep the round-trip off the main thread. The captured
+    // `root_path`, `relative_path`, and `sha` bind the request to its own
+    // repository, file, and revision (no cross-root or cross-file leakage). The
+    // gateway validates `relative_path` and `sha` before they reach git.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_commit_diff(&root, &relative_path, &sha)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stage_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Staging shells out to `git add` then re-reads status; keep the round-trip
+    // off the main thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stage(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unstage_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Unstaging shells out to `git` and re-reads status; keep it off the main
+    // thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .unstage(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_file_hunks(
+    root_path: String,
+    relative_path: String,
+    staged: bool,
+) -> Result<Vec<GitDiffHunk>, String> {
+    // Reads a single file's `git diff` off the main thread, bound to the
+    // requested repository root and file (no cross-root/file leakage).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .file_hunks(&root, &relative_path, staged)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stage_git_hunk(
+    root_path: String,
+    relative_path: String,
+    hunk_index: u32,
+) -> Result<GitStatus, String> {
+    // Staging one hunk runs `git diff` + `git apply --cached` and re-reads
+    // status; keep the round-trip off the main thread, bound to the requested
+    // repository root. A rejected patch fails atomically (index untouched).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stage_hunk(&root, &relative_path, hunk_index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unstage_git_hunk(
+    root_path: String,
+    relative_path: String,
+    hunk_index: u32,
+) -> Result<GitStatus, String> {
+    // Unstaging one hunk runs `git diff --cached` + `git apply --cached
+    // --reverse` and re-reads status; keep it off the main thread, bound to the
+    // requested repository root. A rejected patch fails atomically.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .unstage_hunk(&root, &relative_path, hunk_index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn revert_git_files(
+    root_path: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    // Reverting shells out to `git checkout`/`restore` and re-reads status; keep
+    // it off the main thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .revert(&root, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn commit_git_changes(
     root_path: String,
     message: String,
     changes: Vec<GitChangedFile>,
 ) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .commit(&root, &message, &changes)
-        .map_err(|error| error.to_string())
+    // Committing runs several `git` subprocesses (write-tree, commit-tree, ...);
+    // keep the whole sequence off the main thread, bound to the requested
+    // repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .commit(&root, &message, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    CommandGitRepositoryGateway
-        .push(&root)
-        .map_err(|error| error.to_string())
+async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
+    // `git push` performs network I/O and can block for seconds; it MUST run off
+    // the main thread so the WebView stays responsive. Bound to the requested
+    // repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .push(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_git_stash(root_path: String, message: String) -> Result<(), String> {
+    // `git stash push` shells out and rewrites the working tree; keep it off the
+    // main thread, bound to the requested repository root (no cross-root leak).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stash_save(&root, &message)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_stash_list(root_path: String) -> Result<Vec<GitStashEntry>, String> {
+    // Listing stashes shells out to `git stash list`; keep it off the main
+    // thread, scoped to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .stash_list(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_apply_git(root_path: String, index: String) -> Result<(), String> {
+    // Applying a stash rewrites the working tree; keep it off the main thread,
+    // bound to the requested repository root. The index is validated numerically
+    // before it reaches the `stash@{N}` selector (no option/revision injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_apply(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_pop_git(root_path: String, index: String) -> Result<(), String> {
+    // Popping a stash applies then drops it; keep it off the main thread, bound
+    // to the requested repository root. The index is validated numerically.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_pop(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_stash_diff(root_path: String, index: String) -> Result<String, String> {
+    // `git stash show -p` shells out to produce a diff; keep it off the main
+    // thread, bound to the requested repository root. The index is validated
+    // numerically before it reaches the `stash@{N}` selector.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_show(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_drop_git(root_path: String, index: String) -> Result<(), String> {
+    // Dropping a stash is destructive; keep it off the main thread, bound to the
+    // requested repository root. The index is validated numerically before it
+    // reaches the `stash@{N}` selector (no option/revision injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
+        CommandGitRepositoryGateway
+            .stash_drop(&root, index)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_git_branches(root_path: String) -> Result<Vec<GitBranch>, String> {
+    // Listing branches shells out to `git for-each-ref`; keep it off the main
+    // thread, scoped to the requested repository root (no cross-root leak).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .branch_list(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_git_current_branch(root_path: String) -> Result<Option<String>, String> {
+    // Resolving the current branch shells out to git; keep it off the main
+    // thread, bound to the requested repository root.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .current_branch(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_git_branch(root_path: String, name: String) -> Result<(), String> {
+    // `git branch <name>` creates a branch WITHOUT switching (the working tree is
+    // never touched). Keep it off the main thread, bound to the requested root.
+    // The name is validated against git's own ref grammar before it reaches the
+    // subprocess (no option/shell injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .create_branch(&root, &name)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn switch_git_branch(root_path: String, name: String) -> Result<(), String> {
+    // `git switch <name>` (no `-f`/`--discard`) rewrites the working tree but
+    // refuses when local changes would be overwritten, so no work is ever lost.
+    // Keep it off the main thread, bound to the requested repository root. The
+    // name is validated against git's ref grammar (no option/shell injection).
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .switch_branch(&root, &name)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3887,28 +4443,40 @@ async fn javascript_typescript_text_document_signature_help(
 }
 
 #[tauri::command]
-fn write_text_file(path: String, content: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .write_text_file(&PathBuf::from(path), &content)
-        .map_err(|error| error.to_string())
+async fn write_text_file(path: String, content: String) -> Result<(), String> {
+    // Every save writes to disk; keep the write off the main thread so the
+    // WebView never stalls while persisting a document.
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        repository
+            .write_text_file(&PathBuf::from(path), &content)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-fn apply_workspace_edit(
+async fn apply_workspace_edit(
     root_path: String,
     edit: LanguageServerWorkspaceEdit,
     skipped_paths: Vec<String>,
 ) -> Result<usize, String> {
-    let repository = LocalWorkspaceFileRepository;
-    ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
-    let file_operation_count = apply_workspace_file_operations(&repository, &edit.file_operations)?;
-    let edits = workspace_text_edits_from_language_server(edit)?;
+    // A cross-file rename/refactor writes an unbounded number of files in a
+    // loop; run the whole apply off the main thread, scoped to the requested
+    // workspace root (path guard rejects anything outside it).
+    run_blocking_command(move || {
+        let repository = LocalWorkspaceFileRepository;
+        ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
+        let file_operation_count =
+            apply_workspace_file_operations(&repository, &edit.file_operations)?;
+        let edits = workspace_text_edits_from_language_server(edit)?;
 
-    let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
-        .map_err(|error| error.to_string())?;
+        let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
+            .map_err(|error| error.to_string())?;
 
-    Ok(file_operation_count + text_edit_count)
+        Ok(file_operation_count + text_edit_count)
+    })
+    .await
 }
 
 fn apply_workspace_file_operations(
@@ -4134,21 +4702,28 @@ mod tests {
         apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
+        ensure_local_history_relative_path,
         ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_inlay_hint_payload_in_workspace,
         ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
         ensure_lsp_text_document_content_in_workspace, ensure_lsp_text_document_path_in_workspace,
         ensure_lsp_type_hierarchy_item_in_workspace, ensure_lsp_workspace_edit_paths_in_workspace,
+        cached_monospace_font_families, enumerate_monospace_font_families,
         ensure_path_in_workspace, filter_lsp_call_hierarchy_items_to_workspace,
         filter_lsp_code_actions_to_workspace, filter_lsp_code_lenses_to_workspace,
         filter_lsp_completion_list_to_workspace, filter_lsp_document_links_to_workspace,
         filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace,
-        javascript_typescript_did_change_configuration_settings,
+        filter_lsp_workspace_symbols_to_workspace, create_git_branch, get_git_blame,
+        get_git_current_branch, get_git_file_commit_diff, get_git_file_history, get_git_file_hunks,
+        get_git_stash_diff, get_git_stash_list, get_git_status,
+        javascript_typescript_did_change_configuration_settings, list_git_branches,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
-        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
+        parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
+        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
+        search_files, stage_git_files, stage_git_hunk, stash_apply_git,
+        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk, write_text_file,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -4164,8 +4739,12 @@ mod tests {
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
+    use crate::php_file_outline::PhpFileOutlineNodeKind;
+    use crate::workspace::FileEntryKind;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::OnceLock;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -5172,7 +5751,7 @@ mod tests {
                 new_text: "export const created = true;\n".to_string(),
             }],
         );
-        let changed_paths = apply_workspace_edit(
+        let changed_paths = tauri::async_runtime::block_on(apply_workspace_edit(
             path_string(&root),
             LanguageServerWorkspaceEdit {
                 changes,
@@ -5197,7 +5776,7 @@ mod tests {
                 ],
             },
             Vec::new(),
-        )
+        ))
         .expect("apply workspace edit");
 
         assert_eq!(changed_paths, 4);
@@ -5208,6 +5787,693 @@ mod tests {
         assert!(!old_path.exists());
         assert!(renamed_path.exists());
         assert!(!deleted_path.exists());
+    }
+
+    // The git, write-file, and apply-edit commands moved off the Tauri main
+    // thread (async fn + spawn_blocking) so save/tab-switch/push never stall the
+    // WebView. These tests drive the real async commands through the Tauri async
+    // runtime and assert behaviour is unchanged off-thread, that concurrent
+    // requests succeed, and that commands stay isolated per workspace root.
+
+    fn init_test_git_repo(root: &Path) {
+        run_test_git(root, &["init"]);
+        run_test_git(root, &["config", "user.email", "test@example.com"]);
+        run_test_git(root, &["config", "user.name", "Test User"]);
+    }
+
+    fn run_test_git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn write_text_file_persists_contents_off_thread() {
+        let root = temp_workspace("write-off-thread");
+        let file = root.join("notes.txt");
+
+        tauri::async_runtime::block_on(write_text_file(
+            path_string(&file),
+            "off-thread save".to_string(),
+        ))
+        .expect("write result");
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("written file"),
+            "off-thread save"
+        );
+    }
+
+    #[test]
+    fn write_text_file_handles_concurrent_saves_off_thread() {
+        let root = temp_workspace("write-concurrent");
+        let first = root.join("first.txt");
+        let second = root.join("second.txt");
+
+        let first_task = tauri::async_runtime::spawn(write_text_file(
+            path_string(&first),
+            "first".to_string(),
+        ));
+        let second_task = tauri::async_runtime::spawn(write_text_file(
+            path_string(&second),
+            "second".to_string(),
+        ));
+
+        tauri::async_runtime::block_on(first_task)
+            .expect("first join")
+            .expect("first write");
+        tauri::async_runtime::block_on(second_task)
+            .expect("second join")
+            .expect("second write");
+
+        assert_eq!(fs::read_to_string(&first).expect("first"), "first");
+        assert_eq!(fs::read_to_string(&second).expect("second"), "second");
+    }
+
+    #[test]
+    fn get_git_status_reports_staged_changes_off_thread() {
+        let root = temp_workspace("git-status-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("tracked.txt"), "one\n").expect("write tracked");
+        run_test_git(&root, &["add", "tracked.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("tracked.txt"), "two\n").expect("modify tracked");
+
+        let status = tauri::async_runtime::block_on(get_git_status(path_string(&root)))
+            .expect("git status result");
+
+        assert!(
+            status
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "tracked.txt"),
+            "expected the modified file in git status, got {:?}",
+            status.changes
+        );
+    }
+
+    #[test]
+    fn stage_git_files_off_thread_stages_only_requested_repository() {
+        let root = temp_workspace("git-stage-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("tracked.txt"), "one\n").expect("write tracked");
+        run_test_git(&root, &["add", "tracked.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("tracked.txt"), "two\n").expect("modify tracked");
+
+        let change = crate::git::GitChangedFile {
+            is_staged: false,
+            is_unversioned: false,
+            old_path: None,
+            old_relative_path: None,
+            path: path_string(&root.join("tracked.txt")),
+            relative_path: "tracked.txt".to_string(),
+            status: crate::git::GitChangeStatus::Modified,
+        };
+
+        let status =
+            tauri::async_runtime::block_on(stage_git_files(path_string(&root), vec![change]))
+                .expect("stage result");
+
+        assert!(
+            status
+                .changes
+                .iter()
+                .any(|entry| entry.relative_path == "tracked.txt" && entry.is_staged),
+            "expected the file to be staged, got {:?}",
+            status.changes
+        );
+    }
+
+    #[test]
+    fn stage_git_hunk_off_thread_stages_only_requested_repository() {
+        let root = temp_workspace("git-stage-hunk-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("f.txt"), "a\nb\nc\nd\ne\n").expect("write");
+        run_test_git(&root, &["add", "f.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("f.txt"), "A\nb\nc\nd\nE\n").expect("modify");
+
+        let hunks = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("hunks");
+        assert_eq!(hunks.len(), 2, "expected two hunks, got {hunks:?}");
+
+        tauri::async_runtime::block_on(stage_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+        ))
+        .expect("stage hunk");
+
+        // Partial staging: exactly the first hunk moved to the index while the
+        // last hunk remains in the worktree diff. `git status --porcelain`
+        // collapses both sides into one `MM` entry, so verify the split
+        // directly through the staged/worktree hunk views.
+        let staged = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            true,
+        ))
+        .expect("staged hunks");
+        let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("worktree hunks");
+
+        assert_eq!(staged.len(), 1, "expected one staged hunk, got {staged:?}");
+        assert!(staged[0].lines.contains(&"+A".to_string()));
+        assert_eq!(
+            worktree.len(),
+            1,
+            "expected one remaining worktree hunk, got {worktree:?}"
+        );
+        assert!(worktree[0].lines.contains(&"+E".to_string()));
+    }
+
+    #[test]
+    fn unstage_git_hunk_off_thread_unstages_only_selected_hunk() {
+        let root = temp_workspace("git-unstage-hunk-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("f.txt"), "a\nb\nc\nd\ne\n").expect("write");
+        run_test_git(&root, &["add", "f.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("f.txt"), "A\nb\nc\nd\nE\n").expect("modify");
+        run_test_git(&root, &["add", "f.txt"]);
+
+        tauri::async_runtime::block_on(unstage_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+        ))
+        .expect("unstage hunk");
+
+        // Only the first staged hunk dropped back to the worktree; the other
+        // stays in the index. Verify via the staged/worktree hunk views since
+        // porcelain collapses the file into a single entry.
+        let staged = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            true,
+        ))
+        .expect("staged hunks");
+        let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+        ))
+        .expect("worktree hunks");
+
+        assert_eq!(staged.len(), 1, "expected one staged hunk left, got {staged:?}");
+        assert!(staged[0].lines.contains(&"+E".to_string()));
+        assert_eq!(
+            worktree.len(),
+            1,
+            "expected the unstaged hunk back in the worktree, got {worktree:?}"
+        );
+        assert!(worktree[0].lines.contains(&"+A".to_string()));
+    }
+
+    #[test]
+    fn git_status_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-iso-a");
+        let root_b = temp_workspace("git-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("only-in-a.txt"), "a\n").expect("file in a");
+        fs::write(root_b.join("only-in-b.txt"), "b\n").expect("file in b");
+
+        let status_a = tauri::async_runtime::block_on(get_git_status(path_string(&root_a)))
+            .expect("status a");
+        let status_b = tauri::async_runtime::block_on(get_git_status(path_string(&root_b)))
+            .expect("status b");
+
+        assert!(
+            status_a
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "only-in-a.txt"),
+            "root A should see its own file"
+        );
+        assert!(
+            status_a
+                .changes
+                .iter()
+                .all(|change| change.relative_path != "only-in-b.txt"),
+            "root A must not see root B's file (no cross-root leakage)"
+        );
+        assert!(
+            status_b
+                .changes
+                .iter()
+                .any(|change| change.relative_path == "only-in-b.txt"),
+            "root B should see its own file"
+        );
+        assert!(
+            status_b
+                .changes
+                .iter()
+                .all(|change| change.relative_path != "only-in-a.txt"),
+            "root B must not see root A's file (no cross-root leakage)"
+        );
+    }
+
+    #[test]
+    fn get_git_status_handles_concurrent_repositories_off_thread() {
+        let root_a = temp_workspace("git-concurrent-a");
+        let root_b = temp_workspace("git-concurrent-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("a.txt"), "a\n").expect("file a");
+        fs::write(root_b.join("b.txt"), "b\n").expect("file b");
+
+        let task_a = tauri::async_runtime::spawn(get_git_status(path_string(&root_a)));
+        let task_b = tauri::async_runtime::spawn(get_git_status(path_string(&root_b)));
+
+        let status_a = tauri::async_runtime::block_on(task_a)
+            .expect("join a")
+            .expect("status a");
+        let status_b = tauri::async_runtime::block_on(task_b)
+            .expect("join b")
+            .expect("status b");
+
+        assert!(status_a
+            .changes
+            .iter()
+            .any(|change| change.relative_path == "a.txt"));
+        assert!(status_b
+            .changes
+            .iter()
+            .any(|change| change.relative_path == "b.txt"));
+    }
+
+    #[test]
+    fn get_git_blame_reports_per_line_authors_off_thread() {
+        let root = temp_workspace("git-blame-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "alpha\nbeta\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        let lines = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root),
+            "file.txt".to_string(),
+        ))
+        .expect("blame result");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].line_number, 1);
+        assert_eq!(lines[0].author, "Test User");
+        assert!(!lines[0].sha.is_empty());
+        assert_eq!(lines[1].line_number, 2);
+    }
+
+    #[test]
+    fn git_blame_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-blame-iso-a");
+        let root_b = temp_workspace("git-blame-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        run_test_git(&root_a, &["config", "user.name", "Author A"]);
+        run_test_git(&root_b, &["config", "user.name", "Author B"]);
+        fs::write(root_a.join("shared.txt"), "from a\n").expect("file in a");
+        fs::write(root_b.join("shared.txt"), "from b\n").expect("file in b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a commit"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b commit"]);
+
+        let blame_a = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root_a),
+            "shared.txt".to_string(),
+        ))
+        .expect("blame a");
+        let blame_b = tauri::async_runtime::block_on(get_git_blame(
+            path_string(&root_b),
+            "shared.txt".to_string(),
+        ))
+        .expect("blame b");
+
+        assert_eq!(blame_a[0].author, "Author A");
+        assert_eq!(blame_b[0].author, "Author B");
+        assert_ne!(blame_a[0].sha, blame_b[0].sha, "no cross-root leakage");
+    }
+
+    #[test]
+    fn get_git_file_history_lists_commits_off_thread() {
+        let root = temp_workspace("git-file-history-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "first commit"]);
+        fs::write(root.join("file.txt"), "one\ntwo\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "second commit"]);
+
+        let entries = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root),
+            "file.txt".to_string(),
+        ))
+        .expect("file history result");
+
+        assert_eq!(entries.len(), 2);
+        // Newest commit first (git log default ordering).
+        assert_eq!(entries[0].subject, "second commit");
+        assert_eq!(entries[1].subject, "first commit");
+        assert_eq!(entries[0].author, "Test User");
+        assert!(!entries[0].sha.is_empty());
+    }
+
+    #[test]
+    fn get_git_file_history_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-file-history-iso-a");
+        let root_b = temp_workspace("git-file-history-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("shared.txt"), "from a\n").expect("file in a");
+        fs::write(root_b.join("shared.txt"), "from b\n").expect("file in b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a commit"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b commit"]);
+
+        let history_a = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root_a),
+            "shared.txt".to_string(),
+        ))
+        .expect("history a");
+        let history_b = tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root_b),
+            "shared.txt".to_string(),
+        ))
+        .expect("history b");
+
+        assert_eq!(history_a[0].subject, "a commit");
+        assert_eq!(history_b[0].subject, "b commit");
+        assert_ne!(
+            history_a[0].sha, history_b[0].sha,
+            "no cross-root leakage"
+        );
+    }
+
+    #[test]
+    fn get_git_file_history_rejects_paths_outside_workspace_off_thread() {
+        let root = temp_workspace("git-file-history-escape");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_file_history(
+            path_string(&root),
+            "../secret.txt".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn git_stash_save_list_pop_round_trip_off_thread() {
+        let root = temp_workspace("git-stash-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("file.txt"), "two\n").expect("write file");
+
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+            .expect("stash save");
+
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 0);
+
+        let diff = tauri::async_runtime::block_on(get_git_stash_diff(path_string(&root), "0".to_string()))
+            .expect("stash diff");
+        assert!(diff.contains("file.txt"));
+
+        tauri::async_runtime::block_on(stash_pop_git(path_string(&root), "0".to_string()))
+            .expect("stash pop");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).expect("read"),
+            "two\n"
+        );
+        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn git_stash_apply_keeps_entry_and_drop_removes_it_off_thread() {
+        let root = temp_workspace("git-stash-apply-drop-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("file.txt"), "two\n").expect("write file");
+
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+            .expect("stash save");
+        tauri::async_runtime::block_on(stash_apply_git(path_string(&root), "0".to_string()))
+            .expect("stash apply");
+
+        // apply keeps the entry around.
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert_eq!(entries.len(), 1);
+
+        tauri::async_runtime::block_on(stash_drop_git(path_string(&root), "0".to_string()))
+            .expect("stash drop");
+
+        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+            .expect("stash list");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn git_stash_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-stash-iso-a");
+        let root_b = temp_workspace("git-stash-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("shared.txt"), "base a\n").expect("file a");
+        fs::write(root_b.join("shared.txt"), "base b\n").expect("file b");
+        run_test_git(&root_a, &["add", "shared.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a"]);
+        run_test_git(&root_b, &["add", "shared.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b"]);
+        fs::write(root_a.join("shared.txt"), "wip a\n").expect("file a");
+
+        // Only root A has a stash; root B's list must stay empty (no leakage).
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root_a), "wip a".to_string()))
+            .expect("stash save a");
+
+        let list_a = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_a)))
+            .expect("list a");
+        let list_b = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_b)))
+            .expect("list b");
+
+        assert_eq!(list_a.len(), 1);
+        assert!(list_b.is_empty(), "no cross-root stash leakage");
+    }
+
+    #[test]
+    fn git_stash_diff_rejects_non_numeric_index_off_thread() {
+        let root = temp_workspace("git-stash-bad-index");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_stash_diff(
+            path_string(&root),
+            "0} --output=/etc/passwd".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn git_branch_create_list_switch_round_trip_off_thread() {
+        let root = temp_workspace("git-branch-off-thread");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root),
+            "feature/login".to_string(),
+        ))
+        .expect("create branch");
+
+        let branches =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root))).expect("list");
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+        assert!(names.contains(&"feature/login"));
+        assert!(names.contains(&"main"));
+        // create must NOT switch: HEAD is still on main.
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("main"));
+
+        tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "feature/login".to_string(),
+        ))
+        .expect("switch branch");
+
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("feature/login"));
+    }
+
+    #[test]
+    fn git_branch_switch_refuses_to_discard_uncommitted_changes_off_thread() {
+        let root = temp_workspace("git-branch-switch-safety");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        run_test_git(&root, &["checkout", "-b", "feature"]);
+        fs::write(root.join("file.txt"), "feature\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "feature"]);
+        run_test_git(&root, &["checkout", "main"]);
+        // Dirty local change that conflicts with the feature branch content.
+        fs::write(root.join("file.txt"), "dirty\n").expect("write file");
+
+        let result = tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "feature".to_string(),
+        ));
+
+        // The switch must FAIL rather than discard the uncommitted change.
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).expect("read"),
+            "dirty\n"
+        );
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current");
+        assert_eq!(current.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn git_branch_create_rejects_injection_off_thread() {
+        let root = temp_workspace("git-branch-bad-name");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        assert!(tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root),
+            "--force".to_string(),
+        ))
+        .is_err());
+        assert!(tauri::async_runtime::block_on(switch_git_branch(
+            path_string(&root),
+            "foo; rm -rf /".to_string(),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn git_branches_stay_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-branch-iso-a");
+        let root_b = temp_workspace("git-branch-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        run_test_git(&root_a, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        run_test_git(&root_b, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root_a.join("a.txt"), "a\n").expect("file a");
+        fs::write(root_b.join("b.txt"), "b\n").expect("file b");
+        run_test_git(&root_a, &["add", "a.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "a"]);
+        run_test_git(&root_b, &["add", "b.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "b"]);
+
+        // A branch created in root A must never appear in root B's list.
+        tauri::async_runtime::block_on(create_git_branch(
+            path_string(&root_a),
+            "only-in-a".to_string(),
+        ))
+        .expect("create in a");
+
+        let list_a =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root_a))).expect("list a");
+        let list_b =
+            tauri::async_runtime::block_on(list_git_branches(path_string(&root_b))).expect("list b");
+
+        assert!(list_a.iter().any(|branch| branch.name == "only-in-a"));
+        assert!(
+            !list_b.iter().any(|branch| branch.name == "only-in-a"),
+            "no cross-root branch leakage"
+        );
+    }
+
+    #[test]
+    fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
+        assert!(ensure_local_history_relative_path("src/User.php").is_ok());
+        assert!(ensure_local_history_relative_path("../secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("nested/../../secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("/etc/passwd").is_err());
+        // Backslash-expressed traversal must also be rejected (Windows paths).
+        assert!(ensure_local_history_relative_path("..\\secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("nested\\..\\..\\secret.txt").is_err());
+    }
+
+    #[test]
+    fn get_git_file_commit_diff_reports_commit_blobs_off_thread() {
+        let root = temp_workspace("git-file-commit-diff-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("file.txt"), "one\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "first"]);
+        fs::write(root.join("file.txt"), "one\ntwo\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "second"]);
+
+        let sha = String::from_utf8_lossy(
+            &std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&root)
+                .output()
+                .expect("rev-parse")
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        let diff = tauri::async_runtime::block_on(get_git_file_commit_diff(
+            path_string(&root),
+            "file.txt".to_string(),
+            sha,
+        ))
+        .expect("file commit diff result");
+
+        assert_eq!(diff.original_content, "one\n");
+        assert_eq!(diff.modified_content, "one\ntwo\n");
+        assert_eq!(diff.change.relative_path, "file.txt");
+    }
+
+    #[test]
+    fn get_git_file_commit_diff_rejects_invalid_sha_off_thread() {
+        let root = temp_workspace("git-file-commit-diff-bad-sha");
+        init_test_git_repo(&root);
+
+        assert!(tauri::async_runtime::block_on(get_git_file_commit_diff(
+            path_string(&root),
+            "file.txt".to_string(),
+            "HEAD".to_string(),
+        ))
+        .is_err());
     }
 
     #[cfg(unix)]
@@ -5277,6 +6543,47 @@ mod tests {
         assert_eq!(
             workspace_root_for_disposal(&path_string(&root.join(".").join("src"))),
             nested.canonicalize().expect("canonical nested")
+        );
+    }
+
+    #[test]
+    fn monospace_font_cache_scans_once_and_reuses_result() {
+        let cache: OnceLock<Vec<String>> = OnceLock::new();
+        let scans = AtomicUsize::new(0);
+        let scan = || {
+            scans.fetch_add(1, Ordering::SeqCst);
+            vec!["Fira Code".to_string(), "Menlo".to_string()]
+        };
+
+        let first = cached_monospace_font_families(&cache, scan).clone();
+        let second = cached_monospace_font_families(&cache, scan).clone();
+        let third = cached_monospace_font_families(&cache, scan).clone();
+
+        assert_eq!(first, vec!["Fira Code".to_string(), "Menlo".to_string()]);
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(
+            scans.load(Ordering::SeqCst),
+            1,
+            "system font scan must run at most once per session cache",
+        );
+    }
+
+    #[test]
+    fn monospace_font_enumeration_returns_sorted_unique_families() {
+        let families = enumerate_monospace_font_families();
+
+        let mut sorted = families.clone();
+        sorted.sort();
+        assert_eq!(families, sorted, "families must be sorted");
+
+        let mut deduped = families.clone();
+        deduped.dedup();
+        assert_eq!(families, deduped, "families must be unique");
+
+        assert!(
+            families.iter().all(|family| !family.trim().is_empty()),
+            "families must not contain blank names",
         );
     }
 
@@ -5472,6 +6779,162 @@ mod tests {
             value.insert(key.clone(), field.clone());
         }
     }
+
+    // The index/file/parse commands moved off the Tauri main thread (async fn +
+    // spawn_blocking). These tests drive the real async commands through the Tauri
+    // async runtime and assert behaviour is unchanged off-thread, that concurrent
+    // requests succeed, and that file commands stay isolated per workspace root.
+
+    #[test]
+    fn parse_php_file_outline_extracts_symbols_off_thread() {
+        let outline = tauri::async_runtime::block_on(parse_php_file_outline(
+            "/workspace/src/User.php".to_string(),
+            "<?php\n\nnamespace App;\n\nclass User\n{\n    public function name() {}\n}\n"
+                .to_string(),
+        ))
+        .expect("outline result");
+
+        let class = outline
+            .nodes
+            .iter()
+            .find(|node| node.label == "User")
+            .expect("class node");
+        assert_eq!(class.kind, PhpFileOutlineNodeKind::Class);
+        assert!(
+            class.children.iter().any(|child| child.label == "name"),
+            "expected method node under the class"
+        );
+    }
+
+    #[test]
+    fn parse_php_file_outline_surfaces_signature_metadata_off_thread() {
+        let outline = tauri::async_runtime::block_on(parse_php_file_outline(
+            "/workspace/src/User.php".to_string(),
+            concat!(
+                "<?php\n\nnamespace App;\n\nclass User\n{\n",
+                "    protected static function find(string $id, $fallback): ?User\n",
+                "    {\n        return null;\n    }\n}\n",
+            )
+            .to_string(),
+        ))
+        .expect("outline result");
+
+        let method = outline
+            .nodes
+            .iter()
+            .find(|node| node.label == "User")
+            .and_then(|class| class.children.iter().find(|child| child.label == "find"))
+            .expect("method node");
+
+        let value = serde_json::to_value(method).expect("serialize node");
+        assert_eq!(value["visibility"], "protected");
+        assert_eq!(value["isStatic"], true);
+        assert_eq!(value["returnType"], "?User");
+        assert_eq!(value["parameters"][0]["name"], "$id");
+        assert_eq!(value["parameters"][0]["type"], "string");
+        assert_eq!(value["parameters"][1]["name"], "$fallback");
+        assert!(
+            value["parameters"][1].get("type").is_none(),
+            "untyped parameter should omit the type key, got {:?}",
+            value["parameters"][1]
+        );
+    }
+
+    #[test]
+    fn parse_php_syntax_reports_no_diagnostics_for_valid_source_off_thread() {
+        let diagnostics =
+            tauri::async_runtime::block_on(parse_php_syntax("<?php\n\necho 'ok';\n".to_string()))
+                .expect("syntax result");
+
+        assert!(
+            diagnostics.is_empty(),
+            "valid PHP should produce no syntax diagnostics, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn parse_php_file_outline_handles_concurrent_requests_off_thread() {
+        let first_future = parse_php_file_outline(
+            "/workspace/src/First.php".to_string(),
+            "<?php\nclass First {}\n".to_string(),
+        );
+        let second_future = parse_php_file_outline(
+            "/workspace/src/Second.php".to_string(),
+            "<?php\nclass Second {}\n".to_string(),
+        );
+
+        // Spawn both on the runtime so they are genuinely in flight together on
+        // the blocking pool, then join them.
+        let first_task = tauri::async_runtime::spawn(first_future);
+        let second_task = tauri::async_runtime::spawn(second_future);
+
+        let first = tauri::async_runtime::block_on(first_task)
+            .expect("first join")
+            .expect("first outline");
+        let second = tauri::async_runtime::block_on(second_task)
+            .expect("second join")
+            .expect("second outline");
+
+        assert!(first.nodes.iter().any(|node| node.label == "First"));
+        assert!(second.nodes.iter().any(|node| node.label == "Second"));
+    }
+
+    #[test]
+    fn read_text_file_returns_contents_off_thread() {
+        let root = temp_workspace("read-text");
+        let file = root.join("greeting.txt");
+        fs::write(&file, "hello off thread").expect("write file");
+
+        let contents = tauri::async_runtime::block_on(read_text_file(path_string(&file)))
+            .expect("read result");
+
+        assert_eq!(contents, "hello off thread");
+    }
+
+    #[test]
+    fn read_directory_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("dir-iso-a");
+        let root_b = temp_workspace("dir-iso-b");
+        fs::write(root_a.join("only-in-a.php"), "<?php").expect("file in a");
+        fs::write(root_b.join("only-in-b.php"), "<?php").expect("file in b");
+
+        let entries_a = tauri::async_runtime::block_on(read_directory(path_string(&root_a)))
+            .expect("read directory a");
+        let entries_b = tauri::async_runtime::block_on(read_directory(path_string(&root_b)))
+            .expect("read directory b");
+
+        let names_a: Vec<&str> = entries_a.iter().map(|entry| entry.name.as_str()).collect();
+        let names_b: Vec<&str> = entries_b.iter().map(|entry| entry.name.as_str()).collect();
+
+        assert!(names_a.contains(&"only-in-a.php"));
+        assert!(!names_a.contains(&"only-in-b.php"));
+        assert!(names_b.contains(&"only-in-b.php"));
+        assert!(!names_b.contains(&"only-in-a.php"));
+        assert!(entries_a
+            .iter()
+            .all(|entry| matches!(entry.kind, FileEntryKind::File)));
+    }
+
+    #[test]
+    fn search_files_finds_workspace_files_off_thread() {
+        let root = temp_workspace("search-files");
+        fs::write(root.join("Controller.php"), "<?php").expect("controller");
+        fs::write(root.join("README.md"), "docs").expect("readme");
+
+        let results = tauri::async_runtime::block_on(search_files(
+            path_string(&root),
+            "Controller".to_string(),
+            10,
+        ))
+        .expect("search result");
+
+        assert!(
+            results
+                .iter()
+                .any(|result| result.path.ends_with("Controller.php")),
+            "expected Controller.php in results, got {results:?}"
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5543,6 +7006,7 @@ pub fn run() {
             detect_workspace,
             dispose_workspace_root,
             get_php_file_outline,
+            get_git_blame,
             get_git_commit_graph_page,
             get_git_commit_log,
             get_git_commit_diff,
@@ -5551,7 +7015,13 @@ pub fn run() {
             get_git_branches,
             get_git_repo_status,
             get_git_diff,
+            get_git_file_commit_diff,
+            get_git_file_history,
+            get_git_file_hunks,
             get_git_status,
+            record_local_history_snapshot,
+            get_local_history_versions,
+            get_local_history_version_content,
             get_javascript_typescript_language_server_status,
             get_php_language_server_status,
             get_php_tree,
@@ -5567,6 +7037,16 @@ pub fn run() {
             plan_javascript_typescript_language_server,
             plan_php_language_server,
             push_git_changes,
+            save_git_stash,
+            get_git_stash_list,
+            get_git_stash_diff,
+            stash_apply_git,
+            stash_pop_git,
+            stash_drop_git,
+            list_git_branches,
+            get_git_current_branch,
+            create_git_branch,
+            switch_git_branch,
             quit_application,
             read_directory,
             read_text_file,
@@ -5577,9 +7057,12 @@ pub fn run() {
             search_files,
             search_project_symbols,
             search_text,
+            replace_in_path,
             set_smart_mode,
             set_workspace_trust,
             stage_git_files,
+            stage_git_hunk,
+            unstage_git_hunk,
             start_initial_metadata_scan,
             start_javascript_typescript_language_server,
             start_workspace_reindex,

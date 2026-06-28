@@ -43,6 +43,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+U",
+    id: "editor.goToSuperMethod",
+    label: "Go to Super Method",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Shift+F12",
     id: "editor.findReferences",
     label: "Find All References",
@@ -55,9 +61,24 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // VS Code's F2 rename. Drives Monaco's built-in rename action, which routes
+    // through the language server's provideRenameEdits and applies the resulting
+    // WorkspaceEdit across every open file (cross-file rename).
+    defaultShortcut: "F2",
+    id: "editor.rename",
+    label: "Rename Symbol",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+R",
     id: "editor.fileStructure",
     label: "File Structure",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+L",
+    id: "editor.gotoLine",
+    label: "Go to Line/Column",
   },
   {
     category: "Editor",
@@ -70,6 +91,12 @@ export const keymapCommands = [
     defaultShortcut: "Shift+Alt+F",
     id: "editor.formatDocument",
     label: "Format Document",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Alt+L",
+    id: "editor.formatSelection",
+    label: "Format Selection",
   },
   {
     category: "Editor",
@@ -91,9 +118,55 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // VS Code's "Go to Next Change" (Alt+F5). Jumps the caret to the next git
+    // change hunk in the active editor using the gutter change markers.
+    defaultShortcut: "Alt+F5",
+    id: "editor.nextChange",
+    label: "Go to Next Change",
+  },
+  {
+    category: "Editor",
+    // VS Code's "Go to Previous Change" (Shift+Alt+F5). Mirrors editor.nextChange
+    // in the reverse direction across the gutter change markers.
+    defaultShortcut: "Shift+Alt+F5",
+    id: "editor.previousChange",
+    label: "Go to Previous Change",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Alt+ArrowUp",
     id: "editor.extendSelection",
     label: "Extend Selection",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Alt+ArrowDown",
+    id: "editor.shrinkSelection",
+    label: "Shrink Selection",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Alt+ArrowUp",
+    id: "editor.insertCursorAbove",
+    label: "Add Caret Above",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Alt+ArrowDown",
+    id: "editor.insertCursorBelow",
+    label: "Add Caret Below",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+L",
+    id: "editor.selectAllOccurrences",
+    label: "Select All Occurrences",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.toggleColumnSelection",
+    label: "Toggle Column Selection Mode",
   },
   {
     category: "Editor",
@@ -151,6 +224,74 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    // Alt+/ on every platform (PhpStorm "Cyclic Expand Word" / Emacs hippie).
+    // Not a Cmd-based shortcut, so it stays Alt+/ on Windows/Linux too.
+    defaultShortcut: "Alt+/",
+    id: "editor.cyclicExpandWord",
+    label: "Cyclic Expand Word",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+J",
+    id: "editor.joinLines",
+    label: "Join Lines",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.sortLinesAscending",
+    label: "Sort Lines Ascending",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.sortLinesDescending",
+    label: "Sort Lines Descending",
+  },
+  {
+    category: "Editor",
+    // PhpStorm's "Toggle Case" key. Monaco has no toggle action, so this drives
+    // its Transform to Uppercase command; Transform to Lowercase ships unbound.
+    defaultShortcut: "Cmd+Shift+U",
+    id: "editor.toggleCase",
+    label: "Toggle Case",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.transformToLowercase",
+    label: "Transform to Lowercase",
+  },
+  {
+    category: "Editor",
+    // Cmd+Shift+- collapses every folding region. Distinct from font zoom out
+    // (Cmd+-) by the Shift modifier, so the two never collide.
+    defaultShortcut: "Cmd+Shift+-",
+    id: "editor.foldAll",
+    label: "Fold All",
+  },
+  {
+    category: "Editor",
+    // Cmd+Shift+= expands every folding region. Distinct from font zoom in
+    // (Cmd+=) by the Shift modifier.
+    defaultShortcut: "Cmd+Shift+=",
+    id: "editor.unfoldAll",
+    label: "Unfold All",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.foldRecursively",
+    label: "Fold Recursively",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.unfoldRecursively",
+    label: "Unfold Recursively",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+=",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",
@@ -174,6 +315,68 @@ export const keymapCommands = [
     label: "Toggle Editor Font Ligatures",
   },
   {
+    category: "Editor",
+    // PhpStorm has no default for Annotate; Cmd+Alt+G is free and mirrors the
+    // "git" mnemonic. Distinct from Cmd+B go-to-definition by the Alt modifier.
+    defaultShortcut: "Cmd+Alt+G",
+    id: "editor.toggleGitBlame",
+    label: "Annotate with Git Blame",
+  },
+  {
+    category: "Editor",
+    // Cmd+Alt+H ("history") opens the VCS file history for the active document.
+    defaultShortcut: "Cmd+Alt+H",
+    id: "editor.showFileHistory",
+    label: "Show File History",
+  },
+  {
+    category: "Editor",
+    // Local History sits beside the git file history; Cmd+Shift+H keeps the "H"
+    // mnemonic while staying distinct from the Cmd+Alt+H git file history.
+    defaultShortcut: "Cmd+Shift+H",
+    id: "editor.showLocalHistory",
+    label: "Local History: Show History",
+  },
+  {
+    category: "Git",
+    // PhpStorm stashes with Cmd+Shift+S; the slot is free here, so we keep parity.
+    defaultShortcut: "Cmd+Shift+S",
+    id: "git.stashChanges",
+    label: "Git: Stash Changes",
+  },
+  {
+    category: "Git",
+    // Unstash/Show Stashes pairs with Stash; Cmd+Alt+S keeps the "stash" mnemonic
+    // and stays distinct from Cmd+Shift+S (stash) by the Alt vs Shift modifier.
+    defaultShortcut: "Cmd+Alt+S",
+    id: "git.showStashes",
+    label: "Git: Show Stashes",
+  },
+  {
+    category: "Git",
+    // Switch/checkout branch. Cmd+Shift+B is free ("B" = branch).
+    defaultShortcut: "Cmd+Shift+B",
+    id: "git.switchBranch",
+    label: "Git: Switch Branch",
+  },
+  {
+    category: "Git",
+    // New branch pairs with Switch Branch; Cmd+Alt+N ("new") stays distinct from
+    // the Cmd+Shift+B switch-branch shortcut by both key and modifier.
+    defaultShortcut: "Cmd+Alt+N",
+    id: "git.newBranch",
+    label: "Git: New Branch",
+  },
+  {
+    category: "Git",
+    // Commit the staged changes. Cmd+Enter is the VS Code / PhpStorm commit
+    // accelerator and is free (distinct from Cmd+Shift+Enter complete-statement
+    // and Alt+Enter context-actions by its modifier set).
+    defaultShortcut: "Cmd+Enter",
+    id: "git.commit",
+    label: "Git: Commit",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",
@@ -184,6 +387,12 @@ export const keymapCommands = [
     defaultShortcut: "Cmd+E",
     id: "editor.recentFiles",
     label: "Recent Files",
+  },
+  {
+    category: "File",
+    defaultShortcut: "Cmd+Shift+E",
+    id: "editor.recentLocations",
+    label: "Recent Locations",
   },
   {
     category: "PHP",
@@ -232,6 +441,16 @@ export const keymapCommands = [
     defaultShortcut: "Cmd+K",
     id: "commands.show",
     label: "Show Commands",
+  },
+  {
+    category: "Workbench",
+    // PhpStorm triggers Search Everywhere with double-Shift, which is not
+    // expressible as a normal chord; this is the discoverable fallback shortcut
+    // (also rebindable from the keymap settings). Double-Shift is handled
+    // separately in the global keydown listener.
+    defaultShortcut: "Cmd+Shift+A",
+    id: "workbench.searchEverywhere",
+    label: "Search Everywhere",
   },
   {
     category: "Workbench",
@@ -309,9 +528,44 @@ interface KeymapNavigator {
   };
 }
 
+// The platform never changes within a session, yet `detectKeymapPlatform` is on
+// the keydown hot path (every auto-repeat keydown runs ~35 shortcut matches,
+// each of which would otherwise re-run these regexes against navigator fields).
+// We memoize per navigator object identity: the hot path always resolves to the
+// same global `navigator` singleton, so the regex work runs once per session.
+// A distinct navigator object (e.g. a test fixture) recomputes, keeping the
+// pure-input behaviour intact, and tests can force recomputation via reset.
+const KEYMAP_PLATFORM_DEFAULT_KEY = Symbol("keymap-platform-default");
+let cachedPlatformKey: KeymapNavigator | symbol | undefined;
+let cachedPlatform: KeymapPlatform | undefined;
+
 export function detectKeymapPlatform(
   navigatorLike: KeymapNavigator | undefined =
     typeof navigator === "undefined" ? undefined : navigator,
+): KeymapPlatform {
+  const cacheKey = navigatorLike ?? KEYMAP_PLATFORM_DEFAULT_KEY;
+
+  if (cachedPlatform !== undefined && cachedPlatformKey === cacheKey) {
+    return cachedPlatform;
+  }
+
+  const platform = computeKeymapPlatform(navigatorLike);
+  cachedPlatformKey = cacheKey;
+  cachedPlatform = platform;
+  return platform;
+}
+
+/**
+ * Clears the {@link detectKeymapPlatform} memo. Test-only: production never
+ * changes platform mid-session, but tests swap navigator fixtures.
+ */
+export function __resetKeymapPlatformCacheForTests(): void {
+  cachedPlatformKey = undefined;
+  cachedPlatform = undefined;
+}
+
+function computeKeymapPlatform(
+  navigatorLike: KeymapNavigator | undefined,
 ): KeymapPlatform {
   const platformText = [
     navigatorLike?.userAgentData?.platform,
@@ -421,6 +675,68 @@ export function matchesShortcut(
     event.shiftKey === parsed.shift &&
     normalizeKeyboardEventKey(event.key) === parsed.key
   );
+}
+
+interface KeymapModifierEvent {
+  altKey: boolean;
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+  shiftKey: boolean;
+}
+
+/**
+ * Builds the set of normalized keys for keymap shortcuts that require NO
+ * modifier at all (e.g. the F8 "Next Problem" and F11 "Toggle Bookmark"
+ * defaults). These are the only fully bare events that can match a command, so
+ * the keydown hot path can skip the ~35-iteration matching loop for any other
+ * bare keystroke (held ArrowUp/ArrowDown, plain letters, etc.).
+ *
+ * A shortcut whose only modifier is Shift (e.g. `Shift+F8`) is NOT a bare-key
+ * key here, because the corresponding event carries `shiftKey` and is therefore
+ * treated as "has a modifier" by {@link eventCanMatchKeymapShortcut}, which
+ * keeps the loop running for Shift-bearing events.
+ */
+export function collectBareKeyShortcutKeys(
+  keymap: KeymapSettings,
+): ReadonlySet<string> {
+  const bareKeys = new Set<string>();
+
+  for (const shortcut of Object.values(keymap)) {
+    const parsed = parseShortcut(shortcut);
+
+    if (!parsed) {
+      continue;
+    }
+
+    if (parsed.meta || parsed.ctrl || parsed.alt || parsed.shift) {
+      continue;
+    }
+
+    bareKeys.add(parsed.key);
+  }
+
+  return bareKeys;
+}
+
+/**
+ * Cheap precondition for the keydown hot path: returns false when no keymap
+ * shortcut could possibly match, so the caller can skip the full matching loop.
+ *
+ * An event can only match a shortcut when it either carries at least one
+ * modifier (meta/ctrl/alt/shift), or its key is a registered bare-key command
+ * key. Shift counts as a modifier here so the loop is never skipped on
+ * Shift-bearing events (e.g. `Shift+F8`), keeping behaviour conservative.
+ */
+export function eventCanMatchKeymapShortcut(
+  event: KeymapModifierEvent,
+  bareKeyShortcutKeys: ReadonlySet<string>,
+): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    return true;
+  }
+
+  return bareKeyShortcutKeys.has(normalizeKeyboardEventKey(event.key));
 }
 
 export function parseShortcut(shortcut: string): ParsedShortcut | null {

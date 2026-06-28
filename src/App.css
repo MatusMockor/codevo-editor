@@ -36,6 +36,19 @@
   --change-modified: #e7c66c;
   --change-modified-soft: rgba(231, 198, 108, 0.14);
   --change-modified-strong: #f6dc86;
+  --symbol-method: #b48ead;
+  --symbol-property: #d08770;
+  --symbol-const: #5e9cd0;
+  --symbol-class: #a3be8c;
+  --symbol-interface: #5fb3b3;
+  --symbol-enum: #ebcb8b;
+  --symbol-function: #b48ead;
+  --symbol-trait: #6cb6c9;
+  --symbol-variable: #8b94a3;
+  --symbol-keyword: #b48ead;
+  --vis-public: #8fbf7f;
+  --vis-private: #d07f7f;
+  --vis-protected: #d8b977;
   --radius-sm: 6px;
   --radius-md: 9px;
   --radius-lg: 12px;
@@ -98,6 +111,19 @@
   --change-modified: #bd8525;
   --change-modified-soft: rgba(189, 133, 37, 0.14);
   --change-modified-strong: #81570d;
+  --symbol-method: #8250c4;
+  --symbol-property: #c25a3a;
+  --symbol-const: #2f6fb0;
+  --symbol-class: #3f7a3f;
+  --symbol-interface: #1d7a86;
+  --symbol-enum: #b07d18;
+  --symbol-function: #8250c4;
+  --symbol-trait: #2a7d6f;
+  --symbol-variable: #6b727d;
+  --symbol-keyword: #8a5c8f;
+  --vis-public: #3f8a3f;
+  --vis-private: #c2484a;
+  --vis-protected: #b07d18;
   color-scheme: light;
 }
 
@@ -139,6 +165,19 @@
   --change-modified: #ffcc66;
   --change-modified-soft: rgba(255, 204, 102, 0.15);
   --change-modified-strong: #ffd580;
+  --symbol-method: #d4bfff;
+  --symbol-property: #ffa759;
+  --symbol-const: #73d0ff;
+  --symbol-class: #bae67e;
+  --symbol-interface: #5ccfe6;
+  --symbol-enum: #ffd580;
+  --symbol-function: #d4bfff;
+  --symbol-trait: #5ccfe6;
+  --symbol-variable: #9aa3b4;
+  --symbol-keyword: #ffa659;
+  --vis-public: #87d96c;
+  --vis-private: #f28779;
+  --vis-protected: #ffcc66;
   color-scheme: dark;
 }
 
@@ -180,6 +219,19 @@
   --change-modified: #ffcb6b;
   --change-modified-soft: rgba(255, 203, 107, 0.15);
   --change-modified-strong: #ffd98a;
+  --symbol-method: #c792ea;
+  --symbol-property: #f78c6c;
+  --symbol-const: #82aaff;
+  --symbol-class: #c3e88d;
+  --symbol-interface: #89ddff;
+  --symbol-enum: #ffcb6b;
+  --symbol-function: #c792ea;
+  --symbol-trait: #89ddff;
+  --symbol-variable: #8a90b5;
+  --symbol-keyword: #c792ea;
+  --vis-public: #c3e88d;
+  --vis-private: #f07178;
+  --vis-protected: #ffcb6b;
   color-scheme: dark;
 }
 
@@ -221,6 +273,19 @@
   --change-modified: #e5c07b;
   --change-modified-soft: rgba(229, 192, 123, 0.16);
   --change-modified-strong: #f0d29a;
+  --symbol-method: #c678dd;
+  --symbol-property: #e06c75;
+  --symbol-const: #56b6c2;
+  --symbol-class: #98c379;
+  --symbol-interface: #56b6c2;
+  --symbol-enum: #e5c07b;
+  --symbol-function: #c678dd;
+  --symbol-trait: #56b6c2;
+  --symbol-variable: #868e9c;
+  --symbol-keyword: #c678dd;
+  --vis-public: #98c379;
+  --vis-private: #e06c75;
+  --vis-protected: #e5c07b;
   color-scheme: dark;
 }
 
@@ -262,6 +327,19 @@
   --change-modified: #ffb86c;
   --change-modified-soft: rgba(255, 184, 108, 0.16);
   --change-modified-strong: #ffce95;
+  --symbol-method: #bd93f9;
+  --symbol-property: #ff79c6;
+  --symbol-const: #8be9fd;
+  --symbol-class: #50fa7b;
+  --symbol-interface: #8be9fd;
+  --symbol-enum: #f1fa8c;
+  --symbol-function: #bd93f9;
+  --symbol-trait: #8be9fd;
+  --symbol-variable: #9aa3c4;
+  --symbol-keyword: #ff79c6;
+  --vis-public: #50fa7b;
+  --vis-private: #ff5555;
+  --vis-protected: #ffb86c;
   color-scheme: dark;
 }
 
@@ -303,6 +381,19 @@
   --change-modified: #f9e2af;
   --change-modified-soft: rgba(249, 226, 175, 0.16);
   --change-modified-strong: #fceec6;
+  --symbol-method: #cba6f7;
+  --symbol-property: #fab387;
+  --symbol-const: #74c7ec;
+  --symbol-class: #a6e3a1;
+  --symbol-interface: #89dceb;
+  --symbol-enum: #f9e2af;
+  --symbol-function: #cba6f7;
+  --symbol-trait: #94e2d5;
+  --symbol-variable: #a6adc8;
+  --symbol-keyword: #cba6f7;
+  --vis-public: #a6e3a1;
+  --vis-private: #f38ba8;
+  --vis-protected: #f9e2af;
   color-scheme: dark;
 }
 
@@ -344,6 +435,19 @@
   --change-modified: #e2c08d;
   --change-modified-soft: rgba(226, 192, 141, 0.16);
   --change-modified-strong: #efd6ad;
+  --symbol-method: #c586c0;
+  --symbol-property: #ce9178;
+  --symbol-const: #4fc1ff;
+  --symbol-class: #4ec9b0;
+  --symbol-interface: #4ec9b0;
+  --symbol-enum: #dcdcaa;
+  --symbol-function: #c586c0;
+  --symbol-trait: #4ec9b0;
+  --symbol-variable: #9d9d9d;
+  --symbol-keyword: #c586c0;
+  --vis-public: #89d185;
+  --vis-private: #f48771;
+  --vis-protected: #cca700;
   color-scheme: dark;
 }
 
@@ -385,6 +489,19 @@
   --change-modified: #b07407;
   --change-modified-soft: rgba(223, 142, 29, 0.16);
   --change-modified-strong: #8a5a05;
+  --symbol-method: #8839ef;
+  --symbol-property: #fe640b;
+  --symbol-const: #1e66f5;
+  --symbol-class: #40a02b;
+  --symbol-interface: #209fb5;
+  --symbol-enum: #df8e1d;
+  --symbol-function: #8839ef;
+  --symbol-trait: #179299;
+  --symbol-variable: #6c6f85;
+  --symbol-keyword: #8839ef;
+  --vis-public: #40a02b;
+  --vis-private: #d20f39;
+  --vis-protected: #df8e1d;
   color-scheme: light;
 }
 
@@ -426,6 +543,19 @@
   --change-modified: #9a6801;
   --change-modified-soft: rgba(193, 132, 1, 0.16);
   --change-modified-strong: #7a5201;
+  --symbol-method: #a626a4;
+  --symbol-property: #d75f00;
+  --symbol-const: #0184bc;
+  --symbol-class: #50a14f;
+  --symbol-interface: #0997b3;
+  --symbol-enum: #c18401;
+  --symbol-function: #a626a4;
+  --symbol-trait: #0997b3;
+  --symbol-variable: #696c77;
+  --symbol-keyword: #a626a4;
+  --vis-public: #3f8c3e;
+  --vis-private: #d83b2c;
+  --vis-protected: #9a6801;
   color-scheme: light;
 }
 
@@ -468,6 +598,19 @@
     --change-modified: #bd8525;
     --change-modified-soft: rgba(189, 133, 37, 0.14);
     --change-modified-strong: #81570d;
+    --symbol-method: #8250c4;
+    --symbol-property: #c25a3a;
+    --symbol-const: #2f6fb0;
+    --symbol-class: #3f7a3f;
+    --symbol-interface: #1d7a86;
+    --symbol-enum: #b07d18;
+    --symbol-function: #8250c4;
+    --symbol-trait: #2a7d6f;
+    --symbol-variable: #5d6b7a;
+    --symbol-keyword: #b48ead;
+    --vis-public: #3f8a3f;
+    --vis-private: #c2484a;
+    --vis-protected: #b07d18;
     color-scheme: light;
   }
 }
@@ -876,6 +1019,39 @@ button {
 .empty-tree p,
 .empty-editor p {
   margin: 0;
+}
+
+.error-boundary-fallback {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-subtle);
+}
+
+.error-boundary-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.error-boundary-message {
+  margin: 0;
+  max-width: 60ch;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  opacity: 0.8;
+  word-break: break-word;
+}
+
+.error-boundary-fallback button {
+  margin-top: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
 }
 
 .tree-row-group {
@@ -1330,10 +1506,159 @@ button {
   color: var(--color-text-muted);
 }
 
-.git-diff-header button:hover {
+.git-diff-header button:hover:not(:disabled) {
   border-color: var(--color-border-strong);
   background: var(--color-panel-soft);
   color: var(--color-text);
+}
+
+.git-diff-header button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.git-diff-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-diff-hunks {
+  display: flex;
+  flex: 0 0 auto;
+  max-height: 30%;
+  flex-direction: column;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+}
+
+.git-diff-hunk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  font-size: 12px;
+}
+
+.git-diff-hunk-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.git-diff-hunk-toggle input:disabled {
+  cursor: default;
+}
+
+.git-diff-hunk-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+
+.git-diff-hunk-header {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+}
+
+.git-diff-hunk-summary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-diff-hunk-added {
+  color: #7ddc9f;
+}
+
+.git-diff-hunk-removed {
+  color: #ef7373;
+}
+
+.git-plain-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--color-editor);
+  color: var(--color-text);
+  line-height: 20px;
+  white-space: pre;
+}
+
+.git-plain-diff table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+}
+
+.git-plain-diff-row {
+  height: 20px;
+}
+
+.git-plain-diff-row.header {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  color: var(--color-text-muted);
+}
+
+.git-plain-diff-row.added {
+  background: color-mix(in srgb, #2f9d58 18%, transparent);
+}
+
+.git-plain-diff-row.removed {
+  background: color-mix(in srgb, #d44d4d 17%, transparent);
+}
+
+.git-plain-diff-row.active {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.git-plain-diff-line {
+  width: 52px;
+  user-select: none;
+  color: var(--color-text-muted);
+  padding: 0 10px;
+  text-align: right;
+}
+
+.git-plain-diff-marker {
+  width: 18px;
+  user-select: none;
+  color: var(--color-text-muted);
+  padding: 0 4px;
+  text-align: center;
+}
+
+.git-plain-diff-code {
+  padding: 0 14px 0 2px;
+}
+
+.git-plain-diff-row.added .git-plain-diff-marker,
+.git-plain-diff-row.added .git-plain-diff-code {
+  color: #9ee6b2;
+}
+
+.git-plain-diff-row.removed .git-plain-diff-marker,
+.git-plain-diff-row.removed .git-plain-diff-code {
+  color: #f09a9a;
+}
+
+.git-plain-diff-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--color-text-subtle);
 }
 
 .tree-chevron {
@@ -1831,6 +2156,21 @@ button {
 
 .monaco-editor .bookmark-gutter-glyph:hover::before {
   background: #ffc266;
+}
+
+/* Git blame annotation: inline author + relative date rendered as injected
+   `before` text at the start of each line, dimmed so it reads as metadata
+   beside the code (the closest Monaco equivalent to PhpStorm's annotate
+   column). It occupies none of the gutter lanes used by the change / impl /
+   test / bookmark glyphs. */
+.monaco-editor .git-blame-annotation {
+  margin-right: 1.25ch;
+  padding-right: 0.75ch;
+  border-right: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  font-style: italic;
+  opacity: 0.85;
+  white-space: pre;
 }
 
 .editor-change-popover {
@@ -2876,10 +3216,10 @@ button.problem-row:focus-visible {
 }
 
 .file-structure {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(560px, calc(100vw - 32px));
   max-height: min(520px, calc(100vh - 72px));
-  grid-template-rows: 44px 36px minmax(0, 1fr);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-modal);
@@ -2887,17 +3227,154 @@ button.problem-row:focus-visible {
   overflow: hidden;
 }
 
-.file-structure .quick-open-result span {
-  padding-left: var(--structure-indent, 0);
+.file-structure .palette-search,
+.file-structure .file-structure-option {
+  flex: none;
 }
 
 .file-structure .quick-open-results {
+  flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+  padding: 4px;
 }
 
+/* JetBrains-classic structure rows: round kind icon + visibility + signature. */
 .file-structure .quick-open-result {
-  min-height: 48px;
+  min-height: 30px;
+  grid-template-columns: 18px 11px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 9px;
+}
+
+/*
+ * Active structure row. The shared `.quick-open-result.active` rule fills the
+ * row edge-to-edge, which reads as a square full-width bar inside the palette.
+ * Inset it from the palette edges and round it so the soft-accent fill floats
+ * like the other widgets (JetBrains-classic). Theme-aware via our tokens.
+ */
+.file-structure .quick-open-result.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+  border-radius: var(--radius-sm);
+  margin-inline: 4px;
+}
+
+/* Keep the left accent bar tucked inside the now-inset, rounded fill. */
+.file-structure .quick-open-result.active::before {
+  left: 4px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.file-structure .symbol-label {
+  padding-left: var(--structure-indent, 0);
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.file-structure .symbol-label strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-structure .symbol-label .signature {
+  font-family:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-white);
+  background: var(--symbol-variable);
+  flex: none;
+}
+
+.symbol-icon[data-kind="method"] {
+  background: var(--symbol-method);
+}
+
+.symbol-icon[data-kind="property"] {
+  background: var(--symbol-property);
+}
+
+.symbol-icon[data-kind="constant"] {
+  background: var(--symbol-const);
+}
+
+.symbol-icon[data-kind="class"] {
+  background: var(--symbol-class);
+}
+
+.symbol-icon[data-kind="interface"] {
+  background: var(--symbol-interface);
+}
+
+.symbol-icon[data-kind="enum"] {
+  background: var(--symbol-enum);
+}
+
+.symbol-icon[data-kind="function"] {
+  background: var(--symbol-function);
+}
+
+.symbol-icon[data-kind="trait"] {
+  background: var(--symbol-trait);
+}
+
+.symbol-icon[data-kind="variable"] {
+  background: var(--symbol-variable);
+}
+
+/* Static members get a subtle ring to set them apart without an extra glyph. */
+.symbol-icon[data-static="true"] {
+  box-shadow:
+    0 0 0 1px var(--color-modal),
+    0 0 0 2px currentColor;
+}
+
+.symbol-visibility,
+.symbol-visibility-spacer {
+  width: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+.symbol-visibility[data-visibility="public"] {
+  color: var(--vis-public);
+}
+
+.symbol-visibility[data-visibility="private"] {
+  color: var(--vis-private);
+}
+
+.symbol-visibility[data-visibility="protected"] {
+  color: var(--vis-protected);
 }
 
 .file-structure-option {
@@ -3155,6 +3632,24 @@ button.problem-row:focus-visible {
   color: var(--color-success);
 }
 
+/* Clickable status-bar affordances (problems, git branch, cursor position).
+   They use `color: inherit` so they pick up the theme-aware muted footer text;
+   the hover highlight reuses the same border token as the dividers, so it works
+   across every theme without a hard-coded palette. */
+.status-git-branch,
+.status-cursor-position {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-problems:hover,
+.status-git-branch:hover,
+.status-cursor-position:hover {
+  background: var(--color-border);
+}
+
 .status-bar-menu {
   position: fixed;
   z-index: 20;
@@ -3213,6 +3708,158 @@ button.problem-row:focus-visible {
   border-radius: var(--radius-lg);
   background: var(--color-modal);
   box-shadow: var(--shadow-pop);
+}
+
+/* Palettes are a flex column so the results scroll while the search header and
+   the JetBrains-classic footer hint stay pinned. */
+.command-palette,
+.quick-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.command-palette .palette-results,
+.quick-open .quick-open-results {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.text-search-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+}
+
+.text-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-toggle:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.text-search-toggle.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft, var(--color-hover));
+  color: var(--color-accent);
+}
+
+.text-search-mask {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-subtle);
+}
+
+.text-search-mask input {
+  height: 28px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-strong);
+}
+
+.text-search-match {
+  background: var(--color-accent-soft, rgba(255, 213, 0, 0.28));
+  color: inherit;
+  border-radius: 2px;
+}
+
+.text-search-replace {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.text-search-replace-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft, var(--color-hover));
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-replace-all:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-bg, #fff);
+}
+
+.text-search-replace-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.text-search-result-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.text-search-result-row .text-search-result {
+  min-width: 0;
+}
+
+.text-search-replace-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.text-search-result-row:hover .text-search-replace-file,
+.text-search-replace-file:focus-visible {
+  opacity: 1;
+}
+
+.text-search-replace-file:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-accent);
+}
+
+.text-search-replace-file:disabled {
+  opacity: 0;
+  cursor: default;
 }
 
 .surround-with-picker {
@@ -3541,6 +4188,285 @@ button.problem-row:focus-visible {
   font-size: 12px;
 }
 
+.file-history-panel {
+  display: flex;
+  width: min(1080px, calc(100vw - 36px));
+  height: min(680px, calc(100vh - 96px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-modal);
+  box-shadow: var(--shadow-pop);
+  outline: 0;
+}
+
+.file-history-header {
+  display: grid;
+  min-height: 50px;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-strong);
+  padding: 7px 13px;
+}
+
+.file-history-header span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.file-history-header strong {
+  font-size: 15px;
+}
+
+.file-history-header small {
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-header button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.file-history-header button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+}
+
+.file-history-body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+}
+
+.file-history-commits {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--color-border);
+  padding: 7px 8px 9px;
+}
+
+.file-history-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.file-history-row {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.file-history-row:hover {
+  background: var(--color-hover);
+}
+
+.file-history-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.file-history-row svg {
+  color: var(--color-accent);
+}
+
+.file-history-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.file-history-row strong,
+.file-history-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-row strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.file-history-row small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.file-history-diff {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.file-history-diff .editor-loading-placeholder,
+.file-history-diff > div {
+  flex: 1 1 auto;
+}
+
+.file-history-diff-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}
+
+/* Git branch switcher: a single-column popup (no diff pane), sized like a
+   command popup rather than the wide file-history layout. */
+.git-branch-panel {
+  width: min(460px, calc(100vw - 36px));
+  height: min(520px, calc(100vh - 96px));
+}
+
+.git-branch-panel .file-history-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.git-branch-panel .file-history-commits {
+  border-right: 0;
+}
+
+.git-branch-actions-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+}
+
+.git-branch-new-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.git-branch-new-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.git-branch-new-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.git-branch-row {
+  display: grid;
+  width: 100%;
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.git-branch-row:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.git-branch-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+  cursor: default;
+}
+
+.git-branch-icon {
+  color: var(--color-text-muted);
+}
+
+.git-branch-name {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-branch-current {
+  color: var(--color-accent);
+}
+
+.local-history-diff-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.local-history-revert {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.local-history-revert:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
 .todo-panel {
   width: min(680px, calc(100vw - 36px));
   max-height: min(540px, calc(100vh - 96px));
@@ -3794,9 +4720,10 @@ button.problem-row:focus-visible {
 }
 
 .palette-command {
+  position: relative;
   display: flex;
   width: 100%;
-  min-height: 48px;
+  min-height: 38px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3805,7 +4732,7 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 5px 10px;
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-standard);
 }
@@ -3817,6 +4744,24 @@ button.problem-row:focus-visible {
 .palette-command:disabled {
   color: var(--color-disabled);
   cursor: not-allowed;
+}
+
+/* JetBrains-classic active row: accent-soft fill + a subtle left accent bar,
+   mirroring the .quick-open-result.active treatment so all palettes match. */
+.palette-command.active:not(:disabled) {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.palette-command.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-accent-bar, var(--color-accent));
 }
 
 .palette-command span {
@@ -3844,9 +4789,10 @@ button.problem-row:focus-visible {
 
 .quick-open-result,
 .text-search-result {
+  position: relative;
   display: grid;
   width: 100%;
-  min-height: 52px;
+  min-height: 38px;
   grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
@@ -3855,7 +4801,7 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 4px 10px;
   text-align: left;
   transition: background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
@@ -3866,10 +4812,24 @@ button.problem-row:focus-visible {
   background: var(--color-hover);
 }
 
+/* JetBrains-classic active row: accent-soft fill + a subtle left accent bar.
+   The accent bar is scoped to the command palettes (.quick-open-result) so the
+   Text Search dialog keeps its existing active treatment. */
 .quick-open-result.active,
 .text-search-result.active {
   background: var(--color-accent-soft);
   color: var(--color-text-strong);
+}
+
+.quick-open-result.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-accent-bar, var(--color-accent));
 }
 
 .quick-open-result span,
@@ -3895,6 +4855,68 @@ button.problem-row:focus-visible {
 
 .quick-open-state {
   padding: 14px 12px;
+}
+
+/* Search Everywhere: categorized sections inside the shared quick-open shell. */
+.search-everywhere-section + .search-everywhere-section {
+  margin-top: 4px;
+}
+
+.search-everywhere-section-label {
+  padding: 8px 10px 4px;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.search-everywhere-result {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.search-everywhere-result kbd {
+  justify-self: end;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Shared JetBrains-classic palette footer hint row. */
+.palette-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-top: 1px solid var(--color-border);
+  padding: 6px 12px;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+}
+
+.palette-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.palette-footer kbd {
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .setup-header {
@@ -4409,6 +5431,28 @@ button.problem-row:focus-visible {
   font-size: 11px;
 }
 
+/* Compact, settings-appropriate variant of the palette search row: a bordered
+   box rather than the palette's full-width underline, theme-aware via tokens. */
+.keymap-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: 0 10px;
+}
+
+.keymap-search input {
+  height: 34px;
+}
+
+.keymap-empty {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  padding: 6px 2px;
+}
+
 .settings-field span,
 .settings-toggle span,
 .settings-readout span {
@@ -4575,10 +5619,197 @@ kbd {
   background: transparent;
 }
 
-.monaco-editor .suggest-widget {
-  border-radius: var(--radius-md);
+/*
+ * Widget surface colors. Monaco reads these `--vscode-*` variables for the
+ * suggest/hover/menu backgrounds, borders and selection. Our custom palettes set
+ * the matching theme tokens, but the bundled Shiki themes (dracula, one-dark-pro,
+ * catppuccin, dark-plus, ayu-mirage, material-deep-ocean) ship none of them, so
+ * we pin the popup surfaces to our theme-aware chrome tokens here. This makes the
+ * popup background/selection consistent across ALL themes in one place instead of
+ * relying on Monaco's per-theme defaults. Scoped under `.app-shell` so it stays
+ * isolated to the editor surface and cascades to portalled menus/hovers.
+ */
+.app-shell .monaco-editor,
+.app-shell .monaco-menu,
+.app-shell .monaco-hover,
+.app-shell .context-view {
+  --vscode-editorSuggestWidget-background: var(--color-modal);
+  --vscode-editorSuggestWidget-border: var(--color-border-strong);
+  --vscode-editorSuggestWidget-foreground: var(--color-text);
+  --vscode-editorSuggestWidget-selectedBackground: var(--color-accent-soft);
+  --vscode-editorSuggestWidget-selectedForeground: var(--color-text-strong);
+  --vscode-editorSuggestWidget-highlightForeground: var(--color-accent);
+  --vscode-editorSuggestWidget-focusHighlightForeground: var(--color-accent);
+  --vscode-editorHoverWidget-background: var(--color-modal);
+  --vscode-editorHoverWidget-border: var(--color-border-strong);
+  --vscode-editorHoverWidget-foreground: var(--color-text);
+  --vscode-editorWidget-background: var(--color-modal);
+  --vscode-editorWidget-border: var(--color-border-strong);
+  --vscode-editorWidget-foreground: var(--color-text);
+  --vscode-menu-background: var(--color-modal);
+  --vscode-menu-foreground: var(--color-text);
+  --vscode-menu-selectionBackground: var(--color-accent-soft);
+  --vscode-menu-selectionForeground: var(--color-text-strong);
+  --vscode-menu-separatorBackground: var(--color-border);
+  --vscode-menu-border: var(--color-border-strong);
+  /* Cmd+. code-action list (Monaco's newer `.action-widget`) reads these.
+     Bundled Shiki themes ship none of them, so pin to our chrome tokens too;
+     focusBackground in particular replaces Monaco's default blue selection. */
+  --vscode-editorActionList-background: var(--color-modal);
+  --vscode-editorActionList-foreground: var(--color-text);
+  --vscode-editorActionList-focusBackground: var(--color-accent-soft);
+  --vscode-editorActionList-focusForeground: var(--color-text-strong);
+}
+
+/*
+ * JetBrains-classic chrome for Monaco's built-in popups (autocomplete suggest,
+ * hover docs, right-click context menu, Cmd+. code-action list). Monaco renders
+ * these inside `.app-shell[data-theme=...]` (no fixedOverflowWidgets), so every
+ * rule below is theme-aware through our CSS variables - no hardcoded colors -
+ * and lines up with the FileStructure palette (rounded corners, soft accent
+ * selection, the same --symbol-* kind colors). Only the widget *chrome* is
+ * touched here; editor token / syntax colors stay owned by the Shiki theme.
+ */
+.monaco-editor .suggest-widget,
+.monaco-editor.rename-box {
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
   overflow: hidden;
+}
+
+/* Detail/documentation column docked to the suggest widget keeps the radius. */
+.monaco-editor .suggest-widget .suggest-details {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
+}
+
+/* Selected / focused completion row: soft accent tint, JetBrains style. */
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+/* Hover documentation tooltip mirrors the suggest popup shape + spacing. */
+.monaco-editor .monaco-hover,
+.monaco-hover {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--color-border-strong);
+}
+
+.monaco-editor .monaco-hover .monaco-hover-content,
+.monaco-hover .monaco-hover-content {
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+
+/*
+ * Context menu + the Cmd+. code-action lightbulb list. Monaco paints both with
+ * `.monaco-menu .monaco-action-bar`; round and pad it to match the popups and
+ * give the active item the same soft-accent treatment as the suggest rows.
+ */
+.monaco-menu .monaco-action-bar.vertical {
+  border-radius: var(--radius-lg);
+  padding: 4px;
+}
+
+.monaco-menu .monaco-action-bar.vertical .action-item .action-menu-item {
+  border-radius: var(--radius-sm);
+}
+
+.monaco-menu
+  .monaco-action-bar.vertical
+  .action-item.focused
+  .action-menu-item {
+  background: var(--color-accent-soft);
+}
+
+/*
+ * Cmd+. code-action lightbulb list. Unlike the right-click context menu (which
+ * Monaco paints as `.monaco-menu .monaco-action-bar`), the code-action list is
+ * Monaco's newer `.action-widget` (actionWidget.css) - a separate DOM that
+ * defaults to a 5px radius and a blue --vscode-editorActionList-focusBackground
+ * selection. We give it the same JetBrains-classic chrome as the other popups:
+ * rounded card, soft surface, and a soft-accent focused row (theme-aware via our
+ * CSS variables, surface vars pinned in the block above for the Shiki themes).
+ */
+.monaco-editor .action-widget,
+.action-widget {
+  border-radius: var(--radius-lg);
+  background-color: var(--color-modal);
+  border: 1px solid var(--color-border-strong) !important;
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+}
+
+/* Group headers ("Quick Fix...", "Extract...") read as subtle section labels. */
+.monaco-editor .action-widget .monaco-list-row.group-header,
+.action-widget .monaco-list-row.group-header {
+  color: var(--color-text-subtle) !important;
+}
+
+/* Selected / focused action row: soft accent tint, not Monaco's default blue. */
+.monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled),
+.action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) {
+  background-color: var(--color-accent-soft) !important;
+  color: var(--color-text-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+/*
+ * Completion kind icons. Monaco's own rule colors these codicons from the
+ * symbolIcon.* theme tokens; we override the same icons under the suggest widget
+ * so they read with the FileStructure --symbol-* roles exactly (theme-aware) on
+ * every theme, including the bundled Shiki themes whose baked-in icon colors we
+ * would otherwise inherit.
+ */
+.monaco-editor .suggest-widget .codicon-symbol-method::before,
+.monaco-editor .suggest-widget .codicon-symbol-constructor::before {
+  color: var(--symbol-method);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-function::before {
+  color: var(--symbol-function);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-property::before {
+  color: var(--symbol-property);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-field::before {
+  color: var(--symbol-property);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-constant::before {
+  color: var(--symbol-const);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-enum-member::before {
+  color: var(--symbol-const);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-class::before,
+.monaco-editor .suggest-widget .codicon-symbol-struct::before {
+  color: var(--symbol-class);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-interface::before {
+  color: var(--symbol-interface);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-enum::before {
+  color: var(--symbol-enum);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-variable::before {
+  color: var(--symbol-variable);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-keyword::before {
+  color: var(--symbol-keyword);
 }
 
 :focus-visible {

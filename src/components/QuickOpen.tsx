@@ -1,6 +1,7 @@
 import { FileCode2, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { FileSearchResult } from "../domain/workspace";
+import { PaletteFooter } from "./PaletteFooter";
 
 interface QuickOpenProps {
   isOpen: boolean;
@@ -109,6 +110,8 @@ export function QuickOpen({
             </button>
           ))}
         </div>
+
+        <PaletteFooter />
       </section>
     </div>
   );

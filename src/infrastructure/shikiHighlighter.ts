@@ -1,6 +1,7 @@
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import { shikiToMonaco } from "@shikijs/monaco";
+import { textmateThemeToMonacoTheme } from "@shikijs/monaco";
+import { INITIAL, type StateStack } from "@shikijs/vscode-textmate";
 import {
   customPalettes,
   materialDeepOcean,
@@ -67,6 +68,35 @@ function buildSemanticTokenColors(p: ThemePalette): Record<string, string> {
   };
 }
 
+/**
+ * Maps Monaco's `symbolIcon.*Foreground` theme tokens (the colors it paints the
+ * suggest-widget completion-kind codicons with) onto the same palette roles the
+ * FileStructure palette uses for its `--symbol-*` chips. Method/function take the
+ * function color, class/interface/enum/struct the type color, constant/enum
+ * member the constant color, property/field the property color, so autocomplete
+ * and the structure outline read with one consistent kind-color language.
+ */
+function buildSymbolIconColors(p: ThemePalette): Record<string, string> {
+  return {
+    "symbolIcon.methodForeground": p.func,
+    "symbolIcon.functionForeground": p.func,
+    "symbolIcon.constructorForeground": p.func,
+    "symbolIcon.propertyForeground": p.property,
+    "symbolIcon.fieldForeground": p.property,
+    "symbolIcon.variableForeground": p.variable,
+    "symbolIcon.constantForeground": p.constant,
+    "symbolIcon.enumeratorMemberForeground": p.constant,
+    "symbolIcon.classForeground": p.type,
+    "symbolIcon.interfaceForeground": p.type,
+    "symbolIcon.enumeratorForeground": p.type,
+    "symbolIcon.structForeground": p.type,
+    "symbolIcon.typeParameterForeground": p.type,
+    "symbolIcon.keywordForeground": p.keyword,
+    "symbolIcon.namespaceForeground": p.namespace,
+    "symbolIcon.snippetForeground": p.accent,
+  };
+}
+
 export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
   const tok = (scope: string[], foreground: string, italic = false) => ({
     scope,
@@ -108,13 +138,29 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
       "editorSuggestWidget.focusHighlightForeground": p.accent,
       "editorWidget.background": p.widgetBg,
       "editorWidget.border": p.border,
+      "editorWidget.foreground": p.fg,
       "editorHoverWidget.background": p.widgetBg,
       "editorHoverWidget.border": p.border,
+      "editorHoverWidget.foreground": p.fg,
+      // Context menu + the Cmd+. code-action lightbulb list share Monaco's
+      // `menu.*` chrome; tint them with the same widget palette so every popup
+      // reads as one family with the FileStructure palette.
+      "menu.background": p.widgetBg,
+      "menu.foreground": p.fg,
+      "menu.selectionBackground": p.selectedBg,
+      "menu.selectionForeground": p.selectedFg,
+      "menu.separatorBackground": p.border,
+      "menu.border": p.border,
       "input.background": p.inputBg,
       "input.border": p.border,
       focusBorder: p.accent,
       "diffEditor.insertedTextBackground": p.diffInserted,
       "diffEditor.removedTextBackground": p.diffRemoved,
+      // Completion kind icons. Monaco paints the suggest-widget codicons from
+      // these tokens; mapping them onto the same palette roles the FileStructure
+      // --symbol-* CSS uses keeps the autocomplete icons and the structure
+      // palette telling the same color story (method = func, class = type, ...).
+      ...buildSymbolIconColors(p),
     },
     tokenColors: [
       tok(
@@ -266,6 +312,7 @@ export const SHIKI_LANGS = [
   "yaml",
   "markdown",
   "sql",
+  "vue",
 ] as const;
 
 export const APP_SHIKI_THEMES = [
@@ -353,6 +400,11 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/langs/yaml.mjs"),
       import("shiki/langs/markdown.mjs"),
       import("shiki/langs/sql.mjs"),
+      // Vue SFC grammar — highlights <template>/<script>/<style> blocks. The
+      // bundle is self-contained (it ships its embedded css/js/ts/html/markdown
+      // sub-grammars), so no extra imports are needed. Highlighting only; .vue
+      // does not get LSP/Volar completions or diagnostics in this slice.
+      import("shiki/langs/vue.mjs"),
     ],
   });
 
@@ -401,7 +453,55 @@ interface MonacoLanguageHost {
   };
 }
 
-interface MonacoForShiki extends MonacoLanguageHost {}
+/** Opaque tokenizer state Monaco threads from one line to the next. */
+interface MonacoTokenizerState {
+  clone(): MonacoTokenizerState;
+  equals(other: MonacoTokenizerState | null): boolean;
+}
+
+interface MonacoEncodedLineTokens {
+  tokens: Uint32Array;
+  endState: MonacoTokenizerState;
+}
+
+interface MonacoEncodedTokensProvider {
+  getInitialState(): MonacoTokenizerState;
+  tokenizeEncoded(
+    line: string,
+    state: MonacoTokenizerState,
+  ): MonacoEncodedLineTokens;
+}
+
+interface MonacoStandaloneTheme {
+  base: string;
+  inherit: boolean;
+  colors: Record<string, string>;
+  rules: unknown[];
+}
+
+/**
+ * Subset of the Monaco standalone API the encoded Shiki tokenizer drives.
+ * Kept structural (not a hard dependency on the monaco-editor types) so the
+ * unit tests can pass a lightweight stub.
+ */
+interface MonacoForShiki extends MonacoLanguageHost {
+  languages: MonacoLanguageHost["languages"] & {
+    // Monaco's single tokens-provider entry point. It accepts either a classic
+    // scope-string provider or an EncodedTokensProvider (detected via the
+    // presence of `tokenizeEncoded`); we always pass the encoded variant.
+    setTokensProvider(
+      languageId: string,
+      provider: MonacoEncodedTokensProvider,
+    ): { dispose(): void };
+    // Installs the color map the encoded foreground ids index into. Lives under
+    // `monaco.languages` (not `monaco.editor`) in the standalone API.
+    setColorMap(colorMap: string[] | null): void;
+  };
+  editor: {
+    defineTheme(name: string, theme: MonacoStandaloneTheme): void;
+    setTheme(themeName: string): void;
+  };
+}
 
 const MONACO_INDENT_ACTION = {
   Indent: 1,
@@ -519,8 +619,163 @@ export function applyImmediateFallbackTheme(
   monaco.editor.setTheme(LIGHT_APP_THEMES.has(theme) ? "vs" : "vs-dark");
 }
 
+/**
+ * Wraps a TextMate `ruleStack` as the immutable state object Monaco threads
+ * between consecutive lines. Mirrors `@shikijs/monaco`'s internal
+ * `TokenizerState` so the grammar state semantics stay identical.
+ */
+class ShikiTokenizerState {
+  constructor(readonly ruleStack: StateStack) {}
+
+  clone(): ShikiTokenizerState {
+    return new ShikiTokenizerState(this.ruleStack);
+  }
+
+  equals(other: ShikiTokenizerState | null): boolean {
+    if (!other || !(other instanceof ShikiTokenizerState)) {
+      return false;
+    }
+    return other === this || other.ruleStack === this.ruleStack;
+  }
+}
+
+/**
+ * Default per-line regex budget (ms) handed to Shiki's `tokenizeLine2`. Matches
+ * `@shikijs/monaco`'s default; a single line that blows past it falls back to
+ * the partial result instead of stalling the frame indefinitely.
+ */
+const SHIKI_TOKENIZE_TIME_LIMIT = 500;
+
+/**
+ * Maximum line length that gets a full TextMate regex pass. Monaco tokenizes
+ * the visible viewport synchronously on the reveal/scroll path; a single very
+ * long PHP/Blade line (interpolation, long chains) costs ~0.8ms of regex work,
+ * so a viewport full of them blows the 16ms frame budget and makes navigation
+ * (Cmd+B open, Cmd+Up/Down jump) lag. Lines longer than this fall back to a
+ * single plain token. Short lines (the overwhelming majority) tokenize
+ * normally, so syntax highlighting is unaffected for real source.
+ */
+const SHIKI_TOKENIZE_MAX_LINE_LENGTH = 2000;
+
+/**
+ * Builds an EncodedTokensProvider that streams Shiki's binary tokens straight
+ * into Monaco. This is the fast path: `tokenizeLine2` already emits Monaco's
+ * encoded metadata layout (foreground color id + StandardTokenType + font
+ * style bits), so the provider returns the `Uint32Array` verbatim. Compared to
+ * the classic scope-string provider (`@shikijs/monaco`'s `shikiToMonaco`),
+ * every visible line skips the per-token color->scope reverse lookup, the
+ * scope-string join, and Monaco's `tokenTheme.match()` Trie re-parse, which is
+ * the synchronous-per-line cost that made heavy viewports lag on reveal.
+ *
+ * Colors stay identical because the encoded foreground ids index the Shiki
+ * color map installed via `monaco.editor.setColorMap`.
+ */
+export function createEncodedShikiProvider(
+  highlighter: HighlighterCore,
+  languageId: string,
+): MonacoEncodedTokensProvider {
+  return {
+    getInitialState(): ShikiTokenizerState {
+      return new ShikiTokenizerState(INITIAL);
+    },
+    tokenizeEncoded(
+      line: string,
+      state: ShikiTokenizerState,
+    ): MonacoEncodedLineTokens {
+      if (line.length >= SHIKI_TOKENIZE_MAX_LINE_LENGTH) {
+        // One plain token spanning the line, with the grammar state preserved
+        // so the lines after a skipped long line still tokenize correctly.
+        return { tokens: new Uint32Array([0, 0]), endState: state };
+      }
+      // Monaco calls this synchronously while painting the viewport. If the
+      // Shiki grammar for this language is somehow unavailable (load race,
+      // version skew, an embedded grammar that failed to resolve), `getLanguage`
+      // returns undefined and `tokenizeLine2` would throw. An exception here
+      // propagates out of Monaco's render and unmounts the whole React tree
+      // (blank screen), so degrade to a single plain token instead of throwing.
+      const grammar = highlighter.getLanguage(languageId) as
+        | {
+            tokenizeLine2(
+              line: string,
+              ruleStack: StateStack,
+              timeLimit: number,
+            ): { tokens: Uint32Array; ruleStack: StateStack };
+          }
+        | undefined;
+      if (!grammar) {
+        return { tokens: new Uint32Array([0, 0]), endState: state };
+      }
+      try {
+        const result = grammar.tokenizeLine2(
+          line,
+          state.ruleStack,
+          SHIKI_TOKENIZE_TIME_LIMIT,
+        );
+        return {
+          tokens: result.tokens,
+          endState: new ShikiTokenizerState(result.ruleStack),
+        };
+      } catch (error) {
+        // A grammar that throws mid-tokenization must not take the renderer down
+        // with it; fall back to an uncolored line and keep the prior state.
+        console.error("Shiki tokenize failed", languageId, error);
+        return { tokens: new Uint32Array([0, 0]), endState: state };
+      }
+    },
+  };
+}
+
+/**
+ * Installs the resolved Shiki color map onto Monaco so the encoded foreground
+ * ids resolve to the correct palette colors, then applies the theme. Forwards
+ * future `setTheme` calls to Shiki and re-installs the matching color map so a
+ * theme switch recolors already-tokenized lines without a re-tokenization.
+ */
+function installShikiThemes(
+  highlighter: HighlighterCore,
+  monaco: MonacoForShiki,
+  initialTheme: string,
+): void {
+  for (const themeId of highlighter.getLoadedThemes()) {
+    monaco.editor.defineTheme(
+      themeId,
+      textmateThemeToMonacoTheme(
+        highlighter.getTheme(themeId),
+      ) as unknown as MonacoStandaloneTheme,
+    );
+  }
+
+  const applyShikiColorMap = (themeName: string): void => {
+    const { colorMap } = highlighter.setTheme(themeName);
+    // Shiki's color map is already 1-based (id 0 = the default/"no color"
+    // placeholder), which is exactly the layout `setColorMap` expects (it
+    // treats index 0 as null and reads from index 1). So a Shiki foreground id
+    // N from tokenizeLine2 lines up 1:1 with Monaco color id N.
+    monaco.languages.setColorMap(colorMap);
+  };
+
+  // Monaco's namespace is a process-wide singleton shared by every editor tab
+  // (light editor + git diff). `setupShikiTokenization` can run more than once
+  // against it, so guard the setTheme patch to wrap the native implementation
+  // exactly once instead of stacking redundant wrappers on each call.
+  const patchable = monaco.editor.setTheme as ((themeName: string) => void) & {
+    __shikiColorMapPatched?: boolean;
+  };
+  if (!patchable.__shikiColorMapPatched) {
+    const nativeSetTheme = monaco.editor.setTheme.bind(monaco.editor);
+    const patched = ((themeName: string): void => {
+      applyShikiColorMap(themeName);
+      nativeSetTheme(themeName);
+    }) as typeof patchable;
+    patched.__shikiColorMapPatched = true;
+    monaco.editor.setTheme = patched;
+  }
+
+  monaco.editor.setTheme(initialTheme);
+}
+
 export async function setupShikiTokenization(
-  monaco: MonacoForShiki & Parameters<typeof shikiToMonaco>[1],
+  monaco: MonacoForShiki,
   theme: string,
 ): Promise<void> {
   const highlighter = await createAppHighlighter();
@@ -537,6 +792,22 @@ export async function setupShikiTokenization(
   }
 
   configureShikiLanguageFeatures(monaco);
-  shikiToMonaco(highlighter, monaco);
-  monaco.editor.setTheme(theme);
+  installShikiThemes(highlighter, monaco, theme);
+
+  const loadedLanguages = new Set(highlighter.getLoadedLanguages());
+  const monacoLanguageIds = new Set(
+    monaco.languages.getLanguages().map((language) => language.id),
+  );
+  for (const id of SHIKI_LANGS) {
+    monacoLanguageIds.add(id);
+  }
+  for (const languageId of monacoLanguageIds) {
+    if (!loadedLanguages.has(languageId)) {
+      continue;
+    }
+    monaco.languages.setTokensProvider(
+      languageId,
+      createEncodedShikiProvider(highlighter, languageId),
+    );
+  }
 }

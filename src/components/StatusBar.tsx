@@ -1,16 +1,19 @@
-import { CircleX, TriangleAlert } from "lucide-react";
+import { CircleX, GitBranch, TriangleAlert } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
-import type { MouseEvent } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import type {
   StatusBarItemVisibility,
 } from "../domain/settings";
+import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { IntelligenceMode } from "../domain/workspace";
 
 interface StatusBarProps {
   activeLanguage: string | null;
   activePath: string | null;
+  cursorPosition?: EditorPosition | null;
   dirtyCount: number;
   errorCount?: number;
+  gitBranch?: string | null;
   ideActivityLabel: string | null;
   ideActivityState: IdeActivityState | null;
   intelligenceMode: IntelligenceMode;
@@ -24,8 +27,26 @@ interface StatusBarProps {
     key: keyof StatusBarItemVisibility,
     visible: boolean,
   ): void;
+  onShowGitBranches?(): void;
+  onShowGoToLine?(): void;
   onShowProblems?(): void;
 }
+
+// Shared chrome for the clickable status-bar entries (problems, git branch,
+// cursor position). Transparent so it inherits the theme-aware footer colours
+// (no hard-coded palette), and laid out inline-flex with a small gap so an icon
+// and its label sit together like the existing problems affordance.
+const statusButtonStyle: CSSProperties = {
+  alignItems: "center",
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  cursor: "pointer",
+  display: "inline-flex",
+  font: "inherit",
+  gap: 4,
+  padding: "0 12px",
+};
 
 const statusBarItems: Array<{
   key: keyof StatusBarItemVisibility;
@@ -38,6 +59,8 @@ const statusBarItems: Array<{
   { key: "workspaceTrust", label: "Trust" },
   { key: "mode", label: "Mode" },
   { key: "language", label: "Language" },
+  { key: "cursorPosition", label: "Cursor position" },
+  { key: "gitBranch", label: "Git branch" },
   { key: "dirtyCount", label: "Unsaved files" },
   { key: "message", label: "Messages" },
 ];
@@ -45,13 +68,17 @@ const statusBarItems: Array<{
 function StatusBarComponent({
   activeLanguage,
   activePath,
+  cursorPosition = null,
   dirtyCount,
   errorCount = 0,
+  gitBranch = null,
   ideActivityLabel,
   ideActivityState,
   intelligenceMode,
   message,
   onChangeVisibility,
+  onShowGitBranches,
+  onShowGoToLine,
   onShowProblems,
   statusBar,
   warningCount = 0,
@@ -110,17 +137,7 @@ function StatusBarComponent({
         aria-label={problemsTitle}
         className="status-problems"
         onClick={onShowProblems}
-        style={{
-          alignItems: "center",
-          background: "transparent",
-          border: "none",
-          color: "inherit",
-          cursor: "pointer",
-          display: "inline-flex",
-          font: "inherit",
-          gap: 4,
-          padding: "0 12px",
-        }}
+        style={statusButtonStyle}
         title={problemsTitle}
         type="button"
       >
@@ -129,6 +146,19 @@ function StatusBarComponent({
         <TriangleAlert aria-hidden="true" size={13} />
         {warningCount}
       </button>
+      {statusBar.gitBranch && gitBranch ? (
+        <button
+          aria-label={`Git branch: ${gitBranch}`}
+          className="status-git-branch"
+          onClick={onShowGitBranches}
+          style={statusButtonStyle}
+          title={`Git branch: ${gitBranch}`}
+          type="button"
+        >
+          <GitBranch aria-hidden="true" size={13} />
+          {gitBranch}
+        </button>
+      ) : null}
       {statusBar.activePath ? (
         <span title={activePathLabel}>
           {activePathLabel}
@@ -150,6 +180,18 @@ function StatusBarComponent({
       ) : null}
       {statusBar.mode ? (
         <span className="status-mode">{formatMode(intelligenceMode)}</span>
+      ) : null}
+      {statusBar.cursorPosition && cursorPosition ? (
+        <button
+          aria-label={cursorPositionLabel(cursorPosition)}
+          className="status-cursor-position"
+          onClick={onShowGoToLine}
+          style={statusButtonStyle}
+          title="Go to Line/Column"
+          type="button"
+        >
+          {cursorPositionLabel(cursorPosition)}
+        </button>
       ) : null}
       {statusBar.language && activeLanguage ? <span>{activeLanguage}</span> : null}
       {statusBar.dirtyCount && dirtyCount > 0 ? (
@@ -193,6 +235,10 @@ export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
 
 function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
+}
+
+function cursorPositionLabel(position: EditorPosition): string {
+  return `Ln ${position.lineNumber}, Col ${position.column}`;
 }
 
 function formatMode(mode: IntelligenceMode): string {

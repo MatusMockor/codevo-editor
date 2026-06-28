@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpClassConstantPositionOrNull,
   phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpDocPropertyPositionOrNull,
   phpDocMethodPositionOrNull,
+  phpEnclosingMethodNameAt,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -367,6 +369,187 @@ class AlbumController
       kind: "classIdentifier",
       name: "class",
     });
+  });
+
+  it("classifies a class constant access under the cursor as classConstant", () => {
+    const source = `<?php
+class RevisionController
+{
+    public function update(): void
+    {
+        $type = Revision::REVISION_TYPE_POST_INTERNAL_UPDATE;
+        \\App\\Models\\Revision::REVISION_TYPE_POST;
+        self::INTERNAL_FLAG;
+        static::INTERNAL_FLAG;
+        parent::BASE_FLAG;
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "Revision::REVISION_TYPE_POST_INTERNAL_UPDATE"),
+      ),
+    ).toEqual({
+      className: "Revision",
+      constantName: "REVISION_TYPE_POST_INTERNAL_UPDATE",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "\\App\\Models\\Revision::REVISION_TYPE_POST"),
+      ),
+    ).toEqual({
+      className: "App\\Models\\Revision",
+      constantName: "REVISION_TYPE_POST",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "self::INTERNAL_FLAG")),
+    ).toEqual({
+      className: "self",
+      constantName: "INTERNAL_FLAG",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "static::INTERNAL_FLAG"),
+      ),
+    ).toEqual({
+      className: "static",
+      constantName: "INTERNAL_FLAG",
+      kind: "classConstant",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "parent::BASE_FLAG")),
+    ).toEqual({
+      className: "parent",
+      constantName: "BASE_FLAG",
+      kind: "classConstant",
+    });
+  });
+
+  it("keeps classifying a static method call (trailing parens) as staticMethodCall", () => {
+    const source = `<?php
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::find(1);
+        Album::FIND;
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "Album::find")),
+    ).toEqual({
+      className: "Album",
+      kind: "staticMethodCall",
+      methodName: "find",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "Album::FIND")),
+    ).toEqual({
+      className: "Album",
+      constantName: "FIND",
+      kind: "classConstant",
+    });
+  });
+
+  it("locates a declared class constant position", () => {
+    const source = `<?php
+class Revision
+{
+    public const REVISION_TYPE_POST_INTERNAL_UPDATE = 'post_internal_update';
+    final protected const BASE_FLAG = 1;
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(
+      source,
+      "REVISION_TYPE_POST_INTERNAL_UPDATE",
+    );
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("REVISION_TYPE_POST_INTERNAL_UPDATE");
+
+    const baseFlagPosition = phpClassConstantPositionOrNull(source, "BASE_FLAG");
+
+    expect(baseFlagPosition).not.toBeNull();
+    expect(
+      source.split("\n")[(baseFlagPosition?.lineNumber ?? 1) - 1],
+    ).toContain("BASE_FLAG");
+  });
+
+  it("locates an enum case as a class constant position", () => {
+    const source = `<?php
+enum RevisionType: string
+{
+    case PostInternalUpdate = 'post_internal_update';
+    case PostPublished = 'post_published';
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(source, "PostPublished");
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("PostPublished");
+  });
+
+  it("returns null when no matching class constant exists", () => {
+    const source = `<?php
+class Revision
+{
+    public const OTHER = 1;
+}
+`;
+
+    expect(phpClassConstantPositionOrNull(source, "MISSING")).toBeNull();
+  });
+
+  it("does not match a switch arm label as a class constant", () => {
+    const source = `<?php
+enum RevisionType: string
+{
+    case PostPublished = 'post_published';
+
+    public function describe(): string
+    {
+        switch ($this) {
+            case PostPublished:
+                return 'published';
+        }
+
+        return 'unknown';
+    }
+}
+`;
+
+    const position = phpClassConstantPositionOrNull(source, "PostPublished");
+
+    expect(position).not.toBeNull();
+    expect(
+      source.split("\n")[(position?.lineNumber ?? 1) - 1],
+    ).toContain("case PostPublished = 'post_published'");
+  });
+
+  it("does not match a constant used as a value rather than declared", () => {
+    const source = `<?php
+class Revision
+{
+    public const ALIAS = self::TARGET;
+}
+`;
+
+    expect(phpClassConstantPositionOrNull(source, "TARGET")).toBeNull();
   });
 
   it("detects Laravel relation strings under the cursor", () => {
@@ -1546,6 +1729,59 @@ abstract class ParserFactory
     ).toBeNull();
   });
 
+  it("resolves the enclosing method name from a position inside its body", () => {
+    const source = `<?php
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(string $name): string
+    {
+        $value = trim($name);
+
+        return $value;
+    }
+
+    protected function boot(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "trim($name")),
+    ).toBe("handle");
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "function handle")),
+    ).toBe("handle");
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "function boot")),
+    ).toBe("boot");
+  });
+
+  it("returns null when the position is outside any method body", () => {
+    const source = `<?php
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpEnclosingMethodNameAt(source, positionAfter(source, "class Child")),
+    ).toBeNull();
+    expect(
+      phpEnclosingMethodNameAt(
+        source,
+        positionAfter(source, "extends BaseService"),
+      ),
+    ).toBeNull();
+  });
+
   it("extracts PHP supertype references from class headers", () => {
     const source = `<?php
 namespace App\\Services;
@@ -1856,6 +2092,46 @@ class PageService
         source.indexOf("getFilteredPosts") + 2,
       ),
     ).toBeNull();
+  });
+
+  // Regression: `parent::method()` is a static method call whose receiver is the
+  // literal token `parent`. Go-to-definition must resolve that receiver via the
+  // extends clause (resolvePhpClassReference), never via resolvePhpClassName,
+  // which would treat `parent` as a real type name (`<namespace>\parent`) and
+  // never reach the parent declaration.
+  it("classifies parent::method() as a static call to the parent receiver", () => {
+    const source = `<?php
+
+namespace App\\DTOs\\Facebook\\Posts;
+
+final readonly class FacebookCarouselPostDTO extends AbstractFacebookPostDTO
+{
+    public function toImportFields(): array
+    {
+        return [...parent::toImportFields()];
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "parent::toImportFields"),
+      ),
+    ).toEqual({
+      className: "parent",
+      kind: "staticMethodCall",
+      methodName: "toImportFields",
+    });
+
+    // The extends clause names the real parent (covering `final readonly class`).
+    expect(phpExtendsClassName(source)).toBe("AbstractFacebookPostDTO");
+
+    // resolvePhpClassName must NOT be used for the `parent` receiver: it yields a
+    // junk namespaced literal instead of the parent class.
+    expect(resolvePhpClassName(source, "parent")).toBe(
+      "App\\DTOs\\Facebook\\Posts\\parent",
+    );
   });
 });
 

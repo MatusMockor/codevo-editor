@@ -1,4 +1,6 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { phpLaravelGateAbilityReferenceContextAt } from "./phpLaravelAuthorization";
+import { phpLaravelMiddlewareAliasReferenceContextAt } from "./phpLaravelMiddleware";
 import { phpLaravelAuthGuardReferenceContextAt } from "./phpLaravelAuth";
 import { phpLaravelBroadcastConnectionReferenceContextAt } from "./phpLaravelBroadcasting";
 import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
@@ -27,6 +29,8 @@ export function phpLaravelScopedStringCompletionContextAt(
       phpLaravelTranslationReferenceContextAt(source, position) ||
       phpLaravelEnvReferenceContextAt(source, position) ||
       phpLaravelConfigReferenceContextAt(source, position) ||
+      phpLaravelGateAbilityReferenceContextAt(source, position) ||
+      phpLaravelMiddlewareAliasReferenceContextAt(source, position) ||
       phpLaravelAuthGuardReferenceContextAt(source, position) ||
       phpLaravelCacheStoreReferenceContextAt(source, position) ||
       phpLaravelDatabaseConnectionReferenceContextAt(source, position) ||
