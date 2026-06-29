@@ -69,6 +69,7 @@ import {
   defaultWorkspaceSettings,
   type SettingsGateway,
 } from "../domain/settings";
+import { defaultKeymapSettings } from "../domain/keymap";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
@@ -12371,6 +12372,54 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().gitCommitMessage).toBe("");
     expect(getWorkbench().gitStatus.changes).toEqual([]);
+  });
+
+  it("commits staged Git changes from the primary keymap shortcut", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const gitGateway = fileHistoryGitGateway({
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: defaultKeymapSettings("linux"),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().setGitCommitMessage("feat: keymap commit");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          ctrlKey: true,
+          key: "Enter",
+        }),
+      );
+      await flushAsyncTurns();
+    });
+
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "feat: keymap commit",
+      [change],
+    );
   });
 
   it("does not commit a staged file that was excluded from the commit selection", async () => {
@@ -63077,9 +63126,7 @@ function gitChangedFile(relativePath: string, isStaged: boolean) {
   };
 }
 
-function fileHistoryGitGateway(
-  overrides: Pick<Partial<GitGateway>, "fileCommitDiff" | "fileHistory">,
-): GitGateway {
+function fileHistoryGitGateway(overrides: Partial<GitGateway>): GitGateway {
   return {
     blame: vi.fn(async () => []),
     fileHistory: overrides.fileHistory ?? vi.fn(async () => []),
@@ -63099,7 +63146,8 @@ function fileHistoryGitGateway(
         modifiedContent: "",
         originalContent: "",
       })),
-    commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    commit:
+      overrides.commit ?? vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     getDiff: vi.fn(async (_rootPath, requestedChange) => ({
       change: requestedChange,
@@ -63107,7 +63155,8 @@ function fileHistoryGitGateway(
       modifiedContent: "",
       originalContent: "",
     })),
-    getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    getStatus:
+      overrides.getStatus ?? vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     getFileHunks: vi.fn(async () => []),
     revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),

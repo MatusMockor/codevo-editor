@@ -28479,6 +28479,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("git.commit")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          void commitGitChanges();
+        }
+        return;
+      }
+
       if (matches("bookmark.showPanel")) {
         event.preventDefault();
         if (workspaceRoot) {
@@ -28724,6 +28732,7 @@ export function useWorkbenchController(
     openGitStashPanel,
     openGitBranchPanel,
     createGitBranch,
+    commitGitChanges,
     goToNextBookmark,
     goToPreviousBookmark,
     workspaceRoot,
