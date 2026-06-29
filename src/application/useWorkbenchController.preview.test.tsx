@@ -18278,6 +18278,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect.objectContaining({
         preferences: expect.objectContaining({
           includeCompletionsWithSnippetText: true,
+          includePackageJsonAutoImports: "off",
           importModuleSpecifierEnding: "minimal",
           importModuleSpecifierPreference: "relative",
           preferTypeOnlyAutoImports: true,
@@ -18287,6 +18288,9 @@ describe("useWorkbenchController preview tabs", () => {
         referencesCodeLens: {
           enabled: true,
           showOnAllFunctions: false,
+        },
+        updateImportsOnFileMove: {
+          enabled: "never",
         },
         suggest: expect.objectContaining({
           autoImports: false,

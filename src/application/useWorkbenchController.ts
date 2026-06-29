@@ -31528,6 +31528,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     includeCompletionsWithSnippetText: true,
     includeCompletionsForImportStatements: autoImportsEnabled,
     includeCompletionsForModuleExports: autoImportsEnabled,
+    includePackageJsonAutoImports: autoImportsEnabled ? "auto" : "off",
     importModuleSpecifierEnding:
       settings.javaScriptTypeScriptImportModuleSpecifierEnding,
     importModuleSpecifierPreference:
@@ -31574,6 +31575,9 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       },
     },
     preferences,
+    updateImportsOnFileMove: {
+      enabled: autoImportsEnabled ? "always" : "never",
+    },
     validate: {
       enable: validationEnabled,
     },
