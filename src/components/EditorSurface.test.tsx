@@ -66,6 +66,7 @@ interface FakeEditor {
     | ((event: { position: EditorPosition }) => void)
     | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
+  mouseMoveHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
     | ((
         event: {
@@ -84,6 +85,7 @@ interface FakeEditor {
   onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
+  onMouseMove: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
   setSelection: ReturnType<typeof vi.fn>;
@@ -1910,6 +1912,88 @@ class InvoiceServiceTest extends TestCase
       false,
     );
     expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when Cmd is held while hovering over code text on macOS", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "import { value } from './other';\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    const position = { column: 13, lineNumber: 2 };
+    act(() => {
+      editor.mouseMoveHandler?.({
+        event: {
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    await editor.gotoDefinitionContribution.gotoDefinition(position, false);
+
+    expect(editor.setPosition).not.toHaveBeenCalledWith(position);
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("routes a Ctrl+click on code text through go-to-definition on Linux", async () => {
@@ -10209,6 +10293,7 @@ function createEditor(model: FakeModel): FakeEditor {
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     cursorPositionHandler: null,
     mouseDownHandler: null,
+    mouseMoveHandler: null,
     modelContentChangeHandler: null,
     modelChangeHandler: null,
     modelChangeHandlers: [],
@@ -10244,6 +10329,11 @@ function createEditor(model: FakeModel): FakeEditor {
     ),
     onMouseDown: vi.fn((handler: (event: FakeMouseDownEvent) => void) => {
       editor.mouseDownHandler = handler;
+
+      return { dispose: vi.fn() };
+    }),
+    onMouseMove: vi.fn((handler: (event: FakeMouseDownEvent) => void) => {
+      editor.mouseMoveHandler = handler;
 
       return { dispose: vi.fn() };
     }),

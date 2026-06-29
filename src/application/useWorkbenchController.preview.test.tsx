@@ -59492,6 +59492,312 @@ class SampleTest extends TestCase
     expect(dependencies.terminalGateway.writeInput).not.toHaveBeenCalled();
   });
 
+  it("keeps light Cmd+B PHP navigation on the bounded PSR-4 path without PHPactor", async () => {
+    const sourcePath = "/workspace/app/Http/Controllers/UserController.php";
+    const userPath = "/workspace/app/Models/User.php";
+    const source = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Models\\User;
+
+class UserController
+{
+    public function show(User $user): void
+    {
+    }
+}
+`;
+    const userSource = `<?php
+
+namespace App\\Models;
+
+class User
+{
+}
+`;
+    const files = new Map<string, string>([
+      [sourcePath, source],
+      [userPath, userSource],
+    ]);
+
+    for (let index = 0; index < 1_000; index += 1) {
+      files.set(
+        `/workspace/app/Noise/Noise${index}.php`,
+        `<?php\n\nnamespace App\\Noise;\n\nclass Noise${index}\n{\n}\n`,
+      );
+    }
+
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      const content = files.get(requestedPath);
+
+      if (content === undefined) {
+        throw new Error(`missing: ${requestedPath}`);
+      }
+
+      return content;
+    });
+    const searchFiles = vi.fn(async () => {
+      throw new Error("light PHP navigation must not use broad file search");
+    });
+    const searchText = vi.fn(async () => {
+      throw new Error("light PHP navigation must not use text search");
+    });
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      phpToolGateway,
+      readTextFile,
+      searchFiles,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "UserController.php"),
+      );
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(positionAfter(source, "show(U"));
+    });
+
+    await act(async () => {
+      await getWorkbench().goToDefinition();
+    });
+    await flushAsyncTurns(24);
+
+    const contentReadPaths = readTextFile.mock.calls
+      .map(([path]) => path)
+      .filter(
+        (path): path is string =>
+          typeof path === "string" && !path.endsWith("/.editorconfig"),
+      );
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(getWorkbench().activePath).toBe(userPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: userPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(userSource, "class User"),
+      },
+    });
+    expect(contentReadPaths).toEqual([sourcePath, userPath, userPath]);
+    expect(searchFiles).not.toHaveBeenCalled();
+    expect(searchText).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerFeaturesGateway.definition,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerFeaturesGateway.declaration,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerFeaturesGateway.implementation,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerFeaturesGateway.typeDefinition,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("switches IDE PHPactor navigation off without leaking stale LSP results into light PSR-4 navigation", async () => {
+    const sourcePath = "/workspace/app/Http/Controllers/UserController.php";
+    const staleIdePath = "/workspace/vendor/acme/IdeOnly.php";
+    const userPath = "/workspace/app/Models/User.php";
+    const ideSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Services\\IdeOnly;
+
+class UserController
+{
+    public function show(IdeOnly $service): void
+    {
+    }
+}
+`;
+    const lightSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Models\\User;
+
+class UserController
+{
+    public function show(User $user): void
+    {
+    }
+}
+`;
+    const staleIdeSource = `<?php
+
+namespace Vendor\\Acme;
+
+class IdeOnly
+{
+}
+`;
+    const userSource = `<?php
+
+namespace App\\Models;
+
+class User
+{
+}
+`;
+    const files = new Map<string, string>([
+      [sourcePath, ideSource],
+      [staleIdePath, staleIdeSource],
+      [userPath, userSource],
+    ]);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      const content = files.get(requestedPath);
+
+      if (content === undefined) {
+        throw new Error(`missing: ${requestedPath}`);
+      }
+
+      return content;
+    });
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.definition).mockResolvedValue([
+      {
+        range: range(4, 6, 4, 13),
+        uri: fileUriFromPath(staleIdePath),
+      },
+    ]);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 91,
+    };
+    const searchFiles = vi.fn(async () => {
+      throw new Error("light PHP navigation must not use broad file search");
+    });
+    const searchText = vi.fn(async () => {
+      throw new Error("light PHP navigation must not use text search");
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus: runningStatus,
+      searchFiles,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "UserController.php"),
+      );
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(positionAfter(ideSource, "show(I"));
+    });
+
+    await act(async () => {
+      await getWorkbench().goToDefinition();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activePath).toBe(staleIdePath);
+    expect(languageServerFeaturesGateway.definition).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "UserController.php"),
+      );
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveDocument(lightSource);
+      getWorkbench().updateActiveEditorPosition(positionAfter(lightSource, "show(U"));
+    });
+
+    await act(async () => {
+      await getWorkbench().setSmartMode("basic");
+    });
+    await flushAsyncTurns(24);
+
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockClear();
+    searchFiles.mockClear();
+    searchText.mockClear();
+    readTextFile.mockClear();
+
+    await act(async () => {
+      await getWorkbench().goToDefinition();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(getWorkbench().activePath).toBe(userPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: userPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(userSource, "class User"),
+      },
+    });
+    expect(languageServerFeaturesGateway.definition).toHaveBeenCalledTimes(1);
+    expect(searchFiles).not.toHaveBeenCalled();
+    expect(searchText).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(
+      readTextFile.mock.calls
+        .map(([path]) => path)
+        .filter(
+          (path): path is string =>
+            typeof path === "string" && !path.endsWith("/.editorconfig"),
+        ),
+    ).toEqual([userPath, userPath]);
+  });
+
   it("navigates a typed member property to its declared type class", async () => {
     const servicePath = "/workspace/app/Services/PostService.php";
     const repositoryPath = "/workspace/app/Repositories/PostRepository.php";
