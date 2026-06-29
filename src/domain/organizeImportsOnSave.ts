@@ -24,12 +24,17 @@ export const organizeImportsCodeActionKind = "source.organizeImports";
 export const addMissingImportsCodeActionKind = "source.addMissingImports.ts";
 export const fixAllCodeActionKind = "source.fixAll.ts";
 export const removeUnusedCodeActionKind = "source.removeUnused.ts";
+export const removeUnusedImportsCodeActionKind =
+  "source.removeUnusedImports.ts";
+export const sortImportsCodeActionKind = "source.sortImports.ts";
 
 export type JavaScriptTypeScriptOnSaveSourceActionKind =
   | typeof addMissingImportsCodeActionKind
   | typeof fixAllCodeActionKind
   | typeof organizeImportsCodeActionKind
-  | typeof removeUnusedCodeActionKind;
+  | typeof removeUnusedCodeActionKind
+  | typeof removeUnusedImportsCodeActionKind
+  | typeof sortImportsCodeActionKind;
 
 export interface OrganizeImportsOnSaveRuntime {
   status: LanguageServerRuntimeStatus | null;
@@ -65,10 +70,12 @@ export function javaScriptTypeScriptOnSaveSourceActionKinds(
 
   if (settings.javaScriptTypeScriptOrganizeImportsOnSave) {
     kinds.push(organizeImportsCodeActionKind);
+    kinds.push(sortImportsCodeActionKind);
   }
 
   if (settings.javaScriptTypeScriptRemoveUnusedOnSave) {
     kinds.push(removeUnusedCodeActionKind);
+    kinds.push(removeUnusedImportsCodeActionKind);
   }
 
   if (settings.javaScriptTypeScriptFixAllOnSave) {
@@ -121,7 +128,7 @@ export function planOrganizeImportsOnSave(
 
 /**
  * The full-document range covering `content`, used as the requested range for a
- * source-action code action request. `source.organizeImports` operates on the
+ * source-action code action request. TypeScript source actions operate on the
  * whole file regardless of range, but a valid range is still required.
  */
 export function fullDocumentRange(content: string): LanguageServerRange {
@@ -135,9 +142,9 @@ export function fullDocumentRange(content: string): LanguageServerRange {
 }
 
 /**
- * The code action context that asks the server for organize-imports only, so
- * tsserver returns just the `source.organizeImports` action rather than the
- * full quick-fix/refactor set.
+ * The code action context that asks the server for one source action only, so
+ * tsserver returns the requested save-time source action rather than the full
+ * quick-fix/refactor set.
  */
 export function organizeImportsCodeActionContext(
   kind: JavaScriptTypeScriptOnSaveSourceActionKind = organizeImportsCodeActionKind,
@@ -149,12 +156,11 @@ export function organizeImportsCodeActionContext(
 }
 
 /**
- * Picks the text edits for `path` out of the organize-imports code actions the
- * server returned. Conservative: ignores actions that only carry a command (we
- * do not execute commands on save), only matches `source.organizeImports`
- * (including sub-kinds like `source.organizeImports.ts`), and only reads edits
- * targeting the saved file's own URI - so it never mutates other documents on
- * save. Returns null when no usable inline edit exists.
+ * Picks the text edits for `path` out of the source actions the server
+ * returned. Conservative: ignores actions that only carry a command (we do not
+ * execute commands on save), only matches the requested source action kind, and
+ * only reads edits targeting the saved file's own URI - so it never mutates
+ * other documents on save. Returns null when no usable inline edit exists.
  */
 export function organizeImportsTextEditsForPath(
   actions: LanguageServerCodeAction[],

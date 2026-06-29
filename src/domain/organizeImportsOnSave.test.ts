@@ -10,6 +10,8 @@ import {
   organizeImportsTextEditsForPath,
   planOrganizeImportsOnSave,
   removeUnusedCodeActionKind,
+  removeUnusedImportsCodeActionKind,
+  sortImportsCodeActionKind,
   type OrganizeImportsOnSavePlanInput,
 } from "./organizeImportsOnSave";
 import { fileUriFromPath } from "./languageServerDocumentSync";
@@ -160,7 +162,9 @@ describe("javaScriptTypeScriptOnSaveSourceActionKinds", () => {
     ).toEqual([
       addMissingImportsCodeActionKind,
       organizeImportsCodeActionKind,
+      sortImportsCodeActionKind,
       removeUnusedCodeActionKind,
+      removeUnusedImportsCodeActionKind,
       fixAllCodeActionKind,
     ]);
   });
@@ -181,6 +185,21 @@ describe("organizeImportsCodeActionContext", () => {
         only: [removeUnusedCodeActionKind],
       },
     );
+  });
+
+  it("requests TypeScript-specific sort and remove-unused-imports kinds", () => {
+    expect(organizeImportsCodeActionContext(sortImportsCodeActionKind)).toEqual(
+      {
+        diagnostics: [],
+        only: [sortImportsCodeActionKind],
+      },
+    );
+    expect(
+      organizeImportsCodeActionContext(removeUnusedImportsCodeActionKind),
+    ).toEqual({
+      diagnostics: [],
+      only: [removeUnusedImportsCodeActionKind],
+    });
   });
 });
 
@@ -247,6 +266,26 @@ describe("organizeImportsTextEditsForPath", () => {
         [action({ kind: removeUnusedCodeActionKind })],
         path,
         removeUnusedCodeActionKind,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("matches remove-unused-imports source actions when that kind was requested", () => {
+    expect(
+      organizeImportsTextEditsForPath(
+        [action({ kind: removeUnusedImportsCodeActionKind })],
+        path,
+        removeUnusedImportsCodeActionKind,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("matches sort-imports source actions when that kind was requested", () => {
+    expect(
+      organizeImportsTextEditsForPath(
+        [action({ kind: sortImportsCodeActionKind })],
+        path,
+        sortImportsCodeActionKind,
       ),
     ).not.toBeNull();
   });
@@ -351,6 +390,30 @@ describe("organizeImportsCodeActionToResolve", () => {
         removeUnusedCodeActionKind,
       ),
     ).toBe(removeUnusedAction);
+  });
+
+  it("returns the first data-only remove-unused-imports action for that requested kind", () => {
+    const removeUnusedImportsAction = action({
+      kind: removeUnusedImportsCodeActionKind,
+    });
+
+    expect(
+      organizeImportsCodeActionToResolve(
+        [action(), removeUnusedImportsAction],
+        removeUnusedImportsCodeActionKind,
+      ),
+    ).toBe(removeUnusedImportsAction);
+  });
+
+  it("returns the first data-only sort-imports action for that requested kind", () => {
+    const sortImportsAction = action({ kind: sortImportsCodeActionKind });
+
+    expect(
+      organizeImportsCodeActionToResolve(
+        [action(), sortImportsAction],
+        sortImportsCodeActionKind,
+      ),
+    ).toBe(sortImportsAction);
   });
 
   it("returns the first data-only add-missing-imports action for that requested kind", () => {

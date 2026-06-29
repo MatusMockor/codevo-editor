@@ -8447,6 +8447,92 @@ describe("useWorkbenchController preview tabs", () => {
         ).toHaveBeenCalledWith(path, tsWithOrganizedImports);
       });
 
+      it("continues to JS/TS sort imports on save when organize imports has no edits", async () => {
+        const path = "/workspace/src/App.ts";
+        const tsWithSortedImports = [
+          "import { a } from './a';",
+          "import { b } from './b';",
+          "",
+          "b();",
+          "a();",
+          "",
+        ].join("\n");
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async (_root, _path, _range, context) => {
+            if (context.only?.[0] === "source.organizeImports") {
+              return [];
+            }
+
+            if (context.only?.[0] === "source.sortImports.ts") {
+              return [
+                organizeImportsAction(
+                  path,
+                  tsWithUnsortedImports,
+                  tsWithSortedImports,
+                  "source.sortImports.ts",
+                ),
+              ];
+            }
+
+            return [];
+          },
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          1,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.organizeImports"] }),
+        );
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          2,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.sortImports.ts"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithSortedImports);
+      });
+
       it("continues to JS/TS remove unused on save when organize imports has no edits", async () => {
         const path = "/workspace/src/App.ts";
         const tsWithoutUnusedImport = [
@@ -8459,6 +8545,10 @@ describe("useWorkbenchController preview tabs", () => {
         vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
           async (_root, _path, _range, context) => {
             if (context.only?.[0] === "source.organizeImports") {
+              return [];
+            }
+
+            if (context.only?.[0] === "source.sortImports.ts") {
               return [];
             }
 
@@ -8525,7 +8615,98 @@ describe("useWorkbenchController preview tabs", () => {
           "/workspace",
           path,
           expect.anything(),
+          expect.objectContaining({ only: ["source.sortImports.ts"] }),
+        );
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          3,
+          "/workspace",
+          path,
+          expect.anything(),
           expect.objectContaining({ only: ["source.removeUnused.ts"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithoutUnusedImport);
+      });
+
+      it("continues to JS/TS remove unused imports on save when remove unused has no edits", async () => {
+        const path = "/workspace/src/App.ts";
+        const tsWithoutUnusedImport = [
+          "import { a } from './a';",
+          "",
+          "a();",
+          "",
+        ].join("\n");
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async (_root, _path, _range, context) => {
+            if (context.only?.[0] === "source.removeUnused.ts") {
+              return [];
+            }
+
+            if (context.only?.[0] === "source.removeUnusedImports.ts") {
+              return [
+                organizeImportsAction(
+                  path,
+                  tsWithUnsortedImports,
+                  tsWithoutUnusedImport,
+                  "source.removeUnusedImports.ts",
+                ),
+              ];
+            }
+
+            return [];
+          },
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptRemoveUnusedOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          1,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.removeUnused.ts"] }),
+        );
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          2,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.removeUnusedImports.ts"] }),
         );
         expect(
           dependencies.workspaceGateways.files.writeTextFile,
