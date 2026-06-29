@@ -51,6 +51,31 @@ const symbolColorKeys = [
   "--symbol-variable",
   "--symbol-keyword",
 ] as const;
+const monacoPopupTokenMap = [
+  ["--vscode-editorSuggestWidget-background", "var(--color-modal)"],
+  ["--vscode-editorSuggestWidget-border", "var(--color-border-strong)"],
+  ["--vscode-editorSuggestWidget-foreground", "var(--color-text)"],
+  ["--vscode-editorSuggestWidget-selectedBackground", "var(--color-accent-soft)"],
+  ["--vscode-editorSuggestWidget-selectedForeground", "var(--color-text-strong)"],
+  ["--vscode-editorSuggestWidget-highlightForeground", "var(--color-accent)"],
+  ["--vscode-editorSuggestWidget-focusHighlightForeground", "var(--color-accent)"],
+  ["--vscode-editorHoverWidget-background", "var(--color-modal)"],
+  ["--vscode-editorHoverWidget-border", "var(--color-border-strong)"],
+  ["--vscode-editorHoverWidget-foreground", "var(--color-text)"],
+  ["--vscode-editorWidget-background", "var(--color-modal)"],
+  ["--vscode-editorWidget-border", "var(--color-border-strong)"],
+  ["--vscode-editorWidget-foreground", "var(--color-text)"],
+  ["--vscode-menu-background", "var(--color-modal)"],
+  ["--vscode-menu-foreground", "var(--color-text)"],
+  ["--vscode-menu-selectionBackground", "var(--color-accent-soft)"],
+  ["--vscode-menu-selectionForeground", "var(--color-text-strong)"],
+  ["--vscode-menu-separatorBackground", "var(--color-border)"],
+  ["--vscode-menu-border", "var(--color-border-strong)"],
+  ["--vscode-editorActionList-background", "var(--color-modal)"],
+  ["--vscode-editorActionList-foreground", "var(--color-text)"],
+  ["--vscode-editorActionList-focusBackground", "var(--color-accent-soft)"],
+  ["--vscode-editorActionList-focusForeground", "var(--color-text-strong)"],
+] as const;
 
 describe("contrastRatio", () => {
   it("returns WCAG contrast ratios for two hex colors", () => {
@@ -257,6 +282,100 @@ describe("calm design tokens", () => {
   });
 });
 
+describe("Monaco popup chrome", () => {
+  const appCss = readFileSync("src/App.css", "utf8");
+
+  it("pins popup theme tokens to app chrome variables on every popup surface", () => {
+    const block = cssBlockContainingSelector(appCss, ".app-shell .monaco-editor");
+
+    for (const selector of [
+      ".app-shell .monaco-editor",
+      ".app-shell .action-widget",
+      ".app-shell .monaco-menu",
+      ".app-shell .monaco-hover",
+      ".app-shell .context-view",
+    ]) {
+      expect(block, selector).toContain(selector);
+    }
+
+    for (const [token, value] of monacoPopupTokenMap) {
+      expect(cssDeclaration(block, token), token).toBe(value);
+    }
+  });
+
+  it("keeps autocomplete, hover, context menu and action widgets on shared chrome tokens", () => {
+    for (const selector of [
+      ".monaco-editor .suggest-widget",
+      ".monaco-editor .suggest-widget .suggest-details",
+      ".monaco-editor .monaco-hover",
+      ".monaco-menu .monaco-action-bar.vertical",
+      ".monaco-editor .action-widget",
+    ]) {
+      const block = cssBlockContainingSelector(appCss, selector);
+      expect(block, `${selector}: radius`).toContain(
+        "border-radius: var(--radius-lg)",
+      );
+    }
+
+    for (const selector of [
+      ".monaco-editor .suggest-widget",
+      ".monaco-editor .suggest-widget .suggest-details",
+      ".monaco-editor .monaco-hover",
+      ".monaco-editor .action-widget",
+    ]) {
+      const block = cssBlockContainingSelector(appCss, selector);
+      expect(block, `${selector}: border`).toContain(
+        "var(--color-border-strong)",
+      );
+      expect(block, `${selector}: shadow`).toContain(
+        "box-shadow: var(--shadow-pop)",
+      );
+    }
+  });
+
+  it("keeps focused popup rows on the contrast-checked soft accent treatment", () => {
+    for (const selector of [
+      ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
+      ".monaco-menu\n  .monaco-action-bar.vertical\n  .action-item.focused\n  .action-menu-item",
+      ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
+    ]) {
+      const block = cssBlockContainingSelector(appCss, selector);
+      expect(block, `${selector}: selected background`).toContain(
+        "var(--color-accent-soft)",
+      );
+    }
+
+    const actionRow = cssBlockContainingSelector(
+      appCss,
+      ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
+    );
+    expect(actionRow).toContain("color: var(--color-text-strong)");
+  });
+
+  it("keeps action-widget labels readable on its direct surface colors", () => {
+    for (const [name, selector] of themeSelectors) {
+      const modal = cssVariable(appCss, selector, "--color-modal");
+      const text = cssVariable(appCss, selector, "--color-text");
+      const strongText = cssVariable(appCss, selector, "--color-text-strong");
+      const mutedText = cssVariable(appCss, selector, "--color-text-muted");
+      const accentSoft = accentSoftColor(appCss, selector);
+
+      expect(
+        contrastRatio(text, modal),
+        `${name}: action foreground on modal ${modal}`,
+      ).toBeGreaterThanOrEqual(minimumTextContrast);
+      expect(
+        contrastRatio(strongText, accentSoft),
+        `${name}: focused action foreground on accent-soft ${accentSoft}`,
+      ).toBeGreaterThanOrEqual(minimumTextContrast);
+      expect(
+        contrastRatio(mutedText, modal),
+        `${name}: action group header on modal ${modal}`,
+      ).toBeGreaterThanOrEqual(minimumTextContrast);
+    }
+  });
+});
+
 function accentSoftColor(css: string, selector: string): string {
   const accent = cssVariable(css, selector, "--color-accent");
   const panel = cssVariable(css, selector, "--color-panel");
@@ -306,6 +425,16 @@ function cssVariable(css: string, selector: string, variable: string): string {
   return match[1];
 }
 
+function cssDeclaration(css: string, property: string): string {
+  const match = new RegExp(`${escapeRegex(property)}:\\s*([^;]+);`).exec(css);
+
+  if (!match) {
+    throw new Error(`Missing ${property}`);
+  }
+
+  return match[1].trim();
+}
+
 function cssVariableWithRootFallback(
   css: string,
   selector: string,
@@ -343,6 +472,36 @@ function cssBlock(css: string, selector: string): string {
   }
 
   return css.slice(start, end);
+}
+
+function cssBlockContainingSelector(css: string, selector: string): string {
+  let searchFrom = 0;
+
+  while (searchFrom < css.length) {
+    const selectorIndex = css.indexOf(selector, searchFrom);
+
+    if (selectorIndex < 0) {
+      break;
+    }
+
+    const bodyStart = css.indexOf("{", selectorIndex);
+    const previousEnd = css.lastIndexOf("}", selectorIndex);
+    const previousStart = css.lastIndexOf("{", selectorIndex);
+
+    if (bodyStart >= 0 && previousStart <= previousEnd) {
+      const end = css.indexOf("}", bodyStart);
+
+      if (end < 0) {
+        throw new Error(`Unclosed CSS block containing ${selector}`);
+      }
+
+      return css.slice(selectorIndex, end);
+    }
+
+    searchFrom = selectorIndex + selector.length;
+  }
+
+  throw new Error(`Missing CSS block containing ${selector}`);
 }
 
 function escapeRegex(value: string): string {

@@ -5703,6 +5703,7 @@ kbd {
  * isolated to the editor surface and cascades to portalled menus/hovers.
  */
 .app-shell .monaco-editor,
+.app-shell .action-widget,
 .app-shell .monaco-menu,
 .app-shell .monaco-hover,
 .app-shell .context-view {
@@ -5820,7 +5821,7 @@ kbd {
 /* Group headers ("Quick Fix...", "Extract...") read as subtle section labels. */
 .monaco-editor .action-widget .monaco-list-row.group-header,
 .action-widget .monaco-list-row.group-header {
-  color: var(--color-text-subtle) !important;
+  color: var(--color-text-muted) !important;
 }
 
 /* Selected / focused action row: soft accent tint, not Monaco's default blue. */
