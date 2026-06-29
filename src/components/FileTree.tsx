@@ -37,6 +37,7 @@ interface FileTreeProps {
   revealActivePathSignal: number;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
+  onRenameEntry?(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
@@ -53,6 +54,7 @@ function FileTreeComponent({
   revealActivePathSignal,
   onOpenFile,
   onPreviewFile,
+  onRenameEntry,
   onToggleDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
@@ -277,6 +279,7 @@ function FileTreeComponent({
                 level={level}
                 onOpenFile={onOpenFile}
                 onPreviewFile={onPreviewFile}
+                onRenameEntry={onRenameEntry}
                 onToggleDirectory={onToggleDirectory}
                 onPrefetchFile={onPrefetchFile}
                 onCancelPrefetchFile={onCancelPrefetchFile}
@@ -315,6 +318,7 @@ interface TreeRowProps {
   activeRowRef: RefObject<HTMLButtonElement | null>;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
+  onRenameEntry?(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
@@ -330,6 +334,7 @@ const TreeRow = memo(function TreeRow({
   activeRowRef,
   onOpenFile,
   onPreviewFile,
+  onRenameEntry,
   onToggleDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
@@ -378,6 +383,14 @@ const TreeRow = memo(function TreeRow({
         onPrefetchFile?.(entry);
       }}
       onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
+      onContextMenu={(event) => {
+        if (!isDirectory || !onRenameEntry) {
+          return;
+        }
+
+        event.preventDefault();
+        onRenameEntry(entry);
+      }}
       ref={isActive ? activeRowRef : undefined}
       style={
         {

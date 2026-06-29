@@ -79,6 +79,32 @@ describe("FileTree", () => {
     expect(onPrefetchFile).not.toHaveBeenCalled();
   });
 
+  it("invokes directory rename from the context menu while click still toggles", () => {
+    const onRenameEntry = vi.fn();
+    const onToggleDirectory = vi.fn();
+    renderTree({ onRenameEntry, onToggleDirectory });
+
+    const directoryRow = rowByLabel("src");
+    act(() => {
+      directoryRow.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      directoryRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(onToggleDirectory).toHaveBeenCalledWith("/workspace/src");
+    expect(onRenameEntry).toHaveBeenCalledTimes(1);
+    expect(onRenameEntry.mock.calls[0][0]).toMatchObject({
+      kind: "directory",
+      path: "/workspace/src",
+    });
+  });
+
   it("cancels a pending prefetch when the pointer leaves a file row", () => {
     const onCancelPrefetchFile = vi.fn();
     renderTree({ onCancelPrefetchFile });

@@ -14543,6 +14543,230 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("asks the JavaScript TypeScript service for import edits before renaming a folder", async () => {
+    const oldPath = "/workspace/src/models";
+    const newPath = "/workspace/src/domain";
+    const consumerPath = "/workspace/src/Consumer.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "domain/User",
+            range: {
+              end: { character: 28, line: 0 },
+              start: { character: 17, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockResolvedValue(edit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 624,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("domain");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "models",
+        path: oldPath,
+      });
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, []);
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+  });
+
+  it("remaps open documents under a renamed folder without losing dirty content", async () => {
+    const oldFolderPath = "/workspace/src/models";
+    const newFolderPath = "/workspace/src/domain";
+    const oldDocumentPath = "/workspace/src/models/User.ts";
+    const newDocumentPath = "/workspace/src/domain/User.ts";
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 626,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldDocumentPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldDocumentPath, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+    act(() => {
+      getWorkbench().updateActiveDocument("export class User { dirty = true }\n");
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("domain");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "models",
+        path: oldFolderPath,
+      });
+    });
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldFolderPath,
+      newFolderPath,
+    );
+    expect(
+      getWorkbench().openDocuments.find(
+        (document) => document.path === oldDocumentPath,
+      ),
+    ).toBeUndefined();
+    expect(
+      getWorkbench().openDocuments.find(
+        (document) => document.path === newDocumentPath,
+      ),
+    ).toMatchObject({
+      content: "export class User { dirty = true }\n",
+      language: "typescript",
+      name: "User.ts",
+      path: newDocumentPath,
+    });
+    expect(getWorkbench().activePath).toBe(newDocumentPath);
+    expect(getWorkbench().activeDocument?.path).toBe(newDocumentPath);
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "export class User { dirty = true }\n",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", oldDocumentPath);
+    await flushAsyncTurns(24);
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path: newDocumentPath,
+        text: "export class User { dirty = true }\n",
+      }),
+    );
+  });
+
+  it("drops stale JavaScript TypeScript folder rename edits after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/models";
+    const newPath = "/workspace-a/src/domain";
+    const consumerPath = "/workspace-a/src/Consumer.ts";
+    const renameEdit = createDeferred<LanguageServerWorkspaceEdit | null>();
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockImplementationOnce(async () => renameEdit.promise);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 625,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("domain");
+
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = getWorkbench().renameEntry({
+        kind: "directory",
+        name: "models",
+        path: oldPath,
+      });
+    });
+    await flushAsyncTurns(4);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    renameEdit.resolve({
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "domain/User",
+            range: {
+              end: { character: 28, line: 0 },
+              start: { character: 17, line: 0 },
+            },
+          },
+        ],
+      },
+    });
+    await act(async () => {
+      await renamePromise;
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).toHaveBeenCalledWith("/workspace-a", oldPath, newPath);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("asks the PHP language server for file rename edits before renaming a PHP file", async () => {
     const oldPath = "/workspace/src/User.php";
     const newPath = "/workspace/src/Account.php";

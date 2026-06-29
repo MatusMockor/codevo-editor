@@ -24301,6 +24301,162 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const renameEntry = useCallback(
+    async (entry: FileEntry) => {
+      if (entry.kind !== "directory") {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      if (!requestedRoot) {
+        return;
+      }
+
+      const nextName = prompter.prompt("Rename folder", entry.name);
+
+      if (!nextName || nextName === entry.name) {
+        return;
+      }
+
+      const oldPath = entry.path;
+      const parentPath = getParentPath(oldPath);
+      const nextPath = joinWorkspacePath(parentPath, nextName);
+
+      if (nextPath === oldPath) {
+        return;
+      }
+
+      try {
+        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
+          oldPath,
+          nextPath,
+        );
+        if (!mayRename) {
+          return;
+        }
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        await workspaceFiles.renamePath(oldPath, nextPath);
+        filePrefetchCacheRef.current.invalidate(oldPath);
+        filePrefetchCacheRef.current.invalidate(nextPath);
+
+        await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        const diagnosticPaths = new Set([
+          ...Object.keys(languageServerDiagnosticsByPath),
+          ...Object.keys(javaScriptTypeScriptDiagnosticsByPath),
+          ...Object.keys(phpLocalDiagnosticsByPath),
+          ...Object.keys(documentsRef.current),
+        ]);
+
+        for (const diagnosticPath of diagnosticPaths) {
+          if (isPathInDirectory(diagnosticPath, oldPath)) {
+            clearLanguageServerDiagnosticsForPath(requestedRoot, diagnosticPath);
+          }
+        }
+
+        const remappedDocuments = Object.values(documentsRef.current).filter(
+          (document) =>
+            remapPathForDirectoryRename(document.path, oldPath, nextPath) !==
+            document.path,
+        );
+        await Promise.all(
+          remappedDocuments.flatMap((document) => [
+            syncClosedDocument(document),
+            syncClosedJavaScriptTypeScriptDocument(document),
+          ]),
+        );
+
+        const nextDocuments: Record<string, EditorDocument> = {};
+        for (const document of Object.values(documentsRef.current)) {
+          const remappedPath = remapPathForDirectoryRename(
+            document.path,
+            oldPath,
+            nextPath,
+          );
+          const remappedDocument =
+            remappedPath === document.path
+              ? document
+              : {
+                  ...document,
+                  language: detectLanguage(remappedPath),
+                  name: getFileName(remappedPath),
+                  path: remappedPath,
+                };
+          nextDocuments[remappedDocument.path] = remappedDocument;
+        }
+
+        const nextOpenPaths = openPathsRef.current.map((path) =>
+          remapPathForDirectoryRename(path, oldPath, nextPath),
+        );
+        const nextPreviewPath = previewPathRef.current
+          ? remapPathForDirectoryRename(previewPathRef.current, oldPath, nextPath)
+          : null;
+        const nextActivePath = activePath
+          ? remapPathForDirectoryRename(activePath, oldPath, nextPath)
+          : null;
+
+        documentsRef.current = nextDocuments;
+        openPathsRef.current = nextOpenPaths;
+        previewPathRef.current = nextPreviewPath;
+        activeDocumentRef.current = nextActivePath
+          ? nextDocuments[nextActivePath] ?? null
+          : null;
+
+        setDocuments(nextDocuments);
+        setOpenPaths(nextOpenPaths);
+        setPreviewPath(nextPreviewPath);
+        setActivePath(nextActivePath);
+        setEntriesByDirectory((current) =>
+          remapEntriesByDirectoryForDirectoryRename(current, oldPath, nextPath),
+        );
+        setExpandedDirectories((current) =>
+          remapPathSetForDirectoryRename(current, oldPath, nextPath),
+        );
+        setManuallyCollapsedDirectories((current) =>
+          remapPathSetForDirectoryRename(current, oldPath, nextPath),
+        );
+
+        const directoriesToRefresh = new Set([parentPath, getParentPath(nextPath)]);
+        for (const directory of directoriesToRefresh) {
+          await refreshDirectory(directory);
+          if (
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+          ) {
+            return;
+          }
+        }
+
+        setMessage(`Renamed ${entry.name}`);
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename Folder", error);
+      }
+    },
+    [
+      activePath,
+      applyJavaScriptTypeScriptRenameEdits,
+      clearLanguageServerDiagnosticsForPath,
+      javaScriptTypeScriptDiagnosticsByPath,
+      languageServerDiagnosticsByPath,
+      notifyJavaScriptTypeScriptFileRenamed,
+      phpLocalDiagnosticsByPath,
+      prompter,
+      refreshDirectory,
+      reportErrorForActiveWorkspaceRoot,
+      workspaceFiles,
+      workspaceRoot,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
+    ],
+  );
+
   const deleteActiveDocument = useCallback(async () => {
     const document = activeDocumentRef.current;
     if (!document) {
@@ -28936,6 +29092,7 @@ export function useWorkbenchController(
     openPinnedFile,
     prefetchFile,
     cancelFilePrefetch,
+    renameEntry,
     clearLanguageServerDiagnosticsForPath: (path: string) =>
       clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
     updateLocalPhpDiagnostics,
@@ -32593,6 +32750,82 @@ function zeroLengthPhpEditRange(position: {
     startColumn: position.column + 1,
     startLineNumber: position.line + 1,
   };
+}
+
+function isPathInDirectory(path: string, directoryPath: string): boolean {
+  return (
+    path === directoryPath || path.startsWith(`${directoryPath.replace(/\/+$/, "")}/`)
+  );
+}
+
+function remapPathForDirectoryRename(
+  path: string,
+  oldDirectoryPath: string,
+  newDirectoryPath: string,
+): string {
+  const normalizedOldDirectoryPath = oldDirectoryPath.replace(/\/+$/, "");
+
+  if (path === normalizedOldDirectoryPath) {
+    return newDirectoryPath;
+  }
+
+  const oldPrefix = `${normalizedOldDirectoryPath}/`;
+
+  if (!path.startsWith(oldPrefix)) {
+    return path;
+  }
+
+  return `${newDirectoryPath}${path.slice(normalizedOldDirectoryPath.length)}`;
+}
+
+function remapPathSetForDirectoryRename(
+  paths: Set<string>,
+  oldDirectoryPath: string,
+  newDirectoryPath: string,
+): Set<string> {
+  const next = new Set<string>();
+
+  for (const path of paths) {
+    next.add(remapPathForDirectoryRename(path, oldDirectoryPath, newDirectoryPath));
+  }
+
+  return next;
+}
+
+function remapEntriesByDirectoryForDirectoryRename(
+  entriesByDirectory: Record<string, FileEntry[]>,
+  oldDirectoryPath: string,
+  newDirectoryPath: string,
+): Record<string, FileEntry[]> {
+  const next: Record<string, FileEntry[]> = {};
+
+  for (const [directoryPath, entries] of Object.entries(entriesByDirectory)) {
+    const nextDirectoryPath = remapPathForDirectoryRename(
+      directoryPath,
+      oldDirectoryPath,
+      newDirectoryPath,
+    );
+
+    next[nextDirectoryPath] = entries.map((entry) => {
+      const nextEntryPath = remapPathForDirectoryRename(
+        entry.path,
+        oldDirectoryPath,
+        newDirectoryPath,
+      );
+
+      if (nextEntryPath === entry.path) {
+        return entry;
+      }
+
+      return {
+        ...entry,
+        name: getFileName(nextEntryPath),
+        path: nextEntryPath,
+      };
+    });
+  }
+
+  return next;
 }
 
 /**

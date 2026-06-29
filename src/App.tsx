@@ -1047,6 +1047,7 @@ function App() {
             loadingDirectories={workbench.loadingDirectories}
             onOpenFile={workbench.openPinnedFile}
             onPreviewFile={workbench.previewFile}
+            onRenameEntry={workbench.renameEntry}
             onToggleDirectory={workbench.toggleDirectory}
             onPrefetchFile={workbench.prefetchFile}
             onCancelPrefetchFile={workbench.cancelFilePrefetch}
