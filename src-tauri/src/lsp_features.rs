@@ -280,6 +280,18 @@ pub struct WorkspaceFileRename {
     pub new_path: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileCreate {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileDelete {
+    pub path: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkspaceFileChangeType {
@@ -609,7 +621,12 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         command: &LanguageServerCodeActionCommand,
     ) -> LanguageServerFeatureRequest;
+    fn will_create_files(&self, files: &[WorkspaceFileCreate]) -> LanguageServerFeatureRequest;
+    fn did_create_files(&self, files: &[WorkspaceFileCreate]) -> LanguageServerFeatureRequest;
     fn will_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest;
+    fn did_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest;
+    fn will_delete_files(&self, files: &[WorkspaceFileDelete]) -> LanguageServerFeatureRequest;
+    fn did_delete_files(&self, files: &[WorkspaceFileDelete]) -> LanguageServerFeatureRequest;
     fn did_change_watched_files(
         &self,
         changes: &[WorkspaceFileChange],
@@ -990,20 +1007,45 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         }
     }
 
+    fn will_create_files(&self, files: &[WorkspaceFileCreate]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/willCreateFiles".to_string(),
+            params: workspace_file_create_params(files),
+        }
+    }
+
+    fn did_create_files(&self, files: &[WorkspaceFileCreate]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/didCreateFiles".to_string(),
+            params: workspace_file_create_params(files),
+        }
+    }
+
     fn will_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest {
         LanguageServerFeatureRequest {
             method: "workspace/willRenameFiles".to_string(),
-            params: json!({
-                "files": files
-                    .iter()
-                    .map(|file| {
-                        json!({
-                            "oldUri": file_uri(Path::new(&file.old_path)),
-                            "newUri": file_uri(Path::new(&file.new_path)),
-                        })
-                    })
-                .collect::<Vec<_>>(),
-            }),
+            params: workspace_file_rename_params(files),
+        }
+    }
+
+    fn did_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/didRenameFiles".to_string(),
+            params: workspace_file_rename_params(files),
+        }
+    }
+
+    fn will_delete_files(&self, files: &[WorkspaceFileDelete]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/willDeleteFiles".to_string(),
+            params: workspace_file_delete_params(files),
+        }
+    }
+
+    fn did_delete_files(&self, files: &[WorkspaceFileDelete]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/didDeleteFiles".to_string(),
+            params: workspace_file_delete_params(files),
         }
     }
 
@@ -1035,6 +1077,46 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
             }),
         }
     }
+}
+
+fn workspace_file_create_params(files: &[WorkspaceFileCreate]) -> Value {
+    json!({
+        "files": files
+            .iter()
+            .map(|file| {
+                json!({
+                    "uri": file_uri(Path::new(&file.path)),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn workspace_file_rename_params(files: &[WorkspaceFileRename]) -> Value {
+    json!({
+        "files": files
+            .iter()
+            .map(|file| {
+                json!({
+                    "oldUri": file_uri(Path::new(&file.old_path)),
+                    "newUri": file_uri(Path::new(&file.new_path)),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn workspace_file_delete_params(files: &[WorkspaceFileDelete]) -> Value {
+    json!({
+        "files": files
+            .iter()
+            .map(|file| {
+                json!({
+                    "uri": file_uri(Path::new(&file.path)),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn lsp_file_change_type(change_type: WorkspaceFileChangeType) -> u8 {
@@ -2217,7 +2299,7 @@ mod tests {
         TextDocumentInlayHintRange, TextDocumentOnTypeFormatting, TextDocumentPosition,
         TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
         TextDocumentSelectionRange, TextDocumentSignatureHelp, WorkspaceFileChange,
-        WorkspaceFileChangeType, WorkspaceFileRename,
+        WorkspaceFileChangeType, WorkspaceFileCreate, WorkspaceFileDelete, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -2812,6 +2894,69 @@ mod tests {
             request.params["files"][0]["newUri"],
             "file:///tmp/src/Account.ts"
         );
+    }
+
+    #[test]
+    fn will_create_files_request_contains_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.will_create_files(&[WorkspaceFileCreate {
+            path: "/tmp/src/User.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/willCreateFiles");
+        assert_eq!(request.params["files"][0]["uri"], "file:///tmp/src/User.ts");
+    }
+
+    #[test]
+    fn did_create_files_notification_contains_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.did_create_files(&[WorkspaceFileCreate {
+            path: "/tmp/src/User.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/didCreateFiles");
+        assert_eq!(request.params["files"][0]["uri"], "file:///tmp/src/User.ts");
+    }
+
+    #[test]
+    fn did_rename_files_notification_contains_old_and_new_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.did_rename_files(&[WorkspaceFileRename {
+            old_path: "/tmp/src/User.ts".to_string(),
+            new_path: "/tmp/src/Account.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/didRenameFiles");
+        assert_eq!(
+            request.params["files"][0]["oldUri"],
+            "file:///tmp/src/User.ts"
+        );
+        assert_eq!(
+            request.params["files"][0]["newUri"],
+            "file:///tmp/src/Account.ts"
+        );
+    }
+
+    #[test]
+    fn will_delete_files_request_contains_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.will_delete_files(&[WorkspaceFileDelete {
+            path: "/tmp/src/User.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/willDeleteFiles");
+        assert_eq!(request.params["files"][0]["uri"], "file:///tmp/src/User.ts");
+    }
+
+    #[test]
+    fn did_delete_files_notification_contains_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.did_delete_files(&[WorkspaceFileDelete {
+            path: "/tmp/src/User.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/didDeleteFiles");
+        assert_eq!(request.params["files"][0]["uri"], "file:///tmp/src/User.ts");
     }
 
     #[test]

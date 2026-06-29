@@ -16541,6 +16541,125 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("asks the JavaScript TypeScript service for file create edits before creating a JS TS file", async () => {
+    const newPath = "/workspace/src/NewWidget.ts";
+    const consumerPath = "/workspace/src/index.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "import { NewWidget } from './NewWidget';\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles,
+    ).mockResolvedValueOnce(edit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didCreateFiles: true,
+        willCreateFiles: true,
+      },
+      kind: "running",
+      sessionId: 25,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles,
+    ).toHaveBeenCalledWith("/workspace", newPath);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, []);
+    expect(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).toHaveBeenCalledWith(newPath);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didCreateFiles,
+    ).toHaveBeenCalledWith("/workspace", newPath);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("blocks JS TS file creation when create edits fail", async () => {
+    const newPath = "/workspace/src/NewWidget.ts";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles,
+    ).mockRejectedValueOnce(new Error("will create crashed"));
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didCreateFiles: true,
+        willCreateFiles: true,
+      },
+      kind: "running",
+      sessionId: 25,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles,
+    ).toHaveBeenCalledWith("/workspace", newPath);
+    expect(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didCreateFiles,
+    ).not.toHaveBeenCalled();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Create" &&
+          notice.message.includes("will create crashed"),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores stale create file errors after switching project tabs", async () => {
     const newPath = "/workspace-a/src/NewWidget.php";
     const creation = createDeferred<void>();
@@ -16881,6 +17000,139 @@ describe("useWorkbenchController preview tabs", () => {
         javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
       ).mock.invocationCallOrder[0],
     );
+  });
+
+  it("asks the JavaScript TypeScript service for file delete edits before deleting a JS TS file", async () => {
+    const path = "/workspace/src/User.ts";
+    const consumerPath = "/workspace/src/index.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "",
+            range: {
+              end: { character: 31, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles,
+    ).mockResolvedValueOnce(edit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didDeleteFiles: true,
+        willDeleteFiles: true,
+      },
+      kind: "running",
+      sessionId: 26,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [path]);
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didDeleteFiles,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("blocks JS TS file deletion when delete edits fail", async () => {
+    const path = "/workspace/src/User.ts";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles,
+    ).mockRejectedValueOnce(new Error("will delete crashed"));
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didDeleteFiles: true,
+        willDeleteFiles: true,
+      },
+      kind: "running",
+      sessionId: 26,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.workspaceGateways.files.deletePath).not.toHaveBeenCalled();
+    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didDeleteFiles,
+    ).not.toHaveBeenCalled();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Delete" &&
+          notice.message.includes("will delete crashed"),
+      ),
+    ).toBe(true);
   });
 
   it("ignores stale delete errors after switching project tabs", async () => {
@@ -59046,6 +59298,8 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     definition: vi.fn(async () => []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
+    didCreateFiles: vi.fn(async () => undefined),
+    didDeleteFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),
@@ -59075,6 +59329,8 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     typeDefinition: vi.fn(async () => []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
+    willCreateFiles: vi.fn(async () => null),
+    willDeleteFiles: vi.fn(async () => null),
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),

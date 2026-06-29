@@ -243,7 +243,9 @@ function runtimeCapabilities(): Extract<
     documentHighlight: true,
     documentLink: true,
     documentSymbol: true,
-    didRenameFiles: true,
+      didCreateFiles: true,
+      didDeleteFiles: true,
+      didRenameFiles: true,
     foldingRange: true,
     formatting: true,
     hover: true,
@@ -261,7 +263,9 @@ function runtimeCapabilities(): Extract<
     sourceDefinition: true,
     typeDefinition: true,
     typeHierarchy: true,
-    willRenameFiles: true,
+      willCreateFiles: true,
+      willDeleteFiles: true,
+      willRenameFiles: true,
     workspaceSymbol: true,
   };
 }

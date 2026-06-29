@@ -10438,6 +10438,8 @@ function languageServerFeaturesGateway() {
     definition: vi.fn(),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
+    didCreateFiles: vi.fn(async () => undefined),
+    didDeleteFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),
@@ -10471,6 +10473,8 @@ function languageServerFeaturesGateway() {
     typeDefinition: vi.fn(async () => []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
+    willCreateFiles: vi.fn(async () => null),
+    willDeleteFiles: vi.fn(async () => null),
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
   };

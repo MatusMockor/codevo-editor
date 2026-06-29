@@ -5531,6 +5531,8 @@ function featuresGateway(
     definition: vi.fn(async () => responses.definition ?? []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
+    didCreateFiles: vi.fn(async () => undefined),
+    didDeleteFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(
       async () => responses.documentHighlights ?? [],
@@ -5565,6 +5567,8 @@ function featuresGateway(
     typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
+    willCreateFiles: vi.fn(async () => null),
+    willDeleteFiles: vi.fn(async () => null),
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(

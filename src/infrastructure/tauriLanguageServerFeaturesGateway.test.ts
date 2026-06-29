@@ -118,6 +118,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.executeCommand("/project", command()),
     ).resolves.toBeNull();
     await expect(
+      gateway.willCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeNull();
+    await expect(
+      gateway.didCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.willRenameFiles(
         "/project",
         "/project/src/User.ts",
@@ -130,6 +136,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         "/project/src/User.ts",
         "/project/src/Account.ts",
       ),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeNull();
+    await expect(
+      gateway.didDeleteFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
     await expect(
       gateway.didChangeWatchedFiles("/project", [
@@ -437,11 +449,27 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return rename;
       }
 
+      if (command === "text_document_will_create_files") {
+        return rename;
+      }
+
+      if (command === "workspace_did_create_files") {
+        return undefined;
+      }
+
       if (command === "text_document_will_rename_files") {
         return rename;
       }
 
       if (command === "workspace_did_rename_files") {
+        return undefined;
+      }
+
+      if (command === "text_document_will_delete_files") {
+        return rename;
+      }
+
+      if (command === "workspace_did_delete_files") {
         return undefined;
       }
 
@@ -631,6 +659,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
     await expect(
+      gateway.willCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toEqual(rename);
+    await expect(
+      gateway.didCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.willRenameFiles(
         "/project",
         "/project/src/User.ts",
@@ -643,6 +677,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         "/project/src/User.ts",
         "/project/src/Account.ts",
       ),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
+    ).resolves.toEqual(rename);
+    await expect(
+      gateway.didDeleteFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
     await expect(
       gateway.didChangeWatchedFiles("/project", [
@@ -862,6 +902,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       command: command(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_will_create_files", {
+      path: "/project/src/User.ts",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_did_create_files", {
+      path: "/project/src/User.ts",
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_will_rename_files", {
       newPath: "/project/src/Account.ts",
       oldPath: "/project/src/User.ts",
@@ -870,6 +918,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("workspace_did_rename_files", {
       newPath: "/project/src/Account.ts",
       oldPath: "/project/src/User.ts",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_will_delete_files", {
+      path: "/project/src/User.ts",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_did_delete_files", {
+      path: "/project/src/User.ts",
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith(
@@ -1001,6 +1057,64 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       {
         path: "/project/src/User.ts",
         range: range(),
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("delegates JavaScript and TypeScript file create and delete operations through the JS/TS command map", async () => {
+    const edit = { changes: {} };
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command.includes("_did_")) {
+        return undefined;
+      }
+
+      return edit;
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+
+    await expect(
+      gateway.willCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toEqual(edit);
+    await expect(
+      gateway.didCreateFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
+    ).resolves.toEqual(edit);
+    await expect(
+      gateway.didDeleteFiles("/project", "/project/src/User.ts"),
+    ).resolves.toBeUndefined();
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_workspace_will_create_files",
+      {
+        path: "/project/src/User.ts",
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_workspace_did_create_files",
+      {
+        path: "/project/src/User.ts",
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_workspace_will_delete_files",
+      {
+        path: "/project/src/User.ts",
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_workspace_did_delete_files",
+      {
+        path: "/project/src/User.ts",
         rootPath: "/project",
       },
     );

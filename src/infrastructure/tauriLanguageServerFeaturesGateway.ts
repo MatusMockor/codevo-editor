@@ -56,6 +56,8 @@ const DEFAULT_FEATURE_COMMANDS = {
   sourceDefinition: "text_document_definition",
   didChangeConfiguration: "workspace_did_change_configuration",
   didChangeWatchedFiles: "workspace_did_change_watched_files",
+  didCreateFiles: "workspace_did_create_files",
+  didDeleteFiles: "workspace_did_delete_files",
   didRenameFiles: "workspace_did_rename_files",
   typeDefinition: "text_document_type_definition",
   documentHighlights: "text_document_document_highlights",
@@ -85,6 +87,8 @@ const DEFAULT_FEATURE_COMMANDS = {
   signatureHelp: "text_document_signature_help",
   typeHierarchySubtypes: "text_document_type_hierarchy_subtypes",
   typeHierarchySupertypes: "text_document_type_hierarchy_supertypes",
+  willCreateFiles: "text_document_will_create_files",
+  willDeleteFiles: "text_document_will_delete_files",
   willRenameFiles: "text_document_will_rename_files",
   workspaceSymbols: "workspace_symbols",
 };
@@ -104,6 +108,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
     "javascript_typescript_workspace_did_change_configuration",
   didChangeWatchedFiles:
     "javascript_typescript_workspace_did_change_watched_files",
+  didCreateFiles: "javascript_typescript_workspace_did_create_files",
+  didDeleteFiles: "javascript_typescript_workspace_did_delete_files",
   didRenameFiles: "javascript_typescript_workspace_did_rename_files",
   typeDefinition: "javascript_typescript_text_document_type_definition",
   documentHighlights: "javascript_typescript_text_document_document_highlights",
@@ -139,6 +145,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
     "javascript_typescript_text_document_type_hierarchy_subtypes",
   typeHierarchySupertypes:
     "javascript_typescript_text_document_type_hierarchy_supertypes",
+  willCreateFiles: "javascript_typescript_workspace_will_create_files",
+  willDeleteFiles: "javascript_typescript_workspace_will_delete_files",
   willRenameFiles: "javascript_typescript_workspace_will_rename_files",
   workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
@@ -155,6 +163,8 @@ export interface TauriLanguageServerFeatureCommands {
   sourceDefinition: string;
   didChangeConfiguration: string;
   didChangeWatchedFiles: string;
+  didCreateFiles: string;
+  didDeleteFiles: string;
   didRenameFiles: string;
   typeDefinition: string;
   documentHighlights: string;
@@ -184,6 +194,8 @@ export interface TauriLanguageServerFeatureCommands {
   signatureHelp: string;
   typeHierarchySubtypes: string;
   typeHierarchySupertypes: string;
+  willCreateFiles: string;
+  willDeleteFiles: string;
   willRenameFiles: string;
   workspaceSymbols: string;
 }
@@ -584,6 +596,25 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
+  willCreateFiles(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(
+      this.commands.willCreateFiles,
+      { path, rootPath },
+      null,
+    );
+  }
+
+  didCreateFiles(rootPath: string, path: string): Promise<void> {
+    return this.invokeWhenAvailable(
+      this.commands.didCreateFiles,
+      { path, rootPath },
+      undefined,
+    );
+  }
+
   willRenameFiles(
     rootPath: string,
     oldPath: string,
@@ -604,6 +635,25 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.didRenameFiles,
       { newPath, oldPath, rootPath },
+      undefined,
+    );
+  }
+
+  willDeleteFiles(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(
+      this.commands.willDeleteFiles,
+      { path, rootPath },
+      null,
+    );
+  }
+
+  didDeleteFiles(rootPath: string, path: string): Promise<void> {
+    return this.invokeWhenAvailable(
+      this.commands.didDeleteFiles,
+      { path, rootPath },
       undefined,
     );
   }

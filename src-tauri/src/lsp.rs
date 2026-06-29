@@ -813,8 +813,12 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "resourceOperations": ["create", "rename", "delete"]
                         },
                         "fileOperations": {
+                            "didCreate": true,
+                            "didDelete": true,
                             "didRename": true,
                             "dynamicRegistration": false,
+                            "willCreate": true,
+                            "willDelete": true,
                             "willRename": true
                         },
                         "workspaceFolders": true
@@ -1633,11 +1637,27 @@ mod tests {
             true
         );
         assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["willCreate"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["didCreate"],
+            true
+        );
+        assert_eq!(
             request.params["capabilities"]["workspace"]["fileOperations"]["willRename"],
             true
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["fileOperations"]["didRename"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["willDelete"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["didDelete"],
             true
         );
         fs::remove_dir_all(root).expect("cleanup");

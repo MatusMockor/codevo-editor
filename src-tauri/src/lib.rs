@@ -56,7 +56,7 @@ use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
-    file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
+    JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
     PhpLanguageServerSettings, PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
     TypeScriptLanguageServerSettings,
@@ -90,7 +90,8 @@ use lsp_features::{
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-    TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileRename,
+    TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileCreate, WorkspaceFileDelete,
+    WorkspaceFileRename,
 };
 use lsp_session::{
     language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -3616,6 +3617,50 @@ async fn javascript_typescript_language_server_execute_command(
 }
 
 #[tauri::command]
+async fn javascript_typescript_workspace_will_create_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_create_files(&[WorkspaceFileCreate { path }]);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
+}
+
+#[tauri::command]
+fn javascript_typescript_workspace_did_create_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_create_files(&[WorkspaceFileCreate { path }]);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
 async fn javascript_typescript_workspace_will_rename_files(
     root_path: String,
     old_path: String,
@@ -3650,19 +3695,103 @@ fn javascript_typescript_workspace_did_rename_files(
     ensure_lsp_path_in_workspace(&root_path, &old_path)?;
     ensure_lsp_path_in_workspace(&root_path, &new_path)?;
 
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
+
     registry.send_notification(
         &root_path,
         &JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
-            method: "workspace/didRenameFiles".to_string(),
-            params: json!({
-                "files": [
-                    {
-                        "oldUri": file_uri(Path::new(&old_path)),
-                        "newUri": file_uri(Path::new(&new_path)),
-                    }
-                ],
-            }),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
+async fn javascript_typescript_workspace_will_delete_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_delete_files(&[WorkspaceFileDelete { path }]);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
+}
+
+#[tauri::command]
+fn javascript_typescript_workspace_did_delete_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_delete_files(&[WorkspaceFileDelete { path }]);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
+async fn text_document_will_create_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_create_files(&[WorkspaceFileCreate { path }]);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
+}
+
+#[tauri::command]
+fn workspace_did_create_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_create_files(&[WorkspaceFileCreate { path }]);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
         },
     )
 }
@@ -3702,19 +3831,59 @@ fn workspace_did_rename_files(
     ensure_lsp_path_in_workspace(&root_path, &old_path)?;
     ensure_lsp_path_in_workspace(&root_path, &new_path)?;
 
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
+
     registry.send_notification(
         &root_path,
         &JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
-            method: "workspace/didRenameFiles".to_string(),
-            params: json!({
-                "files": [
-                    {
-                        "oldUri": file_uri(Path::new(&old_path)),
-                        "newUri": file_uri(Path::new(&new_path)),
-                    }
-                ],
-            }),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
+async fn text_document_will_delete_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_delete_files(&[WorkspaceFileDelete { path }]);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
+}
+
+#[tauri::command]
+fn workspace_did_delete_files(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_delete_files(&[WorkspaceFileDelete { path }]);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
         },
     )
 }
@@ -7139,7 +7308,11 @@ pub fn run() {
             javascript_typescript_language_server_execute_command,
             javascript_typescript_workspace_did_change_configuration,
             javascript_typescript_workspace_did_change_watched_files,
+            javascript_typescript_workspace_did_create_files,
+            javascript_typescript_workspace_did_delete_files,
             javascript_typescript_workspace_did_rename_files,
+            javascript_typescript_workspace_will_create_files,
+            javascript_typescript_workspace_will_delete_files,
             javascript_typescript_workspace_will_rename_files,
             javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
@@ -7218,7 +7391,11 @@ pub fn run() {
             text_document_type_hierarchy_subtypes,
             text_document_type_hierarchy_supertypes,
             text_document_type_definition,
+            text_document_will_create_files,
+            text_document_will_delete_files,
             text_document_will_rename_files,
+            workspace_did_create_files,
+            workspace_did_delete_files,
             workspace_did_rename_files,
             upsert_workspace_index_file,
             workspace_symbols,

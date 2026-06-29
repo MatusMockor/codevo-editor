@@ -493,6 +493,11 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     command: LanguageServerCodeActionCommand,
   ): Promise<LanguageServerWorkspaceEdit | null>;
+  willCreateFiles(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerWorkspaceEdit | null>;
+  didCreateFiles(rootPath: string, path: string): Promise<void>;
   willRenameFiles(
     rootPath: string,
     oldPath: string,
@@ -503,6 +508,11 @@ export interface LanguageServerFeaturesGateway {
     oldPath: string,
     newPath: string,
   ): Promise<void>;
+  willDeleteFiles(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerWorkspaceEdit | null>;
+  didDeleteFiles(rootPath: string, path: string): Promise<void>;
   didChangeWatchedFiles(
     rootPath: string,
     changes: LanguageServerWorkspaceFileChange[],
@@ -535,7 +545,7 @@ export function canUseLanguageServerFeature(
   capabilities: LanguageServerCapabilities,
   feature: LanguageServerFeature,
 ): boolean {
-  return capabilities[feature];
+  return capabilities[feature] === true;
 }
 
 export function toLanguageServerTextDocumentPosition(

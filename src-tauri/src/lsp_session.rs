@@ -81,6 +81,8 @@ pub struct LanguageServerCapabilities {
     pub document_highlight: bool,
     pub document_link: bool,
     pub document_symbol: bool,
+    pub did_create_files: bool,
+    pub did_delete_files: bool,
     pub did_rename_files: bool,
     pub folding_range: bool,
     pub formatting: bool,
@@ -102,6 +104,8 @@ pub struct LanguageServerCapabilities {
     pub source_definition: bool,
     pub type_definition: bool,
     pub type_hierarchy: bool,
+    pub will_create_files: bool,
+    pub will_delete_files: bool,
     pub will_rename_files: bool,
     pub workspace_symbol: bool,
 }
@@ -3025,6 +3029,16 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         document_highlight: is_capability_enabled(capabilities.get("documentHighlightProvider")),
         document_link: is_capability_enabled(capabilities.get("documentLinkProvider")),
         document_symbol: is_capability_enabled(capabilities.get("documentSymbolProvider")),
+        did_create_files: capabilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|file_operations| file_operations.get("didCreate"))
+            .is_some(),
+        did_delete_files: capabilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|file_operations| file_operations.get("didDelete"))
+            .is_some(),
         did_rename_files: capabilities
             .get("workspace")
             .and_then(|workspace| workspace.get("fileOperations"))
@@ -3063,6 +3077,16 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         ),
         type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
         type_hierarchy: is_capability_enabled(capabilities.get("typeHierarchyProvider")),
+        will_create_files: capabilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|file_operations| file_operations.get("willCreate"))
+            .is_some(),
+        will_delete_files: capabilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|file_operations| file_operations.get("willDelete"))
+            .is_some(),
         will_rename_files: capabilities
             .get("workspace")
             .and_then(|workspace| workspace.get("fileOperations"))
@@ -4418,6 +4442,8 @@ mod tests {
                     document_highlight: false,
                     document_link: false,
                     document_symbol: false,
+                    did_create_files: false,
+                    did_delete_files: false,
                     did_rename_files: false,
                     folding_range: false,
                     formatting: false,
@@ -4437,6 +4463,8 @@ mod tests {
                     source_definition: false,
                     type_definition: false,
                     type_hierarchy: false,
+                    will_create_files: false,
+                    will_delete_files: false,
                     will_rename_files: false,
                     workspace_symbol: false,
                 },
@@ -4462,6 +4490,8 @@ mod tests {
                 document_highlight: true,
                 document_link: true,
                 document_symbol: true,
+                did_create_files: true,
+                did_delete_files: true,
                 did_rename_files: true,
                 folding_range: true,
                 formatting: true,
@@ -4488,6 +4518,8 @@ mod tests {
                 source_definition: true,
                 type_definition: true,
                 type_hierarchy: true,
+                will_create_files: true,
+                will_delete_files: true,
                 will_rename_files: true,
                 workspace_symbol: true,
             },
@@ -4507,6 +4539,8 @@ mod tests {
                     "documentHighlight": true,
                     "documentLink": true,
                     "documentSymbol": true,
+                    "didCreateFiles": true,
+                    "didDeleteFiles": true,
                     "didRenameFiles": true,
                     "foldingRange": true,
                     "formatting": true,
@@ -4529,6 +4563,8 @@ mod tests {
                     "sourceDefinition": true,
                     "typeDefinition": true,
                     "typeHierarchy": true,
+                    "willCreateFiles": true,
+                    "willDeleteFiles": true,
                     "willRenameFiles": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
@@ -4673,7 +4709,11 @@ mod tests {
                     "documentRangeFormattingProvider": true,
                     "workspace": {
                         "fileOperations": {
+                            "didCreate": { "filters": [] },
+                            "didDelete": { "filters": [] },
                             "didRename": { "filters": [] },
+                            "willCreate": { "filters": [] },
+                            "willDelete": { "filters": [] },
                             "willRename": { "filters": [] }
                         }
                     },
@@ -4696,6 +4736,8 @@ mod tests {
                 document_highlight: true,
                 document_link: true,
                 document_symbol: true,
+                did_create_files: true,
+                did_delete_files: true,
                 did_rename_files: true,
                 folding_range: true,
                 formatting: true,
@@ -4722,6 +4764,8 @@ mod tests {
                 source_definition: true,
                 type_definition: true,
                 type_hierarchy: true,
+                will_create_files: true,
+                will_delete_files: true,
                 will_rename_files: true,
                 workspace_symbol: true,
             }

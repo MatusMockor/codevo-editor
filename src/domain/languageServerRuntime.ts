@@ -16,6 +16,8 @@ export interface LanguageServerCapabilities {
   documentHighlight: boolean;
   documentLink: boolean;
   documentSymbol: boolean;
+  didCreateFiles?: boolean;
+  didDeleteFiles?: boolean;
   didRenameFiles: boolean;
   foldingRange: boolean;
   formatting: boolean;
@@ -33,6 +35,8 @@ export interface LanguageServerCapabilities {
   sourceDefinition: boolean;
   typeDefinition: boolean;
   typeHierarchy: boolean;
+  willCreateFiles?: boolean;
+  willDeleteFiles?: boolean;
   willRenameFiles: boolean;
   workspaceSymbol: boolean;
 }
@@ -276,12 +280,28 @@ export function languageServerCapabilityLabels(
     labels.push("type hierarchy");
   }
 
+  if (capabilities.willCreateFiles) {
+    labels.push("file create edits");
+  }
+
+  if (capabilities.didCreateFiles) {
+    labels.push("file create notifications");
+  }
+
   if (capabilities.willRenameFiles) {
     labels.push("file rename edits");
   }
 
   if (capabilities.didRenameFiles) {
     labels.push("file rename notifications");
+  }
+
+  if (capabilities.willDeleteFiles) {
+    labels.push("file delete edits");
+  }
+
+  if (capabilities.didDeleteFiles) {
+    labels.push("file delete notifications");
   }
 
   if (capabilities.workspaceSymbol) {
@@ -315,6 +335,8 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     documentHighlight: false,
     documentLink: false,
     documentSymbol: false,
+    didCreateFiles: false,
+    didDeleteFiles: false,
     didRenameFiles: false,
     foldingRange: false,
     formatting: false,
@@ -333,6 +355,8 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     sourceDefinition: false,
     typeDefinition: false,
     typeHierarchy: false,
+    willCreateFiles: false,
+    willDeleteFiles: false,
     willRenameFiles: false,
     workspaceSymbol: false,
   };

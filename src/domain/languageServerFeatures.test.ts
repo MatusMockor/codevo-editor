@@ -21,6 +21,8 @@ describe("canUseLanguageServerFeature", () => {
       documentHighlight: false,
       documentLink: false,
       documentSymbol: false,
+      didCreateFiles: false,
+      didDeleteFiles: false,
       didRenameFiles: false,
       foldingRange: false,
       formatting: false,
@@ -39,6 +41,8 @@ describe("canUseLanguageServerFeature", () => {
       sourceDefinition: false,
       typeDefinition: false,
       typeHierarchy: false,
+      willCreateFiles: false,
+      willDeleteFiles: false,
       willRenameFiles: false,
       workspaceSymbol: false,
     };

@@ -8020,6 +8020,270 @@ export function useWorkbenchController(
     ],
   );
 
+  const applyJavaScriptTypeScriptCreateEdits = useCallback(
+    async (path: string) => {
+      if (
+        !isJavaScriptTypeScriptWatchedPath(path) ||
+        !workspaceRoot ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "willCreateFiles",
+        )
+      ) {
+        return true;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
+
+      try {
+        const edit =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles(
+            requestedRoot,
+            path,
+          );
+
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return true;
+        }
+
+        if (edit) {
+          await applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(edit, {
+            rootPath: requestedRoot,
+          });
+        }
+
+        return true;
+      } catch (error) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return true;
+        }
+
+        reportError("JavaScript/TypeScript Create", error);
+        return false;
+      }
+    },
+    [
+      applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const notifyJavaScriptTypeScriptFileCreated = useCallback(
+    async (path: string) => {
+      if (
+        !isJavaScriptTypeScriptWatchedPath(path) ||
+        !workspaceRoot ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      try {
+        if (
+          canUseLanguageServerFeature(
+            javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+            "didCreateFiles",
+          )
+        ) {
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.didCreateFiles(
+            requestedRoot,
+            path,
+          );
+        } else {
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(
+            requestedRoot,
+            [
+              {
+                changeType: "created",
+                path,
+              },
+            ],
+          );
+        }
+      } catch (error) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return;
+        }
+
+        reportError("JavaScript/TypeScript Create", error);
+      }
+    },
+    [
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const applyJavaScriptTypeScriptDeleteEdits = useCallback(
+    async (path: string) => {
+      if (
+        !isJavaScriptTypeScriptWatchedPath(path) ||
+        !workspaceRoot ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "willDeleteFiles",
+        )
+      ) {
+        return true;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
+
+      try {
+        const edit =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles(
+            requestedRoot,
+            path,
+          );
+
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return true;
+        }
+
+        if (edit) {
+          await applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(edit, {
+            rootPath: requestedRoot,
+          });
+        }
+
+        return true;
+      } catch (error) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return true;
+        }
+
+        reportError("JavaScript/TypeScript Delete", error);
+        return false;
+      }
+    },
+    [
+      applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const notifyJavaScriptTypeScriptFileDeleted = useCallback(
+    async (path: string) => {
+      if (
+        !isJavaScriptTypeScriptWatchedPath(path) ||
+        !workspaceRoot ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      try {
+        if (
+          canUseLanguageServerFeature(
+            javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+            "didDeleteFiles",
+          )
+        ) {
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.didDeleteFiles(
+            requestedRoot,
+            path,
+          );
+        } else {
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(
+            requestedRoot,
+            [
+              {
+                changeType: "deleted",
+                path,
+              },
+            ],
+          );
+        }
+      } catch (error) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return;
+        }
+
+        reportError("JavaScript/TypeScript Delete", error);
+      }
+    },
+    [
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
   const applyPhpRenameEdits = useCallback(
     async (oldPath: string, newPath: string) => {
       if (
@@ -9120,17 +9384,21 @@ export function useWorkbenchController(
     const path = joinWorkspacePath(requestedRoot, relativePath);
 
     try {
+      const mayCreate = await applyJavaScriptTypeScriptCreateEdits(path);
+      if (!mayCreate) {
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await workspaceFiles.createTextFile(path);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      await notifyJavaScriptTypeScriptWatchedFilesChanged([
-        {
-          changeType: "created",
-          path,
-        },
-      ]);
+      await notifyJavaScriptTypeScriptFileCreated(path);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -9147,8 +9415,9 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Create File", error);
     }
   }, [
+    applyJavaScriptTypeScriptCreateEdits,
     openFile,
-    notifyJavaScriptTypeScriptWatchedFilesChanged,
+    notifyJavaScriptTypeScriptFileCreated,
     prompter,
     refreshDirectory,
     reportErrorForActiveWorkspaceRoot,
@@ -24495,6 +24764,15 @@ export function useWorkbenchController(
     const deletedPath = document.path;
 
     try {
+      const mayDelete = await applyJavaScriptTypeScriptDeleteEdits(deletedPath);
+      if (!mayDelete) {
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await workspaceFiles.deletePath(deletedPath);
       filePrefetchCacheRef.current.invalidate(deletedPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -24504,12 +24782,7 @@ export function useWorkbenchController(
       if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
         await syncClosedJavaScriptTypeScriptDocument(document);
       }
-      await notifyJavaScriptTypeScriptWatchedFilesChanged([
-        {
-          changeType: "deleted",
-          path: deletedPath,
-        },
-      ]);
+      await notifyJavaScriptTypeScriptFileDeleted(deletedPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -24529,12 +24802,13 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Delete File", error);
     }
   }, [
+    applyJavaScriptTypeScriptDeleteEdits,
     clearLanguageServerDiagnosticsForPath,
     closeActiveSurface,
     closeDocument,
     forgetRecentFile,
     forgetRecentLocationsForPath,
-    notifyJavaScriptTypeScriptWatchedFilesChanged,
+    notifyJavaScriptTypeScriptFileDeleted,
     prompter,
     refreshDirectory,
     reportErrorForActiveWorkspaceRoot,
