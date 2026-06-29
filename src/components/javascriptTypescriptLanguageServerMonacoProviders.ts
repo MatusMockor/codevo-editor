@@ -4015,8 +4015,10 @@ function completionInsert(
   insertText: string;
   insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
 } {
-  const insertText =
-    item.textEdit?.newText || item.textEditText || item.insertText || item.label;
+  const explicitInsertText =
+    item.textEdit?.newText ?? item.textEditText ?? item.insertText;
+  const insertText = explicitInsertText ?? item.label;
+  const hasExplicitInsertText = explicitInsertText != null;
   const keepWhitespaceRule =
     item.insertTextMode === 1
       ? monaco.languages.CompletionItemInsertTextRule.KeepWhitespace
@@ -4032,8 +4034,9 @@ function completionInsert(
   }
 
   if (
-    kind !== monaco.languages.CompletionItemKind.Method &&
-    kind !== monaco.languages.CompletionItemKind.Function
+    hasExplicitInsertText ||
+    (kind !== monaco.languages.CompletionItemKind.Method &&
+      kind !== monaco.languages.CompletionItemKind.Function)
   ) {
     return {
       insertText,

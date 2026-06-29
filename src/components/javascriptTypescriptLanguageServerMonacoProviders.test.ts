@@ -180,11 +180,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
-        insertText: "useUser()$0",
+        insertText: "useUser",
         kind: 3,
         label: "useUser",
       }),
     );
+    expect(result.suggestions[0]).not.toHaveProperty("insertTextRules");
   });
 
   it("routes Vue completion, hover and definition requests through the JS/TS gateway using the Vue document path", async () => {
@@ -3518,7 +3519,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
   });
 
-  it("keeps TypeScript method and property completion kinds distinct", async () => {
+  it("preserves explicit TypeScript method insert text as plain text", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
       completion: {
@@ -3556,11 +3557,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
-        insertText: "refresh()$0",
+        insertText: "refresh",
         kind: monaco.languages.CompletionItemKind.Method,
         label: "refresh",
       }),
     );
+    expect(result.suggestions[0]).not.toHaveProperty("insertTextRules");
     expect(result.suggestions[1]).toEqual(
       expect.objectContaining({
         insertText: "status",
@@ -3571,7 +3573,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
   });
 
-  it("keeps the cursor inside generic TypeScript function completions with parameters", async () => {
+  it("preserves explicit generic TypeScript function insert text as plain text", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
       completion: {
@@ -3609,23 +3611,20 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
-        command: {
-          id: "editor.action.triggerParameterHints",
-          title: "Trigger parameter hints",
-        },
-        insertText: "mapValues($0)",
-        insertTextRules: 4,
+        insertText: "mapValues",
         label: "mapValues",
       }),
     );
+    expect(result.suggestions[0]).not.toHaveProperty("command");
+    expect(result.suggestions[0]).not.toHaveProperty("insertTextRules");
     expect(result.suggestions[1]).toEqual(
       expect.objectContaining({
-        insertText: "clone()$0",
-        insertTextRules: 4,
+        insertText: "clone",
         label: "clone",
       }),
     );
     expect(result.suggestions[1]).not.toHaveProperty("command");
+    expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
   });
 
   it("detects required method parameters from TypeScript label details", async () => {
@@ -3637,7 +3636,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           {
             detail: null,
             documentation: null,
-            insertText: "setUser",
+            insertText: null,
             kind: 2,
             label: "setUser",
             labelDetails: {
