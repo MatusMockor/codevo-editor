@@ -297,12 +297,28 @@ export function SettingsDialog({
                       javaScriptTypeScriptCodeLens,
                     })
                   }
+                  onChangeJavaScriptTypeScriptAddMissingImportsOnSave={(
+                    javaScriptTypeScriptAddMissingImportsOnSave,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptAddMissingImportsOnSave,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptInlayHints={(
                     javaScriptTypeScriptInlayHints,
                   ) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptInlayHints,
+                    })
+                  }
+                  onChangeJavaScriptTypeScriptFixAllOnSave={(
+                    javaScriptTypeScriptFixAllOnSave,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptFixAllOnSave,
                     })
                   }
                   onChangeJavaScriptTypeScriptOrganizeImportsOnSave={(
@@ -494,7 +510,9 @@ interface GeneralSettingsProps {
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
   onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptRemoveUnusedOnSave(enabled: boolean): void;
@@ -525,7 +543,9 @@ function GeneralSettings({
   onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
+  onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
+  onChangeJavaScriptTypeScriptFixAllOnSave,
   onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave,
   onChangeJavaScriptTypeScriptRemoveUnusedOnSave,
@@ -672,6 +692,34 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JS/TS remove unused on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptAddMissingImportsOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptAddMissingImportsOnSave(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS add missing imports on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptFixAllOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptFixAllOnSave(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS fix all on save</span>
       </label>
 
       <div className="settings-actions">

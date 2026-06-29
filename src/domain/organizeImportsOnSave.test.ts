@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  addMissingImportsCodeActionKind,
+  fixAllCodeActionKind,
   fullDocumentRange,
   javaScriptTypeScriptOnSaveSourceActionKinds,
   organizeImportsCodeActionToResolve,
@@ -142,16 +144,25 @@ describe("javaScriptTypeScriptOnSaveSourceActionKinds", () => {
   it("builds ordered source actions from the JS/TS save settings", () => {
     expect(
       javaScriptTypeScriptOnSaveSourceActionKinds({
+        javaScriptTypeScriptAddMissingImportsOnSave: false,
+        javaScriptTypeScriptFixAllOnSave: false,
         javaScriptTypeScriptOrganizeImportsOnSave: false,
         javaScriptTypeScriptRemoveUnusedOnSave: false,
       }),
     ).toEqual([]);
     expect(
       javaScriptTypeScriptOnSaveSourceActionKinds({
+        javaScriptTypeScriptAddMissingImportsOnSave: true,
+        javaScriptTypeScriptFixAllOnSave: true,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
         javaScriptTypeScriptRemoveUnusedOnSave: true,
       }),
-    ).toEqual([organizeImportsCodeActionKind, removeUnusedCodeActionKind]);
+    ).toEqual([
+      addMissingImportsCodeActionKind,
+      organizeImportsCodeActionKind,
+      removeUnusedCodeActionKind,
+      fixAllCodeActionKind,
+    ]);
   });
 });
 
@@ -240,6 +251,26 @@ describe("organizeImportsTextEditsForPath", () => {
     ).not.toBeNull();
   });
 
+  it("matches add-missing-imports source actions when that kind was requested", () => {
+    expect(
+      organizeImportsTextEditsForPath(
+        [action({ kind: addMissingImportsCodeActionKind })],
+        path,
+        addMissingImportsCodeActionKind,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("matches fix-all source actions when that kind was requested", () => {
+    expect(
+      organizeImportsTextEditsForPath(
+        [action({ kind: fixAllCodeActionKind })],
+        path,
+        fixAllCodeActionKind,
+      ),
+    ).not.toBeNull();
+  });
+
   it("ignores actions whose kind is not an organize-imports kind", () => {
     expect(
       organizeImportsTextEditsForPath(
@@ -320,6 +351,30 @@ describe("organizeImportsCodeActionToResolve", () => {
         removeUnusedCodeActionKind,
       ),
     ).toBe(removeUnusedAction);
+  });
+
+  it("returns the first data-only add-missing-imports action for that requested kind", () => {
+    const addMissingImportsAction = action({
+      kind: addMissingImportsCodeActionKind,
+    });
+
+    expect(
+      organizeImportsCodeActionToResolve(
+        [action(), addMissingImportsAction],
+        addMissingImportsCodeActionKind,
+      ),
+    ).toBe(addMissingImportsAction);
+  });
+
+  it("returns the first data-only fix-all action for that requested kind", () => {
+    const fixAllAction = action({ kind: fixAllCodeActionKind });
+
+    expect(
+      organizeImportsCodeActionToResolve(
+        [action(), fixAllAction],
+        fixAllCodeActionKind,
+      ),
+    ).toBe(fixAllAction);
   });
 
   it("ignores command-only actions", () => {

@@ -102,7 +102,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript type-definition navigation is now wired through the managed language server and Monaco provider. Linked editing ranges are also advertised and mapped, enabling VS Code-style paired JSX tag editing when the TypeScript server supports it. Signature help now listens to TypeScript's `<` trigger and `)` retrigger as well as function-call commas.
 - TypeScript/JavaScript CodeLens is wired through the managed language server and Monaco provider. References/implementations CodeLens is disabled by default and can be enabled per workspace in settings.
 - TypeScript/JavaScript file rename edits now use `workspace/willRenameFiles` before local file rename and `workspace/didRenameFiles` after local file rename. Closed-file import edits are written to disk through the workspace layer, while open-file edits are applied to editor buffers.
-- TypeScript/JavaScript file create/delete operations now notify the managed language server through `workspace/didChangeWatchedFiles`, so editor-originated file changes update the TypeScript project graph without requiring a service restart.
+- TypeScript/JavaScript file create/delete operations now use `workspace/willCreateFiles` / `workspace/didCreateFiles` and `workspace/willDeleteFiles` / `workspace/didDeleteFiles` when the managed service advertises file-operation support, falling back to `workspace/didChangeWatchedFiles` for older servers. This lets TypeScript update imports/project state around editor-originated file operations more like VS Code without requiring a service restart.
 - TypeScript/JavaScript call hierarchy requests are now wired through the shared LSP gateway and backend commands (`textDocument/prepareCallHierarchy`, incoming calls, outgoing calls).
 - TypeScript/JavaScript Call Hierarchy is now exposed as a command-palette action and modal. It prepares the symbol under the cursor, loads incoming/outgoing calls from the managed language server, and opens selected callers/callees through normal navigation history.
 - TypeScript/JavaScript type hierarchy requests are now wired through the shared LSP gateway and backend commands (`textDocument/prepareTypeHierarchy`, supertypes, subtypes).
@@ -112,6 +112,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript completions now also trigger on backticks, matching VS Code-style TypeScript completions in template string contexts.
 - TypeScript/JavaScript completion metadata now preserves deprecated item markers from LSP `deprecated` and `tags`, so Monaco can render deprecated suggestions like VS Code.
 - TypeScript/JavaScript completion requests now pass VS Code-like LSP completion context (`triggerKind` and `triggerCharacter`) when Monaco invokes completions from trigger characters such as `.`, quotes, backticks, JSX markers, and private field `#`.
+- TypeScript/JavaScript code actions on save now support per-workspace `source.addMissingImports.ts`, `source.organizeImports`, `source.removeUnused.ts`, and `source.fixAll.ts` toggles. Save-time actions remain conservative: only same-file inline edits are applied, command-only actions are ignored, and root/session guards prevent edits from leaking across project tabs.
 - TypeScript/JavaScript diagnostics now preserve LSP diagnostic tags and map them to Monaco marker tags, so unused and deprecated diagnostics can render with VS Code-like unnecessary/deprecated styling.
 - TypeScript/JavaScript diagnostics now preserve full LSP start/end ranges for Monaco markers and overview-ruler highlights, so squiggles cover the same spans the language server reports instead of collapsing to one character.
 - TypeScript/JavaScript diagnostics now preserve LSP diagnostic codes, `codeDescription.href`, and related information in Monaco markers, so error-code context and secondary locations can surface like VS Code diagnostics.
@@ -195,7 +196,7 @@ Basic mode must support:
 - linked editing for JSX/TSX paired ranges. Implemented when the TypeScript language server advertises support.
 - code lenses for references/implementations. Implemented through LSP-backed Monaco provider when enabled in workspace settings.
 - update imports on file rename. Implemented through managed TypeScript LSP file-operation requests.
-- file create/delete project graph refresh. Implemented for editor-originated JS/TS file operations through `workspace/didChangeWatchedFiles`.
+- file create/delete project graph refresh and pre/post file-operation hooks. Implemented for editor-originated JS/TS file operations through managed TypeScript LSP file-operation requests with watched-file fallback.
 - filesystem watcher refresh for external creates/changes/deletes. Implemented through the Rust workspace watcher with per-workspace JS/TS service lifecycle.
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.

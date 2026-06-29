@@ -912,6 +912,10 @@ describe("SettingsDialog", () => {
       false,
     );
     expect(javaScriptTypeScriptRemoveUnusedOnSaveCheckbox().checked).toBe(false);
+    expect(javaScriptTypeScriptAddMissingImportsOnSaveCheckbox().checked).toBe(
+      false,
+    );
+    expect(javaScriptTypeScriptFixAllOnSaveCheckbox().checked).toBe(false);
 
     await act(async () => {
       javaScriptTypeScriptOrganizeImportsOnSaveCheckbox().dispatchEvent(
@@ -941,6 +945,43 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptAddMissingImportsOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAddMissingImportsOnSave: true,
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptFixAllOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAddMissingImportsOnSave: true,
+        javaScriptTypeScriptFixAllOnSave: true,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
         javaScriptTypeScriptRemoveUnusedOnSave: true,
       },
@@ -1349,6 +1390,14 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptRemoveUnusedOnSaveCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JS/TS remove unused on save");
+  }
+
+  function javaScriptTypeScriptAddMissingImportsOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS add missing imports on save");
+  }
+
+  function javaScriptTypeScriptFixAllOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS fix all on save");
   }
 
   function restartJavaScriptTypeScriptServiceButton(): HTMLButtonElement {

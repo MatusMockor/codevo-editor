@@ -44,8 +44,10 @@ describe("settings defaults", () => {
       formatOnSave: false,
       intelligenceMode: "basic",
       intelephensePath: null,
+      javaScriptTypeScriptAddMissingImportsOnSave: false,
       javaScriptTypeScriptAutoImports: true,
       javaScriptTypeScriptCodeLens: false,
+      javaScriptTypeScriptFixAllOnSave: false,
       javaScriptTypeScriptInlayHints: true,
       javaScriptTypeScriptOrganizeImportsOnSave: false,
       javaScriptTypeScriptRemoveUnusedOnSave: false,
@@ -293,8 +295,10 @@ describe("normalizeWorkspaceSettings", () => {
         formatOnSave: true,
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
+        javaScriptTypeScriptAddMissingImportsOnSave: true,
         javaScriptTypeScriptAutoImports: false,
         javaScriptTypeScriptCodeLens: true,
+        javaScriptTypeScriptFixAllOnSave: true,
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
         javaScriptTypeScriptRemoveUnusedOnSave: true,
@@ -339,8 +343,10 @@ describe("normalizeWorkspaceSettings", () => {
       formatOnSave: true,
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
+      javaScriptTypeScriptAddMissingImportsOnSave: true,
       javaScriptTypeScriptAutoImports: false,
       javaScriptTypeScriptCodeLens: true,
+      javaScriptTypeScriptFixAllOnSave: true,
       javaScriptTypeScriptInlayHints: false,
       javaScriptTypeScriptOrganizeImportsOnSave: true,
       javaScriptTypeScriptRemoveUnusedOnSave: true,
@@ -434,18 +440,43 @@ describe("normalizeWorkspaceSettings", () => {
       normalizeWorkspaceSettings({}).javaScriptTypeScriptRemoveUnusedOnSave,
     ).toBe(false);
     expect(
+      normalizeWorkspaceSettings({})
+        .javaScriptTypeScriptAddMissingImportsOnSave,
+    ).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptFixAllOnSave).toBe(
+      false,
+    );
+    expect(
       normalizeWorkspaceSettings({
+        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
+        javaScriptTypeScriptFixAllOnSave: "yes",
         javaScriptTypeScriptOrganizeImportsOnSave: "yes",
         javaScriptTypeScriptRemoveUnusedOnSave: "yes",
       }).javaScriptTypeScriptOrganizeImportsOnSave,
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({
+        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
+        javaScriptTypeScriptFixAllOnSave: "yes",
+      }).javaScriptTypeScriptAddMissingImportsOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
+        javaScriptTypeScriptFixAllOnSave: "yes",
+      }).javaScriptTypeScriptFixAllOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptAddMissingImportsOnSave: true,
+        javaScriptTypeScriptFixAllOnSave: true,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
         javaScriptTypeScriptRemoveUnusedOnSave: true,
       }),
     ).toEqual({
       ...defaultWorkspaceSettings(),
+      javaScriptTypeScriptAddMissingImportsOnSave: true,
+      javaScriptTypeScriptFixAllOnSave: true,
       javaScriptTypeScriptOrganizeImportsOnSave: true,
       javaScriptTypeScriptRemoveUnusedOnSave: true,
     });

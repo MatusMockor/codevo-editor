@@ -21,9 +21,13 @@ import { workspaceRootKeysEqual } from "./workspaceRootKey";
  * and its `.ts`/`.js` sub-kinds; requesting the base kind is sufficient.
  */
 export const organizeImportsCodeActionKind = "source.organizeImports";
+export const addMissingImportsCodeActionKind = "source.addMissingImports.ts";
+export const fixAllCodeActionKind = "source.fixAll.ts";
 export const removeUnusedCodeActionKind = "source.removeUnused.ts";
 
 export type JavaScriptTypeScriptOnSaveSourceActionKind =
+  | typeof addMissingImportsCodeActionKind
+  | typeof fixAllCodeActionKind
   | typeof organizeImportsCodeActionKind
   | typeof removeUnusedCodeActionKind;
 
@@ -47,11 +51,17 @@ export interface OrganizeImportsOnSavePlan {
 export function javaScriptTypeScriptOnSaveSourceActionKinds(
   settings: Pick<
     WorkspaceSettings,
+    | "javaScriptTypeScriptAddMissingImportsOnSave"
+    | "javaScriptTypeScriptFixAllOnSave"
     | "javaScriptTypeScriptOrganizeImportsOnSave"
     | "javaScriptTypeScriptRemoveUnusedOnSave"
   >,
 ): JavaScriptTypeScriptOnSaveSourceActionKind[] {
   const kinds: JavaScriptTypeScriptOnSaveSourceActionKind[] = [];
+
+  if (settings.javaScriptTypeScriptAddMissingImportsOnSave) {
+    kinds.push(addMissingImportsCodeActionKind);
+  }
 
   if (settings.javaScriptTypeScriptOrganizeImportsOnSave) {
     kinds.push(organizeImportsCodeActionKind);
@@ -59,6 +69,10 @@ export function javaScriptTypeScriptOnSaveSourceActionKinds(
 
   if (settings.javaScriptTypeScriptRemoveUnusedOnSave) {
     kinds.push(removeUnusedCodeActionKind);
+  }
+
+  if (settings.javaScriptTypeScriptFixAllOnSave) {
+    kinds.push(fixAllCodeActionKind);
   }
 
   return kinds;

@@ -8529,6 +8529,198 @@ describe("useWorkbenchController preview tabs", () => {
         ).toHaveBeenCalledWith(path, tsWithoutUnusedImport);
       });
 
+      it("requests and applies JS/TS add missing imports on save", async () => {
+        const path = "/workspace/src/App.ts";
+        const tsWithMissingImport = ["dayjs();", ""].join("\n");
+        const tsWithAddedImport = [
+          "import dayjs from 'dayjs';",
+          "",
+          "dayjs();",
+          "",
+        ].join("\n");
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          organizeImportsAction(
+            path,
+            tsWithMissingImport,
+            tsWithAddedImport,
+            "source.addMissingImports.ts",
+          ),
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptAddMissingImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithMissingImport);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.addMissingImports.ts"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithAddedImport);
+      });
+
+      it("requests and applies JS/TS fix all on save", async () => {
+        const path = "/workspace/src/App.ts";
+        const tsWithFixableIssue = [
+          "const value: string = 1;",
+          "console.log(value);",
+          "",
+        ].join("\n");
+        const tsWithFixAllApplied = [
+          "const value: number = 1;",
+          "console.log(value);",
+          "",
+        ].join("\n");
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          organizeImportsAction(
+            path,
+            tsWithFixableIssue,
+            tsWithFixAllApplied,
+            "source.fixAll.ts",
+          ),
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptFixAllOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithFixableIssue);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalledWith(
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.fixAll.ts"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithFixAllApplied);
+      });
+
+      it("does not execute command-only JS/TS fix all actions on save", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          {
+            command: {
+              arguments: [],
+              command: "_typescript.applyFixAllCodeAction",
+              title: "Fix all",
+            },
+            data: null,
+            edit: null,
+            isPreferred: false,
+            kind: "source.fixAll.ts",
+            title: "Fix all",
+          },
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptFixAllOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.resolveCodeAction).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
+      });
+
       it("resolves data-only organize-imports actions before writing", async () => {
         const path = "/workspace/src/App.ts";
         const actionToResolve = lazyOrganizeImportsAction();

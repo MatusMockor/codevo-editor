@@ -128,7 +128,9 @@ export interface WorkspaceSettings {
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptAutoImports: boolean;
+  javaScriptTypeScriptAddMissingImportsOnSave: boolean;
   javaScriptTypeScriptCodeLens: boolean;
+  javaScriptTypeScriptFixAllOnSave: boolean;
   javaScriptTypeScriptInlayHints: boolean;
   javaScriptTypeScriptOrganizeImportsOnSave: boolean;
   javaScriptTypeScriptRemoveUnusedOnSave: boolean;
@@ -262,8 +264,10 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     formatOnSave: false,
     intelligenceMode: "basic",
     intelephensePath: null,
+    javaScriptTypeScriptAddMissingImportsOnSave: false,
     javaScriptTypeScriptAutoImports: true,
     javaScriptTypeScriptCodeLens: false,
+    javaScriptTypeScriptFixAllOnSave: false,
     javaScriptTypeScriptInlayHints: true,
     javaScriptTypeScriptOrganizeImportsOnSave: false,
     javaScriptTypeScriptRemoveUnusedOnSave: false,
@@ -394,9 +398,17 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.javaScriptTypeScriptAutoImports,
       defaults.javaScriptTypeScriptAutoImports,
     ),
+    javaScriptTypeScriptAddMissingImportsOnSave: normalizeBoolean(
+      value.javaScriptTypeScriptAddMissingImportsOnSave,
+      defaults.javaScriptTypeScriptAddMissingImportsOnSave,
+    ),
     javaScriptTypeScriptCodeLens: normalizeBoolean(
       value.javaScriptTypeScriptCodeLens,
       defaults.javaScriptTypeScriptCodeLens,
+    ),
+    javaScriptTypeScriptFixAllOnSave: normalizeBoolean(
+      value.javaScriptTypeScriptFixAllOnSave,
+      defaults.javaScriptTypeScriptFixAllOnSave,
     ),
     javaScriptTypeScriptInlayHints: normalizeBoolean(
       value.javaScriptTypeScriptInlayHints,
