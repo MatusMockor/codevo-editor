@@ -58,8 +58,12 @@ export const defaultEditorFontFamily =
   "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 export const defaultEditorFontLigatures = false;
 export const defaultEditorFontSize = 14;
+export const defaultWorkspaceInsertSpaces = true;
+export const defaultWorkspaceTabSize = 4;
 export const minEditorFontSize = 8;
 export const maxEditorFontSize = 40;
+export const minWorkspaceTabSize = 1;
+export const maxWorkspaceTabSize = 8;
 const editorFontFamilyAliases = [
   "Berkeley Mono",
   "Cascadia Code",
@@ -116,6 +120,8 @@ export interface AppSettings {
 export interface WorkspaceSettings {
   autoSave: boolean;
   autoSaveConfigured: boolean;
+  defaultInsertSpaces: boolean;
+  defaultTabSize: number;
   extraIgnorePatterns: string[];
   formatOnPaste: boolean;
   formatOnSave: boolean;
@@ -197,6 +203,19 @@ export function normalizeEditorFontSize(value: unknown): number {
   return Math.min(Math.max(rounded, minEditorFontSize), maxEditorFontSize);
 }
 
+export function normalizeWorkspaceTabSize(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultWorkspaceTabSize;
+  }
+
+  const rounded = Math.floor(value);
+
+  return Math.min(
+    Math.max(rounded, minWorkspaceTabSize),
+    maxWorkspaceTabSize,
+  );
+}
+
 export function normalizeEditorFontFamily(value: unknown): string {
   if (typeof value !== "string") {
     return defaultEditorFontFamily;
@@ -234,9 +253,11 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
   return {
     autoSave: true,
     autoSaveConfigured: true,
+    defaultInsertSpaces: defaultWorkspaceInsertSpaces,
+    defaultTabSize: defaultWorkspaceTabSize,
     extraIgnorePatterns: [],
-    formatOnPaste: true,
-    formatOnSave: true,
+    formatOnPaste: false,
+    formatOnSave: false,
     intelligenceMode: "basic",
     intelephensePath: null,
     javaScriptTypeScriptAutoImports: true,
@@ -341,6 +362,14 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
         ? value.autoSave
         : defaults.autoSave,
     autoSaveConfigured: true,
+    defaultInsertSpaces: normalizeBoolean(
+      value.defaultInsertSpaces,
+      defaults.defaultInsertSpaces,
+    ),
+    defaultTabSize:
+      value.defaultTabSize === undefined
+        ? defaults.defaultTabSize
+        : normalizeWorkspaceTabSize(value.defaultTabSize),
     extraIgnorePatterns: normalizePatternList(
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,

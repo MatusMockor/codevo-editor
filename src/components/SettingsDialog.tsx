@@ -255,6 +255,18 @@ export function SettingsDialog({
                       formatOnSave,
                     })
                   }
+                  onChangeDefaultInsertSpaces={(defaultInsertSpaces) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      defaultInsertSpaces,
+                    })
+                  }
+                  onChangeDefaultTabSize={(defaultTabSize) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      defaultTabSize,
+                    })
+                  }
                   onChangeOptimizeImportsOnSave={(optimizeImportsOnSave) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -456,6 +468,8 @@ interface GeneralSettingsProps {
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
   onChangeAutoSave(autoSave: boolean): void;
+  onChangeDefaultInsertSpaces(defaultInsertSpaces: boolean): void;
+  onChangeDefaultTabSize(defaultTabSize: number): void;
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
@@ -486,6 +500,8 @@ function GeneralSettings({
   draftTrusted,
   hasWorkspace,
   onChangeAutoSave,
+  onChangeDefaultInsertSpaces,
+  onChangeDefaultTabSize,
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
   onChangeOptimizeImportsOnSave,
@@ -688,6 +704,35 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>Format on Paste</span>
+      </label>
+
+      <label className="settings-field">
+        <span>Default tab size</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeDefaultTabSize(Number(event.currentTarget.value))
+          }
+          value={workspaceSettings.defaultTabSize}
+        >
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((tabSize) => (
+            <option key={tabSize} value={tabSize}>
+              {tabSize}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.defaultInsertSpaces}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeDefaultInsertSpaces(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Insert spaces by default</span>
       </label>
 
       <label className="settings-toggle">

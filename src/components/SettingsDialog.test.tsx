@@ -111,7 +111,7 @@ describe("SettingsDialog", () => {
     });
   });
 
-  it("keeps Format on Save enabled by default and persists disabling it from settings", async () => {
+  it("keeps Format on Save disabled by default and persists enabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -133,7 +133,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(formatOnSaveCheckbox().checked).toBe(true);
+    expect(formatOnSaveCheckbox().checked).toBe(false);
 
     await act(async () => {
       formatOnSaveCheckbox().dispatchEvent(
@@ -147,7 +147,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        formatOnSave: false,
+        formatOnSave: true,
       },
     });
   });
@@ -193,7 +193,7 @@ describe("SettingsDialog", () => {
     });
   });
 
-  it("keeps Format on Paste enabled by default and persists disabling it from settings", async () => {
+  it("keeps Format on Paste disabled by default and persists enabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -215,7 +215,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(formatOnPasteCheckbox().checked).toBe(true);
+    expect(formatOnPasteCheckbox().checked).toBe(false);
 
     await act(async () => {
       formatOnPasteCheckbox().dispatchEvent(
@@ -229,7 +229,67 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        formatOnPaste: false,
+        formatOnPaste: true,
+      },
+    });
+  });
+
+  it("persists default indentation settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(defaultTabSizeSelect().value).toBe("4");
+    expect(defaultInsertSpacesCheckbox().checked).toBe(true);
+
+    await act(async () => {
+      defaultTabSizeSelect().value = "2";
+      defaultTabSizeSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        defaultTabSize: 2,
+      },
+    });
+
+    await act(async () => {
+      defaultInsertSpacesCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        defaultInsertSpaces: false,
+        defaultTabSize: 2,
       },
     });
   });
@@ -1104,6 +1164,24 @@ describe("SettingsDialog", () => {
 
   function formatOnPasteCheckbox(): HTMLInputElement {
     return checkboxWithLabel("Format on Paste");
+  }
+
+  function defaultTabSizeSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("Default tab size"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error("Default tab size select was not rendered.");
+    }
+
+    return select;
+  }
+
+  function defaultInsertSpacesCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("Insert spaces by default");
   }
 
   function optimizeImportsOnSaveCheckbox(): HTMLInputElement {

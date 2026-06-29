@@ -20,6 +20,7 @@ export function defaultFormattingOptions(): LanguageServerFormattingOptions {
  */
 export function formattingOptionsFromContent(
   content: string,
+  fallback: LanguageServerFormattingOptions = defaultFormattingOptions(),
 ): LanguageServerFormattingOptions {
   const lines = content.split("\n");
 
@@ -46,16 +47,16 @@ export function formattingOptionsFromContent(
   }
 
   if (linesIndentedWithTabs > linesIndentedWithSpaces) {
-    return { insertSpaces: false, tabSize: DEFAULT_TAB_SIZE };
+    return { insertSpaces: false, tabSize: fallback.tabSize };
   }
 
   if (linesIndentedWithSpaces === 0) {
-    return defaultFormattingOptions();
+    return fallback;
   }
 
   return {
     insertSpaces: true,
-    tabSize: mostLikelySpaceIndent(spaceIndentVotes),
+    tabSize: mostLikelySpaceIndent(spaceIndentVotes, fallback.tabSize),
   };
 }
 
@@ -92,8 +93,11 @@ function addVote(votes: Map<number, number>, indent: number): void {
   votes.set(indent, (votes.get(indent) ?? 0) + 1);
 }
 
-function mostLikelySpaceIndent(votes: Map<number, number>): number {
-  let bestIndent = DEFAULT_TAB_SIZE;
+function mostLikelySpaceIndent(
+  votes: Map<number, number>,
+  fallbackTabSize: number,
+): number {
+  let bestIndent = fallbackTabSize;
   let bestVotes = 0;
 
   for (const indent of CANDIDATE_SPACE_INDENTS) {

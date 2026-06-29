@@ -9,10 +9,12 @@
  * what model short name does the parameter map to?
  *
  * It is deliberately conservative — it only recognises the URI string of a
- * `Route::<verb>(...)` call (the verbs that accept a URI path). It intentionally
- * does NOT handle:
- *   - explicit bindings (`Route::model(...)`, `Route::bind(...)`, the
- *     `RouteServiceProvider::boot` mapping)
+ * `Route::<verb>(...)` call (the verbs that accept a URI path), plus simple
+ * static explicit bindings in the same PHP source:
+ *   - `Route::model('user', User::class)`
+ *   - `Route::bind('user', fn (...) => User::...)`
+ * It intentionally does NOT handle:
+ *   - dynamic explicit bindings or project-wide RouteServiceProvider lookup
  *   - resource / singleton routes (their URIs are generated, not literal)
  *   - dynamic / interpolated URIs
  * Resolution of the model short name to a concrete class / file is out of scope
@@ -31,6 +33,8 @@ interface PhpProjectDescriptorLike {
 export interface LaravelRouteModelBindingParameter {
   /** Studly-cased model short name the parameter maps to (e.g. `User`). */
   modelShortName: string;
+  /** Explicitly bound model class name, when statically detectable. */
+  explicitModelClassName: string | null;
   /** Raw parameter name as written, without the `{}`/`?`/`:field` parts. */
   parameterName: string;
   /** Offset of the parameter-name start (just after `{`). */
@@ -106,11 +110,64 @@ export function detectLaravelRouteModelBindingAt(
   }
 
   return {
+    explicitModelClassName: explicitLaravelRouteModelBindingClassName(
+      source,
+      parameter.parameterName,
+    ),
     modelShortName,
     parameterName: parameter.parameterName,
     parameterEnd: parameter.parameterEnd,
     parameterStart: parameter.parameterStart,
   };
+}
+
+/**
+ * Returns the explicitly bound model class for a route parameter when the
+ * binding is static enough to trust, otherwise `null`.
+ */
+export function explicitLaravelRouteModelBindingClassName(
+  source: string,
+  parameterName: string,
+): string | null {
+  for (const call of laravelRouteStaticCallArguments(source, "model")) {
+    const args = splitTopLevelArguments(call.arguments);
+
+    if (args.length < 2) {
+      continue;
+    }
+
+    if (phpStaticStringLiteralValue(args[0]?.text ?? "") !== parameterName) {
+      continue;
+    }
+
+    const modelClassName = phpClassConstantName(args[1]?.text ?? "");
+
+    if (modelClassName) {
+      return modelClassName;
+    }
+  }
+
+  for (const call of laravelRouteStaticCallArguments(source, "bind")) {
+    const args = splitTopLevelArguments(call.arguments);
+
+    if (args.length < 2) {
+      continue;
+    }
+
+    if (phpStaticStringLiteralValue(args[0]?.text ?? "") !== parameterName) {
+      continue;
+    }
+
+    const modelClassName = phpModelClassNameFromRouteBindResolver(
+      args[1]?.text ?? "",
+    );
+
+    if (modelClassName) {
+      return modelClassName;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -166,6 +223,143 @@ function appPsr4Roots(roots: readonly Psr4RootLike[]): Psr4RootLike[] {
   return roots.filter((root) =>
     root.paths.some((path) => /^app\/?$/.test(path.replace(/^\.\//, "").trim())),
   );
+}
+
+interface PhpCallArguments {
+  arguments: string;
+}
+
+interface PhpArgument {
+  text: string;
+}
+
+function laravelRouteStaticCallArguments(
+  source: string,
+  methodName: "bind" | "model",
+): PhpCallArguments[] {
+  const calls: PhpCallArguments[] = [];
+  const pattern = new RegExp(
+    `Route\\s*::\\s*${methodName}\\s*\\(`,
+    "gi",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const openParen = (match.index ?? 0) + match[0].length - 1;
+
+    if (!isPhpCodeOffset(source, openParen)) {
+      continue;
+    }
+
+    const closeParen = matchingParenOffset(source, openParen);
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    calls.push({ arguments: source.slice(openParen + 1, closeParen) });
+  }
+
+  return calls;
+}
+
+function splitTopLevelArguments(argumentsSource: string): PhpArgument[] {
+  const args: PhpArgument[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: "'" | "\"" | null = null;
+
+  for (let index = 0; index < argumentsSource.length; index += 1) {
+    const character = argumentsSource[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth -= 1;
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      args.push({ text: argumentsSource.slice(start, index).trim() });
+      start = index + 1;
+    }
+  }
+
+  args.push({ text: argumentsSource.slice(start).trim() });
+
+  return args;
+}
+
+function phpStaticStringLiteralValue(argument: string): string | null {
+  const match = /^\s*(['"])([\s\S]*)\1\s*$/.exec(argument);
+
+  if (!match?.[1] || match[2] === undefined) {
+    return null;
+  }
+
+  if (match[1] === "\"" && hasPhpVariableInterpolation(match[2])) {
+    return null;
+  }
+
+  return phpUnescapeStringLiteralValue(match[2], match[1] as "'" | "\"");
+}
+
+function phpUnescapeStringLiteralValue(
+  value: string,
+  quote: "'" | "\"",
+): string {
+  if (quote === "'") {
+    return value.replace(/\\\\/g, "\\").replace(/\\'/g, "'");
+  }
+
+  return value.replace(/\\(["\\$])/g, "$1");
+}
+
+function phpClassConstantName(argument: string): string | null {
+  const match =
+    /^\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*$/i.exec(
+      argument,
+    );
+
+  return match?.[1]?.replace(/^\\+/, "") ?? null;
+}
+
+function phpModelClassNameFromRouteBindResolver(argument: string): string | null {
+  const arrowMatch =
+    /^\s*(?:static\s+)?fn\s*\([^)]*\)\s*=>\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::/.exec(
+      argument,
+    );
+
+  if (arrowMatch?.[1]) {
+    return arrowMatch[1].replace(/^\\+/, "");
+  }
+
+  const closureMatch =
+    /^\s*(?:static\s+)?function\s*\([^)]*\)(?:\s*use\s*\([^)]*\))?\s*\{[\s\S]*?\breturn\s+((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::[\s\S]*\}\s*$/.exec(
+      argument,
+    );
+
+  return closureMatch?.[1]?.replace(/^\\+/, "") ?? null;
 }
 
 /**

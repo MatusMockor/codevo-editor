@@ -265,12 +265,14 @@ import {
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
+  phpLaravelResolvedModelTypeCandidate,
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
 import { detectLaravelStringLiteralHelper } from "../domain/laravelStringLiteralHelpers";
 import {
   detectLaravelRouteModelBindingAt,
+  explicitLaravelRouteModelBindingClassName,
   phpModelNamespacePrefixes,
 } from "../domain/laravelRouteModelBinding";
 import {
@@ -7994,7 +7996,11 @@ export function useWorkbenchController(
       path: string,
       content: string,
     ): Promise<LanguageServerTextEdit[]> => {
-      const options = formattingOptionsFromContent(content);
+      const settings = workspaceSettingsRef.current;
+      const options = formattingOptionsFromContent(content, {
+        insertSpaces: settings.defaultInsertSpaces,
+        tabSize: settings.defaultTabSize,
+      });
 
       if (plan.provider === "javaScriptTypeScript") {
         return javaScriptTypeScriptLanguageServerFeaturesGateway.formatting(
@@ -17362,6 +17368,21 @@ export function useWorkbenchController(
           methodCall.receiverExpression,
           depth + 1,
         );
+        const receiverModelType =
+          isLaravelFrameworkActive && receiverType
+            ? phpLaravelResolvedModelTypeCandidate(source, receiverType)
+            : null;
+
+        if (
+          receiverModelType &&
+          (await phpClassHasLaravelLocalScope(
+            receiverModelType,
+            methodCall.methodName,
+          ))
+        ) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
@@ -17529,9 +17550,20 @@ export function useWorkbenchController(
         position,
         receiverExpression,
       );
-      const localScopeMethods = builderModelType
+      const receiverModelType =
+        !builderModelType && isLaravelFrameworkActive && resolvedReceiverType
+          ? phpLaravelResolvedModelTypeCandidate(source, resolvedReceiverType)
+          : null;
+      const localScopeModelType = builderModelType ?? receiverModelType;
+      const localScopeSourceMethods =
+        localScopeModelType && localScopeModelType === resolvedReceiverType
+          ? receiverMethods
+          : localScopeModelType
+            ? await collectPhpMethodsForClass(localScopeModelType)
+            : [];
+      const localScopeMethods = localScopeModelType
         ? phpLaravelLocalScopeCompletionsFromMethods(
-            await collectPhpMethodsForClass(builderModelType),
+            localScopeSourceMethods,
           )
         : [];
       const dynamicWhereMethods = builderModelType
@@ -17548,6 +17580,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
+      isLaravelFrameworkActive,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
     ],
@@ -19358,6 +19391,84 @@ export function useWorkbenchController(
     [goToPhpLaravelEventListenerDefinition, openPhpLaravelHandlerTarget],
   );
 
+  const resolvePhpLaravelExplicitRouteModelBindingClassName = useCallback(
+    async (
+      currentSource: string,
+      currentPath: string | null,
+      parameterName: string,
+    ): Promise<string | null> => {
+      const localClassName = explicitLaravelRouteModelBindingClassName(
+        currentSource,
+        parameterName,
+      );
+
+      if (localClassName) {
+        return resolvePhpClassName(currentSource, localClassName);
+      }
+
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !isRequestedRootActive()) {
+        return null;
+      }
+
+      const searchResults = await Promise.all(
+        ["Route::model", "Route::bind"].map((query) =>
+          textSearch.searchText(requestedRoot, query, 100),
+        ),
+      );
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      const visitedPaths = new Set(currentPath ? [currentPath] : []);
+
+      for (const result of searchResults.flat()) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          const className = explicitLaravelRouteModelBindingClassName(
+            content,
+            parameterName,
+          );
+          const resolvedClassName = className
+            ? resolvePhpClassName(content, className)
+            : null;
+
+          if (resolvedClassName) {
+            return resolvedClassName;
+          }
+        } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          continue;
+        }
+      }
+
+      return null;
+    },
+    [readNavigationFileContent, textSearch, workspaceRoot],
+  );
+
   // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
   // literals (config / view / __ / trans / env / route). Monaco's definition provider
   // delegates here; because the editor opens files through its own tab system
@@ -19381,20 +19492,42 @@ export function useWorkbenchController(
         return false;
       }
 
-      // Implicit route model binding: a `{user}` segment in a `Route::<verb>`
-      // URI string binds to the `User` Eloquent model by convention (Laravel
-      // Studly-cases the parameter name; it does NOT singularise it). We try the
-      // modern `App\Models\<Studly>` location first, then the legacy `App\<Studly>`
-      // one. openPhpClassTarget carries the indexed-symbol lookup, candidate-path
-      // resolution, and per-workspace isolation guards, and navigates only when a
-      // class file exists — so an unresolvable parameter conservatively does
-      // nothing. Detection runs before the string-helper branch because a route
-      // URI literal is never a global helper argument.
+      // Route model binding: a `{user}` segment in a `Route::<verb>` URI string
+      // first checks static explicit bindings (`Route::model` / simple
+      // `Route::bind` resolvers), then falls back to the implicit `User` Eloquent
+      // model convention (Laravel Studly-cases the parameter name; it does NOT
+      // singularise it). openPhpClassTarget carries the indexed-symbol lookup,
+      // candidate-path resolution, and per-workspace isolation guards, and
+      // navigates only when a class file exists — so an unresolvable parameter
+      // conservatively does nothing. Detection runs before the string-helper
+      // branch because a route URI literal is never a global helper argument.
       const routeBinding = isLaravelFrameworkActive
         ? detectLaravelRouteModelBindingAt(source, offset)
         : null;
 
       if (routeBinding) {
+        const resolvedExplicitClassName =
+          await resolvePhpLaravelExplicitRouteModelBindingClassName(
+            source,
+            activeDocument?.path ?? null,
+            routeBinding.parameterName,
+          );
+
+        if (resolvedExplicitClassName) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          const handled = await openPhpClassTarget(
+            resolvedExplicitClassName,
+            shortPhpName(resolvedExplicitClassName),
+          );
+
+          if (handled) {
+            return true;
+          }
+        }
+
         const modelNamespaces =
           phpModelNamespacePrefixes(workspaceDescriptor?.php);
 
@@ -19582,6 +19715,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       openNavigationTarget,
       openPhpClassTarget,
+      resolvePhpLaravelExplicitRouteModelBindingClassName,
       workspaceDescriptor,
       workspaceRoot,
     ],

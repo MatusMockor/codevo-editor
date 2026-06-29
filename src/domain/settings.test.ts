@@ -37,9 +37,11 @@ describe("settings defaults", () => {
     expect(defaultWorkspaceSettings()).toEqual({
       autoSave: true,
       autoSaveConfigured: true,
+      defaultInsertSpaces: true,
+      defaultTabSize: 4,
       extraIgnorePatterns: [],
-      formatOnPaste: true,
-      formatOnSave: true,
+      formatOnPaste: false,
+      formatOnSave: false,
       intelligenceMode: "basic",
       intelephensePath: null,
       javaScriptTypeScriptAutoImports: true,
@@ -282,6 +284,8 @@ describe("normalizeWorkspaceSettings", () => {
       normalizeWorkspaceSettings({
         autoSave: true,
         autoSaveConfigured: true,
+        defaultInsertSpaces: false,
+        defaultTabSize: 6,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
         formatOnPaste: true,
         formatOnSave: true,
@@ -324,6 +328,8 @@ describe("normalizeWorkspaceSettings", () => {
     ).toEqual({
       autoSave: true,
       autoSaveConfigured: true,
+      defaultInsertSpaces: false,
+      defaultTabSize: 6,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
       formatOnPaste: true,
       formatOnSave: true,
@@ -385,11 +391,11 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
   });
 
-  it("defaults formatOnSave to true and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).formatOnSave).toBe(true);
+  it("defaults formatOnSave to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).formatOnSave).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: "yes" }).formatOnSave,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: false }).formatOnSave,
     ).toBe(false);
@@ -427,11 +433,11 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(true);
   });
 
-  it("defaults formatOnPaste to true and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).formatOnPaste).toBe(true);
+  it("defaults formatOnPaste to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).formatOnPaste).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnPaste: "yes" }).formatOnPaste,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnPaste: false }).formatOnPaste,
     ).toBe(false);
@@ -444,6 +450,8 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({
         extraIgnorePatterns: ["var/cache", 4],
+        defaultInsertSpaces: "yes",
+        defaultTabSize: 0,
         intelligenceMode: "unknown",
         javaScriptTypeScriptService: "manual",
         javaScriptTypeScriptVersion: "manual",
@@ -452,6 +460,7 @@ describe("normalizeWorkspaceSettings", () => {
       }),
     ).toEqual({
       ...defaultWorkspaceSettings(),
+      defaultTabSize: 1,
       extraIgnorePatterns: ["var/cache"],
     });
     expect(normalizeWorkspaceSettings(null)).toEqual(defaultWorkspaceSettings());

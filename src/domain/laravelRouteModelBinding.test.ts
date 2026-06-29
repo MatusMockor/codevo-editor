@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectLaravelRouteModelBindingAt,
+  explicitLaravelRouteModelBindingClassName,
   laravelRouteParameterModelShortName,
   phpModelNamespacePrefixes,
 } from "./laravelRouteModelBinding";
@@ -71,6 +72,65 @@ describe("phpModelNamespacePrefixes", () => {
   });
 });
 
+describe("explicitLaravelRouteModelBindingClassName", () => {
+  it("detects a conservative Route::model binding", () => {
+    const source = `<?php
+use App\\Models\\Member;
+
+Route::model('user', Member::class);
+`;
+
+    expect(explicitLaravelRouteModelBindingClassName(source, "user")).toBe(
+      "Member",
+    );
+  });
+
+  it("detects a fully qualified Route::model binding", () => {
+    const source = `<?php
+Route::model('account', \\Domain\\Accounts\\Account::class);
+`;
+
+    expect(explicitLaravelRouteModelBindingClassName(source, "account")).toBe(
+      "Domain\\Accounts\\Account",
+    );
+  });
+
+  it("detects a simple Route::bind arrow-function model resolver", () => {
+    const source = `<?php
+use App\\Models\\Member;
+
+Route::bind('user', fn ($value) => Member::where('uuid', $value)->firstOrFail());
+`;
+
+    expect(explicitLaravelRouteModelBindingClassName(source, "user")).toBe(
+      "Member",
+    );
+  });
+
+  it("detects a simple Route::bind closure return model resolver", () => {
+    const source = `<?php
+Route::bind('user', function ($value) {
+    return App\\Models\\Member::where('uuid', $value)->firstOrFail();
+});
+`;
+
+    expect(explicitLaravelRouteModelBindingClassName(source, "user")).toBe(
+      "App\\Models\\Member",
+    );
+  });
+
+  it("rejects dynamic Route::model and Route::bind cases", () => {
+    const source = `<?php
+Route::model($parameter, User::class);
+Route::model('team', modelClass());
+Route::bind('user', fn ($value) => app(UserRepository::class)->find($value));
+`;
+
+    expect(explicitLaravelRouteModelBindingClassName(source, "user")).toBeNull();
+    expect(explicitLaravelRouteModelBindingClassName(source, "team")).toBeNull();
+  });
+});
+
 describe("detectLaravelRouteModelBindingAt", () => {
   it("detects a parameter inside a Route::get URI string", () => {
     const source = `<?php
@@ -85,6 +145,25 @@ Route::get('/users/{user}', [UserController::class, 'show']);
     expect(result).not.toBeNull();
     expect(result?.parameterName).toBe("user");
     expect(result?.modelShortName).toBe("User");
+    expect(result?.explicitModelClassName).toBeNull();
+  });
+
+  it("detects an explicit model binding for a route parameter", () => {
+    const source = `<?php
+use App\\Models\\Member;
+
+Route::model('user', Member::class);
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+
+    const result = detectLaravelRouteModelBindingAt(
+      source,
+      offsetInside(source, "user", "{user}"),
+    );
+
+    expect(result?.parameterName).toBe("user");
+    expect(result?.modelShortName).toBe("User");
+    expect(result?.explicitModelClassName).toBe("Member");
   });
 
   it("detects a camelCase parameter and studly-cases the model", () => {

@@ -7411,7 +7411,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
         "/workspace",
         path,
-        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+        expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
       );
       expect(
         dependencies.workspaceGateways.files.writeTextFile,
@@ -7480,7 +7480,7 @@ describe("useWorkbenchController preview tabs", () => {
       );
     });
 
-    it("falls back to two-space indentation when the document has none", async () => {
+    it("falls back to workspace default indentation when the document has none", async () => {
       const path = "/workspace/src/App.ts";
       const unformatted = "export const value=2;\n";
       const formatted = "export const value = 2;\n";
@@ -7504,6 +7504,8 @@ describe("useWorkbenchController preview tabs", () => {
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
           autoSave: false,
+          defaultInsertSpaces: false,
+          defaultTabSize: 8,
           formatOnSave: true,
         },
       });
@@ -7525,7 +7527,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
         "/workspace",
         path,
-        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+        expect.objectContaining({ insertSpaces: false, tabSize: 8 }),
       );
     });
 
@@ -7667,7 +7669,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(phpFeaturesGateway.formatting).toHaveBeenCalledWith(
         "/workspace",
         path,
-        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+        expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
       );
       expect(
         dependencies.workspaceGateways.files.writeTextFile,
@@ -7728,7 +7730,7 @@ describe("useWorkbenchController preview tabs", () => {
         expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
           "/workspace-a",
           path,
-          expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+          expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
         );
       });
 
@@ -7829,7 +7831,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
         "/workspace",
         path,
-        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+        expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
       );
       expect(
         vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
@@ -35397,6 +35399,10 @@ class AlbumController
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
 
+        $existingAlbum->pub
+        $existingAlbum->pop
+        $existingAlbum->published()->ord
+
         $multilineAlbum = Album::query()
             ->whereNull('parent_id')
             ->first();
@@ -35512,6 +35518,9 @@ class AlbumController
           return `<?php
 namespace App\\Models;
 
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+
 class Album
 {
     public string $title;
@@ -35519,6 +35528,8 @@ class Album
     public function getTitle(): string {}
 
     public function scopePublished($query, bool $strict = true): void {}
+    #[Scope]
+    protected function popular(Builder $query): void {}
     public function scopeWithRelations(Builder $query): Builder {}
 }
 `;
@@ -35611,6 +35622,45 @@ class Builder
         name: "getTitle",
         parameters: "",
         returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$existingAlbum->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$existingAlbum->pop"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "popular",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$existingAlbum->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
       },
     ]);
     await expect(
@@ -45167,6 +45217,181 @@ class User extends Model
           lineNumber: 5,
         },
       });
+    });
+
+    it("prefers an explicit Route::model binding over the implicit model guess", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const explicitModelPath = "/workspace/app/Models/Member.php";
+      const implicitModelPath = "/workspace/app/Models/User.php";
+      const routesSource = `<?php
+use App\\Models\\Member;
+
+Route::model('user', Member::class);
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const explicitModelSource = `<?php
+
+namespace App\\Models;
+
+class Member extends Model
+{
+}
+`;
+      const implicitModelSource = `<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === explicitModelPath) {
+            return explicitModelSource;
+          }
+
+          if (path === implicitModelPath) {
+            return implicitModelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(explicitModelPath);
+      expect(getWorkbench().activePath).not.toBe(implicitModelPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: explicitModelPath,
+        position: {
+          column: 7,
+          lineNumber: 5,
+        },
+      });
+    });
+
+    it("prefers an explicit provider Route::model binding over the implicit model guess", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const providerPath = "/workspace/app/Providers/RouteServiceProvider.php";
+      const explicitModelPath = "/workspace/app/Models/Member.php";
+      const implicitModelPath = "/workspace/app/Models/User.php";
+      const routesSource = `<?php
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Models\\Member;
+use Illuminate\\Support\\Facades\\Route;
+
+class RouteServiceProvider
+{
+    public function boot(): void
+    {
+        Route::model('user', Member::class);
+    }
+}
+`;
+      const explicitModelSource = `<?php
+
+namespace App\\Models;
+
+class Member extends Model
+{
+}
+`;
+      const implicitModelSource = `<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === explicitModelPath) {
+            return explicitModelSource;
+          }
+
+          if (path === implicitModelPath) {
+            return implicitModelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        searchText: vi.fn(async (_root, query) =>
+          query === "Route::model"
+            ? [
+                {
+                  column: 9,
+                  lineNumber: 11,
+                  lineText: "        Route::model('user', Member::class);",
+                  path: providerPath,
+                  relativePath: "app/Providers/RouteServiceProvider.php",
+                },
+              ]
+            : [],
+        ),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(explicitModelPath);
+      expect(getWorkbench().activePath).not.toBe(implicitModelPath);
     });
 
     it("falls back to a legacy flat-namespaced model for a route parameter", async () => {

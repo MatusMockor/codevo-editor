@@ -3047,6 +3047,18 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
     );
   }
 
+  const receiverModelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    receiverType,
+  );
+
+  if (
+    receiverModelType &&
+    phpLaravelModelHasLocalScope(source, receiverModelType, methodName)
+  ) {
+    return phpLaravelEloquentBuilderType(receiverModelType);
+  }
+
   const modelType = phpLaravelStaticModelReceiverType(source, receiverType);
 
   return modelType
@@ -3106,7 +3118,7 @@ function phpLaravelStaticModelReceiverType(
   return phpLaravelResolvedModelTypeCandidate(source, receiverType);
 }
 
-function phpLaravelResolvedModelTypeCandidate(
+export function phpLaravelResolvedModelTypeCandidate(
   source: string,
   typeName: string | null,
 ): string | null {
