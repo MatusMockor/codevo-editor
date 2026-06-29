@@ -2534,16 +2534,9 @@ function store($request): void
       },
     );
 
+    // Category grouping puts the property ahead of the method regardless of the
+    // collector's source order, while visibility metadata is preserved.
     expect(result.suggestions).toEqual([
-      expect.objectContaining({
-        detail: "protected App\\Models\\Comment::publish(): bool",
-        kind: 2,
-        label: {
-          description: "protected method - App\\Models\\Comment",
-          detail: "(): bool",
-          label: "publish",
-        },
-      }),
       expect.objectContaining({
         detail: "public App\\Models\\Comment::$body: string",
         kind: 10,
@@ -2553,6 +2546,98 @@ function store($request): void
           label: "body",
         },
       }),
+      expect.objectContaining({
+        detail: "protected App\\Models\\Comment::publish(): bool",
+        kind: 2,
+        label: {
+          description: "protected method - App\\Models\\Comment",
+          detail: "(): bool",
+          label: "publish",
+        },
+      }),
+    ]);
+  });
+
+  it("orders PHP member completions by category with distinct per-category glyphs", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "publish",
+        parameters: "",
+        returnType: "void",
+      },
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "scope" as const,
+        name: "active",
+        parameters: "Builder $query",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "property" as const,
+        name: "title",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "relation" as const,
+        name: "author",
+        parameters: "",
+        returnType: "App\\Models\\User",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Post $post): void\n{\n    $post->\n}\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $post->",
+        word: {
+          endColumn: 12,
+          startColumn: 12,
+        },
+      }),
+      {
+        column: 12,
+        lineNumber: 4,
+      },
+    );
+
+    const rows = result.suggestions.map(
+      (suggestion: {
+        kind: number;
+        label: string | { label: string };
+        sortText?: string;
+      }) => ({
+        kind: suggestion.kind,
+        name:
+          typeof suggestion.label === "string"
+            ? suggestion.label
+            : suggestion.label.label,
+        sortText: suggestion.sortText,
+      }),
+    );
+
+    // property (10) -> relation/Field (5) -> method (2) -> scope/Function (3),
+    // and the `sortText` index follows the category order.
+    expect(rows).toEqual([
+      { kind: 10, name: "title", sortText: "0_0000" },
+      { kind: 5, name: "author", sortText: "0_0001" },
+      { kind: 2, name: "publish", sortText: "0_0002" },
+      { kind: 3, name: "active", sortText: "0_0003" },
     ]);
   });
 

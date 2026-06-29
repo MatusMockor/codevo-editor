@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  orderPhpMemberCompletionsByCategory,
   phpMemberAccessCompletionContextAt,
   phpMixinClassNames,
   phpMethodCompletionsFromSource,
@@ -7,6 +8,7 @@ import {
   phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
+  type PhpMethodCompletion,
 } from "./phpMethodCompletions";
 import {
   isLaravelDatabaseQueryBuilderFluentMethod,
@@ -4200,5 +4202,142 @@ ${attributes}
       "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
     );
     expect(elapsed).toBeLessThan(100);
+  });
+});
+
+describe("orderPhpMemberCompletionsByCategory", () => {
+  function member(
+    name: string,
+    kind?: PhpMethodCompletion["kind"],
+  ): PhpMethodCompletion {
+    return {
+      declaringClassName: "App\\Models\\Post",
+      ...(kind ? { kind } : {}),
+      name,
+      parameters: "",
+      returnType: null,
+    };
+  }
+
+  it("groups members PhpStorm-like: properties, relations, methods, then magic scopes", () => {
+    const ordered = orderPhpMemberCompletionsByCategory([
+      member("publish"),
+      member("active", "scope"),
+      member("title", "property"),
+      member("author", "relation"),
+      member("save"),
+      member("body", "property"),
+    ]);
+
+    expect(ordered.map((completion) => completion.name)).toEqual([
+      "title",
+      "body",
+      "author",
+      "publish",
+      "save",
+      "active",
+    ]);
+  });
+
+  it("is a stable sort that preserves source order within a category", () => {
+    const ordered = orderPhpMemberCompletionsByCategory([
+      member("zebra", "property"),
+      member("alpha", "property"),
+      member("mango", "property"),
+    ]);
+
+    expect(ordered.map((completion) => completion.name)).toEqual([
+      "zebra",
+      "alpha",
+      "mango",
+    ]);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [member("publish"), member("title", "property")];
+    const snapshot = input.map((completion) => completion.name);
+
+    orderPhpMemberCompletionsByCategory(input);
+
+    expect(input.map((completion) => completion.name)).toEqual(snapshot);
+  });
+});
+
+describe("trait members behave as host-class members (kontentino HasTenancy)", () => {
+  // Real shapes captured from kontentino/api:
+  //   app/Tenancy/HasTenancy.php (public methods, body references host members)
+  //   app/Kontentino/src/UserAccounts/Models/UserAccount.php (use HasTenancy)
+  const hasTenancyTrait = `<?php
+
+declare(strict_types=1);
+
+namespace App\\Tenancy;
+
+trait HasTenancy
+{
+    public function database(): DatabaseConfig
+    {
+        return new DatabaseConfig($this);
+    }
+
+    public function getTenantKeyName(): string
+    {
+        return 'account_id';
+    }
+
+    public function getTenantKey(): mixed
+    {
+        return $this->getAttribute($this->getTenantKeyName());
+    }
+
+    public function getInternal(string $key): mixed
+    {
+        return $this->getAttribute(static::internalPrefix() . $key);
+    }
+
+    public function setInternal(string $key, mixed $value): self
+    {
+        $this->setAttribute(static::internalPrefix() . $key, $value);
+
+        return $this;
+    }
+}
+`;
+  const userAccountModel = `<?php
+
+declare(strict_types=1);
+
+namespace Kontentino\\UserAccounts\\Models;
+
+use App\\Tenancy\\HasTenancy;
+use Kontentino\\Eloquent\\AdminModel;
+
+class UserAccount extends AdminModel
+{
+    use HasTenancy;
+}
+`;
+
+  it("surfaces a trait's public members so the host class can complete them", () => {
+    const names = phpMethodCompletionsFromSource(
+      hasTenancyTrait,
+      "App\\Tenancy\\HasTenancy",
+    ).map((member) => member.name);
+
+    // These flow into the host's `$this->`/`$account->` completion list when the
+    // controller traverses `use HasTenancy;`.
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "database",
+        "getTenantKeyName",
+        "getTenantKey",
+        "getInternal",
+        "setInternal",
+      ]),
+    );
+  });
+
+  it("resolves the trait the host model uses for member traversal", () => {
+    expect(phpTraitClassNames(userAccountModel)).toContain("HasTenancy");
   });
 });

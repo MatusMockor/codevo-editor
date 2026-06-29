@@ -594,6 +594,149 @@ class Post extends Model
       "laravel",
     );
   });
+
+  describe("model attributes from migration workspace sources", () => {
+    // Real shapes captured from kontentino/api:
+    //   app/Kontentino/src/AiHub/Models/AiUsage.php
+    //   database/migrations/2026_05_04_150000_create_ai_usages_table.php
+    const aiUsageModel = `<?php
+namespace Kontentino\\AiHub\\Models;
+
+use Kontentino\\Eloquent\\AdminModel;
+
+class AiUsage extends AdminModel
+{
+    protected $table = 'ai_usages';
+
+    protected $fillable = [
+        'user_id',
+        'account_id',
+        'usage_date',
+        'usage_count',
+    ];
+
+    protected $casts = [
+        'user_id' => 'integer',
+        'account_id' => 'integer',
+        'usage_count' => 'integer',
+        'usage_date' => 'date',
+    ];
+}
+`;
+    const aiUsagesMigration = `<?php
+
+declare(strict_types=1);
+
+use Illuminate\\Database\\Migrations\\Migration;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('ai_usages', function (Blueprint $table) {
+            $table->id();
+            $table->integer('user_id');
+            $table->integer('account_id');
+            $table->date('usage_date');
+            $table->integer('usage_count')->default(0);
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('ai_usages');
+    }
+};
+`;
+
+    function completionsFor(workspaceSources?: readonly string[]) {
+      return phpFrameworkMemberCompletionsFromSource(
+        aiUsageModel,
+        "Kontentino\\AiHub\\Models\\AiUsage",
+        [phpLaravelFrameworkProvider],
+        workspaceSources ? { workspaceSources } : undefined,
+      );
+    }
+
+    it("merges DB columns parsed from migrations into model attribute completions", () => {
+      const completions = completionsFor([aiUsagesMigration]);
+      const names = completions.map((completion) => completion.name);
+
+      // fillable + casts are preserved.
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "user_id",
+          "account_id",
+          "usage_date",
+          "usage_count",
+        ]),
+      );
+      // Columns that only exist in the migration (never in $fillable):
+      // primary key + timestamps().
+      expect(names).toEqual(
+        expect.arrayContaining(["id", "created_at", "updated_at"]),
+      );
+
+      const byName = new Map(
+        completions.map((completion) => [completion.name, completion.returnType]),
+      );
+      expect(byName.get("id")).toBe("int");
+      expect(byName.get("created_at")).toBe("\\Illuminate\\Support\\Carbon");
+      expect(byName.get("updated_at")).toBe("\\Illuminate\\Support\\Carbon");
+      // Both the cast and the migration agree on int here; the divergent-type
+      // case below proves the cast actually wins.
+      expect(byName.get("account_id")).toBe("int");
+    });
+
+    it("lets an explicit $casts type win over the raw migration column type", () => {
+      // Migration declares `integer('account_id')` but the model casts it to a
+      // string - the cast must take precedence over the migration column type.
+      const modelWithDivergentCast = aiUsageModel.replace(
+        "'account_id' => 'integer',",
+        "'account_id' => 'string',",
+      );
+      const byName = new Map(
+        phpFrameworkMemberCompletionsFromSource(
+          modelWithDivergentCast,
+          "Kontentino\\AiHub\\Models\\AiUsage",
+          [phpLaravelFrameworkProvider],
+          { workspaceSources: [aiUsagesMigration] },
+        ).map((completion) => [completion.name, completion.returnType]),
+      );
+
+      expect(byName.get("account_id")).toBe("string");
+      // The migration still contributes its DB-only column alongside the cast.
+      expect(byName.get("created_at")).toBe("\\Illuminate\\Support\\Carbon");
+    });
+
+    it("falls back to fillable/casts when no migration sources are supplied", () => {
+      const names = completionsFor().map((completion) => completion.name);
+
+      expect(names).toEqual(
+        expect.arrayContaining(["user_id", "account_id", "usage_count"]),
+      );
+      expect(names).not.toContain("created_at");
+      expect(names).not.toContain("id");
+    });
+
+    it("ignores migrations whose table does not match the model (conservative)", () => {
+      const unrelatedMigration = aiUsagesMigration.replace(
+        /ai_usages/g,
+        "other_table",
+      );
+      const names = completionsFor([unrelatedMigration]).map(
+        (completion) => completion.name,
+      );
+
+      expect(names).not.toContain("created_at");
+      expect(names).not.toContain("id");
+      // Existing fillable/casts attributes remain intact.
+      expect(names).toEqual(expect.arrayContaining(["user_id", "account_id"]));
+    });
+  });
 });
 
 function phpProjectDescriptor(

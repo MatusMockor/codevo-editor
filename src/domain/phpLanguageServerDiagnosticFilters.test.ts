@@ -1021,6 +1021,63 @@ trait DispatchesEvents
     ).toEqual([]);
   });
 
+  it("treats a real kontentino trait (HasTenancy) as part of its host model", () => {
+    // app/Tenancy/HasTenancy.php: trait methods reach for Eloquent host members
+    // (getAttribute/setAttribute). PHPactor analysing the trait in isolation
+    // reports them as missing; with the host context confirmed they are not the
+    // user's bug, so the trait is treated as part of the host model.
+    const source = `<?php
+
+declare(strict_types=1);
+
+namespace App\\Tenancy;
+
+trait HasTenancy
+{
+    public function getTenantKey(): mixed
+    {
+        return $this->getAttribute($this->getTenantKeyName());
+    }
+
+    public function setInternal(string $key, mixed $value): self
+    {
+        $this->setAttribute(static::internalPrefix() . $key, $value);
+
+        return $this;
+    }
+}
+`;
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnosticAt(source, "getAttribute(", {
+            message:
+              'Method "getAttribute" does not exist on trait "App\\Tenancy\\HasTenancy"',
+          }),
+          diagnosticAt(source, "setAttribute(", {
+            message:
+              'Method "setAttribute" does not exist on trait "App\\Tenancy\\HasTenancy"',
+          }),
+        ],
+        {
+          contextualTraitHostMethods: new Set([
+            phpTraitHostMethodDiagnosticKey(
+              "App\\Tenancy\\HasTenancy",
+              "getAttribute",
+            ),
+            phpTraitHostMethodDiagnosticKey(
+              "App\\Tenancy\\HasTenancy",
+              "setAttribute",
+            ),
+          ]),
+          path: "/workspace/app/Tenancy/HasTenancy.php",
+        },
+      ),
+    ).toEqual([]);
+  });
+
   it("suppresses trait self host-method diagnostics when host context is confirmed", () => {
     const source = `<?php
 namespace App\\Support;

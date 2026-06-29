@@ -47,6 +47,7 @@ import {
   type UserSnippet,
 } from "../domain/snippets";
 import {
+  orderPhpMemberCompletionsByCategory,
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
   phpStaticAccessCompletionContextAt,
@@ -4213,7 +4214,11 @@ async function phpMethodSuggestions(
       return [];
     }
 
-    return methods.map((item, index) => ({
+    // Group the list PhpStorm-like (properties, relations, methods, magic
+    // scopes) before assigning the `sortText` index so Monaco renders the
+    // categories together. The sort is stable, so each collector's intended
+    // ordering within a category is untouched.
+    return orderPhpMemberCompletionsByCategory(methods).map((item, index) => ({
       command:
         item.kind !== "property" &&
         item.kind !== "config" &&
@@ -4542,6 +4547,12 @@ function phpMethodCompletionKind(
     return monaco.languages.CompletionItemKind.Property;
   }
 
+  if (item.kind === "scope") {
+    // Magic query scopes read like methods but are not declared as such, so a
+    // distinct Function glyph separates them from real methods in the list.
+    return monaco.languages.CompletionItemKind.Function;
+  }
+
   return monaco.languages.CompletionItemKind.Method;
 }
 
@@ -4669,6 +4680,10 @@ function phpMethodCompletionLabelDescription(item: PhpMethodCompletion): string 
 
   if (item.kind === "property") {
     return `${visibilityPrefix}property - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "scope") {
+    return `scope - ${item.declaringClassName}`;
   }
 
   return `${visibilityPrefix}method - ${item.declaringClassName}`;

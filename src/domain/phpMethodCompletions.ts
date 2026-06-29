@@ -215,6 +215,49 @@ export function phpMethodCompletionsFromSource(
   return dedupePhpMembers(members);
 }
 
+// PhpStorm-like member grouping rank for `$receiver->`/`Class::` completion
+// lists: data first (properties incl. DB columns), then relations, then plain
+// methods, then "magic" query scopes. Lower ranks sort first.
+const phpMemberCompletionCategoryRanks: Record<
+  NonNullable<PhpMethodCompletion["kind"]>,
+  number
+> = {
+  property: 0,
+  relation: 1,
+  config: 2,
+  env: 2,
+  route: 2,
+  translation: 2,
+  view: 2,
+  scope: 3,
+};
+
+function phpMemberCompletionCategoryRank(member: PhpMethodCompletion): number {
+  // Plain methods (kind undefined) sit between relations and magic scopes.
+  return member.kind ? phpMemberCompletionCategoryRanks[member.kind] : 2;
+}
+
+/**
+ * Returns a new array of member completions ordered by category so callers can
+ * render PhpStorm-like grouping (properties, relations, methods, then magic
+ * scopes). The sort is stable, so the relative order within each category - and
+ * therefore each upstream collector's intended ordering - is preserved.
+ */
+export function orderPhpMemberCompletionsByCategory(
+  members: readonly PhpMethodCompletion[],
+): PhpMethodCompletion[] {
+  return members
+    .map((member, index) => ({ index, member }))
+    .sort((left, right) => {
+      const rankDelta =
+        phpMemberCompletionCategoryRank(left.member) -
+        phpMemberCompletionCategoryRank(right.member);
+
+      return rankDelta !== 0 ? rankDelta : left.index - right.index;
+    })
+    .map((entry) => entry.member);
+}
+
 function phpDocMethodCompletionsFromSource(
   source: string,
   declaringClassName: string,

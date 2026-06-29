@@ -2070,6 +2070,7 @@ export function isLaravelDynamicWhereMethodForSource(
 export function phpLaravelModelAttributeCompletionsFromSource(
   source: string,
   declaringClassName: string,
+  workspaceSources: readonly string[] = [],
 ): PhpMethodCompletion[] {
   const attributes = new Map<string, string | null>();
 
@@ -2080,6 +2081,14 @@ export function phpLaravelModelAttributeCompletionsFromSource(
   for (const [attribute, returnType] of phpLaravelSchemaAttributesForModel(
     source,
     declaringClassName,
+  )) {
+    attributes.set(attribute, returnType);
+  }
+
+  for (const [attribute, returnType] of phpLaravelMigrationSchemaAttributesForModel(
+    source,
+    declaringClassName,
+    workspaceSources,
   )) {
     attributes.set(attribute, returnType);
   }
@@ -4921,6 +4930,54 @@ function phpLaravelSchemaAttributesForModel(
   );
 }
 
+// Resolves the model's table (explicit `$table` or Laravel naming convention)
+// and merges DB columns parsed from the migration files supplied as
+// `workspaceSources`. Conservative by design: returns nothing when the table
+// cannot be determined or no supplied migration touches it, so callers fall
+// back to the existing $fillable/$casts-derived attributes. Per-workspace
+// isolation is preserved because the migration sources are passed in by the
+// caller for the active project root only.
+function phpLaravelMigrationSchemaAttributesForModel(
+  modelSource: string,
+  declaringClassName: string,
+  workspaceSources: readonly string[],
+): Array<[string, string | null]> {
+  if (workspaceSources.length === 0) {
+    return [];
+  }
+
+  const tableName = phpLaravelModelTableNameFromSource(
+    modelSource,
+    declaringClassName,
+  );
+
+  if (!tableName) {
+    return [];
+  }
+
+  const columns = new Map<string, string | null>();
+
+  for (const workspaceSource of workspaceSources) {
+    if (
+      !phpLaravelSourceHasSchemaColumns(workspaceSource) ||
+      !workspaceSource.includes(tableName)
+    ) {
+      continue;
+    }
+
+    for (const occurrence of phpLaravelSchemaAttributeOccurrences(
+      workspaceSource,
+      tableName,
+    )) {
+      if (!columns.has(occurrence.attributeName)) {
+        columns.set(occurrence.attributeName, occurrence.returnType);
+      }
+    }
+  }
+
+  return Array.from(columns);
+}
+
 function phpLaravelModelTableNameFromSource(
   source: string,
   declaringClassName: string,
@@ -5207,19 +5264,66 @@ function phpLaravelSchemaColumnsFromClosure(
       continue;
     }
 
-    const column = phpLaravelSchemaColumnFromCall(
-      source,
-      methodName,
-      openOffset,
-      closeOffset,
+    columns.push(
+      ...phpLaravelSchemaColumnsFromCall(
+        source,
+        methodName,
+        openOffset,
+        closeOffset,
+      ),
     );
-
-    if (column) {
-      columns.push(column);
-    }
   }
 
   return columns;
+}
+
+const PHP_CARBON_TYPE = "\\Illuminate\\Support\\Carbon";
+
+// Blueprint helpers that materialise one or more conventionally-named columns
+// without taking the column name as their first argument (e.g. `$table->
+// timestamps()` -> created_at + updated_at). Mapped to their default column
+// names so migration-backed attribute completion surfaces them too.
+const phpLaravelSchemaFixedColumnGroups = new Map<
+  string,
+  ReadonlyArray<readonly [string, string | null]>
+>([
+  ["timestamps", [["created_at", PHP_CARBON_TYPE], ["updated_at", PHP_CARBON_TYPE]]],
+  ["timestampstz", [["created_at", PHP_CARBON_TYPE], ["updated_at", PHP_CARBON_TYPE]]],
+  [
+    "nullabletimestamps",
+    [["created_at", PHP_CARBON_TYPE], ["updated_at", PHP_CARBON_TYPE]],
+  ],
+  ["softdeletes", [["deleted_at", PHP_CARBON_TYPE]]],
+  ["softdeletestz", [["deleted_at", PHP_CARBON_TYPE]]],
+  ["remembertoken", [["remember_token", "string"]]],
+]);
+
+function phpLaravelSchemaColumnsFromCall(
+  source: string,
+  methodName: string,
+  openOffset: number,
+  closeOffset: number,
+): PhpLaravelSchemaColumn[] {
+  const fixedColumns = phpLaravelSchemaFixedColumnGroups.get(
+    methodName.toLowerCase(),
+  );
+
+  if (fixedColumns) {
+    return fixedColumns.map(([attributeName, returnType]) => ({
+      attributeName,
+      attributeOffset: openOffset - methodName.length,
+      returnType,
+    }));
+  }
+
+  const column = phpLaravelSchemaColumnFromCall(
+    source,
+    methodName,
+    openOffset,
+    closeOffset,
+  );
+
+  return column ? [column] : [];
 }
 
 function phpLaravelSchemaColumnFromCall(

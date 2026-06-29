@@ -108,7 +108,11 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         declaringClassName,
         sourceContext?.workspaceSources,
       ),
-      ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
+      ...phpLaravelModelAttributeCompletionsFromSource(
+        source,
+        declaringClassName,
+        sourceContext?.workspaceSources,
+      ),
       ...phpLaravelRelationPropertyCompletionsFromSource(
         source,
         declaringClassName,
