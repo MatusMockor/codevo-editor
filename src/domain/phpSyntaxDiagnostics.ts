@@ -35,19 +35,17 @@ export function suspiciousPhpBareIdentifierDiagnostics(
   source: string,
 ): PhpSyntaxDiagnostic[] {
   return Array.from(source.matchAll(bareIdentifierStatementPattern))
-    .filter((match) => shouldReportBareIdentifier(match[3] || ""))
+    .map((match) => toBareIdentifierCandidate(source, match))
+    .filter((candidate) => shouldReportBareIdentifierCandidate(candidate))
     .map((match) => {
-      const identifier = match[3] || "";
-      const startOffset =
-        (match.index ?? 0) + (match[1]?.length ?? 0) + (match[2]?.length ?? 0);
-      const start = lineCharacterAt(source, startOffset);
+      const start = lineCharacterAt(source, match.startOffset);
 
       return {
         character: start.character,
-        endCharacter: start.character + identifier.length,
+        endCharacter: start.character + match.identifier.length,
         endLine: start.line,
         line: start.line,
-        message: `Unexpected bare PHP identifier "${identifier}".`,
+        message: `Unexpected bare PHP identifier "${match.identifier}".`,
       };
     });
 }
@@ -174,16 +172,56 @@ export function structuralPhpSyntaxDiagnostics(
   ];
 }
 
-function shouldReportBareIdentifier(identifier: string): boolean {
-  if (!identifier) {
+interface BareIdentifierCandidate {
+  identifier: string;
+  previousNonWhitespace: string;
+  startOffset: number;
+}
+
+function toBareIdentifierCandidate(
+  source: string,
+  match: RegExpMatchArray,
+): BareIdentifierCandidate {
+  const startOffset =
+    (match.index ?? 0) + (match[1]?.length ?? 0) + (match[2]?.length ?? 0);
+
+  return {
+    identifier: match[3] || "",
+    previousNonWhitespace: previousNonWhitespaceBefore(source, startOffset),
+    startOffset,
+  };
+}
+
+function shouldReportBareIdentifierCandidate(
+  candidate: BareIdentifierCandidate,
+): boolean {
+  if (!candidate.identifier) {
     return false;
   }
 
-  if (phpReservedBareIdentifiers.has(identifier.toLowerCase())) {
+  if (candidate.previousNonWhitespace === ",") {
     return false;
   }
 
-  return !likelyConstantIdentifierPattern.test(identifier);
+  if (phpReservedBareIdentifiers.has(candidate.identifier.toLowerCase())) {
+    return false;
+  }
+
+  return !likelyConstantIdentifierPattern.test(candidate.identifier);
+}
+
+function previousNonWhitespaceBefore(source: string, offset: number): string {
+  for (let index = offset - 1; index >= 0; index -= 1) {
+    const char = source[index] ?? "";
+
+    if (/\s/.test(char)) {
+      continue;
+    }
+
+    return char;
+  }
+
+  return "";
 }
 
 function closingDelimiterFor(delimiter: string): string {

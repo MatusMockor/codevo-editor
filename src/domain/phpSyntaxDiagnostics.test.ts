@@ -28,6 +28,20 @@ describe("suspiciousPhpBareIdentifierDiagnostics", () => {
       ),
     ).toEqual([]);
   });
+
+  it("does not flag multi-line trait use lists", () => {
+    expect(
+      suspiciousPhpBareIdentifierDiagnostics(`<?php
+
+trait HasTenancy
+{
+    use HasDatabase,
+        HasInternalKeys,
+        TenantRun;
+}
+`),
+    ).toEqual([]);
+  });
 });
 
 describe("structuralPhpSyntaxDiagnostics", () => {
