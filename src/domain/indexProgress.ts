@@ -180,7 +180,7 @@ export function indexProgressCompletionMessage(
   }
 
   if (report.parsedFiles > 0 || report.symbolsIndexed > 0) {
-    return `Indexed ${report.indexedFiles} files, parsed ${report.parsedFiles} PHP files, ${report.symbolsIndexed} symbols (${report.skippedEntries} skipped, ${report.erroredEntries} errors).`;
+    return `Indexed ${report.indexedFiles} files, parsed ${report.parsedFiles} source files, ${report.symbolsIndexed} symbols (${report.skippedEntries} skipped, ${report.erroredEntries} errors).`;
   }
 
   if (report.removedFiles > 0) {

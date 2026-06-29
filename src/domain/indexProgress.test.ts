@@ -68,7 +68,7 @@ describe("indexProgress", () => {
     expect(indexProgressNoticeSeverity(event)).toBe("warning");
   });
 
-  it("includes PHP symbol reindex counts in completion messages", () => {
+  it("includes source symbol reindex counts in completion messages", () => {
     const event = completedEvent(scanReport({
       indexedFiles: 3,
       parsedFiles: 2,
@@ -77,7 +77,19 @@ describe("indexProgress", () => {
     }));
 
     expect(indexProgressCompletionMessage(event)).toBe(
-      "Indexed 3 files, parsed 2 PHP files, 8 symbols (1 skipped, 0 errors).",
+      "Indexed 3 files, parsed 2 source files, 8 symbols (1 skipped, 0 errors).",
+    );
+  });
+
+  it("describes zero-symbol parsed source files neutrally", () => {
+    const event = completedEvent(scanReport({
+      indexedFiles: 2,
+      parsedFiles: 2,
+      symbolsIndexed: 0,
+    }));
+
+    expect(indexProgressCompletionMessage(event)).toBe(
+      "Indexed 2 files, parsed 2 source files, 0 symbols (0 skipped, 0 errors).",
     );
   });
 
