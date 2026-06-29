@@ -5,6 +5,17 @@ export interface TypescriptJavascriptDefaultsOptions {
   validationEnabled?: boolean;
 }
 
+type ModernCompilerOptions = Monaco.languages.typescript.CompilerOptions & {
+  allowImportingTsExtensions?: boolean;
+  resolvePackageJsonExports?: boolean;
+  resolvePackageJsonImports?: boolean;
+};
+
+type ModuleResolutionKinds = typeof Monaco.languages.typescript.ModuleResolutionKind & {
+  Bundler?: Monaco.languages.typescript.ModuleResolutionKind;
+  NodeNext?: Monaco.languages.typescript.ModuleResolutionKind;
+};
+
 export function configureTypescriptJavascriptDefaults(
   monaco: typeof Monaco,
   options: TypescriptJavascriptDefaultsOptions = {},
@@ -23,15 +34,22 @@ export function configureTypescriptJavascriptDefaults(
   const builtInDiagnosticsEnabled =
     builtInProvidersEnabled && validationEnabled;
 
-  const sharedCompilerOptions: Monaco.languages.typescript.CompilerOptions = {
+  const moduleResolutionKind = typescript.ModuleResolutionKind as ModuleResolutionKinds;
+  const sharedCompilerOptions: ModernCompilerOptions = {
     allowSyntheticDefaultImports: true,
     allowNonTsExtensions: true,
     jsx: typescript.JsxEmit.ReactJSX,
     module: typescript.ModuleKind.ESNext,
-    moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+    moduleResolution: preferredModuleResolutionKind(moduleResolutionKind),
     resolveJsonModule: true,
     target: typescript.ScriptTarget.ESNext,
   };
+
+  if (supportsModernInferredProjectOptions(moduleResolutionKind)) {
+    sharedCompilerOptions.allowImportingTsExtensions = true;
+    sharedCompilerOptions.resolvePackageJsonExports = true;
+    sharedCompilerOptions.resolvePackageJsonImports = true;
+  }
 
   typescript.typescriptDefaults.setCompilerOptions(sharedCompilerOptions);
   typescript.javascriptDefaults.setCompilerOptions({
@@ -69,4 +87,23 @@ export function configureTypescriptJavascriptDefaults(
   typescript.javascriptDefaults.setModeConfiguration(modeConfiguration);
   typescript.typescriptDefaults.setEagerModelSync(true);
   typescript.javascriptDefaults.setEagerModelSync(true);
+}
+
+function preferredModuleResolutionKind(
+  moduleResolutionKind: ModuleResolutionKinds,
+): Monaco.languages.typescript.ModuleResolutionKind {
+  return (
+    moduleResolutionKind.Bundler ??
+    moduleResolutionKind.NodeNext ??
+    moduleResolutionKind.NodeJs
+  );
+}
+
+function supportsModernInferredProjectOptions(
+  moduleResolutionKind: ModuleResolutionKinds,
+): boolean {
+  return (
+    moduleResolutionKind.Bundler !== undefined ||
+    moduleResolutionKind.NodeNext !== undefined
+  );
 }

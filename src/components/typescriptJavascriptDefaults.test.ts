@@ -60,6 +60,100 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
     );
   });
 
+  it("prefers Bundler module resolution and modern inferred project options when available", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults, {
+      Bundler: 100,
+      NodeNext: 99,
+      NodeJs: 2,
+    });
+
+    configureTypescriptJavascriptDefaults(monaco as never);
+
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowImportingTsExtensions: true,
+        moduleResolution: 100,
+        resolvePackageJsonExports: true,
+        resolvePackageJsonImports: true,
+      }),
+    );
+  });
+
+  it("falls back to NodeNext module resolution and modern inferred project options when Bundler is unavailable", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults, {
+      NodeNext: 99,
+      NodeJs: 2,
+    });
+
+    configureTypescriptJavascriptDefaults(monaco as never);
+
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowImportingTsExtensions: true,
+        moduleResolution: 99,
+        resolvePackageJsonExports: true,
+        resolvePackageJsonImports: true,
+      }),
+    );
+  });
+
+  it("keeps NodeJs module resolution without modern inferred project options for compatibility", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults, {
+      NodeJs: 2,
+    });
+
+    configureTypescriptJavascriptDefaults(monaco as never);
+
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        moduleResolution: 2,
+      }),
+    );
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        allowImportingTsExtensions: true,
+        resolvePackageJsonExports: true,
+        resolvePackageJsonImports: true,
+      }),
+    );
+  });
+
+  it("applies modern module resolution options to both TypeScript and JavaScript defaults", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults, {
+      Bundler: 100,
+      NodeJs: 2,
+    });
+
+    configureTypescriptJavascriptDefaults(monaco as never);
+
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowImportingTsExtensions: true,
+        moduleResolution: 100,
+        resolvePackageJsonExports: true,
+        resolvePackageJsonImports: true,
+      }),
+    );
+    expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowImportingTsExtensions: true,
+        allowJs: true,
+        checkJs: false,
+        moduleResolution: 100,
+        resolvePackageJsonExports: true,
+        resolvePackageJsonImports: true,
+      }),
+    );
+  });
+
   it("keeps Monaco built-in JS/TS diagnostics disabled during fallback when validation is off", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
@@ -182,6 +276,11 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
 function monacoWithDefaults(
   typescriptDefaults: ReturnType<typeof languageDefaults>,
   javascriptDefaults: ReturnType<typeof languageDefaults>,
+  moduleResolutionKind: {
+    Bundler?: number;
+    NodeNext?: number;
+    NodeJs: number;
+  } = { NodeJs: 2 },
 ) {
   return {
     languages: {
@@ -190,7 +289,7 @@ function monacoWithDefaults(
         typescriptDefaults,
         JsxEmit: { ReactJSX: 4 },
         ModuleKind: { ESNext: 99 },
-        ModuleResolutionKind: { NodeJs: 2 },
+        ModuleResolutionKind: moduleResolutionKind,
         ScriptTarget: { ESNext: 99 },
       },
     },
