@@ -12321,6 +12321,7 @@ export function useWorkbenchController(
       source: string,
       targetClassName: string,
       genericReferences: ReturnType<typeof phpDocGenericInheritances>,
+      inheritedTemplateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<ReadonlyMap<string, string>> => {
       const normalizedTargetClassName = targetClassName
         .trim()
@@ -12354,9 +12355,12 @@ export function useWorkbenchController(
 
             templateNames.forEach((templateName, index) => {
               const genericType = genericReference.genericTypes[index];
-              const resolvedGenericType = genericType
-                ? resolvePhpClassReference(source, genericType)
+              const inheritedGenericType = genericType
+                ? inheritedTemplateTypes.get(genericType.toLowerCase()) ?? null
                 : null;
+              const resolvedGenericType =
+                inheritedGenericType ??
+                (genericType ? resolvePhpClassReference(source, genericType) : null);
 
               if (resolvedGenericType) {
                 templateTypes.set(
@@ -12388,11 +12392,13 @@ export function useWorkbenchController(
     async (
       source: string,
       inheritedClassName: string,
+      inheritedTemplateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<ReadonlyMap<string, string>> =>
       resolvePhpTemplateTypesForGenericReferences(
         source,
         inheritedClassName,
         phpDocGenericInheritances(source),
+        inheritedTemplateTypes,
       ),
     [resolvePhpTemplateTypesForGenericReferences],
   );
@@ -12401,11 +12407,13 @@ export function useWorkbenchController(
     async (
       source: string,
       mixinClassName: string,
+      inheritedTemplateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<ReadonlyMap<string, string>> =>
       resolvePhpTemplateTypesForGenericReferences(
         source,
         mixinClassName,
         phpDocGenericMixins(source),
+        inheritedTemplateTypes,
       ),
     [resolvePhpTemplateTypesForGenericReferences],
   );
@@ -12523,6 +12531,7 @@ export function useWorkbenchController(
                   await resolvePhpGenericTemplateTypesForInheritedClass(
                     content,
                     resolvedTraitName,
+                    templateTypes,
                   );
 
                 if (!isRequestedRootActive()) {
@@ -12548,6 +12557,7 @@ export function useWorkbenchController(
                   await resolvePhpGenericTemplateTypesForMixinClass(
                     content,
                     resolvedMixinName,
+                    templateTypes,
                   );
 
                 if (!isRequestedRootActive()) {
@@ -12576,6 +12586,7 @@ export function useWorkbenchController(
                   await resolvePhpGenericTemplateTypesForInheritedClass(
                     content,
                     resolvedSuperTypeName,
+                    templateTypes,
                   );
 
                 if (!isRequestedRootActive()) {
@@ -16461,6 +16472,7 @@ export function useWorkbenchController(
               ? await resolvePhpGenericTemplateTypesForInheritedClass(
                   content,
                   resolvedTraitName,
+                  templateTypes,
                 )
               : new Map<string, string>();
 
@@ -16493,6 +16505,7 @@ export function useWorkbenchController(
               ? await resolvePhpGenericTemplateTypesForMixinClass(
                   content,
                   resolvedMixinName,
+                  templateTypes,
                 )
               : new Map<string, string>();
 
@@ -16533,6 +16546,7 @@ export function useWorkbenchController(
               await resolvePhpGenericTemplateTypesForInheritedClass(
                 content,
                 resolvedSuperTypeName,
+                templateTypes,
               );
 
             if (!isRequestedRootActive()) {
@@ -16698,6 +16712,7 @@ export function useWorkbenchController(
       propertyName: string,
       includeCollectionRelations = false,
       visitedClassNames = new Set<string>(),
+      templateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<string | null> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
@@ -16747,9 +16762,17 @@ export function useWorkbenchController(
             matchingMembers.find(
               (candidate) => candidate.kind === "property" && candidate.returnType,
             ) ?? null;
+          const resolvedPropertyMember = propertyMember
+            ? phpMethodCompletionWithTemplateReturnType(
+                propertyMember,
+                templateTypes,
+              )
+            : null;
           const collectionPropertyModelType =
-            propertyMember && includeCollectionRelations
-              ? phpCollectionGenericModelTypeCandidate(propertyMember.returnType)
+            resolvedPropertyMember && includeCollectionRelations
+              ? phpCollectionGenericModelTypeCandidate(
+                  resolvedPropertyMember.returnType,
+                )
               : null;
           const resolvedCollectionPropertyModelType = collectionPropertyModelType
             ? resolvePhpClassReference(content, collectionPropertyModelType)
@@ -16771,7 +16794,7 @@ export function useWorkbenchController(
             return resolvedCollectionPropertyModelType;
           }
 
-          const propertyReturnType = propertyMember?.returnType ?? null;
+          const propertyReturnType = resolvedPropertyMember?.returnType ?? null;
           const propertyTypeCandidate = propertyReturnType
             ? phpDeclaredTypeCandidate(propertyReturnType)
             : null;
@@ -16829,12 +16852,20 @@ export function useWorkbenchController(
 
           for (const traitName of phpTraitClassNames(content)) {
             const resolvedTraitName = resolvePhpClassReference(content, traitName);
+            const traitTemplateTypes = resolvedTraitName
+              ? await resolvePhpGenericTemplateTypesForInheritedClass(
+                  content,
+                  resolvedTraitName,
+                  templateTypes,
+                )
+              : new Map<string, string>();
             const traitType = resolvedTraitName
               ? await resolvePhpClassPropertyOrRelationType(
                   resolvedTraitName,
                   propertyName,
                   includeCollectionRelations,
                   visitedClassNames,
+                  traitTemplateTypes,
                 )
               : null;
 
@@ -16849,12 +16880,20 @@ export function useWorkbenchController(
 
           for (const mixinName of phpMixinClassNames(content)) {
             const resolvedMixinName = resolvePhpClassReference(content, mixinName);
+            const mixinTemplateTypes = resolvedMixinName
+              ? await resolvePhpGenericTemplateTypesForMixinClass(
+                  content,
+                  resolvedMixinName,
+                  templateTypes,
+                )
+              : new Map<string, string>();
             const mixinType = resolvedMixinName
               ? await resolvePhpClassPropertyOrRelationType(
                   resolvedMixinName,
                   propertyName,
                   includeCollectionRelations,
                   visitedClassNames,
+                  mixinTemplateTypes,
                 )
               : null;
 
@@ -16872,12 +16911,20 @@ export function useWorkbenchController(
               content,
               superTypeName,
             );
+            const superTypeTemplateTypes = resolvedSuperTypeName
+              ? await resolvePhpGenericTemplateTypesForInheritedClass(
+                  content,
+                  resolvedSuperTypeName,
+                  templateTypes,
+                )
+              : new Map<string, string>();
             const superTypePropertyType = resolvedSuperTypeName
               ? await resolvePhpClassPropertyOrRelationType(
                   resolvedSuperTypeName,
                   propertyName,
                   includeCollectionRelations,
                   visitedClassNames,
+                  superTypeTemplateTypes,
                 )
               : null;
 
@@ -16911,6 +16958,8 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
       resolvePhpDeclaredType,
+      resolvePhpGenericTemplateTypesForInheritedClass,
+      resolvePhpGenericTemplateTypesForMixinClass,
       resolvePhpLaravelProjectMorphMapModelType,
       isLaravelFrameworkActive,
       workspaceDescriptor,

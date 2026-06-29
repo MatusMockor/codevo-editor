@@ -29747,6 +29747,294 @@ class Comment
     ]);
   });
 
+  it("resolves generic repository magic properties through PHPDoc extends", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+    const baseRepositoryInterfacePath =
+      "/workspace/app/Contracts/RepositoryInterface.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $this->commentRepository->model->getContent();
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 10,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath: "app/Contracts/CommentRepositoryInterface.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\RepositoryInterface",
+          kind: "interface",
+          lineNumber: 8,
+          name: "RepositoryInterface",
+          path: baseRepositoryInterfacePath,
+          relativePath: "app/Contracts/RepositoryInterface.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 4,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+use App\\Models\\Comment;
+
+/**
+ * @phpstan-extends RepositoryInterface<Comment>
+ */
+interface CommentRepositoryInterface extends RepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === baseRepositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+/**
+ * @template TModel of object
+ * @property-read TModel $model
+ */
+interface RepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return commentSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "->model->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "->model->getContent"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const methodNameEnd = positionAfter(commentSource, "function getContent");
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: methodNameEnd.column - "getContent".length,
+        lineNumber: methodNameEnd.lineNumber,
+      },
+    });
+  });
+
+  it("resolves generic repository magic properties through PHPDoc mixins", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+    const baseRepositoryInterfacePath =
+      "/workspace/app/Contracts/RepositoryInterface.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $this->commentRepository->model->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 9,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath: "app/Contracts/CommentRepositoryInterface.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\RepositoryInterface",
+          kind: "interface",
+          lineNumber: 8,
+          name: "RepositoryInterface",
+          path: baseRepositoryInterfacePath,
+          relativePath: "app/Contracts/RepositoryInterface.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 4,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+use App\\Models\\Comment;
+
+/**
+ * @mixin RepositoryInterface<Comment>
+ */
+interface CommentRepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === baseRepositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+/**
+ * @template TModel of object
+ * @property-read TModel $model
+ */
+interface RepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "->model->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("resolves implemented interface PHPDoc method returns on chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";
