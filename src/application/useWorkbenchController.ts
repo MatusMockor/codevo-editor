@@ -7945,7 +7945,7 @@ export function useWorkbenchController(
           "willRenameFiles",
         )
       ) {
-        return;
+        return true;
       }
 
       const requestedRoot = workspaceRoot;
@@ -7966,28 +7966,28 @@ export function useWorkbenchController(
           );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return;
+          return true;
         }
 
         if (!edit) {
-          return;
+          return true;
         }
 
         const rootEdit = workspaceEditForRoot(edit, requestedRoot);
         const openDocumentPaths = Object.keys(documentsRef.current);
-        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
-          rootEdit,
-          requestedRoot,
-          javaScriptTypeScriptDocumentVersionsByUriRef.current,
-        );
         const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
           requestedRoot,
           rootEdit,
           openDocumentPaths,
         );
+        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
+          rootEdit,
+          requestedRoot,
+          javaScriptTypeScriptDocumentVersionsByUriRef.current,
+        );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return;
+          return true;
         }
 
         const changedFiles = changedClosedFiles + editedOpenPaths.length;
@@ -7995,12 +7995,15 @@ export function useWorkbenchController(
         if (changedFiles > 0) {
           setMessage(`Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`);
         }
+
+        return true;
       } catch (error) {
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return;
+          return true;
         }
 
         reportError("JavaScript/TypeScript Rename", error);
+        return false;
       }
     },
     [
@@ -24208,7 +24211,13 @@ export function useWorkbenchController(
       }
 
       if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        await applyJavaScriptTypeScriptRenameEdits(document.path, nextPath);
+        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
+          document.path,
+          nextPath,
+        );
+        if (!mayRename) {
+          return;
+        }
       }
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
