@@ -102,8 +102,14 @@ const RIPGREP_INVALID_PATTERN_EXIT_CODE: i32 = 2;
 /// Hardcoded directories we never want in Find-in-Path results. Kept as
 /// excludes (not overridable by the user mask) to avoid drowning matches in
 /// vendored / generated code.
-const DEFAULT_EXCLUDE_GLOBS: [&str; 6] =
-    ["!.git", "!node_modules", "!vendor", "!target", "!dist", "!build"];
+const DEFAULT_EXCLUDE_GLOBS: [&str; 6] = [
+    "!.git",
+    "!node_modules",
+    "!vendor",
+    "!target",
+    "!dist",
+    "!build",
+];
 
 impl TextSearcher for RipgrepTextSearcher {
     fn search(
@@ -366,9 +372,8 @@ impl TextReplacer for RipgrepTextReplacer {
         // safe by construction (it never slices on a byte boundary). Capture
         // groups in `replacement` (`$1`, `${name}`) are honoured by the `regex`
         // crate.
-        let matcher = build_replacement_regex(trimmed_query, options).map_err(|error| {
-            io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
-        })?;
+        let matcher = build_replacement_regex(trimmed_query, options)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
 
         // List EVERY file that matches AND passes every filter
         // (case/whole-word/regex/file-mask/gitignore/default excludes), with no
@@ -597,7 +602,10 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     /// Returns true when the `rg` (ripgrep) binary is invocable in the current
     /// PATH. Integration tests that spawn ripgrep use this to skip gracefully
@@ -621,8 +629,9 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system time")
                 .as_nanos();
+            let counter = TEMP_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "mockor-editor-search-test-{}-{nanos}",
+                "mockor-editor-search-test-{}-{nanos}-{counter}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("create temp project");
@@ -753,7 +762,9 @@ mod tests {
     #[test]
     fn replace_regex_capture_groups_are_substituted() {
         if !rg_available() {
-            eprintln!("skipping replace_regex_capture_groups_are_substituted: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping replace_regex_capture_groups_are_substituted: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
@@ -793,7 +804,9 @@ mod tests {
     #[test]
     fn replace_literal_does_not_treat_query_as_regex() {
         if !rg_available() {
-            eprintln!("skipping replace_literal_does_not_treat_query_as_regex: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping replace_literal_does_not_treat_query_as_regex: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
@@ -939,7 +952,9 @@ mod tests {
     #[test]
     fn replace_regex_anchors_match_per_line_like_find() {
         if !rg_available() {
-            eprintln!("skipping replace_regex_anchors_match_per_line_like_find: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping replace_regex_anchors_match_per_line_like_find: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
@@ -1011,8 +1026,8 @@ mod tests {
 
     #[test]
     fn build_replacement_regex_literal_escapes_metacharacters() {
-        let regex = build_replacement_regex("a.b", &TextSearchOptions::default())
-            .expect("valid regex");
+        let regex =
+            build_replacement_regex("a.b", &TextSearchOptions::default()).expect("valid regex");
 
         assert!(regex.is_match("a.b"));
         assert!(!regex.is_match("axb"));
@@ -1054,7 +1069,9 @@ mod tests {
     #[test]
     fn default_search_is_case_insensitive_literal() {
         if !rg_available() {
-            eprintln!("skipping default_search_is_case_insensitive_literal: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping default_search_is_case_insensitive_literal: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
@@ -1091,7 +1108,9 @@ mod tests {
     #[test]
     fn whole_word_matches_only_standalone_token() {
         if !rg_available() {
-            eprintln!("skipping whole_word_matches_only_standalone_token: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping whole_word_matches_only_standalone_token: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
@@ -1176,7 +1195,9 @@ mod tests {
     #[test]
     fn file_mask_include_restricts_to_matching_files() {
         if !rg_available() {
-            eprintln!("skipping file_mask_include_restricts_to_matching_files: ripgrep (rg) not in PATH");
+            eprintln!(
+                "skipping file_mask_include_restricts_to_matching_files: ripgrep (rg) not in PATH"
+            );
             return;
         }
         let project = TempProject::new();
