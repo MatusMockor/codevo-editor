@@ -616,6 +616,79 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().gitStashEntries).toEqual([]);
   });
 
+  it("applies and pops stashes through the active workspace without blanking on errors", async () => {
+    const appliedChange = gitChangedFile("src/Applied.php", false);
+    const stashApply = vi.fn(async () => undefined);
+    const stashPop = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("stash has conflicts"));
+    let listCalls = 0;
+    const stashList = vi.fn(async () => {
+      listCalls += 1;
+      return listCalls < 2
+        ? [{ branch: "main", index: 0, message: "WIP", timestamp: 1700000000 }]
+        : [];
+    });
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [appliedChange],
+      isRepository: true,
+      rootPath,
+    }));
+    gitGateway.stashApply = stashApply;
+    gitGateway.stashList = stashList;
+    gitGateway.stashPop = stashPop;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitStashPanel();
+    });
+    expect(getWorkbench().gitStashEntries).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().applyGitStash(0);
+    });
+
+    expect(stashApply).toHaveBeenCalledWith("/workspace", 0);
+    expect(getWorkbench().gitStatus.changes).toEqual([appliedChange]);
+    expect(getWorkbench().gitStashLoading).toBe(false);
+
+    await act(async () => {
+      await getWorkbench().selectGitStash(0);
+    });
+    await act(async () => {
+      await getWorkbench().popGitStash(0);
+    });
+
+    expect(stashPop).toHaveBeenCalledWith("/workspace", 0);
+    expect(getWorkbench().gitStashEntries).toEqual([]);
+    expect(getWorkbench().gitStashSelectedIndex).toBeNull();
+    expect(getWorkbench().gitStashDiff).toBeNull();
+    expect(getWorkbench().gitStashLoading).toBe(false);
+
+    await act(async () => {
+      await getWorkbench().popGitStash(0);
+    });
+
+    expect(getWorkbench().gitStashLoading).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Git Stash" &&
+          notice.message.includes("stash has conflicts"),
+      ),
+    ).toBe(true);
+  });
+
   it("drops a stale file history result after switching tabs", async () => {
     const historyDeferred = createDeferred<
       Array<{
@@ -1130,6 +1203,63 @@ describe("useWorkbenchController preview tabs", () => {
           notice.message.includes("get_git_diff failed for README.md"),
       ),
     ).toBe(true);
+  });
+
+  it("recovers from a failed Git diff preview when the user retries", async () => {
+    const change = gitChangedFile("README.md", false);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: [change],
+      isRepository: true,
+      rootPath,
+    }));
+    gitGateway.getDiff = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("get_git_diff failed for README.md"))
+      .mockResolvedValueOnce({
+        change,
+        language: "markdown",
+        modifiedContent: "# Project\n\nRetried diff\n",
+        originalContent: "# Project\n",
+      });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Git Diff" &&
+          notice.message.includes("get_git_diff failed for README.md"),
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+
+    expect(gitGateway.getDiff).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change,
+        modifiedContent: "# Project\n\nRetried diff\n",
+        originalContent: "# Project\n",
+      }),
+    );
+    expect(getWorkbench().activePath).toBe(
+      "mockor-git-diff:worktree:/workspace/README.md",
+    );
   });
 
   it("keeps an existing Git diff preview open when the same change is previewed again", async () => {
@@ -12844,6 +12974,110 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(gitGateway.getStatus).toHaveBeenCalledTimes(2);
     expect(getWorkbench().gitStatus.changes).toEqual([]);
+  });
+
+  it("lists, switches, and creates branches only in the active workspace", async () => {
+    const branchList = vi.fn(async (rootPath: string) =>
+      rootPath === "/workspace-b"
+        ? [
+            { isCurrent: true, name: "main" },
+            { isCurrent: false, name: "feature/login" },
+          ]
+        : [{ isCurrent: true, name: "workspace-a-only" }],
+    );
+    const createBranch = vi.fn(async () => undefined);
+    const switchBranch = vi.fn(async () => undefined);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.branchList = branchList;
+    gitGateway.createBranch = createBranch;
+    gitGateway.switchBranch = switchBranch;
+    const prompt = vi.fn(() => "  feature/retry  ");
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway,
+      prompter: { confirm: vi.fn(() => true), prompt },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitBranchPanel();
+    });
+
+    expect(getWorkbench().gitBranchPanelOpen).toBe(true);
+    expect(getWorkbench().gitBranchEntries.map((branch) => branch.name)).toEqual([
+      "main",
+      "feature/login",
+    ]);
+    expect(branchList).toHaveBeenCalledWith("/workspace-b");
+    expect(branchList).not.toHaveBeenCalledWith("/workspace-a");
+
+    await act(async () => {
+      await getWorkbench().switchGitBranch(" feature/login ");
+    });
+
+    expect(switchBranch).toHaveBeenCalledWith("/workspace-b", "feature/login");
+    expect(getWorkbench().gitBranchPanelOpen).toBe(false);
+    expect(getWorkbench().gitBranchLoading).toBe(false);
+
+    await act(async () => {
+      await getWorkbench().createGitBranch();
+    });
+
+    expect(prompt).toHaveBeenCalledWith("New branch name", "feature/");
+    expect(createBranch).toHaveBeenCalledWith("/workspace-b", "feature/retry");
+    expect(branchList).toHaveBeenLastCalledWith("/workspace-b");
+    expect(getWorkbench().gitBranchLoading).toBe(false);
+    expect(getWorkbench().message).toBe("Created branch feature/retry");
+  });
+
+  it("toggles blame and provides blame for the active workspace file only", async () => {
+    const blame = vi.fn(async () => [
+      {
+        author: "Alice",
+        lineNumber: 1,
+        sha: "abc123",
+        summary: "Add user",
+        timestamp: 1700000000,
+      },
+    ]);
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.blame = blame;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace-b/src/User.php", "User.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().toggleGitBlame();
+    });
+
+    expect(getWorkbench().isActiveDocumentGitBlameEnabled).toBe(true);
+
+    const blameLines = await getWorkbench().provideGitBlame(
+      "/workspace-b/src/User.php",
+    );
+    const outsideWorkspace = await getWorkbench().provideGitBlame(
+      "/workspace-a/src/User.php",
+    );
+
+    expect(blame).toHaveBeenCalledWith("/workspace-b", "src/User.php");
+    expect(blame).not.toHaveBeenCalledWith("/workspace-a", "src/User.php");
+    expect(blameLines).toHaveLength(1);
+    expect(outsideWorkspace).toEqual([]);
   });
 
   it("reuses a clean preview tab for search result opens", async () => {
