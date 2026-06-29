@@ -163,7 +163,7 @@ describe("CommandPalette", () => {
     expect(rows[0]?.className).toContain("active");
   });
 
-  it("wraps the active row at both ends", () => {
+  it("wraps the command palette active row at both ends", () => {
     render();
     const field = input();
 
@@ -186,7 +186,7 @@ describe("CommandPalette", () => {
     expect(rows[0]?.className).toContain("active");
   });
 
-  it("runs the active command on Enter", async () => {
+  it("runs the highlighted command palette command on Enter", async () => {
     const save = vi.fn();
     const format = vi.fn();
     const { onClose } = render({
@@ -213,7 +213,20 @@ describe("CommandPalette", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an empty state when no command matches", () => {
+  it("closes the command palette on Escape", () => {
+    const { onClose } = render();
+    const field = input();
+
+    act(() => {
+      field?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows No matching commands when no command matches", () => {
     render();
     setQuery("nonexistent command xyz");
 

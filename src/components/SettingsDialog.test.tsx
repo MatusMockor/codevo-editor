@@ -455,6 +455,139 @@ describe("SettingsDialog", () => {
     ).toBe(true);
   });
 
+  it("matches keymap commands by their current and default shortcuts", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings(),
+              "editor.formatDocument": "",
+              "editor.save": "Cmd+Alt+Shift+S",
+            },
+          }}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const search = keymapSearchInput();
+
+    await act(async () => {
+      changeInputValue(search, "alt+shift+s");
+      await Promise.resolve();
+    });
+
+    let fields = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(fields).toHaveLength(1);
+    expect(fields[0]?.textContent).toContain("Save File");
+
+    await act(async () => {
+      changeInputValue(search, "shift+alt+f");
+      await Promise.resolve();
+    });
+
+    fields = Array.from(host.querySelectorAll(".keymap-field"));
+    expect(fields.length).toBeGreaterThan(0);
+    expect(
+      fields.some((field) => field.textContent?.includes("Format Document")),
+    ).toBe(true);
+  });
+
+  it("normalizes and persists keymap shortcut rebindings through app settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Save File"), "cmd + alt + s");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultKeymapSettings(),
+          "editor.save": "Cmd+Alt+S",
+        },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
+  it("persists conflicting keymap shortcuts without rewriting other bindings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Save File"), "Cmd+W");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultKeymapSettings(),
+          "editor.save": "Cmd+W",
+        },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
   it("restores every keymap command when the search box is cleared", async () => {
     await act(async () => {
       root.render(

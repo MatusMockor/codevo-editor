@@ -1108,10 +1108,12 @@ function KeymapSettingsPanel({
     }
 
     return keymapCommands.filter((command) => {
-      const haystack = `${command.label} ${command.category} ${command.id}`;
+      const shortcut =
+        appSettings.keymap[command.id] || defaultShortcutForCommand(command.id);
+      const haystack = `${command.label} ${command.category} ${command.id} ${shortcut}`;
       return haystack.toLowerCase().includes(normalizedFilter);
     });
-  }, [filter]);
+  }, [appSettings.keymap, filter]);
 
   return (
     <div className="settings-group">
