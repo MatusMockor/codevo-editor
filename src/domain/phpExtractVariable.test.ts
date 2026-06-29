@@ -85,6 +85,49 @@ describe("planExtractVariable", () => {
     );
   });
 
+  it("covers extract variable with a padded selection in a namespaced Laravel class without touching imports", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Support\\Collection;
+
+class UserReporter
+{
+    public function report(User $user): Collection
+    {
+        return collect([ $user->profile->display_name ]);
+    }
+}
+`;
+    const expression = "$user->profile->display_name";
+    const start = source.indexOf(expression) - 1;
+    const end = source.indexOf(expression) + expression.length + 1;
+
+    const plan = planExtractVariable(source, start, end, "displayName");
+
+    expect(plan).not.toBeNull();
+    expect(plan!.replaceStart).toBe(source.indexOf(expression));
+    expect(plan!.replaceEnd).toBe(source.indexOf(expression) + expression.length);
+    expect(applyPlan(source, plan!)).toBe(`<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Support\\Collection;
+
+class UserReporter
+{
+    public function report(User $user): Collection
+    {
+        $displayName = $user->profile->display_name;
+        return collect([ $displayName ]);
+    }
+}
+`);
+  });
+
   it("preserves the indentation of the enclosing statement", () => {
     const source =
       "<?php\nclass A {\n    public function b() {\n        return 1 + 2;\n    }\n}\n";

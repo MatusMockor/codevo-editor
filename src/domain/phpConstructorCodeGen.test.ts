@@ -3,7 +3,11 @@ import {
   propertyToParameter,
   renderConstructor,
 } from "./phpConstructorCodeGen";
-import type { PhpPropertyMember } from "./phpClassStructure";
+import {
+  parsePhpClassStructure,
+  type PhpPropertyMember,
+} from "./phpClassStructure";
+import { insertGeneratedClassMemberForTest } from "./phpCodeGenTestUtils";
 
 function property(
   overrides: Partial<PhpPropertyMember> & { name: string },
@@ -190,6 +194,46 @@ describe("renderConstructor (filtering and edge cases)", () => {
         "}",
       ].join("\n"),
     );
+  });
+
+  it("generates valid constructor output inside a namespaced Laravel class without moving imports", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Contracts\\Cache\\Repository;
+
+class UserCache
+{
+    private Repository $cache;
+
+    private ?User $fallback = null;
+}
+`;
+    const { properties } = parsePhpClassStructure(source);
+    const block = renderConstructor(properties);
+
+    expect(insertGeneratedClassMemberForTest(source, block)).toBe(`<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Contracts\\Cache\\Repository;
+
+class UserCache
+{
+    private Repository $cache;
+
+    private ?User $fallback = null;
+
+    public function __construct(Repository $cache, ?User $fallback = null)
+    {
+        $this->cache = $cache;
+        $this->fallback = $fallback;
+    }
+}
+`);
   });
 
   it("renders an empty constructor for an empty property list (classic)", () => {

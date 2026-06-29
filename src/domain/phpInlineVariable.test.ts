@@ -86,6 +86,45 @@ describe("planInlineVariable", () => {
     );
   });
 
+  it("covers inline variable from a cursor inside the name in a namespaced Laravel class without touching imports", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Support\\Str;
+
+class UserReporter
+{
+    public function report(User $user): string
+    {
+        $displayName = Str::of($user->name)->title();
+        return (string) $displayName;
+    }
+}
+`;
+    const offset = source.indexOf("displayName") + "display".length;
+
+    const plan = planInlineVariable(source, offset);
+
+    expect(plan).not.toBeNull();
+    expect(applyPlan(source, plan!)).toBe(`<?php
+
+namespace App\\Services;
+
+use App\\Models\\User;
+use Illuminate\\Support\\Str;
+
+class UserReporter
+{
+    public function report(User $user): string
+    {
+        return (string) Str::of($user->name)->title();
+    }
+}
+`);
+  });
+
   describe("parenthesization by precedence", () => {
     it("wraps a compound additive expression inlined into multiplication", () => {
       const source =

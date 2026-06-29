@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { PhpPropertyMember } from "./phpClassStructure";
+import {
+  parsePhpClassStructure,
+  type PhpPropertyMember,
+} from "./phpClassStructure";
+import { insertGeneratedClassMemberForTest } from "./phpCodeGenTestUtils";
 import {
   renderAccessors,
   renderGetter,
@@ -375,6 +379,66 @@ describe("renderAccessors", () => {
         "}",
       ].join("\n"),
     );
+  });
+
+  it("generates valid getter and setter accessors inside a namespaced Laravel model without moving imports", () => {
+    const source = `<?php
+
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Account extends Model
+{
+    private bool $active;
+
+    /** @var array<int, string> */
+    private array $tags = [];
+}
+`;
+    const { properties } = parsePhpClassStructure(source);
+    const block = renderAccessors(properties);
+
+    expect(insertGeneratedClassMemberForTest(source, block)).toBe(`<?php
+
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Account extends Model
+{
+    private bool $active;
+
+    /** @var array<int, string> */
+    private array $tags = [];
+
+    public function isActive(): bool
+    {
+        return $this->active;
+    }
+
+    public function setActive(bool $active): void
+    {
+        $this->active = $active;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function getTags(): array
+    {
+        return $this->tags;
+    }
+
+    /**
+     * @param array<int, string> $tags
+     */
+    public function setTags(array $tags): void
+    {
+        $this->tags = $tags;
+    }
+}
+`);
   });
 
   it("renders only getters in get mode", () => {

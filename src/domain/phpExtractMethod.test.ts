@@ -132,6 +132,61 @@ class Calculator
     expect(result).toContain("$total = $base + 10;");
   });
 
+  it("covers extract method with padded statement selections in a namespaced Laravel service without touching imports", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Order;
+use Illuminate\\Support\\Facades\\Log;
+
+class OrderReporter
+{
+    public function report(Order $order): void
+    {
+        $prefix = 'order';
+        $message = $prefix . ':' . $order->number;
+        Log::info($message);
+    }
+}
+`;
+    const [lineStart, lineEnd] = lineSpanOf(
+      source,
+      "$message = $prefix . ':' . $order->number;",
+      "Log::info($message);",
+    );
+
+    const plan = planExtractMethod(source, lineStart - 1, lineEnd + 1);
+
+    expect(plan).not.toBeNull();
+    expect(plan!.replaceStart).toBe(
+      source.indexOf("$message = $prefix . ':' . $order->number;"),
+    );
+    expect(plan!.replaceEnd).toBe(lineEnd);
+    expect(applyPlan(source, plan!)).toBe(`<?php
+
+namespace App\\Services;
+
+use App\\Models\\Order;
+use Illuminate\\Support\\Facades\\Log;
+
+class OrderReporter
+{
+    public function report(Order $order): void
+    {
+        $prefix = 'order';
+        $this->extracted($prefix, $order);
+    }
+
+    private function extracted($prefix, $order): void
+    {
+        $message = $prefix . ':' . $order->number;
+        Log::info($message);
+    }
+}
+`);
+  });
+
   it("returns the single variable defined inside and used after the selection", () => {
     const source = `<?php
 
