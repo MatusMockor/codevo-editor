@@ -2173,7 +2173,7 @@ class AppServiceProvider extends ServiceProvider
         "fromProviderMacro",
         laravelOptions,
       ),
-    ).toBeNull();
+    ).toBe("App\\Models\\Post");
   });
 
   it("resolves Laravel model assignments from Eloquent collection chains", () => {

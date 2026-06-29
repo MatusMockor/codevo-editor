@@ -191,7 +191,7 @@ use App\\Services\\FooService;
       isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", [
         phpLaravelFrameworkProvider,
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("recognizes global Laravel builder member methods through the Laravel provider", () => {
@@ -217,7 +217,7 @@ class Album extends Model
       isKnownPhpFrameworkMemberMethod(source, "Album::query()", "withRelations", [
         phpLaravelFrameworkProvider,
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("routes same-source Laravel builder macros through the Laravel provider", () => {

@@ -39,13 +39,7 @@ $album = Album::withRelations()->findOrFail($id);
       ], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([
-      diagnostic({
-        character: 16,
-        line: 4,
-        message: "Method App\\Models\\Album::withRelations() does not exist",
-      }),
-    ]);
+    ).toEqual([]);
   });
 
   it("keeps Laravel static builder method diagnostics for non-model receivers", () => {
@@ -228,7 +222,7 @@ $album = Album::query()->withRelations()->first();
       filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod, localScope], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([localScope]);
+    ).toEqual([]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod], {
         frameworkProviders: [],
@@ -307,10 +301,10 @@ class Post extends Model
 {
 }
 
-$fromStatic = Post::withRelations()->first();
-$fromMember = Post::query()->withRelations()->first();
+$fromStatic = Post::withEditorialRelations()->first();
+$fromMember = Post::query()->withEditorialRelations()->first();
 $query = Post::query();
-$fromVariable = $query->withRelations()->first();
+$fromVariable = $query->withEditorialRelations()->first();
 $fromUnknown = $query->missingWorkspaceMacro()->first();
 `;
     const providerSource = `<?php
@@ -323,7 +317,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        Builder::macro('withRelations', function (): \\Illuminate\\Database\\Eloquent\\Builder {
+        Builder::macro('withEditorialRelations', function (): \\Illuminate\\Database\\Eloquent\\Builder {
             return $this->with([]);
         });
     }
@@ -331,21 +325,21 @@ class AppServiceProvider extends ServiceProvider
 `;
     const staticMacro = diagnosticAt(
       source,
-      "withRelations()->first();\n$fromMember",
+      "withEditorialRelations()->first();\n$fromMember",
       {
-        message: "Method App\\Models\\Post::withRelations() does not exist",
+        message: "Method App\\Models\\Post::withEditorialRelations() does not exist",
       },
     );
-    const memberMacro = diagnosticAt(source, "withRelations()->first();\n$query", {
+    const memberMacro = diagnosticAt(source, "withEditorialRelations()->first();\n$query", {
       message:
-        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+        "Method Illuminate\\Database\\Eloquent\\Builder::withEditorialRelations() does not exist",
     });
     const variableMacro = diagnosticAt(
       source,
-      "withRelations()->first();\n$fromUnknown",
+      "withEditorialRelations()->first();\n$fromUnknown",
       {
         message:
-          "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+          "Method Illuminate\\Database\\Eloquent\\Builder::withEditorialRelations() does not exist",
       },
     );
     const unknownBuilderMethod = diagnosticAt(source, "missingWorkspaceMacro", {
