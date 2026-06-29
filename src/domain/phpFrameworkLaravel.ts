@@ -3044,6 +3044,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
       source,
       relationModelType,
       methodName,
+      callExpression,
       workspaceSources,
     );
   }
@@ -3060,6 +3061,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
       source,
       builderModelType,
       methodName,
+      callExpression,
       workspaceSources,
     );
   }
@@ -3083,6 +3085,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
         source,
         modelType,
         methodName,
+        callExpression,
         workspaceSources,
       )
     : null;
@@ -3194,6 +3197,7 @@ function phpLaravelStaticModelCallReturnType(
   source: string,
   modelType: string,
   methodName: string,
+  callExpression: string | null,
   workspaceSources: readonly string[] = [],
 ): string | null {
   if (isLaravelEloquentModelFluentMethod(methodName)) {
@@ -3204,6 +3208,7 @@ function phpLaravelStaticModelCallReturnType(
     source,
     modelType,
     methodName,
+    callExpression,
     workspaceSources,
   );
 }
@@ -3428,6 +3433,12 @@ function phpLaravelFluentThroughMethodCallReturnTypeFromSource(
 
   if (!relatedModelType) {
     return null;
+  }
+
+  if (
+    phpLaravelEloquentFindCallUsesArrayIdLiteral(methodName, callExpression)
+  ) {
+    return phpLaravelEloquentBuilderCollectionType(relatedModelType, methodName);
   }
 
   if (
@@ -3658,8 +3669,13 @@ function phpLaravelEloquentBuilderCallReturnType(
   source: string,
   modelType: string,
   methodName: string,
+  callExpression: string | null,
   workspaceSources: readonly string[] = [],
 ): string | null {
+  if (phpLaravelEloquentFindCallUsesArrayIdLiteral(methodName, callExpression)) {
+    return phpLaravelEloquentBuilderCollectionType(modelType, methodName);
+  }
+
   if (isLaravelEloquentBuilderTerminalModelMethod(methodName)) {
     return modelType;
   }
@@ -3680,6 +3696,80 @@ function phpLaravelEloquentBuilderCallReturnType(
   }
 
   return null;
+}
+
+function phpLaravelEloquentFindCallUsesArrayIdLiteral(
+  methodName: string,
+  callExpression: string | null,
+): boolean {
+  const normalizedMethodName = methodName.toLowerCase();
+
+  if (normalizedMethodName !== "find" && normalizedMethodName !== "findorfail") {
+    return false;
+  }
+
+  const argumentsSource = phpLaravelMethodCallArgumentsSource(
+    callExpression ?? "",
+    methodName,
+  );
+
+  if (argumentsSource === null) {
+    return false;
+  }
+
+  const idArgument =
+    phpNamedArgumentExpression(argumentsSource, "id") ??
+    phpFirstPositionalArgument(argumentsSource);
+
+  return phpLaravelExpressionIsArrayLiteral(idArgument);
+}
+
+function phpLaravelMethodCallArgumentsSource(
+  callExpression: string,
+  methodName: string,
+): string | null {
+  const maskedExpression = maskPhpStringsAndComments(callExpression);
+  const pattern = new RegExp(
+    `(?:->|::)\\s*${escapeRegExp(methodName)}\\s*\\(`,
+    "gi",
+  );
+  let argumentsSource: string | null = null;
+
+  for (const match of maskedExpression.matchAll(pattern)) {
+    const openOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
+    const closeOffset = matchingPairOffset(
+      callExpression,
+      openOffset,
+      "(",
+      ")",
+    );
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    argumentsSource = callExpression.slice(openOffset + 1, closeOffset);
+  }
+
+  return argumentsSource;
+}
+
+function phpLaravelExpressionIsArrayLiteral(expression: string | null): boolean {
+  const trimmed = expression?.trim() ?? "";
+
+  if (trimmed.startsWith("[")) {
+    return matchingPairOffset(trimmed, 0, "[", "]") === trimmed.length - 1;
+  }
+
+  const arrayMatch = /^array\s*\(/i.exec(trimmed);
+
+  if (!arrayMatch) {
+    return false;
+  }
+
+  const openOffset = arrayMatch[0].lastIndexOf("(");
+
+  return matchingPairOffset(trimmed, openOffset, "(", ")") === trimmed.length - 1;
 }
 
 function phpLaravelEloquentBuilderCallPreservesBuilder(

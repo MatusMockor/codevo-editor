@@ -663,6 +663,24 @@ class Album extends Model
       phpLaravelMethodCallReturnTypeFromSource(
         source,
         "findOrFail",
+        "Album",
+        "Album::findOrFail([1, 2])",
+        "Album::findOrFail([1, 2])",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "find",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        "Album::query()",
+        "Album::query()->find(id: [1, 2])",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findOrFail",
         "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
         null,
       ),
