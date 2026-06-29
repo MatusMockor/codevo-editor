@@ -445,6 +445,10 @@ function EditorSurfaceComponent({
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
+  const [
+    phpInspectionDiagnosticCountsByPath,
+    setPhpInspectionDiagnosticCountsByPath,
+  ] = useState<Record<string, number>>({});
   const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(
     null,
   );
@@ -2143,6 +2147,9 @@ function EditorSurfaceComponent({
     setSyntaxDiagnosticsByPath((current) =>
       pruneClosedPaths(current, openPaths),
     );
+    setPhpInspectionDiagnosticCountsByPath((current) =>
+      pruneClosedPaths(current, openPaths),
+    );
     setBreadcrumbSymbolsByPath((current) =>
       pruneClosedPaths(current, openPaths),
     );
@@ -2217,6 +2224,10 @@ function EditorSurfaceComponent({
       activeDocument.language === "php"
         ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
         : [];
+    const phpInspectionDiagnosticCount =
+      activeDocument.language === "php"
+        ? phpInspectionDiagnosticCountsByPath[activeDocument.path] ?? 0
+        : 0;
 
     // Monaco's content hover widget is mouse-driven and is NOT dismissed when its
     // markers are removed, so a hover left open over a diagnostic (error/warning
@@ -2230,7 +2241,9 @@ function EditorSurfaceComponent({
     // is touched (the path match above), so a stale tab can never dismiss the
     // active editor's hover.
     const activeDiagnosticCount =
-      languageServerDiagnostics.length + syntaxDiagnostics.length;
+      languageServerDiagnostics.length +
+      syntaxDiagnostics.length +
+      phpInspectionDiagnosticCount;
     const previousActiveDiagnostics = previousActiveDiagnosticCountRef.current;
     const diagnosticsClearedForActivePath =
       previousActiveDiagnostics !== null &&
@@ -2277,6 +2290,7 @@ function EditorSurfaceComponent({
     editorApi,
     languageServerDiagnosticsByPath,
     monacoApi,
+    phpInspectionDiagnosticCountsByPath,
     syntaxDiagnosticsByPath,
   ]);
 
@@ -2305,6 +2319,15 @@ function EditorSurfaceComponent({
     monacoApi.editor.setModelMarkers(model, "php-syntax", []);
     setSyntaxDiagnosticsByPath((current) => {
       if (!current[activeDocument.path]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[activeDocument.path];
+      return next;
+    });
+    setPhpInspectionDiagnosticCountsByPath((current) => {
+      if (current[activeDocument.path] === undefined) {
         return current;
       }
 
@@ -2353,6 +2376,22 @@ function EditorSurfaceComponent({
           ...current,
           [phpEditTick.path]: allDiagnostics,
         }));
+        setPhpInspectionDiagnosticCountsByPath((current) => {
+          if (inspectionDiagnostics.length === 0) {
+            if (current[phpEditTick.path] === undefined) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[phpEditTick.path];
+            return next;
+          }
+
+          return {
+            ...current,
+            [phpEditTick.path]: inspectionDiagnostics.length,
+          };
+        });
         monacoApi.editor.setModelMarkers(model, "php-syntax", [
           ...allDiagnostics.map((diagnostic) =>
             toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),

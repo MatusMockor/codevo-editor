@@ -3479,6 +3479,131 @@ class Foo
     expect(inspectionMarker.startLineNumber).toBe(9);
   });
 
+  it("hides a stale PHP inspection hover when unused symbols are fixed", async () => {
+    const contentWithInspections = `<?php
+
+namespace App;
+
+use App\\Services\\UnusedService;
+
+class Foo
+{
+    public function bar(): int
+    {
+        $unused = 5;
+        return 1;
+    }
+}
+`;
+    const fixedContent = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function bar(): int
+    {
+        return 1;
+    }
+}
+`;
+    const activeDocument: EditorDocument = {
+      content: contentWithInspections,
+      language: "php",
+      name: "Foo.php",
+      path: "/workspace/app/Foo.php",
+      savedContent: contentWithInspections,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+    const flushPhpValidation = async () => {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await Promise.resolve();
+      });
+    };
+    const hideHoverCalls = () =>
+      editor.trigger.mock.calls.filter(
+        ([, actionId]) => actionId === "editor.action.hideHover",
+      );
+    const latestPhpSyntaxMarkers = () => {
+      const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+        ([, owner]) => owner === "php-syntax",
+      );
+
+      return syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
+        | any[]
+        | undefined;
+    };
+
+    await renderWith(activeDocument);
+    await flushPhpValidation();
+
+    expect(
+      latestPhpSyntaxMarkers()?.filter(
+        (marker) => marker.source === "PHP Inspection",
+      ),
+    ).toHaveLength(2);
+
+    editor.trigger.mockClear();
+
+    await renderWith({
+      ...activeDocument,
+      content: fixedContent,
+      savedContent: fixedContent,
+    });
+    await flushPhpValidation();
+
+    expect(
+      latestPhpSyntaxMarkers()?.filter(
+        (marker) => marker.source === "PHP Inspection",
+      ),
+    ).toHaveLength(0);
+    expect(hideHoverCalls().length).toBeGreaterThan(0);
+  });
+
   it("does not re-map diagnostic overview decorations per keystroke when diagnostics are unchanged", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
