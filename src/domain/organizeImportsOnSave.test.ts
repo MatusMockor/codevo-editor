@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   fullDocumentRange,
+  organizeImportsCodeActionToResolve,
   organizeImportsCodeActionContext,
   organizeImportsCodeActionKind,
   organizeImportsTextEditsForPath,
@@ -232,5 +233,67 @@ describe("organizeImportsTextEditsForPath", () => {
 
   it("returns null when no actions are provided", () => {
     expect(organizeImportsTextEditsForPath([], path)).toBeNull();
+  });
+});
+
+describe("organizeImportsCodeActionToResolve", () => {
+  const action = (
+    overrides: Partial<LanguageServerCodeAction> = {},
+  ): LanguageServerCodeAction => ({
+    command: null,
+    data: { uri: fileUriFromPath("/workspace/src/App.ts") },
+    edit: null,
+    isPreferred: false,
+    kind: organizeImportsCodeActionKind,
+    title: "Organize Imports",
+    ...overrides,
+  });
+
+  it("returns the first data-only organize-imports action", () => {
+    const organizeAction = action();
+
+    expect(
+      organizeImportsCodeActionToResolve([
+        action({ kind: "source.fixAll" }),
+        organizeAction,
+      ]),
+    ).toBe(organizeAction);
+  });
+
+  it("ignores command-only actions", () => {
+    expect(
+      organizeImportsCodeActionToResolve([
+        action({
+          command: {
+            arguments: [],
+            command: "_typescript.organizeImports",
+            title: "Organize Imports",
+          },
+          data: null,
+        }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("ignores actions that already carry inline edits", () => {
+    expect(
+      organizeImportsCodeActionToResolve([
+        action({
+          edit: {
+            changes: {
+              [fileUriFromPath("/workspace/src/App.ts")]: [
+                {
+                  newText: "",
+                  range: {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 0 },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+      ]),
+    ).toBeNull();
   });
 });

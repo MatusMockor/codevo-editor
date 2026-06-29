@@ -131,6 +131,7 @@ import {
 } from "../domain/formatOnSave";
 import {
   fullDocumentRange,
+  organizeImportsCodeActionToResolve,
   organizeImportsCodeActionContext,
   organizeImportsTextEditsForPath,
   planOrganizeImportsOnSave,
@@ -8298,7 +8299,28 @@ export function useWorkbenchController(
           return content;
         }
 
-        const edits = organizeImportsTextEditsForPath(actions, document.path);
+        let edits = organizeImportsTextEditsForPath(actions, document.path);
+
+        if (!edits || edits.length === 0) {
+          const actionToResolve = organizeImportsCodeActionToResolve(actions);
+
+          if (actionToResolve) {
+            const resolvedAction =
+              await javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
+                requestedRoot,
+                actionToResolve,
+              );
+
+            if (!isRequestedSessionActive()) {
+              return content;
+            }
+
+            edits = organizeImportsTextEditsForPath(
+              [resolvedAction],
+              document.path,
+            );
+          }
+        }
 
         if (!edits || edits.length === 0) {
           return content;
@@ -18237,19 +18259,25 @@ export function useWorkbenchController(
         ""
       ).toLowerCase();
 
-      return methods
-        .filter((method) => method.name.toLowerCase().startsWith(normalizedPrefix))
-        .sort((left, right) => {
-          const leftExact = left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-          const rightExact = right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+      return phpMethodCompletionsWithStableMetadata(
+        methods
+          .filter((method) =>
+            method.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .sort((left, right) => {
+            const leftExact =
+              left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+            const rightExact =
+              right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
 
-          if (leftExact !== rightExact) {
-            return leftExact - rightExact;
-          }
+            if (leftExact !== rightExact) {
+              return leftExact - rightExact;
+            }
 
-          return left.name.localeCompare(right.name);
-        })
-        .slice(0, 80);
+            return left.name.localeCompare(right.name);
+          })
+          .slice(0, 80),
+      );
     },
     [
       collectPhpLaravelAuthGuardTargets,
@@ -18327,7 +18355,7 @@ export function useWorkbenchController(
 
       return {
         argumentIndex: signatureContext.argumentIndex,
-        method,
+        method: phpMethodCompletionWithStableMetadata(method),
         parameters: phpMethodParameters(method.parameters),
       };
     },
@@ -29403,6 +29431,30 @@ function mergePhpMethodCompletions(
   }
 
   return Array.from(completions.values());
+}
+
+function phpMethodCompletionsWithStableMetadata(
+  completions: PhpMethodCompletion[],
+): PhpMethodCompletion[] {
+  return completions.map(phpMethodCompletionWithStableMetadata);
+}
+
+function phpMethodCompletionWithStableMetadata(
+  completion: PhpMethodCompletion,
+): PhpMethodCompletion {
+  if (!completion.visibility) {
+    return completion;
+  }
+
+  const { visibility, ...stableCompletion } = completion;
+
+  Object.defineProperty(stableCompletion, "visibility", {
+    configurable: true,
+    enumerable: false,
+    value: visibility,
+  });
+
+  return stableCompletion;
 }
 
 function isLaravelEloquentRelationType(

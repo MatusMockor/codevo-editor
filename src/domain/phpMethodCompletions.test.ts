@@ -1609,6 +1609,46 @@ class Request
         name: "get",
         parameters: "string $key, mixed $default = null",
         returnType: "mixed",
+        visibility: "public",
+      },
+    ]);
+  });
+
+  it("captures visibility metadata for local PHP methods and properties", () => {
+    const source = `<?php
+/**
+ * @method protected static string magic(string $key)
+ */
+class Request
+{
+    public function get(string $key): mixed {}
+    public string $name;
+}
+`;
+
+    expect(phpMethodCompletionsFromSource(source, "Request")).toEqual([
+      {
+        declaringClassName: "Request",
+        name: "get",
+        parameters: "string $key",
+        returnType: "mixed",
+        visibility: "public",
+      },
+      {
+        declaringClassName: "Request",
+        isStatic: true,
+        name: "magic",
+        parameters: "string $key",
+        returnType: "string",
+        visibility: "protected",
+      },
+      {
+        declaringClassName: "Request",
+        kind: "property",
+        name: "name",
+        parameters: "",
+        returnType: "string",
+        visibility: "public",
       },
     ]);
   });
@@ -1639,18 +1679,21 @@ class Comment
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Builder",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "recentlyCreated",
         parameters: "int $days = 7",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "popular",
         parameters: "bool $featured = false",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        visibility: "protected",
       },
     ]);
     expect(methods.some((method) => method.name === "popular")).toBe(true);
@@ -1682,6 +1725,7 @@ class Comment
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -1689,6 +1733,7 @@ class Comment
         name: "popular",
         parameters: "",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        visibility: "protected",
       },
     ]);
   });
@@ -2273,6 +2318,7 @@ class Comment
         name: "make",
         parameters: "",
         returnType: "Comment",
+        visibility: "public",
       },
     ]);
   });
@@ -2297,6 +2343,7 @@ class Container
         name: "get",
         parameters: "string $className",
         returnType: "object",
+        visibility: "public",
       },
     ]);
   });
@@ -2322,6 +2369,7 @@ class Comment
         name: "parent",
         parameters: "",
         returnType: "BelongsTo<Comment, self>",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -2403,48 +2451,56 @@ class Comment
         name: "post",
         parameters: "",
         returnType: "BelongsTo",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "attachments",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "distantPosts",
         parameters: "",
         returnType: "HasManyThrough<Post, User>",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "ambiguousMedia",
         parameters: "",
         returnType: "HasOneThrough<Post|Video, User>",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "siblings",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "replies",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "commentable",
         parameters: "",
         returnType: "MorphTo<Post, self>",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "attachable",
         parameters: "",
         returnType: "MorphTo<Post|Video, self>",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -2645,6 +2701,7 @@ trait InteractsWithInput
         name: "input",
         parameters: "string|null $key = null, mixed $default = null",
         returnType: "mixed",
+        visibility: "public",
       },
     ]);
   });
@@ -2677,6 +2734,7 @@ class Comment
         name: "getBody",
         parameters: "",
         returnType: "string",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -2719,6 +2777,7 @@ class Comment
         name: "status",
         parameters: "",
         returnType: "string",
+        visibility: "public",
       },
     ]);
   });
@@ -2760,12 +2819,14 @@ class Comment
         name: "post",
         parameters: "",
         returnType: "BelongsTo",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "attachments",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -2816,12 +2877,14 @@ class User
         name: "roles",
         parameters: "",
         returnType: "BelongsToMany",
+        visibility: "public",
       },
       {
         declaringClassName: "User",
         name: "tags",
         parameters: "",
         returnType: "MorphToMany",
+        visibility: "public",
       },
       {
         declaringClassName: "User",
@@ -2878,12 +2941,14 @@ class Comment
         name: "post",
         parameters: "",
         returnType: "BelongsTo",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
         name: "attachments",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -3243,6 +3308,7 @@ class User
         name: "comments",
         parameters: "",
         returnType: "HasMany",
+        visibility: "public",
       },
       {
         declaringClassName: "User",
@@ -3543,6 +3609,7 @@ class Comment extends Model
         name: "status",
         parameters: "",
         returnType: "string",
+        visibility: "public",
       },
       {
         declaringClassName: "Comment",
@@ -3588,6 +3655,7 @@ class Comment extends Model
         name: "content",
         parameters: "",
         returnType: "string",
+        visibility: "public",
       },
     ]);
   });
@@ -3643,6 +3711,7 @@ class User extends Model
         name: "getFullNameAttribute",
         parameters: "",
         returnType: "string",
+        visibility: "public",
       },
       {
         declaringClassName: "User",

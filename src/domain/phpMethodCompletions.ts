@@ -24,6 +24,8 @@ export interface PhpMemberAccessCompletionContext {
   variableName: string | null;
 }
 
+export type PhpMemberVisibility = "public" | "protected" | "private";
+
 export interface PhpMethodCompletion {
   classStringTemplate?: string;
   declaringClassName: string;
@@ -41,6 +43,7 @@ export interface PhpMethodCompletion {
   name: string;
   parameters: string;
   returnType: string | null;
+  visibility?: PhpMemberVisibility;
 }
 
 export interface PhpMethodParameter {
@@ -183,6 +186,7 @@ export function phpMethodCompletionsFromSource(
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
     const classStringTemplate = phpDocClassStringReturnTemplate(docBlock);
+    const visibility = phpMemberVisibilityFromModifiers(modifiers);
 
     members.push({
       ...(classStringTemplate ? { classStringTemplate } : {}),
@@ -195,6 +199,7 @@ export function phpMethodCompletionsFromSource(
       ),
       returnType: bestPhpReturnType(declaredReturnType, documentedReturnType),
       ...(modifiers.includes("static") ? { isStatic: true } : {}),
+      ...(visibility ? { visibility } : {}),
     });
   }
 
@@ -223,9 +228,13 @@ function phpDocMethodCompletionsFromSource(
 
     const prefix = normalizeWhitespace(match[1] ?? "");
     const prefixParts = prefix ? prefix.split(" ") : [];
-    const isStatic = prefixParts[0]?.toLowerCase() === "static";
+    const visibility = phpMemberVisibilityFromToken(prefixParts[0]);
+    const partsWithoutVisibility = visibility ? prefixParts.slice(1) : prefixParts;
+    const isStatic = partsWithoutVisibility[0]?.toLowerCase() === "static";
     const returnType = normalizeReturnType(
-      (isStatic ? prefixParts.slice(1) : prefixParts).join(" "),
+      (isStatic ? partsWithoutVisibility.slice(1) : partsWithoutVisibility).join(
+        " ",
+      ),
     );
 
     members.push({
@@ -234,6 +243,7 @@ function phpDocMethodCompletionsFromSource(
       name,
       parameters: normalizeWhitespace(match[3] ?? ""),
       returnType,
+      ...(visibility ? { visibility } : {}),
     });
   }
 
@@ -294,6 +304,7 @@ function phpPropertyCompletionsFromSource(
       name,
       parameters: "",
       returnType: normalizeReturnType(match[2] ?? null),
+      visibility: "public",
     });
   }
 
@@ -343,6 +354,40 @@ function dedupePhpMembers(members: PhpMethodCompletion[]): PhpMethodCompletion[]
   }
 
   return unique;
+}
+
+function phpMemberVisibilityFromModifiers(
+  modifiers: string,
+): PhpMemberVisibility | null {
+  if (/\bpublic\b/.test(modifiers)) {
+    return "public";
+  }
+
+  if (/\bprotected\b/.test(modifiers)) {
+    return "protected";
+  }
+
+  if (/\bprivate\b/.test(modifiers)) {
+    return "private";
+  }
+
+  return null;
+}
+
+function phpMemberVisibilityFromToken(
+  token: string | undefined,
+): PhpMemberVisibility | null {
+  const normalized = token?.toLowerCase();
+
+  if (
+    normalized === "public" ||
+    normalized === "protected" ||
+    normalized === "private"
+  ) {
+    return normalized;
+  }
+
+  return null;
 }
 
 export function phpMethodParameters(parameters: string): PhpMethodParameter[] {

@@ -4546,6 +4546,8 @@ function phpMethodCompletionKind(
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {
+  const visibilityPrefix = item.visibility ? `${item.visibility} ` : "";
+
   if (item.kind === "relation") {
     const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -4555,7 +4557,7 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
   if (item.kind === "property") {
     const returnType = item.returnType ? `: ${item.returnType}` : "";
 
-    return `${item.declaringClassName}::$${item.name}${returnType}`;
+    return `${visibilityPrefix}${item.declaringClassName}::$${item.name}${returnType}`;
   }
 
   if (item.kind === "route") {
@@ -4581,7 +4583,7 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
-  return `${item.declaringClassName}::${item.name}${parameters}${returnType}`;
+  return `${visibilityPrefix}${item.declaringClassName}::${item.name}${parameters}${returnType}`;
 }
 
 function phpMethodDocumentation(item: PhpMethodCompletion): string {
@@ -4632,34 +4634,67 @@ function phpMethodCompletionLabel(
   item: PhpMethodCompletion,
 ): Monaco.languages.CompletionItemLabel {
   return {
-    description:
-      item.kind === "relation"
-        ? `relation - ${item.declaringClassName}`
-        : item.kind === "route"
-        ? `route - ${item.declaringClassName}`
-        : item.kind === "config"
-        ? `config - ${item.declaringClassName}`
-        : item.kind === "env"
-        ? `env - ${item.declaringClassName}`
-        : item.kind === "translation"
-        ? `translation - ${item.declaringClassName}`
-        : item.kind === "view"
-        ? `view - ${item.declaringClassName}`
-        : item.kind === "property"
-        ? `property - ${item.declaringClassName}`
-        : `method - ${item.declaringClassName}`,
-    detail:
-      item.kind === "property" ||
-      item.kind === "config" ||
-      item.kind === "env" ||
-      item.kind === "translation" ||
-      item.kind === "relation" ||
-      item.kind === "route" ||
-      item.kind === "view"
-        ? ""
-        : "()",
+    description: phpMethodCompletionLabelDescription(item),
+    detail: phpMethodCompletionLabelDetail(item),
     label: item.name,
   };
+}
+
+function phpMethodCompletionLabelDescription(item: PhpMethodCompletion): string {
+  const visibilityPrefix = item.visibility ? `${item.visibility} ` : "";
+
+  if (item.kind === "relation") {
+    return `relation - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "route") {
+    return `route - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "config") {
+    return `config - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "env") {
+    return `env - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "translation") {
+    return `translation - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "view") {
+    return `view - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "property") {
+    return `${visibilityPrefix}property - ${item.declaringClassName}`;
+  }
+
+  return `${visibilityPrefix}method - ${item.declaringClassName}`;
+}
+
+function phpMethodCompletionLabelDetail(item: PhpMethodCompletion): string {
+  if (
+    item.kind === "config" ||
+    item.kind === "env" ||
+    item.kind === "translation" ||
+    item.kind === "relation" ||
+    item.kind === "route" ||
+    item.kind === "view"
+  ) {
+    return "";
+  }
+
+  if (item.kind === "property") {
+    return item.visibility && item.returnType ? `: ${item.returnType}` : "";
+  }
+
+  if (item.visibility && item.returnType) {
+    return `(): ${item.returnType}`;
+  }
+
+  return "()";
 }
 
 function phpMethodSignatureLabel(item: PhpMethodCompletion): string {

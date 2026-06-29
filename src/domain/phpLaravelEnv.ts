@@ -57,22 +57,7 @@ export function phpLaravelEnvReferenceContextAt(
     return null;
   }
 
-  const beforeCall = source.slice(0, argument.openParen);
-  const functionMatch = /(?:^|[^A-Za-z0-9_>$:])([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
-    beforeCall,
-  );
-
-  if (!functionMatch?.[1]) {
-    return null;
-  }
-
-  const beforeFunction = beforeCall.slice(0, functionMatch.index);
-
-  if (/(?:->|::)\s*$/.test(beforeFunction)) {
-    return null;
-  }
-
-  if (functionMatch[1].toLowerCase() !== "env") {
+  if (!isLaravelEnvReferenceCall(source.slice(0, argument.openParen))) {
     return null;
   }
 
@@ -137,10 +122,39 @@ export function isUsableLaravelEnvName(envName: string): boolean {
 }
 
 function isFirstArgument(argument: PhpArgumentContext): boolean {
-  return (
-    argument.argumentIndex === 0 ||
-    argument.argumentName?.toLowerCase() === "key"
+  if (argument.argumentName) {
+    return argument.argumentName.toLowerCase() === "key";
+  }
+
+  return argument.argumentIndex === 0;
+}
+
+function isLaravelEnvReferenceCall(beforeOpenParen: string): boolean {
+  const functionMatch = /(?:^|[^A-Za-z0-9_>$:])([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+    beforeOpenParen,
   );
+
+  if (functionMatch?.[1]?.toLowerCase() === "env") {
+    const beforeFunction = beforeOpenParen.slice(0, functionMatch.index);
+
+    return !/(?:->|::)\s*$/.test(beforeFunction);
+  }
+
+  const staticMatch = /(^|[^A-Za-z0-9_\\])Env\s*::\s*get\s*$/.exec(
+    beforeOpenParen,
+  );
+
+  if (!staticMatch) {
+    return false;
+  }
+
+  const boundary = staticMatch[1] ?? "";
+  const beforeClass = beforeOpenParen.slice(
+    0,
+    staticMatch.index + boundary.length,
+  );
+
+  return !/(?:->|::)\s*$/.test(beforeClass);
 }
 
 function argumentContextAt(

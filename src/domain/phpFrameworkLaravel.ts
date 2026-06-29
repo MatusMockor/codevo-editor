@@ -1899,6 +1899,7 @@ export function phpLaravelLocalScopeCompletionsFromMethods(
             method.returnType === "void" || method.returnType === "never"
               ? "Illuminate\\Database\\Eloquent\\Builder"
               : method.returnType,
+          ...(method.visibility ? { visibility: method.visibility } : {}),
         },
       ];
     }),

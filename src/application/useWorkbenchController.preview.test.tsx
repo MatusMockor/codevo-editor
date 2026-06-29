@@ -8114,6 +8114,15 @@ describe("useWorkbenchController preview tabs", () => {
         };
       };
 
+      const lazyOrganizeImportsAction = (): LanguageServerCodeAction => ({
+        command: null,
+        data: { requestId: "organize-imports" },
+        edit: null,
+        isPreferred: false,
+        kind: "source.organizeImports",
+        title: "Organize Imports",
+      });
+
       it("organizes JS/TS imports through the LSP before writing when optimizeImportsOnSave is enabled", async () => {
         const path = "/workspace/src/App.ts";
         const featuresGatewayInstance = featuresGateway();
@@ -8172,6 +8181,124 @@ describe("useWorkbenchController preview tabs", () => {
         expect(getWorkbench().activeDocument?.content).toBe(
           tsWithOrganizedImports,
         );
+      });
+
+      it("resolves data-only organize-imports actions before writing", async () => {
+        const path = "/workspace/src/App.ts";
+        const actionToResolve = lazyOrganizeImportsAction();
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          actionToResolve,
+        ]);
+        vi.mocked(featuresGatewayInstance.resolveCodeAction).mockResolvedValue(
+          organizeImportsAction(
+            path,
+            tsWithUnsortedImports,
+            tsWithOrganizedImports,
+          ),
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.resolveCodeAction).toHaveBeenCalledWith(
+          "/workspace",
+          actionToResolve,
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithOrganizedImports);
+      });
+
+      it("does not resolve command-only organize-imports actions on save", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          {
+            command: {
+              arguments: [],
+              command: "_typescript.organizeImports",
+              title: "Organize Imports",
+            },
+            data: null,
+            edit: null,
+            isPreferred: false,
+            kind: "source.organizeImports",
+            title: "Organize Imports",
+          },
+        ]);
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.resolveCodeAction).not.toHaveBeenCalled();
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
       });
 
       it("does not organize JS/TS imports on save when optimizeImportsOnSave is disabled", async () => {
@@ -8403,7 +8530,97 @@ describe("useWorkbenchController preview tabs", () => {
         expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
         expect(
           dependencies.workspaceGateways.files.writeTextFile,
-        ).not.toHaveBeenCalledWith(path, tsWithOrganizedImports);
+        ).not.toHaveBeenCalledWith(path, expect.anything());
+      });
+
+      it("does not write resolved organize-imports edits after switching project tabs while resolve is pending", async () => {
+        const path = "/workspace-a/src/App.ts";
+        const runningStatus: LanguageServerRuntimeStatus = {
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            codeAction: true,
+          },
+          kind: "running",
+          sessionId: 943,
+        };
+        const actionToResolve = lazyOrganizeImportsAction();
+        const resolveResult = createDeferred<LanguageServerCodeAction>();
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
+          actionToResolve,
+        ]);
+        vi.mocked(featuresGatewayInstance.resolveCodeAction).mockImplementation(
+          async () => resolveResult.promise,
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace-a",
+            workspaceTabs: ["/workspace-a", "/workspace-b"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus: runningStatus,
+          readTextFile: vi.fn(async (requestedPath: string) =>
+            requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+          ),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            optimizeImportsOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        let savePromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          savePromise = getWorkbench().saveActiveDocument();
+          await Promise.resolve();
+        });
+        await vi.waitFor(() => {
+          expect(featuresGatewayInstance.resolveCodeAction).toHaveBeenCalledWith(
+            "/workspace-a",
+            actionToResolve,
+          );
+        });
+
+        let switchPromise: Promise<void> = Promise.resolve();
+        await act(async () => {
+          switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+        });
+        await vi.waitFor(() => {
+          expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        });
+
+        act(() => {
+          resolveResult.resolve(
+            organizeImportsAction(
+              path,
+              tsWithUnsortedImports,
+              tsWithOrganizedImports,
+            ),
+          );
+        });
+        await act(async () => {
+          await Promise.all([savePromise, switchPromise]);
+        });
+        await flushAsyncTurns(24);
+
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).not.toHaveBeenCalledWith(path, expect.anything());
       });
     });
   });
@@ -44148,6 +44365,64 @@ class AppController
     public function name(): string
     {
         return env('APP_NA');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          return "APP_NAME=Codevo\nAPP_ENV=local\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "APP_NA"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: ".env",
+        insertText: "APP_NAME",
+        kind: "env",
+        name: "APP_NAME",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel env keys inside Env facade get strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace/.env";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return Env::get('APP_NA');
     }
 }
 `;

@@ -2492,6 +2492,70 @@ function store($request): void
     });
   });
 
+  it("surfaces PHP member visibility in Monaco method and property rows", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "publish",
+        parameters: "",
+        returnType: "bool",
+        visibility: "protected" as const,
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "property" as const,
+        name: "body",
+        parameters: "",
+        returnType: "string",
+        visibility: "public" as const,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->",
+        word: {
+          endColumn: 15,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 15,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        detail: "protected App\\Models\\Comment::publish(): bool",
+        kind: 2,
+        label: {
+          description: "protected method - App\\Models\\Comment",
+          detail: "(): bool",
+          label: "publish",
+        },
+      }),
+      expect.objectContaining({
+        detail: "public App\\Models\\Comment::$body: string",
+        kind: 10,
+        label: {
+          description: "public property - App\\Models\\Comment",
+          detail: ": string",
+          label: "body",
+        },
+      }),
+    ]);
+  });
+
   it("maps Laravel relation completions as field-like property access", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

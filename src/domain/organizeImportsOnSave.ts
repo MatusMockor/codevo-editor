@@ -132,6 +132,24 @@ export function organizeImportsTextEditsForPath(
   return null;
 }
 
+export function organizeImportsCodeActionToResolve(
+  actions: LanguageServerCodeAction[],
+): LanguageServerCodeAction | null {
+  for (const action of actions) {
+    if (!isOrganizeImportsAction(action)) {
+      continue;
+    }
+
+    if (action.command || action.edit || action.data == null) {
+      continue;
+    }
+
+    return action;
+  }
+
+  return null;
+}
+
 function isOrganizeImportsAction(action: LanguageServerCodeAction): boolean {
   return (
     typeof action.kind === "string" &&

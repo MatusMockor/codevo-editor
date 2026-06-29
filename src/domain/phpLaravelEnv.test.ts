@@ -37,6 +37,35 @@ return env(key: 'APP_NAME', default: 'Codevo');
     });
   });
 
+  it("detects unqualified Laravel Env facade get strings", () => {
+    const source = `<?php
+
+return Env::get('APP_NAME');
+`;
+
+    expect(
+      phpLaravelEnvReferenceContextAt(source, positionAfter(source, "APP_NA")),
+    ).toEqual({
+      name: "APP_NAME",
+      position: { column: 18, lineNumber: 3 },
+      prefix: "APP_NA",
+    });
+  });
+
+  it("detects named Laravel Env facade key arguments", () => {
+    const source = `<?php
+
+return Env::get(key: 'APP_NAME');
+`;
+
+    expect(
+      phpLaravelEnvReferenceContextAt(source, positionAfter(source, "APP_NA")),
+    ).toMatchObject({
+      name: "APP_NAME",
+      prefix: "APP_NA",
+    });
+  });
+
   it("ignores interpolation, invalid names, and non-env calls", () => {
     const interpolated = `<?php\n\nreturn env("APP_$name");\n`;
     const invalid = `<?php\n\nreturn env('APP-NAME');\n`;
@@ -54,6 +83,26 @@ return env(key: 'APP_NAME', default: 'Codevo');
     expect(
       phpLaravelEnvReferenceContextAt(wrongCall, positionAfter(wrongCall, "APP")),
     ).toBeNull();
+  });
+
+  it("ignores non-reference Env facade calls and arguments", () => {
+    const cases: Array<{ source: string; token: string }> = [
+      { source: `<?php\n\nreturn Env::set('APP_NAME');\n`, token: "APP" },
+      { source: `<?php\n\nreturn App\\Env::get('APP_NAME');\n`, token: "APP" },
+      { source: `<?php\n\nreturn Env::get(default: 'APP_NAME');\n`, token: "APP" },
+      {
+        source: `<?php\n\nreturn Env::get('APP_ENV', 'APP_NAME');\n`,
+        token: "APP_NAME",
+      },
+      { source: `<?php\n\nreturn Env::get(key: 'APP-NAME');\n`, token: "APP" },
+      { source: `<?php\n\nreturn Env::get(key: "APP_$name");\n`, token: "APP" },
+    ];
+
+    for (const { source, token } of cases) {
+      expect(
+        phpLaravelEnvReferenceContextAt(source, positionAfter(source, token)),
+      ).toBeNull();
+    }
   });
 
   it("extracts dotenv entries with positions", () => {
