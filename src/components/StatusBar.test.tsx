@@ -432,4 +432,68 @@ describe("StatusBar", () => {
     expect(menu?.textContent).toContain("Cursor position");
     expect(menu?.textContent).toContain("Git branch");
   });
+
+  it("toggles message visibility from the context menu without closing it", async () => {
+    const onChangeVisibility = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          cursorPosition={{ column: 1, lineNumber: 1 }}
+          dirtyCount={0}
+          gitBranch="main"
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message="Saved"
+          onChangeVisibility={onChangeVisibility}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const footer = host.querySelector("footer.status-bar");
+
+    await act(async () => {
+      footer?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
+      );
+    });
+
+    const messageCheckbox = checkboxInStatusMenu("Messages");
+
+    await act(async () => {
+      messageCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChangeVisibility).toHaveBeenCalledWith("message", false);
+    expect(host.querySelector(".status-bar-menu")).not.toBeNull();
+
+    await act(async () => {
+      checkboxInStatusMenu("Unsaved files").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(onChangeVisibility).toHaveBeenLastCalledWith("dirtyCount", false);
+  });
+
+  function checkboxInStatusMenu(labelText: string): HTMLInputElement {
+    const labels = Array.from(
+      host.querySelectorAll<HTMLLabelElement>(".status-bar-menu-item"),
+    );
+    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const input = label?.querySelector<HTMLInputElement>("input");
+
+    if (!input) {
+      throw new Error(`${labelText} status bar menu checkbox was not rendered.`);
+    }
+
+    return input;
+  }
 });

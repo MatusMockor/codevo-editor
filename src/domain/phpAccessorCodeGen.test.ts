@@ -67,7 +67,19 @@ describe("renderGetter", () => {
     );
   });
 
-  it("falls back to the phpDoc @var type when there is no native type", () => {
+  it("falls back to a legal native phpDoc @var type when there is no native type", () => {
+    const result = renderGetter(
+      property({
+        name: "owner",
+        type: null,
+        phpDoc: { raw: "/** @var User */", varType: "User" },
+      }),
+    );
+
+    expect(result).toContain("public function getOwner(): User");
+  });
+
+  it("preserves an array-shape phpDoc @var as @return instead of a native return type", () => {
     const result = renderGetter(
       property({
         name: "tags",
@@ -76,7 +88,67 @@ describe("renderGetter", () => {
       }),
     );
 
-    expect(result).toContain("public function getTags(): string[]");
+    expect(result).toBe(
+      [
+        "/**",
+        " * @return string[]",
+        " */",
+        "public function getTags()",
+        "{",
+        "    return $this->tags;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps generic phpDoc precision while using the legal native array return type", () => {
+    const result = renderGetter(
+      property({
+        name: "users",
+        type: "array",
+        phpDoc: {
+          raw: "/** @var array<int, User> */",
+          varType: "array<int, User>",
+        },
+      }),
+    );
+
+    expect(result).toBe(
+      [
+        "/**",
+        " * @return array<int, User>",
+        " */",
+        "public function getUsers(): array",
+        "{",
+        "    return $this->users;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("does not emit generic class PHPDoc types as native return types", () => {
+    const result = renderGetter(
+      property({
+        name: "users",
+        type: null,
+        phpDoc: {
+          raw: "/** @var Collection<int, User> */",
+          varType: "Collection<int, User>",
+        },
+      }),
+    );
+
+    expect(result).toBe(
+      [
+        "/**",
+        " * @return Collection<int, User>",
+        " */",
+        "public function getUsers()",
+        "{",
+        "    return $this->users;",
+        "}",
+      ].join("\n"),
+    );
   });
 
   it("uses the is-prefix for a bool property (PhpStorm convention)", () => {
@@ -198,6 +270,56 @@ describe("renderSetter", () => {
         "    $this->name = $name;",
         "",
         "    return $this;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("adds a phpDoc @param for generic property documentation without emitting it natively", () => {
+    const result = renderSetter(
+      property({
+        name: "users",
+        type: "array",
+        phpDoc: {
+          raw: "/** @var array<int, User> */",
+          varType: "array<int, User>",
+        },
+      }),
+    );
+
+    expect(result).toBe(
+      [
+        "/**",
+        " * @param array<int, User> $users",
+        " */",
+        "public function setUsers(array $users): void",
+        "{",
+        "    $this->users = $users;",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("does not use an illegal native property type in the setter signature", () => {
+    const result = renderSetter(
+      property({
+        name: "users",
+        type: "Collection<int, User>",
+        phpDoc: {
+          raw: "/** @var Collection<int, User> */",
+          varType: "Collection<int, User>",
+        },
+      }),
+    );
+
+    expect(result).toBe(
+      [
+        "/**",
+        " * @param Collection<int, User> $users",
+        " */",
+        "public function setUsers($users): void",
+        "{",
+        "    $this->users = $users;",
         "}",
       ].join("\n"),
     );

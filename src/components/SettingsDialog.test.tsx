@@ -703,6 +703,56 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists theme changes while preserving workspace settings and trust", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 2,
+      revealActiveFileInTree: false,
+      statusBar: {
+        ...defaultWorkspaceSettings().statusBar,
+        message: false,
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="appearance"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={workspaceSettings}
+          workspaceTrust={{ rootPath: "/workspace", trusted: false }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      selectWithLabel("Theme").value = "oneDarkPro";
+      selectWithLabel("Theme").dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        theme: "oneDarkPro",
+      },
+      trusted: false,
+      workspaceSettings,
+    });
+  });
+
   it("persists TypeScript version preference changes", async () => {
     const onSave = vi.fn(async () => undefined);
 

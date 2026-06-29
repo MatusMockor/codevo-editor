@@ -11,8 +11,10 @@ import type { PhpPropertyMember } from "./phpClassStructure";
  *  - Naming follows PhpStorm: `getX` / `setX`, but a boolean property gets an
  *    `isX` getter. The PHP property name is preserved verbatim in `$this->x`.
  *  - A `readonly` property is immutable, so it never gets a setter.
- *  - The native type drives the hint; a `@var` PHPDoc type is a fallback when
- *    there is no native type.
+ *  - The native type drives the hint; a legal native `@var` PHPDoc type is a
+ *    fallback when there is no native type.
+ *  - Rich PHPDoc-only types (`string[]`, `array<int, User>`, generics) stay in
+ *    generated PHPDoc instead of being emitted as invalid native PHP types.
  */
 
 export type PhpAccessorMode = "get" | "set" | "both";
@@ -35,6 +37,10 @@ export interface RenderAccessorsOptions {
 const DEFAULT_INDENT = "";
 const BODY_INDENT = "    ";
 const BOOL_TYPE_TOKENS = new Set(["bool", "null"]);
+const NATIVE_TYPE_TOKEN_PATTERN = "\\\\?[A-Za-z_][\\\\A-Za-z0-9_]*";
+const NATIVE_TYPE_PATTERN = new RegExp(
+  `^\\??${NATIVE_TYPE_TOKEN_PATTERN}(?:\\s*[|&]\\s*${NATIVE_TYPE_TOKEN_PATTERN})*$`,
+);
 
 export function renderGetter(
   property: PhpPropertyMember,
@@ -46,8 +52,9 @@ export function renderGetter(
   const methodName = `${getterPrefix(accessorType)}${pascalCase(property.name)}`;
   const signature = `public function ${methodName}()${returnSuffix}`;
   const body = `return $this->${property.name};`;
+  const docLines = phpDocLines([phpDocTag("return", property)]);
 
-  return renderMethod(signature, [body], indent);
+  return renderMethod(signature, [body], indent, docLines);
 }
 
 export function renderSetter(
@@ -60,13 +67,15 @@ export function renderSetter(
 
   const indent = options.indent ?? DEFAULT_INDENT;
   const fluent = options.fluent ?? false;
-  const typePrefix = property.type ? `${property.type} ` : "";
+  const parameterType = setterParameterType(property);
+  const typePrefix = parameterType ? `${parameterType} ` : "";
   const methodName = `set${pascalCase(property.name)}`;
   const returnSuffix = fluent ? ": static" : ": void";
   const signature = `public function ${methodName}(${typePrefix}$${property.name})${returnSuffix}`;
   const body = setterBody(property, fluent);
+  const docLines = phpDocLines([phpDocTag("param", property)]);
 
-  return renderMethod(signature, body, indent);
+  return renderMethod(signature, body, indent, docLines);
 }
 
 export function renderAccessors(
@@ -121,12 +130,17 @@ function renderMethod(
   signature: string,
   bodyLines: string[],
   indent: string,
+  docLines: string[] = [],
 ): string {
   const body = bodyLines.map((line) => indentBodyLine(line, indent));
 
-  return [`${indent}${signature}`, `${indent}{`, ...body, `${indent}}`].join(
-    "\n",
-  );
+  return [
+    ...docLines.map((line) => `${indent}${line}`),
+    `${indent}${signature}`,
+    `${indent}{`,
+    ...body,
+    `${indent}}`,
+  ].join("\n");
 }
 
 function indentBodyLine(line: string, indent: string): string {
@@ -138,11 +152,90 @@ function indentBodyLine(line: string, indent: string): string {
 }
 
 function getterType(property: PhpPropertyMember): string | null {
-  if (property.type) {
+  if (property.type && isLegalNativeReturnType(property.type)) {
     return property.type;
   }
 
-  return property.phpDoc?.varType ?? null;
+  const docType = property.phpDoc?.varType ?? null;
+
+  return docType && isLegalNativeReturnType(docType) ? docType : null;
+}
+
+function setterParameterType(property: PhpPropertyMember): string | null {
+  if (property.type && isLegalNativeParameterType(property.type)) {
+    return property.type;
+  }
+
+  return null;
+}
+
+function phpDocTag(
+  kind: "param" | "return",
+  property: PhpPropertyMember,
+): string | null {
+  const docType = property.phpDoc?.varType;
+
+  if (!docType || docType === getterType(property)) {
+    return null;
+  }
+
+  if (kind === "param") {
+    return `@param ${docType} $${property.name}`;
+  }
+
+  return `@return ${docType}`;
+}
+
+function phpDocLines(tags: Array<string | null>): string[] {
+  const renderedTags = tags.filter((tag): tag is string => tag !== null);
+
+  if (renderedTags.length === 0) {
+    return [];
+  }
+
+  return ["/**", ...renderedTags.map((tag) => ` * ${tag}`), " */"];
+}
+
+function isLegalNativeReturnType(type: string): boolean {
+  return isLegalNativeType(type, "return");
+}
+
+function isLegalNativeParameterType(type: string): boolean {
+  return isLegalNativeType(type, "parameter");
+}
+
+function isLegalNativeType(
+  type: string,
+  position: "parameter" | "return",
+): boolean {
+  const normalized = type.trim();
+
+  if (!NATIVE_TYPE_PATTERN.test(normalized)) {
+    return false;
+  }
+
+  if (normalized.includes("?") && /[|&]/.test(normalized)) {
+    return false;
+  }
+
+  if (normalized.includes("|") && normalized.includes("&")) {
+    return false;
+  }
+
+  const tokens = normalized
+    .replace(/^\?/, "")
+    .split(/[|&]/)
+    .map((token) => token.trim().replace(/^\\+/, "").toLowerCase());
+
+  if (tokens.some((token) => token === "void" || token === "never")) {
+    return false;
+  }
+
+  if (position === "parameter" && tokens.includes("static")) {
+    return false;
+  }
+
+  return true;
 }
 
 function getterPrefix(accessorType: string | null): string {
