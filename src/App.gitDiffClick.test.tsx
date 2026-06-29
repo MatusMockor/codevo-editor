@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitChangedFile, GitFileDiff } from "./domain/git";
 
 const appGitDiffClickMocks = vi.hoisted(() => ({
+  changes: [] as GitChangedFile[],
+  diffErrorMessage: null as string | null,
   loadGitFileHunks: vi.fn(),
 }));
 
@@ -14,11 +16,20 @@ vi.mock("./application/useWorkbenchController", async () => {
 
   return {
     useWorkbenchController: () => {
-      const change = readmeChange();
+      const changes =
+        appGitDiffClickMocks.changes.length > 0
+          ? appGitDiffClickMocks.changes
+          : [gitChange("modified", "README.md")];
       const [state, setState] = React.useState({
         activePath: null as string | null,
         gitDiffLoading: false,
         gitDiffPreview: null as GitFileDiff | null,
+        notices: [] as Array<{
+          id: string;
+          message: string;
+          severity: string;
+          source: string;
+        }>,
         openDocuments: [] as Array<{
           content: string;
           language: string;
@@ -37,6 +48,7 @@ vi.mock("./application/useWorkbenchController", async () => {
           activePath: diffPath,
           gitDiffLoading: true,
           gitDiffPreview: null,
+          notices: [],
           openDocuments: [
             {
               content: "",
@@ -51,15 +63,44 @@ vi.mock("./application/useWorkbenchController", async () => {
           selectedGitChange: selected,
         });
         await Promise.resolve();
+        if (appGitDiffClickMocks.diffErrorMessage) {
+          setState({
+            activePath: diffPath,
+            gitDiffLoading: false,
+            gitDiffPreview: null,
+            notices: [
+              {
+                id: "recoverable-git-diff-error",
+                message: appGitDiffClickMocks.diffErrorMessage,
+                severity: "error",
+                source: "Git Diff",
+              },
+            ],
+            openDocuments: [
+              {
+                content: "",
+                language: "plaintext",
+                name: `Diff: ${fileName(selected.relativePath)}`,
+                path: diffPath,
+                readOnly: true,
+                savedContent: "",
+              },
+            ],
+            previewPath: diffPath,
+            selectedGitChange: selected,
+          });
+          return;
+        }
         setState({
           activePath: diffPath,
           gitDiffLoading: false,
-          gitDiffPreview: readmeDiff(selected),
+          gitDiffPreview: gitDiff(selected),
+          notices: [],
           openDocuments: [
             {
               content: "",
               language: "plaintext",
-              name: "Diff: README.md",
+              name: `Diff: ${fileName(selected.relativePath)}`,
               path: diffPath,
               readOnly: true,
               savedContent: "",
@@ -74,7 +115,7 @@ vi.mock("./application/useWorkbenchController", async () => {
         ...state,
         gitStatus: {
           branch: "main",
-          changes: [change],
+          changes,
           isRepository: true,
           rootPath: "/workspace",
         },
@@ -86,7 +127,14 @@ vi.mock("./application/useWorkbenchController", async () => {
 });
 
 vi.mock("./application/useNoticeToastRenderers", () => ({
-  useNoticeToastRenderers: () => (notice: unknown) => String(notice),
+  useNoticeToastRenderers: () => (notice: unknown) => {
+    if (notice && typeof notice === "object" && "message" in notice) {
+      const typedNotice = notice as { message: string; source?: string };
+      return `${typedNotice.source ?? "Notice"}: ${typedNotice.message}`;
+    }
+
+    return String(notice);
+  },
 }));
 
 import App from "./App";
@@ -114,19 +162,80 @@ describe("App Git diff click path", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    appGitDiffClickMocks.changes = [];
+    appGitDiffClickMocks.diffErrorMessage = null;
     appGitDiffClickMocks.loadGitFileHunks.mockReset();
     vi.restoreAllMocks();
   });
 
-  it("clicks a modified README row and renders visible diff text", async () => {
+  it.each([
+    {
+      change: gitChange("modified", "README.md"),
+      expectedText: "Updated docs",
+      stagedArgument: false,
+    },
+    {
+      change: gitChange("modified", "src/staged.ts", { isStaged: true }),
+      expectedText: "const value = 2;",
+      stagedArgument: true,
+    },
+    {
+      change: gitChange("untracked", "notes/todo.txt", {
+        isUnversioned: true,
+      }),
+      expectedText: "Write the QA notes",
+      stagedArgument: null,
+    },
+  ])(
+    "clicks a $change.status Git row and renders a nonblank diff",
+    async ({ change, expectedText, stagedArgument }) => {
+      appGitDiffClickMocks.changes = [change];
+
+      await act(async () => {
+        root.render(<App />);
+        await Promise.resolve();
+      });
+
+      const changeButton = changeRowButton(host, change.relativePath);
+      expect(changeButton).toBeDefined();
+
+      await act(async () => {
+        changeButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(host.textContent).toContain(fileName(change.relativePath));
+      expect(host.textContent).toContain(
+        `Diff: ${fileName(change.relativePath)}`,
+      );
+      expect(host.textContent).toContain("@@");
+      expect(host.textContent).toContain(expectedText);
+      expect(host.querySelector('[data-testid="plain-git-diff"]')).not.toBeNull();
+      expect(host.innerHTML).not.toBe("");
+
+      if (stagedArgument === null) {
+        expect(appGitDiffClickMocks.loadGitFileHunks).not.toHaveBeenCalled();
+      } else {
+        expect(appGitDiffClickMocks.loadGitFileHunks).toHaveBeenCalledWith(
+          change.relativePath,
+          stagedArgument,
+        );
+      }
+    },
+  );
+
+  it("shows a recoverable notice instead of a blank diff when loading fails", async () => {
+    const change = gitChange("modified", "README.md");
+    appGitDiffClickMocks.changes = [change];
+    appGitDiffClickMocks.diffErrorMessage = "get_git_diff failed for README.md";
+
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
     });
 
-    const readmeButton = Array.from(
-      host.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("README.md"));
+    const readmeButton = changeRowButton(host, "README.md");
     expect(readmeButton).toBeDefined();
 
     await act(async () => {
@@ -137,14 +246,11 @@ describe("App Git diff click path", () => {
 
     expect(host.textContent).toContain("README.md");
     expect(host.textContent).toContain("Diff: README.md");
-    expect(host.textContent).toContain("@@ -1 +1,3 @@");
-    expect(host.textContent).toContain("Updated docs");
-    expect(host.querySelector('[data-testid="plain-git-diff"]')).not.toBeNull();
-    expect(host.innerHTML).not.toBe("");
-    expect(appGitDiffClickMocks.loadGitFileHunks).toHaveBeenCalledWith(
-      "README.md",
-      false,
+    expect(host.textContent).toContain(
+      "Git Diff: get_git_diff failed for README.md",
     );
+    expect(host.textContent).toContain("Select a changed file to preview diff.");
+    expect(host.innerHTML).not.toBe("");
   });
 });
 
@@ -234,23 +340,60 @@ function createWorkbench(overrides: Record<string, unknown>) {
   );
 }
 
-function readmeChange(): GitChangedFile {
+function gitChange(
+  status: GitChangedFile["status"],
+  relativePath: string,
+  overrides: Partial<GitChangedFile> = {},
+): GitChangedFile {
   return {
-    isStaged: false,
-    isUnversioned: false,
+    isStaged: overrides.isStaged ?? false,
+    isUnversioned: overrides.isUnversioned ?? false,
     oldPath: null,
     oldRelativePath: null,
-    path: "/workspace/README.md",
-    relativePath: "README.md",
-    status: "modified",
+    path: `/workspace/${relativePath}`,
+    relativePath,
+    status,
+    ...overrides,
   };
 }
 
-function readmeDiff(change: GitChangedFile): GitFileDiff {
+function gitDiff(change: GitChangedFile): GitFileDiff {
+  if (change.status === "untracked") {
+    return {
+      change,
+      language: "plaintext",
+      modifiedContent: "Write the QA notes\nCheck the gutter flow\n",
+      originalContent: "",
+    };
+  }
+
+  if (change.relativePath.endsWith(".ts")) {
+    return {
+      change,
+      language: "typescript",
+      modifiedContent: "const value = 2;\n",
+      originalContent: "const value = 1;\n",
+    };
+  }
+
   return {
     change,
     language: "markdown",
     modifiedContent: "# Project\n\nUpdated docs\n",
     originalContent: "# Project\n",
   };
+}
+
+function changeRowButton(
+  container: ParentNode,
+  relativePath: string,
+): HTMLButtonElement | undefined {
+  return Array.from(
+    container.querySelectorAll<HTMLButtonElement>(".git-change-row"),
+  ).find((button) => button.textContent?.includes(fileName(relativePath)));
+}
+
+function fileName(relativePath: string): string {
+  const parts = relativePath.split("/");
+  return parts[parts.length - 1] ?? relativePath;
 }

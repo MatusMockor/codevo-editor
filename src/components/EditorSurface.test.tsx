@@ -13,6 +13,7 @@ import {
 } from "../domain/languageServerRuntime";
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
+import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
@@ -8322,6 +8323,187 @@ class Foo
     });
 
     expect(onRevertChangeHunk).toHaveBeenCalledWith(changeHunks[0]);
+  });
+
+  it("renders added and deleted change gutter markers with preview and revert actions", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ninserted\ntwo\nfour\n",
+      language: "typescript",
+      name: "module.ts",
+      path: "/workspace/src/module.ts",
+      savedContent: "one\ntwo\nremoved\nfour\n",
+    };
+    const addedHunk: EditorChangeHunk = {
+      currentLines: ["inserted"],
+      endLineNumber: 2,
+      id: "added:2:2:0:1",
+      kind: "added",
+      originalLines: [],
+      originalStartLineNumber: 2,
+      startLineNumber: 2,
+    };
+    const deletedHunk: EditorChangeHunk = {
+      currentLines: [],
+      endLineNumber: 4,
+      id: "deleted:3:4:1:0",
+      kind: "deleted",
+      originalLines: ["removed"],
+      originalStartLineNumber: 3,
+      startLineNumber: 4,
+    };
+    const changeHunks = [addedHunk, deletedHunk];
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onRevertChangeHunk = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={changeHunks}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={onRevertChangeHunk}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const changeDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options.glyphMarginClassName ===
+            "editor-change-glyph editor-change-glyph-added",
+        ) &&
+        decorations.some(
+          (decoration: any) =>
+            decoration.options.glyphMarginClassName ===
+            "editor-change-glyph editor-change-glyph-deleted",
+        ),
+    );
+    expect(changeDecorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMargin: {
+              position: monaco.editor.GlyphMarginLane.Left,
+            },
+            glyphMarginClassName:
+              "editor-change-glyph editor-change-glyph-added",
+            linesDecorationsClassName:
+              "editor-change-line editor-change-line-added",
+          }),
+          range: expect.objectContaining({
+            endLineNumber: 2,
+            startLineNumber: 2,
+          }),
+        }),
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMargin: {
+              position: monaco.editor.GlyphMarginLane.Left,
+            },
+            glyphMarginClassName:
+              "editor-change-glyph editor-change-glyph-deleted",
+            linesDecorationsClassName:
+              "editor-change-line editor-change-line-deleted",
+          }),
+          range: expect.objectContaining({
+            endLineNumber: 4,
+            startLineNumber: 4,
+          }),
+        }),
+      ]),
+    );
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
+          },
+          position: {
+            column: 1,
+            lineNumber: addedHunk.startLineNumber,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    expect(host.textContent).toContain("Added lines");
+    expect(host.textContent).toContain("No previous lines.");
+    act(() => {
+      queryRequired<HTMLButtonElement>(
+        host,
+        ".editor-change-popover-action",
+      ).click();
+    });
+    expect(onRevertChangeHunk).toHaveBeenCalledWith(addedHunk);
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
+          },
+          position: {
+            column: 1,
+            lineNumber: deletedHunk.startLineNumber,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    expect(host.textContent).toContain("Deleted lines");
+    expect(host.textContent).toContain("removed");
+    act(() => {
+      queryRequired<HTMLButtonElement>(
+        host,
+        ".editor-change-popover-action",
+      ).click();
+    });
+    expect(onRevertChangeHunk).toHaveBeenCalledWith(deletedHunk);
   });
 
   it("anchors local change previews to the clicked line inside a larger hunk", async () => {
