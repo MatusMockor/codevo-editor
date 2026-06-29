@@ -3108,28 +3108,6 @@ export function useWorkbenchController(
     [isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot],
   );
 
-  const cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime = useCallback(
-    (rootPath: string | null, status: LanguageServerRuntimeStatus) => {
-      if (!rootPath || !languageServerCrashMessage(status)) {
-        return;
-      }
-
-      void javaScriptTypeScriptLanguageServerRuntimeGateway
-        .stop(rootPath)
-        .catch((error) =>
-          reportErrorForActiveWorkspaceRoot(
-            rootPath,
-            "JavaScript/TypeScript",
-            error,
-          ),
-        );
-    },
-    [
-      javaScriptTypeScriptLanguageServerRuntimeGateway,
-      reportErrorForActiveWorkspaceRoot,
-    ],
-  );
-
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus, fallbackRootPath?: string) => {
       const statusRootPath = runtimeStatusRootPath(status, fallbackRootPath);
@@ -3196,11 +3174,6 @@ export function useWorkbenchController(
       );
       const crash = languageServerCrashMessage(status);
 
-      cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime(
-        statusRootPath,
-        status,
-      );
-
       if (!workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)) {
         if (status.kind !== "running") {
           clearJavaScriptTypeScriptDiagnosticsForRoot(statusRootPath);
@@ -3228,7 +3201,6 @@ export function useWorkbenchController(
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
       clearJavaScriptTypeScriptDiagnosticsForRoot,
-      cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime,
       isOpenWorkspaceRuntimeRoot,
       reportError,
     ],
