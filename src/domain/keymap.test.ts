@@ -209,6 +209,19 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults the command palette to Cmd+Shift+P on mac and Ctrl+Shift+P elsewhere", () => {
+    expect(defaultShortcutForCommand("commands.show", "mac")).toBe(
+      "Cmd+Shift+P",
+    );
+    expect(defaultShortcutForCommand("commands.show", "linux")).toBe(
+      "Ctrl+Shift+P",
+    );
+    expect(defaultShortcutForCommand("commands.show", "windows")).toBe(
+      "Ctrl+Shift+P",
+    );
+    expect(defaultKeymapSettings("mac")["commands.show"]).toBe("Cmd+Shift+P");
+  });
+
   it("defaults the recent files switcher to Cmd+E on mac and Ctrl+E elsewhere", () => {
     expect(defaultShortcutForCommand("editor.recentFiles", "mac")).toBe("Cmd+E");
     expect(defaultShortcutForCommand("editor.recentFiles", "linux")).toBe(

@@ -444,7 +444,7 @@ export const keymapCommands = [
   },
   {
     category: "Workbench",
-    defaultShortcut: "Cmd+K",
+    defaultShortcut: "Cmd+Shift+P",
     id: "commands.show",
     label: "Show Commands",
   },
