@@ -29367,6 +29367,428 @@ class CommentsService
     await expect(completionsPromise).resolves.toEqual([]);
   });
 
+  describe("Laravel migration-backed model attribute completions", () => {
+    const migrationsDirFor = (root: string) => `${root}/database/migrations`;
+    const migrationFileName = "2026_05_04_150000_create_ai_usages_table.php";
+    const migrationPathFor = (root: string) =>
+      `${migrationsDirFor(root)}/${migrationFileName}`;
+    const modelPathFor = (root: string) => `${root}/app/Models/AiUsage.php`;
+    const controllerPathFor = (root: string) =>
+      `${root}/app/Http/Controllers/UsageController.php`;
+
+    const aiUsageModel = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class AiUsage extends Model
+{
+    protected $table = 'ai_usages';
+
+    protected $fillable = [
+        'user_id',
+        'account_id',
+        'usage_date',
+        'usage_count',
+    ];
+
+    protected $casts = [
+        'user_id' => 'integer',
+        'account_id' => 'integer',
+        'usage_count' => 'integer',
+        'usage_date' => 'date',
+    ];
+}
+`;
+
+    const aiUsagesMigration = (extraColumn = "") => `<?php
+
+declare(strict_types=1);
+
+use Illuminate\\Database\\Migrations\\Migration;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('ai_usages', function (Blueprint $table) {
+            $table->id();
+            $table->integer('user_id');
+            $table->integer('account_id');
+            $table->date('usage_date');
+            $table->integer('usage_count')->default(0);${extraColumn}
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('ai_usages');
+    }
+};
+`;
+
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\AiUsage;
+
+class UsageController
+{
+    public function show(AiUsage $usage): void
+    {
+        $usage->
+    }
+}
+`;
+    const completionPosition = positionAfter(controllerSource, "$usage->");
+
+    async function completionNames(
+      getWorkbench: () => WorkbenchController,
+    ): Promise<string[]> {
+      const completions = await getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        completionPosition,
+      );
+
+      return completions.map((completion) => completion.name);
+    }
+
+    it("surfaces migration-only DB columns in model member completions once the per-root cache warms", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === migrationsDirFor(root)
+          ? [fileEntry(migrationPathFor(root), migrationFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === modelPathFor(root)) {
+          return aiUsageModel;
+        }
+
+        if (path === migrationPathFor(root)) {
+          return aiUsagesMigration();
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "UsageController.php"),
+        );
+      });
+
+      // First completion warms the cache off the hot path; it is served from
+      // the (empty) cache, so it may not yet carry migration columns.
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(migrationPathFor(root));
+      });
+
+      const warm = await completionNames(getWorkbench);
+
+      // $fillable/$casts attributes remain.
+      expect(warm).toEqual(
+        expect.arrayContaining(["user_id", "account_id", "usage_count"]),
+      );
+      // Columns that only exist in the migration (primary key + timestamps()).
+      expect(warm).toEqual(
+        expect.arrayContaining(["id", "created_at", "updated_at"]),
+      );
+    });
+
+    it("falls back to $fillable/$casts without crashing when no migrations exist", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async () => []);
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === modelPathFor(root)) {
+          return aiUsageModel;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "UsageController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await flushAsyncTurns();
+
+      const names = await completionNames(getWorkbench);
+
+      expect(names).toEqual(
+        expect.arrayContaining(["user_id", "account_id", "usage_count"]),
+      );
+      // Migration-only columns never appear when there are no migrations.
+      expect(names).not.toContain("created_at");
+      expect(names).not.toContain("id");
+    });
+
+    it("reads the migrations directory once and serves later completions from cache", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === migrationsDirFor(root)
+          ? [fileEntry(migrationPathFor(root), migrationFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === modelPathFor(root)) {
+          return aiUsageModel;
+        }
+
+        if (path === migrationPathFor(root)) {
+          return aiUsagesMigration();
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "UsageController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(migrationPathFor(root));
+      });
+
+      await completionNames(getWorkbench);
+      await completionNames(getWorkbench);
+      await completionNames(getWorkbench);
+
+      const migrationDirReads = readDirectory.mock.calls.filter(
+        ([path]) => path === migrationsDirFor(root),
+      );
+      expect(migrationDirReads).toHaveLength(1);
+    });
+
+    it("reloads migration sources after a migration file change", async () => {
+      const root = "/workspace";
+      let publishFileChange:
+        | ((event: WorkspaceFileChangeEvent) => void)
+        | null = null;
+      let migrationSource = aiUsagesMigration();
+      const readDirectory = vi.fn(async (path: string) =>
+        path === migrationsDirFor(root)
+          ? [fileEntry(migrationPathFor(root), migrationFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === modelPathFor(root)) {
+          return aiUsageModel;
+        }
+
+        if (path === migrationPathFor(root)) {
+          return migrationSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+        {
+          startWatching: vi.fn(async () => undefined),
+          subscribeFileChanges: vi.fn(async (listener) => {
+            publishFileChange = listener;
+            return () => undefined;
+          }),
+        };
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceFileChangeGateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "UsageController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(migrationPathFor(root));
+      });
+
+      expect(await completionNames(getWorkbench)).not.toContain("nickname");
+
+      // A new migration column lands on disk and the watcher reports the change.
+      migrationSource = aiUsagesMigration(
+        "\n            $table->string('nickname');",
+      );
+      await act(async () => {
+        publishFileChange?.({
+          kind: "modified",
+          path: migrationPathFor(root),
+          relativePath: `database/migrations/${migrationFileName}`,
+          rootPath: root,
+        });
+        await flushAsyncTurns();
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(async () => {
+        expect(await completionNames(getWorkbench)).toContain("nickname");
+      });
+    });
+
+    it("keeps migration sources isolated per workspace tab", async () => {
+      const rootA = "/workspace-a";
+      const rootB = "/workspace-b";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === migrationsDirFor(rootA)
+          ? [fileEntry(migrationPathFor(rootA), migrationFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(rootA) || path === controllerPathFor(rootB)) {
+          return controllerSource;
+        }
+
+        if (path === modelPathFor(rootA) || path === modelPathFor(rootB)) {
+          return aiUsageModel;
+        }
+
+        if (path === migrationPathFor(rootA)) {
+          return aiUsagesMigration();
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: rootA,
+          workspaceTabs: [rootA, rootB],
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe(rootA);
+      });
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(rootA), "UsageController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(async () => {
+        expect(await completionNames(getWorkbench)).toContain("created_at");
+      });
+
+      // Switch to workspace B, which has no migrations: A's DB-only columns must
+      // not leak into B's completions.
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab(rootB);
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe(rootB);
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(rootB), "UsageController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await flushAsyncTurns();
+
+      const namesForB = await completionNames(getWorkbench);
+      expect(namesForB).toEqual(
+        expect.arrayContaining(["user_id", "account_id"]),
+      );
+      expect(namesForB).not.toContain("created_at");
+      expect(namesForB).not.toContain("id");
+    });
+  });
+
   it("stops stale PHP class source resolver fallback after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
     const controllerSource = `<?php
