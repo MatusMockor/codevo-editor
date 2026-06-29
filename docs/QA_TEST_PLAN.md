@@ -79,29 +79,25 @@ Pri každom bode zapíš: **OK / CHYBA** + ak chyba: čo si spravil, čo si čak
 - [ ] **Settings → Keymap**: **search box** filtruje 72 skratiek podľa názvu/kategórie; rebind funguje
 - [ ] **F2 rename**, **Cmd+Shift+- / =** fold all / unfold all → fungujú
 
-## 12. Vue (.vue súbory) - len ak máš Vue projekt
-- [ ] `.vue` súbor → **syntax highlighting** (template/script/style farebné, nie plaintext)
-- [ ] `<script setup lang="ts">` → TS **completions / hover / go-to-def** (ak je nainštalovaný @vue/typescript-plugin)
-
-## 13. JSON schema
+## 12. JSON schema
 - [ ] Otvor `.phpactor.json` (alebo JSON s `$schema`) → **žiadna žltá vlnovka** ani chyba "No schema request service available (768)" na `$schema` riadku
 
-## 14. EditorConfig
+## 13. EditorConfig
 - [ ] V projekte s `.editorconfig` → indent (tabs/spaces, veľkosť) a EOL sa riadia podľa configu; na save sa trimuje trailing whitespace + final newline
 
-## 15. Per-project izolácia (KRITICKÉ - otvor 2 projekty v tabboch)
+## 14. Per-project izolácia (KRITICKÉ - otvor 2 projekty v tabboch)
 - [ ] Otvor **2 rôzne projekty** v dvoch taboch. Diagnostiky/completions/nav z jedného projektu **NEpretekajú** do druhého
 - [ ] Prepínanie tabov → status bar (branch, cursor), File Structure, diagnostiky vždy patria **aktívnemu** projektu
 - [ ] PHP (phpactor) aj JS/TS (tsserver) procesy bežia oddelene per projekt
 
-## 16. Lifecycle / stabilita
+## 15. Lifecycle / stabilita
 - [ ] **Žiadne falošné error toasty** "Something went wrong" / "UnknownDocument" pri bežnej práci (najmä po zatvorení/rename/delete tabu počas písania)
 - [ ] Delete súboru s chybami → diagnostiky sa **vyčistia**
 - [ ] Rename / open / preview tab → bez stale errorov
 - [ ] Po code action (ktorá zmení súbor) → staré diagnostiky sa **prepíšu** (nezostanú visieť)
 - [ ] Vypnutie IDE mode / zatvorenie appky → bez visiacich procesov/chýb
 
-## 17. Regresie (predošlé fixy - over že stále OK)
+## 16. Regresie (predošlé fixy - over že stále OK)
 - [ ] Quick-open nového PHP súboru → otvorí sa **s obsahom** (nie blank)
 - [ ] PHPactor beží cez managed `codevo-php.ini` (imagick chyba sa neopakuje)
 - [ ] Git diff renderer → nie blank
@@ -110,7 +106,7 @@ Pri každom bode zapíš: **OK / CHYBA** + ak chyba: čo si spravil, čo si čak
 ---
 
 ### Priorita testovania (ak je málo času)
-1. **Sekcia 15 + 16** (izolácia + stabilita) - kritické
+1. **Sekcia 14 + 15** (izolácia + stabilita) - kritické
 2. **Sekcia 2** (Cmd-hover regresia) + **6** (vzhľad naprieč témami)
 3. **Sekcia 1** (code actions) + **3** (Laravel completions)
 4. Zvyšok

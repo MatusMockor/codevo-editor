@@ -159,7 +159,6 @@ Detect JS/TS projects independently:
 - `jsconfig.json`
 - framework markers:
   - React / Next.js / Vite
-  - Vue / Nuxt
   - Svelte / SvelteKit
   - Angular
   - Node / Express / NestJS
