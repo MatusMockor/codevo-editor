@@ -14317,6 +14317,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14326,6 +14327,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14391,6 +14393,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14558,6 +14561,7 @@ describe("useWorkbenchController preview tabs", () => {
       javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14679,6 +14683,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14699,6 +14704,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14755,6 +14761,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14812,6 +14819,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14821,6 +14829,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -14873,6 +14882,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
@@ -14882,6 +14892,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
@@ -17685,6 +17696,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -17735,6 +17747,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
@@ -18134,6 +18147,79 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).not.toHaveBeenCalled();
+  });
+
+  it("restarts JavaScript and TypeScript instead of notifying configuration when automatic type acquisition changes", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 16,
+    };
+    const stoppedStatus: LanguageServerRuntimeStatus = {
+      kind: "stopped",
+      rootPath: "/workspace",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async () => stoppedStatus),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptLanguageServerPlan:
+        readyJavaScriptTypeScriptPlan("/workspace"),
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutomaticTypeAcquisition: false,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptAutomaticTypeAcquisition: true,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        automaticTypeAcquisitionEnabled: true,
+        typeScriptVersionPreference: "bundled",
+      }),
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
   });
 
   it("includes active EditorConfig formatting options in JavaScript and TypeScript configuration changes", async () => {
@@ -18611,6 +18697,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: false,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
@@ -18620,6 +18707,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: false,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
@@ -18693,6 +18781,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: false,
+      automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",

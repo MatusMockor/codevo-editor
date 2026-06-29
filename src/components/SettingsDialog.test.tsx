@@ -793,7 +793,7 @@ describe("SettingsDialog", () => {
     });
   });
 
-  it("persists JavaScript and TypeScript validation, auto imports, and inlay hint changes", async () => {
+  it("persists JavaScript and TypeScript validation, auto imports, automatic type acquisition, and inlay hint changes", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -848,6 +848,28 @@ describe("SettingsDialog", () => {
       },
     });
 
+    expect(
+      javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().checked,
+    ).toBe(false);
+
+    await act(async () => {
+      javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
+        javaScriptTypeScriptValidation: false,
+      },
+    });
+
     await act(async () => {
       javaScriptTypeScriptInlayHintsCheckbox().dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
@@ -861,6 +883,7 @@ describe("SettingsDialog", () => {
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptValidation: false,
       },
@@ -879,6 +902,7 @@ describe("SettingsDialog", () => {
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
         javaScriptTypeScriptCodeLens: true,
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptValidation: false,
@@ -1118,6 +1142,31 @@ describe("SettingsDialog", () => {
     });
 
     expect(restartJavaScriptTypeScriptServiceButton().disabled).toBe(true);
+  });
+
+  it("disables workspace JavaScript and TypeScript controls without an open workspace", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot={null}
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().disabled).toBe(
+      true,
+    );
   });
 
   it("adds a user snippet from the Snippets section", async () => {
@@ -1374,6 +1423,12 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptAutoImportsCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript auto imports");
+  }
+
+  function javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox(): HTMLInputElement {
+    return checkboxWithLabel(
+      "JavaScript/TypeScript automatic type acquisition",
+    );
   }
 
   function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {

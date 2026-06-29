@@ -67,6 +67,7 @@ export type UnsubscribeFn = () => void;
 
 export interface LanguageServerRuntimeStartOptions {
   autoImportsEnabled?: boolean;
+  automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
   intelephensePath?: string | null;

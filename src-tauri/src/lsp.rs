@@ -403,6 +403,7 @@ pub struct TypeScriptLanguageServerPlanner<TFactory = TypeScriptInitializeReques
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
+    pub automatic_type_acquisition: bool,
     pub code_lens: bool,
     pub inlay_hints: bool,
     pub validation: bool,
@@ -412,6 +413,7 @@ impl Default for TypeScriptLanguageServerSettings {
     fn default() -> Self {
         Self {
             auto_imports: true,
+            automatic_type_acquisition: false,
             code_lens: false,
             inlay_hints: true,
             validation: true,
@@ -448,6 +450,10 @@ where
             configure_vue_typescript_plugin(&mut initialize_request, &vue_typescript_plugin.path);
         }
         configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
+        configure_typescript_automatic_type_acquisition(
+            &mut initialize_request,
+            settings.automatic_type_acquisition,
+        );
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
         configure_typescript_validation(&mut initialize_request, settings.validation);
@@ -588,6 +594,33 @@ fn configure_typescript_auto_imports(request: &mut JsonRpcRequest, enabled: bool
     preferences.insert(
         "includePackageJsonAutoImports".to_string(),
         Value::String(if enabled { "auto" } else { "off" }.to_string()),
+    );
+}
+
+fn configure_typescript_automatic_type_acquisition(
+    request: &mut JsonRpcRequest,
+    enabled: bool,
+) {
+    let Some(params) = request.params.as_object_mut() else {
+        return;
+    };
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let Some(initialization_options) = initialization_options.as_object_mut() else {
+        return;
+    };
+
+    let tsserver = initialization_options
+        .entry("tsserver")
+        .or_insert_with(|| json!({}));
+    let Some(tsserver) = tsserver.as_object_mut() else {
+        return;
+    };
+
+    tsserver.insert(
+        "disableAutomaticTypingAcquisition".to_string(),
+        Value::Bool(!enabled),
     );
 }
 
@@ -1673,6 +1706,7 @@ mod tests {
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings {
                 auto_imports: false,
+                automatic_type_acquisition: true,
                 code_lens: true,
                 inlay_hints: false,
                 validation: false,
@@ -1680,6 +1714,11 @@ mod tests {
         );
 
         let request = plan.initialize_request.expect("initialize request");
+        assert_eq!(
+            request.params["initializationOptions"]["tsserver"]
+                ["disableAutomaticTypingAcquisition"],
+            false
+        );
         assert_eq!(
             request.params["initializationOptions"]["preferences"]
                 ["includeInlayParameterNameHints"],

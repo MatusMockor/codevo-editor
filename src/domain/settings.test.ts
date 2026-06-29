@@ -46,6 +46,7 @@ describe("settings defaults", () => {
       intelephensePath: null,
       javaScriptTypeScriptAddMissingImportsOnSave: false,
       javaScriptTypeScriptAutoImports: true,
+      javaScriptTypeScriptAutomaticTypeAcquisition: false,
       javaScriptTypeScriptCodeLens: false,
       javaScriptTypeScriptFixAllOnSave: false,
       javaScriptTypeScriptInlayHints: true,
@@ -297,6 +298,7 @@ describe("normalizeWorkspaceSettings", () => {
         intelephensePath: "/tools/intelephense",
         javaScriptTypeScriptAddMissingImportsOnSave: true,
         javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
         javaScriptTypeScriptCodeLens: true,
         javaScriptTypeScriptFixAllOnSave: true,
         javaScriptTypeScriptInlayHints: false,
@@ -345,6 +347,7 @@ describe("normalizeWorkspaceSettings", () => {
       intelephensePath: "/tools/intelephense",
       javaScriptTypeScriptAddMissingImportsOnSave: true,
       javaScriptTypeScriptAutoImports: false,
+      javaScriptTypeScriptAutomaticTypeAcquisition: true,
       javaScriptTypeScriptCodeLens: true,
       javaScriptTypeScriptFixAllOnSave: true,
       javaScriptTypeScriptInlayHints: false,
@@ -480,6 +483,23 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptOrganizeImportsOnSave: true,
       javaScriptTypeScriptRemoveUnusedOnSave: true,
     });
+  });
+
+  it("defaults JS/TS automatic type acquisition to false and respects explicit booleans", () => {
+    expect(
+      normalizeWorkspaceSettings({})
+        .javaScriptTypeScriptAutomaticTypeAcquisition,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptAutomaticTypeAcquisition: "yes",
+      }).javaScriptTypeScriptAutomaticTypeAcquisition,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
+      }).javaScriptTypeScriptAutomaticTypeAcquisition,
+    ).toBe(true);
   });
 
   it("defaults phpInlayHints to true and respects explicit boolean values", () => {

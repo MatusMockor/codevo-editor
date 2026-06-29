@@ -182,6 +182,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     await expect(
       gateway.start("/workspace", {
         autoImportsEnabled: false,
+        automaticTypeAcquisitionEnabled: true,
         codeLensEnabled: true,
         inlayHintsEnabled: false,
         typeScriptVersionPreference: "workspace",
@@ -193,6 +194,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       "start_javascript_typescript_language_server",
       {
         autoImportsEnabled: false,
+        automaticTypeAcquisitionEnabled: true,
         codeLensEnabled: true,
         inlayHintsEnabled: false,
         rootPath: "/workspace",

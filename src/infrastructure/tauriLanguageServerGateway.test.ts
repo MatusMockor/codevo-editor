@@ -32,4 +32,40 @@ describe("TauriLanguageServerGateway", () => {
       rootPath: "/workspace",
     });
   });
+
+  it("passes JavaScript and TypeScript plan settings to the plan command", async () => {
+    const plan: LanguageServerPlan = {
+      command: null,
+      initializeRequest: null,
+      message: "TypeScript language server is ready to start.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => plan);
+    const gateway = new TauriLanguageServerGateway(invokeCommand);
+
+    await expect(
+      gateway.planJavaScriptTypeScriptLanguageServer("/workspace", {
+        autoImportsEnabled: false,
+        automaticTypeAcquisitionEnabled: true,
+        codeLensEnabled: true,
+        inlayHintsEnabled: false,
+        typeScriptVersionPreference: "workspace",
+        validationEnabled: false,
+      }),
+    ).resolves.toEqual(plan);
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "plan_javascript_typescript_language_server",
+      {
+        autoImportsEnabled: false,
+        automaticTypeAcquisitionEnabled: true,
+        codeLensEnabled: true,
+        inlayHintsEnabled: false,
+        rootPath: "/workspace",
+        typeScriptVersionPreference: "workspace",
+        validationEnabled: false,
+      },
+    );
+  });
 });

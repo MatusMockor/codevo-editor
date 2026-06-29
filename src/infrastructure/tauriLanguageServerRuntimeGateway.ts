@@ -104,6 +104,11 @@ export class TauriLanguageServerRuntimeGateway
       args.autoImportsEnabled = options.autoImportsEnabled;
     }
 
+    if (options.automaticTypeAcquisitionEnabled !== undefined) {
+      args.automaticTypeAcquisitionEnabled =
+        options.automaticTypeAcquisitionEnabled;
+    }
+
     if (options.codeLensEnabled !== undefined) {
       args.codeLensEnabled = options.codeLensEnabled;
     }

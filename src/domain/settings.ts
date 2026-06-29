@@ -128,6 +128,7 @@ export interface WorkspaceSettings {
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptAutoImports: boolean;
+  javaScriptTypeScriptAutomaticTypeAcquisition: boolean;
   javaScriptTypeScriptAddMissingImportsOnSave: boolean;
   javaScriptTypeScriptCodeLens: boolean;
   javaScriptTypeScriptFixAllOnSave: boolean;
@@ -266,6 +267,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelephensePath: null,
     javaScriptTypeScriptAddMissingImportsOnSave: false,
     javaScriptTypeScriptAutoImports: true,
+    javaScriptTypeScriptAutomaticTypeAcquisition: false,
     javaScriptTypeScriptCodeLens: false,
     javaScriptTypeScriptFixAllOnSave: false,
     javaScriptTypeScriptInlayHints: true,
@@ -397,6 +399,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     javaScriptTypeScriptAutoImports: normalizeBoolean(
       value.javaScriptTypeScriptAutoImports,
       defaults.javaScriptTypeScriptAutoImports,
+    ),
+    javaScriptTypeScriptAutomaticTypeAcquisition: normalizeBoolean(
+      value.javaScriptTypeScriptAutomaticTypeAcquisition,
+      defaults.javaScriptTypeScriptAutomaticTypeAcquisition,
     ),
     javaScriptTypeScriptAddMissingImportsOnSave: normalizeBoolean(
       value.javaScriptTypeScriptAddMissingImportsOnSave,

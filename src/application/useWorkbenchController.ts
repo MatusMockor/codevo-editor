@@ -2985,6 +2985,9 @@ export function useWorkbenchController(
             {
               autoImportsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptAutoImports,
+              automaticTypeAcquisitionEnabled:
+                workspaceSettingsRef.current
+                  .javaScriptTypeScriptAutomaticTypeAcquisition,
               codeLensEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptCodeLens,
               inlayHintsEnabled:
@@ -25123,7 +25126,9 @@ export function useWorkbenchController(
         };
         const shouldRestartJavaScriptTypeScriptRuntime =
           previousWorkspaceSettings.javaScriptTypeScriptVersion !==
-          resolvedWorkspaceSettings.javaScriptTypeScriptVersion;
+            resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
+          previousWorkspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition;
         const shouldNotifyJavaScriptTypeScriptConfiguration =
           previousWorkspaceSettings.javaScriptTypeScriptAutoImports !==
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
@@ -25417,6 +25422,8 @@ export function useWorkbenchController(
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.start(requestedRoot, {
           autoImportsEnabled: currentSettings.javaScriptTypeScriptAutoImports,
+          automaticTypeAcquisitionEnabled:
+            currentSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
           codeLensEnabled: currentSettings.javaScriptTypeScriptCodeLens,
           inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
           typeScriptVersionPreference:
@@ -27289,6 +27296,8 @@ export function useWorkbenchController(
         .start(requestedRoot, {
           autoImportsEnabled: workspaceSettingsRef.current
             .javaScriptTypeScriptAutoImports,
+          automaticTypeAcquisitionEnabled: workspaceSettingsRef.current
+            .javaScriptTypeScriptAutomaticTypeAcquisition,
           codeLensEnabled: workspaceSettingsRef.current
             .javaScriptTypeScriptCodeLens,
           inlayHintsEnabled: workspaceSettingsRef.current
@@ -27371,6 +27380,7 @@ export function useWorkbenchController(
     reportErrorForActiveWorkspaceRoot,
     shouldAutoStartJavaScriptTypeScriptLanguageServer,
     workspaceSettings.javaScriptTypeScriptAutoImports,
+    workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
     workspaceSettings.javaScriptTypeScriptCodeLens,
     workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,

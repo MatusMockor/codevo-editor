@@ -289,6 +289,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptAutoImports,
                     })
                   }
+                  onChangeJavaScriptTypeScriptAutomaticTypeAcquisition={(
+                    javaScriptTypeScriptAutomaticTypeAcquisition,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptAutomaticTypeAcquisition,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptCodeLens={(
                     javaScriptTypeScriptCodeLens,
                   ) =>
@@ -510,6 +518,7 @@ interface GeneralSettingsProps {
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
   onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(enabled: boolean): void;
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
   onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
@@ -543,6 +552,7 @@ function GeneralSettings({
   onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
+  onChangeJavaScriptTypeScriptAutomaticTypeAcquisition,
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
   onChangeJavaScriptTypeScriptFixAllOnSave,
@@ -640,6 +650,22 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript auto imports</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={
+            workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition
+          }
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JavaScript/TypeScript automatic type acquisition</span>
       </label>
 
       <label className="settings-toggle">
