@@ -47,6 +47,8 @@ describe("settings defaults", () => {
       javaScriptTypeScriptAutoImports: true,
       javaScriptTypeScriptCodeLens: false,
       javaScriptTypeScriptInlayHints: true,
+      javaScriptTypeScriptOrganizeImportsOnSave: false,
+      javaScriptTypeScriptRemoveUnusedOnSave: false,
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
@@ -294,6 +296,8 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptAutoImports: false,
         javaScriptTypeScriptCodeLens: true,
         javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
         javaScriptTypeScriptService: "off",
         javaScriptTypeScriptValidation: false,
         javaScriptTypeScriptVersion: "workspace",
@@ -338,6 +342,8 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptAutoImports: false,
       javaScriptTypeScriptCodeLens: true,
       javaScriptTypeScriptInlayHints: false,
+      javaScriptTypeScriptOrganizeImportsOnSave: true,
+      javaScriptTypeScriptRemoveUnusedOnSave: true,
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
@@ -418,6 +424,31 @@ describe("normalizeWorkspaceSettings", () => {
       normalizeWorkspaceSettings({ optimizeImportsOnSave: false })
         .optimizeImportsOnSave,
     ).toBe(false);
+  });
+
+  it("defaults JS/TS on-save source actions to false and respects explicit boolean values", () => {
+    expect(
+      normalizeWorkspaceSettings({}).javaScriptTypeScriptOrganizeImportsOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({}).javaScriptTypeScriptRemoveUnusedOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptOrganizeImportsOnSave: "yes",
+        javaScriptTypeScriptRemoveUnusedOnSave: "yes",
+      }).javaScriptTypeScriptOrganizeImportsOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
+      }),
+    ).toEqual({
+      ...defaultWorkspaceSettings(),
+      javaScriptTypeScriptOrganizeImportsOnSave: true,
+      javaScriptTypeScriptRemoveUnusedOnSave: true,
+    });
   });
 
   it("defaults phpInlayHints to true and respects explicit boolean values", () => {

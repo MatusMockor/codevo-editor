@@ -305,6 +305,22 @@ export function SettingsDialog({
                       javaScriptTypeScriptInlayHints,
                     })
                   }
+                  onChangeJavaScriptTypeScriptOrganizeImportsOnSave={(
+                    javaScriptTypeScriptOrganizeImportsOnSave,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptOrganizeImportsOnSave,
+                    })
+                  }
+                  onChangeJavaScriptTypeScriptRemoveUnusedOnSave={(
+                    javaScriptTypeScriptRemoveUnusedOnSave,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptRemoveUnusedOnSave,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptValidation={(
                     javaScriptTypeScriptValidation,
                   ) =>
@@ -480,6 +496,8 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptOrganizeImportsOnSave(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptRemoveUnusedOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
   onChangeJavaScriptTypeScriptVersion(
     preference: JavaScriptTypeScriptVersionPreference,
@@ -509,6 +527,8 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptCodeLens,
   onChangeJavaScriptTypeScriptInlayHints,
+  onChangeJavaScriptTypeScriptOrganizeImportsOnSave,
+  onChangeJavaScriptTypeScriptRemoveUnusedOnSave,
   onChangeJavaScriptTypeScriptService,
   onChangeJavaScriptTypeScriptValidation,
   onChangeJavaScriptTypeScriptVersion,
@@ -624,6 +644,34 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript CodeLens</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptOrganizeImportsOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptOrganizeImportsOnSave(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS organize imports on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptRemoveUnusedOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptRemoveUnusedOnSave(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS remove unused on save</span>
       </label>
 
       <div className="settings-actions">

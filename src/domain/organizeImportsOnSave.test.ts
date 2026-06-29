@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   fullDocumentRange,
+  javaScriptTypeScriptOnSaveSourceActionKinds,
   organizeImportsCodeActionToResolve,
   organizeImportsCodeActionContext,
   organizeImportsCodeActionKind,
   organizeImportsTextEditsForPath,
   planOrganizeImportsOnSave,
+  removeUnusedCodeActionKind,
   type OrganizeImportsOnSavePlanInput,
 } from "./organizeImportsOnSave";
 import { fileUriFromPath } from "./languageServerDocumentSync";
@@ -47,6 +49,7 @@ function planInput(
   return {
     document: document(),
     javaScriptTypeScript: { status: runningStatus(), statusRoot: "/workspace" },
+    sourceActionKinds: [organizeImportsCodeActionKind],
     workspaceRoot: "/workspace",
     ...overrides,
   };
@@ -54,7 +57,16 @@ function planInput(
 
 describe("planOrganizeImportsOnSave", () => {
   it("plans an organize pass for a JS/TS document with a running code-action-capable server", () => {
-    expect(planOrganizeImportsOnSave(planInput())).toEqual({ sessionId: 5 });
+    expect(planOrganizeImportsOnSave(planInput())).toEqual({
+      sessionId: 5,
+      sourceActionKinds: [organizeImportsCodeActionKind],
+    });
+  });
+
+  it("returns null when no JS/TS source actions are enabled", () => {
+    expect(
+      planOrganizeImportsOnSave(planInput({ sourceActionKinds: [] })),
+    ).toBeNull();
   });
 
   it("returns null for PHP documents (the synchronous PHP path handles those)", () => {
@@ -119,7 +131,27 @@ describe("planOrganizeImportsOnSave", () => {
           },
         }),
       ),
-    ).toEqual({ sessionId: 5 });
+    ).toEqual({
+      sessionId: 5,
+      sourceActionKinds: [organizeImportsCodeActionKind],
+    });
+  });
+});
+
+describe("javaScriptTypeScriptOnSaveSourceActionKinds", () => {
+  it("builds ordered source actions from the JS/TS save settings", () => {
+    expect(
+      javaScriptTypeScriptOnSaveSourceActionKinds({
+        javaScriptTypeScriptOrganizeImportsOnSave: false,
+        javaScriptTypeScriptRemoveUnusedOnSave: false,
+      }),
+    ).toEqual([]);
+    expect(
+      javaScriptTypeScriptOnSaveSourceActionKinds({
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
+      }),
+    ).toEqual([organizeImportsCodeActionKind, removeUnusedCodeActionKind]);
   });
 });
 
@@ -129,6 +161,15 @@ describe("organizeImportsCodeActionContext", () => {
       diagnostics: [],
       only: [organizeImportsCodeActionKind],
     });
+  });
+
+  it("requests one requested source action kind", () => {
+    expect(organizeImportsCodeActionContext(removeUnusedCodeActionKind)).toEqual(
+      {
+        diagnostics: [],
+        only: [removeUnusedCodeActionKind],
+      },
+    );
   });
 });
 
@@ -185,6 +226,16 @@ describe("organizeImportsTextEditsForPath", () => {
       organizeImportsTextEditsForPath(
         [action({ kind: "source.organizeImports.ts" })],
         path,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("matches remove-unused source actions when that kind was requested", () => {
+    expect(
+      organizeImportsTextEditsForPath(
+        [action({ kind: removeUnusedCodeActionKind })],
+        path,
+        removeUnusedCodeActionKind,
       ),
     ).not.toBeNull();
   });
@@ -258,6 +309,17 @@ describe("organizeImportsCodeActionToResolve", () => {
         organizeAction,
       ]),
     ).toBe(organizeAction);
+  });
+
+  it("returns the first data-only remove-unused action for that requested kind", () => {
+    const removeUnusedAction = action({ kind: removeUnusedCodeActionKind });
+
+    expect(
+      organizeImportsCodeActionToResolve(
+        [action(), removeUnusedAction],
+        removeUnusedCodeActionKind,
+      ),
+    ).toBe(removeUnusedAction);
   });
 
   it("ignores command-only actions", () => {

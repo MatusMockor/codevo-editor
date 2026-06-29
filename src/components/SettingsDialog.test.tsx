@@ -886,6 +886,67 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists JavaScript and TypeScript on-save source action changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptOrganizeImportsOnSaveCheckbox().checked).toBe(
+      false,
+    );
+    expect(javaScriptTypeScriptRemoveUnusedOnSaveCheckbox().checked).toBe(false);
+
+    await act(async () => {
+      javaScriptTypeScriptOrganizeImportsOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptRemoveUnusedOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptRemoveUnusedOnSave: true,
+      },
+    });
+  });
+
   it("persists the PHP inlay hints toggle", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -1280,6 +1341,14 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptCodeLensCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript CodeLens");
+  }
+
+  function javaScriptTypeScriptOrganizeImportsOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS organize imports on save");
+  }
+
+  function javaScriptTypeScriptRemoveUnusedOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS remove unused on save");
   }
 
   function restartJavaScriptTypeScriptServiceButton(): HTMLButtonElement {

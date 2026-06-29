@@ -11,6 +11,7 @@ import {
   type LanguageServerTextEdit,
 } from "./languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "./languageServerRuntime";
+import type { WorkspaceSettings } from "./settings";
 import type { EditorDocument } from "./workspace";
 import { workspaceRootKeysEqual } from "./workspaceRootKey";
 
@@ -20,6 +21,11 @@ import { workspaceRootKeysEqual } from "./workspaceRootKey";
  * and its `.ts`/`.js` sub-kinds; requesting the base kind is sufficient.
  */
 export const organizeImportsCodeActionKind = "source.organizeImports";
+export const removeUnusedCodeActionKind = "source.removeUnused.ts";
+
+export type JavaScriptTypeScriptOnSaveSourceActionKind =
+  | typeof organizeImportsCodeActionKind
+  | typeof removeUnusedCodeActionKind;
 
 export interface OrganizeImportsOnSaveRuntime {
   status: LanguageServerRuntimeStatus | null;
@@ -29,11 +35,33 @@ export interface OrganizeImportsOnSaveRuntime {
 export interface OrganizeImportsOnSavePlanInput {
   document: EditorDocument;
   javaScriptTypeScript: OrganizeImportsOnSaveRuntime;
+  sourceActionKinds: JavaScriptTypeScriptOnSaveSourceActionKind[];
   workspaceRoot: string;
 }
 
 export interface OrganizeImportsOnSavePlan {
+  sourceActionKinds: JavaScriptTypeScriptOnSaveSourceActionKind[];
   sessionId: number;
+}
+
+export function javaScriptTypeScriptOnSaveSourceActionKinds(
+  settings: Pick<
+    WorkspaceSettings,
+    | "javaScriptTypeScriptOrganizeImportsOnSave"
+    | "javaScriptTypeScriptRemoveUnusedOnSave"
+  >,
+): JavaScriptTypeScriptOnSaveSourceActionKind[] {
+  const kinds: JavaScriptTypeScriptOnSaveSourceActionKind[] = [];
+
+  if (settings.javaScriptTypeScriptOrganizeImportsOnSave) {
+    kinds.push(organizeImportsCodeActionKind);
+  }
+
+  if (settings.javaScriptTypeScriptRemoveUnusedOnSave) {
+    kinds.push(removeUnusedCodeActionKind);
+  }
+
+  return kinds;
 }
 
 /**
@@ -49,6 +77,10 @@ export interface OrganizeImportsOnSavePlan {
 export function planOrganizeImportsOnSave(
   input: OrganizeImportsOnSavePlanInput,
 ): OrganizeImportsOnSavePlan | null {
+  if (input.sourceActionKinds.length === 0) {
+    return null;
+  }
+
   if (!isJavaScriptTypeScriptLanguageServerDocument(input.document)) {
     return null;
   }
@@ -67,7 +99,10 @@ export function planOrganizeImportsOnSave(
     return null;
   }
 
-  return { sessionId: status.sessionId };
+  return {
+    sessionId: status.sessionId,
+    sourceActionKinds: input.sourceActionKinds,
+  };
 }
 
 /**
@@ -90,10 +125,12 @@ export function fullDocumentRange(content: string): LanguageServerRange {
  * tsserver returns just the `source.organizeImports` action rather than the
  * full quick-fix/refactor set.
  */
-export function organizeImportsCodeActionContext(): LanguageServerCodeActionContext {
+export function organizeImportsCodeActionContext(
+  kind: JavaScriptTypeScriptOnSaveSourceActionKind = organizeImportsCodeActionKind,
+): LanguageServerCodeActionContext {
   return {
     diagnostics: [],
-    only: [organizeImportsCodeActionKind],
+    only: [kind],
   };
 }
 
@@ -108,11 +145,12 @@ export function organizeImportsCodeActionContext(): LanguageServerCodeActionCont
 export function organizeImportsTextEditsForPath(
   actions: LanguageServerCodeAction[],
   path: string,
+  kind: JavaScriptTypeScriptOnSaveSourceActionKind = organizeImportsCodeActionKind,
 ): LanguageServerTextEdit[] | null {
   const targetUri = fileUriFromPath(path);
 
   for (const action of actions) {
-    if (!isOrganizeImportsAction(action)) {
+    if (!isRequestedSourceAction(action, kind)) {
       continue;
     }
 
@@ -134,9 +172,10 @@ export function organizeImportsTextEditsForPath(
 
 export function organizeImportsCodeActionToResolve(
   actions: LanguageServerCodeAction[],
+  kind: JavaScriptTypeScriptOnSaveSourceActionKind = organizeImportsCodeActionKind,
 ): LanguageServerCodeAction | null {
   for (const action of actions) {
-    if (!isOrganizeImportsAction(action)) {
+    if (!isRequestedSourceAction(action, kind)) {
       continue;
     }
 
@@ -150,10 +189,13 @@ export function organizeImportsCodeActionToResolve(
   return null;
 }
 
-function isOrganizeImportsAction(action: LanguageServerCodeAction): boolean {
+function isRequestedSourceAction(
+  action: LanguageServerCodeAction,
+  kind: JavaScriptTypeScriptOnSaveSourceActionKind,
+): boolean {
   return (
     typeof action.kind === "string" &&
-    action.kind.startsWith(organizeImportsCodeActionKind)
+    action.kind.startsWith(kind)
   );
 }
 

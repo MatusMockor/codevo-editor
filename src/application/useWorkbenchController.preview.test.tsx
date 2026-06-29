@@ -8274,6 +8274,7 @@ describe("useWorkbenchController preview tabs", () => {
         path: string,
         original: string,
         organized: string,
+        kind = "source.organizeImports",
       ): LanguageServerCodeAction => {
         const lines = original.split("\n");
 
@@ -8297,7 +8298,7 @@ describe("useWorkbenchController preview tabs", () => {
             },
           },
           isPreferred: false,
-          kind: "source.organizeImports",
+          kind,
           title: "Organize Imports",
         };
       };
@@ -8311,7 +8312,7 @@ describe("useWorkbenchController preview tabs", () => {
         title: "Organize Imports",
       });
 
-      it("organizes JS/TS imports through the LSP before writing when optimizeImportsOnSave is enabled", async () => {
+      it("organizes JS/TS imports through the LSP before writing when JS/TS organize imports on save is enabled", async () => {
         const path = "/workspace/src/App.ts";
         const featuresGatewayInstance = featuresGateway();
         vi.mocked(featuresGatewayInstance.codeActions).mockResolvedValue([
@@ -8339,7 +8340,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8369,6 +8370,163 @@ describe("useWorkbenchController preview tabs", () => {
         expect(getWorkbench().activeDocument?.content).toBe(
           tsWithOrganizedImports,
         );
+      });
+
+      it("stops JS/TS on-save source actions after the first content-changing edit", async () => {
+        const path = "/workspace/src/App.ts";
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async (_root, _path, _range, context) => {
+            if (context.only?.[0] === "source.organizeImports") {
+              return [
+                organizeImportsAction(
+                  path,
+                  tsWithUnsortedImports,
+                  tsWithOrganizedImports,
+                ),
+              ];
+            }
+
+            if (context.only?.[0] === "source.removeUnused.ts") {
+              throw new Error("remove unused should not run after content changed");
+            }
+
+            return [];
+          },
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+            javaScriptTypeScriptRemoveUnusedOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          1,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.organizeImports"] }),
+        );
+        expect(featuresGatewayInstance.codeActions).toHaveBeenCalledTimes(1);
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithOrganizedImports);
+      });
+
+      it("continues to JS/TS remove unused on save when organize imports has no edits", async () => {
+        const path = "/workspace/src/App.ts";
+        const tsWithoutUnusedImport = [
+          "import { a } from './a';",
+          "",
+          "a();",
+          "",
+        ].join("\n");
+        const featuresGatewayInstance = featuresGateway();
+        vi.mocked(featuresGatewayInstance.codeActions).mockImplementation(
+          async (_root, _path, _range, context) => {
+            if (context.only?.[0] === "source.organizeImports") {
+              return [];
+            }
+
+            if (context.only?.[0] === "source.removeUnused.ts") {
+              return [
+                organizeImportsAction(
+                  path,
+                  tsWithUnsortedImports,
+                  tsWithoutUnusedImport,
+                  "source.removeUnused.ts",
+                ),
+              ];
+            }
+
+            return [];
+          },
+        );
+        const { dependencies, getWorkbench } = renderController({
+          appSettings: {
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/workspace",
+            workspaceTabs: ["/workspace"],
+          },
+          javaScriptTypeScriptInitialRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          javaScriptTypeScriptLanguageServerFeaturesGateway:
+            featuresGatewayInstance,
+          javaScriptTypeScriptRuntimeStatus:
+            runningJavaScriptTypeScriptOrganizeStatus(),
+          readTextFile: vi.fn(async () => "export const value = 1;\n"),
+          workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+          workspaceSettings: {
+            ...defaultWorkspaceSettings(),
+            autoSave: false,
+            formatOnSave: false,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+            javaScriptTypeScriptRemoveUnusedOnSave: true,
+          },
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+        });
+        act(() => {
+          getWorkbench().updateActiveDocument(tsWithUnsortedImports);
+        });
+        await flushAsyncTurns(24);
+
+        await act(async () => {
+          await getWorkbench().saveActiveDocument();
+        });
+        await flushAsyncTurns(24);
+
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          1,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.organizeImports"] }),
+        );
+        expect(featuresGatewayInstance.codeActions).toHaveBeenNthCalledWith(
+          2,
+          "/workspace",
+          path,
+          expect.anything(),
+          expect.objectContaining({ only: ["source.removeUnused.ts"] }),
+        );
+        expect(
+          dependencies.workspaceGateways.files.writeTextFile,
+        ).toHaveBeenCalledWith(path, tsWithoutUnusedImport);
       });
 
       it("resolves data-only organize-imports actions before writing", async () => {
@@ -8403,7 +8561,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8465,7 +8623,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8489,7 +8647,7 @@ describe("useWorkbenchController preview tabs", () => {
         ).toHaveBeenCalledWith(path, tsWithUnsortedImports);
       });
 
-      it("does not organize JS/TS imports on save when optimizeImportsOnSave is disabled", async () => {
+      it("does not organize JS/TS imports on save when JS/TS on-save source actions are disabled", async () => {
         const path = "/workspace/src/App.ts";
         const featuresGatewayInstance = featuresGateway();
         const { dependencies, getWorkbench } = renderController({
@@ -8510,7 +8668,8 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: false,
+            javaScriptTypeScriptOrganizeImportsOnSave: false,
+            optimizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8558,7 +8717,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8607,7 +8766,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8664,7 +8823,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);
@@ -8758,7 +8917,7 @@ describe("useWorkbenchController preview tabs", () => {
             ...defaultWorkspaceSettings(),
             autoSave: false,
             formatOnSave: false,
-            optimizeImportsOnSave: true,
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
           },
         });
         await flushAsyncTurns(24);

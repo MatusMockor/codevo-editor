@@ -130,6 +130,8 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptAutoImports: boolean;
   javaScriptTypeScriptCodeLens: boolean;
   javaScriptTypeScriptInlayHints: boolean;
+  javaScriptTypeScriptOrganizeImportsOnSave: boolean;
+  javaScriptTypeScriptRemoveUnusedOnSave: boolean;
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
@@ -263,6 +265,8 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptAutoImports: true,
     javaScriptTypeScriptCodeLens: false,
     javaScriptTypeScriptInlayHints: true,
+    javaScriptTypeScriptOrganizeImportsOnSave: false,
+    javaScriptTypeScriptRemoveUnusedOnSave: false,
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
@@ -397,6 +401,14 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     javaScriptTypeScriptInlayHints: normalizeBoolean(
       value.javaScriptTypeScriptInlayHints,
       defaults.javaScriptTypeScriptInlayHints,
+    ),
+    javaScriptTypeScriptOrganizeImportsOnSave: normalizeBoolean(
+      value.javaScriptTypeScriptOrganizeImportsOnSave,
+      defaults.javaScriptTypeScriptOrganizeImportsOnSave,
+    ),
+    javaScriptTypeScriptRemoveUnusedOnSave: normalizeBoolean(
+      value.javaScriptTypeScriptRemoveUnusedOnSave,
+      defaults.javaScriptTypeScriptRemoveUnusedOnSave,
     ),
     javaScriptTypeScriptService: isJavaScriptTypeScriptServiceMode(
       value.javaScriptTypeScriptService,

@@ -136,6 +136,7 @@ import {
 } from "../domain/formatOnSave";
 import {
   fullDocumentRange,
+  javaScriptTypeScriptOnSaveSourceActionKinds,
   organizeImportsCodeActionToResolve,
   organizeImportsCodeActionContext,
   organizeImportsTextEditsForPath,
@@ -8531,23 +8532,17 @@ export function useWorkbenchController(
     [workspaceDescriptor?.php],
   );
 
-  // Organize-imports-on-save for JavaScript/TypeScript: unlike the synchronous
-  // PHP path, this asks the JS/TS language server for its `source.organizeImports`
-  // code action and applies the resulting edits to the (already formatted)
-  // content before it is written. It is async (one LSP round-trip), so the
-  // session is re-checked after the await and the caller re-checks the workspace
-  // root before writing. Any failure (server down, request throws, no usable
-  // edit) is a no-op that returns the input content, so it can never block a save.
+  // JS/TS source actions on save: unlike the synchronous PHP path, this asks
+  // the JS/TS language server for each enabled source action and applies inline
+  // same-file edits to the (already formatted) content before it is written.
+  // It is async, so the session is re-checked after awaits and the caller
+  // re-checks the workspace root before writing. Failures are no-ops.
   const organizedImportsContentForSave = useCallback(
     async (
       document: EditorDocument,
       content: string,
       requestedRoot: string,
     ): Promise<string> => {
-      if (!workspaceSettingsRef.current.optimizeImportsOnSave) {
-        return content;
-      }
-
       const plan = planOrganizeImportsOnSave({
         document,
         javaScriptTypeScript: {
@@ -8555,6 +8550,9 @@ export function useWorkbenchController(
           statusRoot:
             javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
         },
+        sourceActionKinds: javaScriptTypeScriptOnSaveSourceActionKinds(
+          workspaceSettingsRef.current,
+        ),
         workspaceRoot: requestedRoot,
       });
 
@@ -8577,46 +8575,66 @@ export function useWorkbenchController(
           return content;
         }
 
-        const actions =
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
-            requestedRoot,
-            document.path,
-            fullDocumentRange(content),
-            organizeImportsCodeActionContext(),
-          );
+        let currentContent = content;
 
-        if (!isRequestedSessionActive()) {
-          return content;
-        }
-
-        let edits = organizeImportsTextEditsForPath(actions, document.path);
-
-        if (!edits || edits.length === 0) {
-          const actionToResolve = organizeImportsCodeActionToResolve(actions);
-
-          if (actionToResolve) {
-            const resolvedAction =
-              await javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
+        for (const sourceActionKind of plan.sourceActionKinds) {
+          try {
+            const actions =
+              await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
                 requestedRoot,
-                actionToResolve,
+                document.path,
+                fullDocumentRange(currentContent),
+                organizeImportsCodeActionContext(sourceActionKind),
               );
 
             if (!isRequestedSessionActive()) {
               return content;
             }
 
-            edits = organizeImportsTextEditsForPath(
-              [resolvedAction],
+            let edits = organizeImportsTextEditsForPath(
+              actions,
               document.path,
+              sourceActionKind,
             );
+
+            if (!edits || edits.length === 0) {
+              const actionToResolve = organizeImportsCodeActionToResolve(
+                actions,
+                sourceActionKind,
+              );
+
+              if (actionToResolve) {
+                const resolvedAction =
+                  await javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
+                    requestedRoot,
+                    actionToResolve,
+                  );
+
+                if (!isRequestedSessionActive()) {
+                  return content;
+                }
+
+                edits = organizeImportsTextEditsForPath(
+                  [resolvedAction],
+                  document.path,
+                  sourceActionKind,
+                );
+              }
+            }
+
+            if (edits && edits.length > 0) {
+              currentContent = applyLanguageServerTextEdits(
+                currentContent,
+                edits,
+              );
+              break;
+            }
+          } catch {
+            continue;
           }
         }
 
-        if (!edits || edits.length === 0) {
-          return content;
-        }
-
-        return applyLanguageServerTextEdits(content, edits);
+        return currentContent;
       } catch {
         return content;
       }
