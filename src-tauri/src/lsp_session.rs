@@ -3185,6 +3185,8 @@ mod tests {
         SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
         WorkspaceEditSink,
     };
+    #[cfg(unix)]
+    use super::ChildKiller;
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
     use crate::lsp_features::LanguageServerWorkspaceEdit;
@@ -7008,5 +7010,389 @@ mod tests {
             .expect("system time")
             .as_nanos();
         format!("{prefix}-{nanos}")
+    }
+
+    // --- Runtime lifecycle: real OS process termination (no orphans / no hang) ---
+    //
+    // These tests exercise the *real* process-kill path (`ChildKiller` ->
+    // process-group SIGTERM/SIGKILL) instead of the in-memory `FakeKiller`, so
+    // they prove an OS process actually dies on every lifecycle transition
+    // (disable IDE mode / close tab / quit app), that disposing one workspace
+    // never touches another (per-root isolation), and that termination is
+    // idempotent and never blocks the reader join.
+
+    /// Probes process liveness without disturbing it: `kill(pid, 0)` returns 0
+    /// when the process exists, `EPERM` when it exists but is owned by another
+    /// user, and `ESRCH` once it is gone (and reaped).
+    #[cfg(unix)]
+    fn process_is_alive(pid: i32) -> bool {
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return true;
+        }
+
+        io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(unix)]
+    fn wait_until_process_dead(pid: i32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            if !process_is_alive(pid) {
+                return true;
+            }
+
+            if Instant::now() >= deadline {
+                return false;
+            }
+
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
+    fn read_pids_from_file(path: &Path, count: usize, timeout: Duration) -> Vec<i32> {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            if let Ok(contents) = fs::read_to_string(path) {
+                let pids: Vec<i32> = contents
+                    .split_whitespace()
+                    .filter_map(|token| token.parse().ok())
+                    .collect();
+
+                if pids.len() >= count {
+                    return pids;
+                }
+            }
+
+            if Instant::now() >= deadline {
+                panic!("expected {count} pids in {path:?}");
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Spawns a *real* long-lived child (`sleep`) wrapped in the production
+    /// [`ChildKiller`], while serving a scripted LSP handshake over an in-memory
+    /// pipe so the supervisor reaches the `Running` state. This lets registry
+    /// lifecycle tests assert that the OS process is genuinely reaped on stop,
+    /// not merely removed from the registry map.
+    #[cfg(unix)]
+    struct RealProcessSpawner {
+        script: Vec<u8>,
+        stdin_capture: Arc<Mutex<Vec<u8>>>,
+        held_writer: Arc<Mutex<Option<PipeWriter>>>,
+        recorded_pid: Arc<Mutex<Option<i32>>>,
+    }
+
+    #[cfg(unix)]
+    impl RealProcessSpawner {
+        fn new() -> Self {
+            Self {
+                script: ready_script(),
+                stdin_capture: Arc::new(Mutex::new(Vec::new())),
+                held_writer: Arc::new(Mutex::new(None)),
+                recorded_pid: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        fn pid(&self) -> i32 {
+            self.recorded_pid
+                .lock()
+                .expect("recorded pid")
+                .expect("spawned process pid")
+        }
+    }
+
+    #[cfg(unix)]
+    impl ServerProcessSpawner for RealProcessSpawner {
+        fn spawn(&self, _command: &LanguageServerCommand) -> io::Result<SpawnedServer> {
+            use std::os::unix::process::CommandExt;
+            use std::process::{Command, Stdio};
+
+            let (reader, mut writer) = std::io::pipe()?;
+            writer.write_all(&self.script)?;
+            *self.held_writer.lock().expect("held writer lock") = Some(writer);
+
+            let mut command = Command::new("sleep");
+            command
+                .arg("600")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0);
+            let child = command.spawn()?;
+            let process_group_id = child.id() as i32;
+            *self.recorded_pid.lock().expect("recorded pid") = Some(process_group_id);
+
+            Ok(SpawnedServer {
+                stderr: None,
+                stdin: Box::new(SharedWriter(Arc::clone(&self.stdin_capture))),
+                stdout: Box::new(reader),
+                killer: Box::new(RealProcessKiller {
+                    inner: ChildKiller {
+                        child,
+                        process_group_id,
+                    },
+                    held: Arc::clone(&self.held_writer),
+                }),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    struct RealProcessKiller {
+        inner: ChildKiller,
+        held: Arc<Mutex<Option<PipeWriter>>>,
+    }
+
+    #[cfg(unix)]
+    impl ProcessKiller for RealProcessKiller {
+        fn terminate(&mut self) -> io::Result<()> {
+            let result = self.inner.terminate();
+            // In production the dying process closes its own stdout, which gives
+            // the session reader the EOF it needs to unblock and join. Our
+            // scripted stdout is a separate pipe, so drop its writer to emulate
+            // that close and keep `terminate_session`'s reader join from hanging.
+            let _ = self.held.lock().expect("held writer lock").take();
+            result
+        }
+    }
+
+    /// Quitting the app / closing a tab must reap the *whole* server process
+    /// tree. A language server that forks a child which inherits its stdout
+    /// would, under a bare `child.kill()`, leave that grandchild alive holding
+    /// the stdout pipe open - and the session reader's `join()` would block
+    /// forever (a hung, orphaned process). Killing the process group closes the
+    /// pipe and unblocks the reader. This guards that the process-group kill
+    /// stays in place.
+    #[cfg(unix)]
+    #[test]
+    fn child_killer_reaps_process_group_so_inherited_stdout_closes_without_hanging() {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let pid_file = temp_path("pgid-reap");
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg(format!(
+                "sleep 600 & printf '%s %s' \"$$\" \"$!\" > '{}'; wait",
+                pid_file.display()
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0);
+
+        let mut child = command.spawn().expect("spawn process-group child");
+        let process_group_id = child.id() as i32;
+        let stdout = child.stdout.take().expect("child stdout");
+        let mut killer = ChildKiller {
+            child,
+            process_group_id,
+        };
+
+        // Drain the inherited stdout exactly like the session reader does; it can
+        // only finish once every process in the group has released the pipe.
+        let reader = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut sink = Vec::new();
+            let _ = reader.read_to_end(&mut sink);
+        });
+
+        let pids = read_pids_from_file(&pid_file, 2, Duration::from_secs(5));
+        let (shell_pid, grandchild_pid) = (pids[0], pids[1]);
+        assert!(process_is_alive(shell_pid));
+        assert!(process_is_alive(grandchild_pid));
+
+        killer.terminate().expect("terminate process group");
+
+        // Fail fast rather than hang the suite if a grandchild kept stdout open.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !reader.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "stdout reader did not unblock after process-group kill"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        reader.join().expect("reader thread");
+
+        assert!(
+            wait_until_process_dead(shell_pid, Duration::from_secs(5)),
+            "shell child must be reaped"
+        );
+        assert!(
+            wait_until_process_dead(grandchild_pid, Duration::from_secs(5)),
+            "inherited grandchild must be reaped (no orphan)"
+        );
+
+        // Terminate is idempotent and must not block once the process is gone.
+        let started = Instant::now();
+        killer.terminate().expect("idempotent terminate");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "second terminate must return promptly"
+        );
+
+        let _ = fs::remove_file(&pid_file);
+    }
+
+    /// Closing one project tab (`dispose_workspace_root` -> `registry.stop`) must
+    /// kill that workspace's real LSP process while a sibling workspace keeps
+    /// running, and quitting the app (`stop_all`) must then reap the rest.
+    #[cfg(unix)]
+    #[test]
+    fn registry_stop_kills_real_workspace_process_and_leaves_siblings_running() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner_a = RealProcessSpawner::new();
+        let spawner_b = RealProcessSpawner::new();
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+        // Non-managed command path so PHP orphan cleanup (`pkill`) is skipped and
+        // the test never signals unrelated processes on the host.
+        let command = command();
+
+        registry
+            .start(
+                "/tmp/lifecycle-a",
+                &command,
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/lifecycle-b",
+                &command,
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        let pid_a = spawner_a.pid();
+        let pid_b = spawner_b.pid();
+        assert!(process_is_alive(pid_a));
+        assert!(process_is_alive(pid_b));
+
+        assert_eq!(
+            registry.stop("/tmp/lifecycle-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+
+        assert!(
+            wait_until_process_dead(pid_a, Duration::from_secs(5)),
+            "disposed workspace process must be dead"
+        );
+        assert!(
+            process_is_alive(pid_b),
+            "sibling workspace process must stay alive (per-root isolation)"
+        );
+        assert!(matches!(
+            registry.status("/tmp/lifecycle-b"),
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+
+        assert_eq!(registry.stop_all(), LanguageServerRuntimeStatus::Stopped);
+        assert!(
+            wait_until_process_dead(pid_b, Duration::from_secs(5)),
+            "remaining workspace process must be dead after stop_all"
+        );
+
+        // Quitting again over an already-empty registry is idempotent and fast.
+        let started = Instant::now();
+        assert_eq!(registry.stop_all(), LanguageServerRuntimeStatus::Stopped);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// Disabling IDE mode (fullSmart -> basic) routes through
+    /// `stop_php_language_server` -> `PhpLanguageServerRegistry::stop`, which must
+    /// terminate the phpactor process, report `Stopped`, and clear its launch
+    /// context. A second stop is idempotent and non-blocking.
+    #[cfg(unix)]
+    #[test]
+    fn disabling_ide_mode_terminates_php_language_server_process() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = RealProcessSpawner::new();
+        let (sink, _rx) = ChannelSink::new();
+        let command = command();
+
+        registry
+            .start(
+                "/tmp/ide-toggle",
+                &command,
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start phpactor");
+
+        let pid = spawner.pid();
+        assert!(process_is_alive(pid));
+
+        assert_eq!(
+            registry.stop("/tmp/ide-toggle"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert!(
+            wait_until_process_dead(pid, Duration::from_secs(5)),
+            "phpactor process must be dead after disabling IDE mode"
+        );
+        assert!(registry
+            .launch_contexts
+            .lock()
+            .expect("launch contexts")
+            .is_empty());
+
+        let started = Instant::now();
+        assert_eq!(
+            registry.stop("/tmp/ide-toggle"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "stopping an already-stopped workspace must be fast"
+        );
+    }
+
+    /// Closing a JS/TS workspace tab must reap the real tsserver process too, so
+    /// no Node process leaks between open project tabs.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_javascript_typescript_workspace_terminates_real_process() {
+        let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
+        let spawner = RealProcessSpawner::new();
+        let (sink, _rx) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/ts-tab",
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start tsserver");
+
+        let pid = spawner.pid();
+        assert!(process_is_alive(pid));
+
+        assert_eq!(
+            registry.stop("/tmp/ts-tab"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert!(
+            wait_until_process_dead(pid, Duration::from_secs(5)),
+            "tsserver process must be dead after closing the tab"
+        );
     }
 }
