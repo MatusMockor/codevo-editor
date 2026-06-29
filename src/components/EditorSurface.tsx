@@ -1207,7 +1207,10 @@ function EditorSurfaceComponent({
       editorApi.addAction({
         id: "mockor.quickFix",
         label: "Show Context Actions",
-        keybindings: keybinding("editor.quickFix"),
+        keybindings: [
+          ...keybinding("editor.quickFix"),
+          monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.Period,
+        ],
         run: () => {
           const model = editorApi.getModel();
           const position = editorApi.getPosition();
@@ -4351,6 +4354,7 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
 
   const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
     ",": "Comma",
+    ".": "Period",
     "-": "Minus",
     "/": "Slash",
     "=": "Equal",

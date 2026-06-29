@@ -5134,7 +5134,7 @@ class Foo
     expect(historyModel.dispose).not.toHaveBeenCalled();
   });
 
-  it("registers Option+Enter quick fix/context actions", async () => {
+  it("registers Option+Enter and Cmd+. quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
       language: "php",
@@ -5194,7 +5194,10 @@ class Foo
 
     expect(quickFixAction).toEqual(
       expect.objectContaining({
-        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.Enter],
+        keybindings: [
+          monaco.KeyMod.Alt | monaco.KeyCode.Enter,
+          monaco.KeyMod.CtrlCmd | monaco.KeyCode.Period,
+        ],
         label: "Show Context Actions",
       }),
     );
@@ -10320,6 +10323,7 @@ function createMonaco(model: FakeModel) {
       KeyU: 18,
       KeyW: 7,
       Minus: 88,
+      Period: 89,
       Slash: 90,
       UpArrow: 9,
     },

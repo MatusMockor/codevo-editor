@@ -52610,8 +52610,11 @@ class Greeter
     );
   });
 
-  it("offers a Create class quick fix on a `new UnknownClass()` reference", async () => {
+  it("offers and applies a Create class quick fix on a `new UnknownClass()` reference", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
+    const targetPath = "/workspace/app/Services/MailDispatcher.php";
+    const targetContent =
+      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n";
     const classSource = `<?php
 
 namespace App\\Services;
@@ -52624,6 +52627,10 @@ class Greeter
     }
 }
 `;
+    const diskContents = new Map<string, string>();
+    const writeTextFile = vi.fn(async (path: string, content: string) => {
+      diskContents.set(path, content);
+    });
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -52634,10 +52641,21 @@ class Greeter
           return classSource;
         }
 
+        const written = diskContents.get(path);
+
+        if (written !== undefined) {
+          return written;
+        }
+
         // The target class does not exist yet on disk.
+        if (path === targetPath) {
+          throw new Error("ENOENT");
+        }
+
         throw new Error("ENOENT");
       }),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFiles: { writeTextFile },
     });
     await flushAsyncTurns();
     await act(async () => {
@@ -52657,12 +52675,18 @@ class Greeter
     expect(createClass?.isPreferred).toBe(true);
     expect(createClass?.kind).toBe("quickfix");
     expect(createClass?.edits).toEqual([]);
-    expect(createClass?.newFile?.path).toBe(
-      "/workspace/app/Services/MailDispatcher.php",
-    );
-    expect(createClass?.newFile?.content).toBe(
-      "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
-    );
+    expect(createClass?.newFile?.path).toBe(targetPath);
+    expect(createClass?.newFile?.content).toBe(targetContent);
+
+    await act(async () => {
+      await getWorkbench().applyPhpCodeActionNewFile(createClass!.newFile!);
+    });
+    await flushAsyncTurns();
+
+    expect(writeTextFile).toHaveBeenCalledWith(targetPath, targetContent);
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().activeDocument?.path).toBe(targetPath);
+    expect(getWorkbench().activeDocument?.content).toBe(targetContent);
   });
 
   it("resolves the destination through a use-import alias for Create class", async () => {
