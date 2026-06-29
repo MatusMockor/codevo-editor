@@ -6433,6 +6433,107 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("syncs JSX and TSX documents through the JavaScript and TypeScript language server", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 205,
+    };
+    const cases = [
+      {
+        changedContent: "export function App() { return <span />; }\n",
+        languageId: "typescriptreact",
+        name: "App.tsx",
+        originalContent: "export function App() { return <main />; }\n",
+        path: "/workspace/src/App.tsx",
+      },
+      {
+        changedContent: "export function Widget() { return <span />; }\n",
+        languageId: "javascriptreact",
+        name: "Widget.jsx",
+        originalContent: "export function Widget() { return <main />; }\n",
+        path: "/workspace/src/Widget.jsx",
+      },
+    ];
+    const contentByPath = new Map(
+      cases.map((entry) => [entry.path, entry.originalContent]),
+    );
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        contentByPath.get(requestedPath) ?? "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+
+    for (const entry of cases) {
+      vi.mocked(syncGateway.didOpen).mockClear();
+      vi.mocked(syncGateway.didChange).mockClear();
+      vi.mocked(syncGateway.didSave).mockClear();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(entry.path, entry.name));
+      });
+      await flushAsyncTurns(24);
+
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          languageId: entry.languageId,
+          path: entry.path,
+          text: entry.originalContent,
+        }),
+      );
+
+      act(() => {
+        getWorkbench().updateActiveDocument(entry.changedContent);
+      });
+      await act(async () => {
+        await getWorkbench().flushPendingJavaScriptTypeScriptLanguageServerDocument(
+          entry.path,
+        );
+      });
+
+      expect(syncGateway.didChange).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          languageId: entry.languageId,
+          path: entry.path,
+          text: entry.changedContent,
+        }),
+      );
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(syncGateway.didSave).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          languageId: entry.languageId,
+          path: entry.path,
+          text: entry.changedContent,
+        }),
+      );
+    }
+  });
+
   it("ignores JavaScript and TypeScript runtime status events without an explicit workspace root", async () => {
     let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
       null;
@@ -20276,6 +20377,83 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       getWorkbench().referencesView?.locations.map((location) => location.uri),
     ).toEqual([fileUriFromPath(path), fileUriFromPath(callerPath)]);
+  });
+
+  it("enables Find File References for JSX and TSX documents", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 231,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).mockResolvedValue([]);
+    const files = [
+      {
+        content: "export function App() { return <main />; }\n",
+        name: "App.tsx",
+        path: "/workspace/src/App.tsx",
+      },
+      {
+        content: "export function Widget() { return <main />; }\n",
+        name: "Widget.jsx",
+        path: "/workspace/src/Widget.jsx",
+      },
+    ];
+    const contentByPath = new Map(
+      files.map((entry) => [entry.path, entry.content]),
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        contentByPath.get(requestedPath) ?? "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    for (const entry of files) {
+      vi.mocked(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+      ).mockClear();
+
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(entry.path, entry.name));
+      });
+      await flushAsyncTurns(24);
+
+      const command = getWorkbench().commands.find(
+        (candidate) => candidate.id === "editor.findFileReferences",
+      );
+      expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+      await act(async () => {
+        await command?.run();
+      });
+      await flushAsyncTurns(12);
+
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+      ).toHaveBeenCalledWith("/workspace", {
+        arguments: [fileUriFromPath(entry.path)],
+        command: "_typescript.findAllFileReferences",
+        title: "Find File References",
+      });
+      expect(getWorkbench().referencesView?.symbol).toBe(entry.name);
+    }
   });
 
   it("no-ops Find File References with a friendly message outside JavaScript and TypeScript files", async () => {

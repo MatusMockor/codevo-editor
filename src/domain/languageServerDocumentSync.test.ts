@@ -30,12 +30,32 @@ describe("createLanguageServerTextDocument", () => {
 });
 
 describe("isJavaScriptTypeScriptLanguageServerDocument", () => {
-  it("routes JavaScript, TypeScript and Vue documents through the JS/TS server", () => {
+  it("routes JavaScript, TypeScript, React and Vue documents through the JS/TS server", () => {
     expect(
       isJavaScriptTypeScriptLanguageServerDocument(document("javascript")),
     ).toBe(true);
     expect(
       isJavaScriptTypeScriptLanguageServerDocument(document("typescript")),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(
+        document("javascript", "/project/src/App.jsx"),
+      ),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(
+        document("typescript", "/project/src/App.tsx"),
+      ),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(
+        document("javascriptreact", "/project/src/App.jsx"),
+      ),
+    ).toBe(true);
+    expect(
+      isJavaScriptTypeScriptLanguageServerDocument(
+        document("typescriptreact", "/project/src/App.tsx"),
+      ),
     ).toBe(true);
     expect(
       isJavaScriptTypeScriptLanguageServerDocument(

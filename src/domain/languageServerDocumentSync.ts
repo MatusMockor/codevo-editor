@@ -21,10 +21,16 @@ export function isLanguageServerDocument(document: EditorDocument): boolean {
 export function isJavaScriptTypeScriptLanguageServerDocument(
   document: EditorDocument,
 ): boolean {
+  const extension = document.path.split(".").pop()?.toLowerCase();
+
   return (
     document.language === "javascript" ||
+    document.language === "javascriptreact" ||
     document.language === "typescript" ||
-    document.language === "vue"
+    document.language === "typescriptreact" ||
+    document.language === "vue" ||
+    extension === "jsx" ||
+    extension === "tsx"
   );
 }
 
