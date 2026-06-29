@@ -54925,7 +54925,7 @@ class Account
     expect(constructorText).toContain("$this->balance = $balance;");
   });
 
-  it("offers both classic and promoted constructor actions for a class with properties and no constructor", async () => {
+  it("renders safe assignments for the legacy promoted constructor action on declared properties", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
 
@@ -54969,10 +54969,12 @@ class Account
     );
     expect(promotedAction).toBeDefined();
     const promotedText = promotedAction?.edits[0]?.text ?? "";
-    expect(promotedText).toContain("private string $name,");
-    expect(promotedText).toContain("private int $balance,");
-    // Promotion keeps the body empty (no `$this->` assignments).
-    expect(promotedText).not.toContain("$this->name = $name;");
+    expect(promotedText).toContain(
+      "public function __construct(string $name, int $balance)",
+    );
+    expect(promotedText).toContain("$this->name = $name;");
+    expect(promotedText).toContain("$this->balance = $balance;");
+    expect(promotedText).not.toContain("private string $name,");
   });
 
   it("offers no promoted constructor action when the class already has a constructor", async () => {

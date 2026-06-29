@@ -9,7 +9,10 @@ import type { PhpPropertyMember } from "./phpClassStructure";
  *  - Classic (default): the constructor declares one typed parameter per
  *    property and the body assigns each parameter to `$this->property`.
  *  - Constructor property promotion (PHP 8): each parameter carries the
- *    property's visibility (and `readonly`) so the body can stay empty.
+ *    property's visibility (and `readonly`) so the body can stay empty. This
+ *    must only be used when those constructor parameters are the property
+ *    declarations; promoting properties already declared in the class body would
+ *    redeclare them.
  *
  * Design constraints:
  *  - Pure string rendering — no side-effects, no I/O.
@@ -24,6 +27,10 @@ import type { PhpPropertyMember } from "./phpClassStructure";
  *    placed. It is applied to the signature / braces; both the classic body and
  *    the promoted parameters are indented ONE extra step relative to the base,
  *    so the output stays correctly nested at any caller indent.
+ *  - The legacy `promotion` option is kept as a safe request from callers that
+ *    pass parsed class-body properties: it now renders the classic assignment
+ *    constructor instead of duplicating declared properties. New promotion
+ *    renderers must opt into `mode: "promoted"` explicitly.
  *  - Promoted parameters are always rendered multi-line (one per line, trailing
  *    comma) for readability and stable diffs.
  *  - Parameters are ordered required-before-optional (a stable partition that
@@ -35,8 +42,18 @@ import type { PhpPropertyMember } from "./phpClassStructure";
  *    defaulted parameter into a required one.
  */
 
+export type RenderConstructorMode = "classic" | "promoted";
+
 export interface RenderConstructorOptions {
   indent?: string;
+  mode?: RenderConstructorMode;
+  /**
+   * Legacy request from the original "generate constructor with promotion"
+   * action. `renderConstructor` is primarily fed parsed class-body properties,
+   * so this flag intentionally falls back to classic assignments to avoid
+   * redeclaring existing properties. Use `mode: "promoted"` only when promoted
+   * constructor parameters are meant to declare the properties.
+   */
   promotion?: boolean;
 }
 
@@ -48,16 +65,16 @@ export function renderConstructor(
   options: RenderConstructorOptions = {},
 ): string {
   const indent = options.indent ?? DEFAULT_INDENT;
-  const promotion = options.promotion ?? false;
+  const mode = options.mode ?? "classic";
   const instanceProperties = orderRequiredBeforeOptional(
     properties.filter((property) => !property.isStatic),
   );
 
   if (instanceProperties.length === 0) {
-    return renderEmptyConstructor(indent, promotion);
+    return renderEmptyConstructor(indent, mode);
   }
 
-  if (promotion) {
+  if (mode === "promoted") {
     return renderPromotedConstructor(instanceProperties, indent);
   }
 
@@ -96,8 +113,11 @@ export function propertyToParameter(
   return `${promotionPrefix}${typePrefix}$${property.name}${defaultSuffix}`;
 }
 
-function renderEmptyConstructor(indent: string, promotion: boolean): string {
-  if (promotion) {
+function renderEmptyConstructor(
+  indent: string,
+  mode: RenderConstructorMode,
+): string {
+  if (mode === "promoted") {
     return `${indent}public function __construct() {}`;
   }
 

@@ -126,7 +126,7 @@ describe("renderConstructor (promotion)", () => {
   it("promotes a single property keeping its visibility and renders an empty body", () => {
     const result = renderConstructor(
       [property({ name: "name", type: "string", visibility: "public" })],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe(
@@ -141,7 +141,7 @@ describe("renderConstructor (promotion)", () => {
   it("promotes an untyped property without a stray double space", () => {
     const result = renderConstructor(
       [property({ name: "value", type: null, visibility: "protected" })],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe(
@@ -165,7 +165,7 @@ describe("renderConstructor (promotion)", () => {
           defaultValue: "null",
         }),
       ],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe(
@@ -236,6 +236,45 @@ class UserCache
 `);
   });
 
+  it("keeps declared properties and renders safe assignments when legacy promotion is requested", () => {
+    const source = `<?php
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { properties } = parsePhpClassStructure(source);
+    const block = renderConstructor(properties, { promotion: true });
+
+    expect(block).toBe(
+      [
+        "public function __construct(string $name, int $balance)",
+        "{",
+        "    $this->name = $name;",
+        "    $this->balance = $balance;",
+        "}",
+      ].join("\n"),
+    );
+    expect(insertGeneratedClassMemberForTest(source, block)).toBe(`<?php
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+
+    public function __construct(string $name, int $balance)
+    {
+        $this->name = $name;
+        $this->balance = $balance;
+    }
+}
+`);
+  });
+
   it("renders an empty constructor for an empty property list (classic)", () => {
     const result = renderConstructor([]);
 
@@ -247,7 +286,7 @@ class UserCache
   it("renders an empty constructor when only static properties exist (promotion)", () => {
     const result = renderConstructor(
       [property({ name: "instances", type: "int", isStatic: true })],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe("public function __construct() {}");
@@ -272,7 +311,7 @@ class UserCache
   it("honours a custom base indent (promotion)", () => {
     const result = renderConstructor(
       [property({ name: "name", type: "string", visibility: "public" })],
-      { promotion: true, indent: "  " },
+      { mode: "promoted", indent: "  " },
     );
 
     expect(result).toBe(
@@ -314,7 +353,7 @@ describe("renderConstructor (required-before-optional ordering)", () => {
         }),
         property({ name: "timeout", type: "int", visibility: "public" }),
       ],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe(
@@ -404,7 +443,7 @@ describe("renderConstructor (required-before-optional ordering)", () => {
           defaultValue: "1.0",
         }),
       ],
-      { promotion: true },
+      { mode: "promoted" },
     );
 
     expect(result).toBe(
