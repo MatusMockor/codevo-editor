@@ -3169,6 +3169,17 @@ export function useWorkbenchController(
       }
 
       if (!crash) {
+        const previousCrash = lastLanguageServerCrashRef.current;
+        if (previousCrash) {
+          setMessage((current) => (current === previousCrash ? null : current));
+          setNotices((current) =>
+            current.filter(
+              (notice) =>
+                notice.source !== "Language Server" ||
+                notice.message !== previousCrash,
+            ),
+          );
+        }
         lastLanguageServerCrashRef.current = null;
         return;
       }

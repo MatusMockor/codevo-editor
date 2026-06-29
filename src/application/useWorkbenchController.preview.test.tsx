@@ -7059,6 +7059,75 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(true);
   });
 
+  it("clears a stale PHP runtime crash message after the active project recovers", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId: 231,
+      })),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+      },
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishStatus?.({
+        kind: "crashed",
+        message: "PHPactor exited unexpectedly.",
+        rootPath: "/workspace-a",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().message).toBe("PHPactor exited unexpectedly.");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message === "PHPactor exited unexpectedly.",
+      ),
+    ).toBe(true);
+
+    act(() => {
+      publishStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/workspace-a",
+        sessionId: 232,
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().message).toBeNull();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message === "PHPactor exited unexpectedly.",
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale JavaScript and TypeScript runtime subscription errors after switching project tabs", async () => {
     const subscription = createDeferred<() => void>();
     const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
