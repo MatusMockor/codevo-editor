@@ -40513,6 +40513,209 @@ class Comment
     expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
   });
 
+  it("offers Laravel Eloquent model completions after fluent findOrFail chains", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(int $threadId, int $id): void
+    {
+        $comment = Comment::where('thread_id', $threadId)->findOrFail($id);
+        $comment->
+        $comment->visible();
+        $missing = Comment::where('thread_id', $threadId)->definitelyMissingMagic();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 144,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const diagnosticPosition = (needle: string) => {
+      const position = positionAfter(controllerSource, needle);
+
+      return {
+        character: position.column - needle.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+        'thread_id',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'meta' => 'array',
+    ];
+
+    public function replies(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function approve(int $actorId): void {}
+
+    public function scopeVisible(Builder $query, bool $pinned = false): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->"),
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "content",
+          parameters: "",
+          returnType: "mixed",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "is_pinned",
+          parameters: "",
+          returnType: "bool",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "meta",
+          parameters: "",
+          returnType: "array",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "replies",
+          parameters: "",
+          returnType: "App\\Models\\Comment",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          name: "visible",
+          parameters: "bool $pinned = false",
+          returnType: "Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          name: "approve",
+          parameters: "int $actorId",
+          returnType: "void",
+        },
+      ]),
+    );
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...diagnosticPosition("where"),
+            message: "Method App\\Models\\Comment::where() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("findOrFail"),
+            message:
+              "Method Illuminate\\Database\\Eloquent\\Builder::findOrFail() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("visible"),
+            message: "Method App\\Models\\Comment::visible() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("definitelyMissingMagic"),
+            message:
+              "Method Illuminate\\Database\\Eloquent\\Builder::definitelyMissingMagic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...diagnosticPosition("definitelyMissingMagic"),
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::definitelyMissingMagic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("uses filename lookup when Composer PSR-4 points at a missing model path", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
