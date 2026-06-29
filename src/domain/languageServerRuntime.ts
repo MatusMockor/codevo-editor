@@ -1,4 +1,6 @@
 import type {
+  JavaScriptTypeScriptImportModuleSpecifierPreference,
+  JavaScriptTypeScriptQuotePreference,
   JavaScriptTypeScriptVersionPreference,
   PhpBackendPreference,
 } from "./settings";
@@ -70,9 +72,12 @@ export interface LanguageServerRuntimeStartOptions {
   automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
+  importModuleSpecifierPreference?: JavaScriptTypeScriptImportModuleSpecifierPreference;
   intelephensePath?: string | null;
+  preferTypeOnlyAutoImports?: boolean;
   phpBackend?: PhpBackendPreference;
   phpactorPath?: string | null;
+  quotePreference?: JavaScriptTypeScriptQuotePreference;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
   validationEnabled?: boolean;
 }

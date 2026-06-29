@@ -58,8 +58,9 @@ use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
     JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
-    PhpLanguageServerSettings, PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
-    TypeScriptLanguageServerSettings,
+    PhpLanguageServerSettings, PhpactorLanguageServerPlanner,
+    TypeScriptImportModuleSpecifierPreference, TypeScriptLanguageServerPlanner,
+    TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
 };
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
@@ -1423,7 +1424,10 @@ fn build_javascript_typescript_language_server_plan(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_preference: Option<&str>,
     inlay_hints_enabled: Option<bool>,
+    prefer_type_only_auto_imports: Option<bool>,
+    quote_preference: Option<&str>,
     validation_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
@@ -1433,7 +1437,12 @@ fn build_javascript_typescript_language_server_plan(
         auto_imports: auto_imports_enabled.unwrap_or(true),
         automatic_type_acquisition: automatic_type_acquisition_enabled.unwrap_or(false),
         code_lens: code_lens_enabled.unwrap_or(false),
+        import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::from_setting(
+            import_module_specifier_preference,
+        ),
         inlay_hints: inlay_hints_enabled.unwrap_or(true),
+        prefer_type_only_auto_imports: prefer_type_only_auto_imports.unwrap_or(false),
+        quote_preference: TypeScriptQuotePreference::from_setting(quote_preference),
         validation: validation_enabled.unwrap_or(true),
     };
     let tools = LocalJavaScriptTypeScriptToolDetector
@@ -1476,7 +1485,10 @@ fn plan_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_preference: Option<String>,
     inlay_hints_enabled: Option<bool>,
+    prefer_type_only_auto_imports: Option<bool>,
+    quote_preference: Option<String>,
     validation_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     build_javascript_typescript_language_server_plan(
@@ -1485,7 +1497,10 @@ fn plan_javascript_typescript_language_server(
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
         code_lens_enabled,
+        import_module_specifier_preference.as_deref(),
         inlay_hints_enabled,
+        prefer_type_only_auto_imports,
+        quote_preference.as_deref(),
         validation_enabled,
     )
 }
@@ -2374,7 +2389,10 @@ fn start_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_preference: Option<String>,
     inlay_hints_enabled: Option<bool>,
+    prefer_type_only_auto_imports: Option<bool>,
+    quote_preference: Option<String>,
     validation_enabled: Option<bool>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2386,7 +2404,10 @@ fn start_javascript_typescript_language_server(
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
         code_lens_enabled,
+        import_module_specifier_preference.as_deref(),
         inlay_hints_enabled,
+        prefer_type_only_auto_imports,
+        quote_preference.as_deref(),
         validation_enabled,
     )?;
 

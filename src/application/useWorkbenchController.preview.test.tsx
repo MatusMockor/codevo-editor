@@ -18087,7 +18087,10 @@ describe("useWorkbenchController preview tabs", () => {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptAutoImports: true,
         javaScriptTypeScriptCodeLens: false,
+        javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
         javaScriptTypeScriptInlayHints: true,
+        javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
+        javaScriptTypeScriptQuotePreference: "auto",
         javaScriptTypeScriptValidation: true,
       },
     });
@@ -18103,7 +18106,10 @@ describe("useWorkbenchController preview tabs", () => {
           ...defaultWorkspaceSettings(),
           javaScriptTypeScriptAutoImports: false,
           javaScriptTypeScriptCodeLens: true,
+          javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
           javaScriptTypeScriptInlayHints: false,
+          javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+          javaScriptTypeScriptQuotePreference: "single",
           javaScriptTypeScriptValidation: false,
         },
         true,
@@ -18116,6 +18122,11 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({
+        preferences: expect.objectContaining({
+          importModuleSpecifierPreference: "relative",
+          preferTypeOnlyAutoImports: true,
+          quotePreference: "single",
+        }),
         implementationsCodeLens: { enabled: true },
         referencesCodeLens: {
           enabled: true,

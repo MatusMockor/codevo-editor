@@ -405,8 +405,64 @@ pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
     pub automatic_type_acquisition: bool,
     pub code_lens: bool,
+    pub import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference,
     pub inlay_hints: bool,
+    pub prefer_type_only_auto_imports: bool,
+    pub quote_preference: TypeScriptQuotePreference,
     pub validation: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TypeScriptImportModuleSpecifierPreference {
+    Shortest,
+    Relative,
+    NonRelative,
+    ProjectRelative,
+}
+
+impl TypeScriptImportModuleSpecifierPreference {
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("relative") => Self::Relative,
+            Some("non-relative") => Self::NonRelative,
+            Some("project-relative") => Self::ProjectRelative,
+            _ => Self::Shortest,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shortest => "shortest",
+            Self::Relative => "relative",
+            Self::NonRelative => "non-relative",
+            Self::ProjectRelative => "project-relative",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TypeScriptQuotePreference {
+    Auto,
+    Single,
+    Double,
+}
+
+impl TypeScriptQuotePreference {
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("single") => Self::Single,
+            Some("double") => Self::Double,
+            _ => Self::Auto,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Single => "single",
+            Self::Double => "double",
+        }
+    }
 }
 
 impl Default for TypeScriptLanguageServerSettings {
@@ -415,7 +471,10 @@ impl Default for TypeScriptLanguageServerSettings {
             auto_imports: true,
             automatic_type_acquisition: false,
             code_lens: false,
+            import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::Shortest,
             inlay_hints: true,
+            prefer_type_only_auto_imports: false,
+            quote_preference: TypeScriptQuotePreference::Auto,
             validation: true,
         }
     }
@@ -456,6 +515,7 @@ where
         );
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
+        configure_typescript_import_preferences(&mut initialize_request, settings);
         configure_typescript_validation(&mut initialize_request, settings.validation);
 
         LanguageServerPlan {
@@ -597,10 +657,34 @@ fn configure_typescript_auto_imports(request: &mut JsonRpcRequest, enabled: bool
     );
 }
 
-fn configure_typescript_automatic_type_acquisition(
+fn configure_typescript_import_preferences(
     request: &mut JsonRpcRequest,
-    enabled: bool,
+    settings: TypeScriptLanguageServerSettings,
 ) {
+    let Some(preferences) = typescript_preferences_mut(request) else {
+        return;
+    };
+
+    preferences.insert(
+        "importModuleSpecifierPreference".to_string(),
+        Value::String(
+            settings
+                .import_module_specifier_preference
+                .as_str()
+                .to_string(),
+        ),
+    );
+    preferences.insert(
+        "preferTypeOnlyAutoImports".to_string(),
+        Value::Bool(settings.prefer_type_only_auto_imports),
+    );
+    preferences.insert(
+        "quotePreference".to_string(),
+        Value::String(settings.quote_preference.as_str().to_string()),
+    );
+}
+
+fn configure_typescript_automatic_type_acquisition(request: &mut JsonRpcRequest, enabled: bool) {
     let Some(params) = request.params.as_object_mut() else {
         return;
     };
@@ -1056,7 +1140,8 @@ mod tests {
         LanguageServerPlanStatus, LanguageServerPlanner, LanguageServerProvider,
         PhpBackendPreference, PhpInterpreterLauncher, PhpLanguageServerSettings, PhpLauncher,
         PhpactorInitializeRequestFactory, PhpactorLanguageServerPlanner,
-        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings,
+        TypeScriptImportModuleSpecifierPreference, TypeScriptLanguageServerPlanner,
+        TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
@@ -1708,7 +1793,11 @@ mod tests {
                 auto_imports: false,
                 automatic_type_acquisition: true,
                 code_lens: true,
+                import_module_specifier_preference:
+                    TypeScriptImportModuleSpecifierPreference::Relative,
                 inlay_hints: false,
+                prefer_type_only_auto_imports: true,
+                quote_preference: TypeScriptQuotePreference::Single,
                 validation: false,
             },
         );
@@ -1744,6 +1833,19 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["mockorValidationEnabled"],
             false
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["importModuleSpecifierPreference"],
+            "relative"
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["preferTypeOnlyAutoImports"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["quotePreference"],
+            "single"
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -5583,8 +5583,11 @@ mod tests {
                         "includeCompletionsForModuleExports": false,
                         "includeInlayFunctionLikeReturnTypeHints": false,
                         "includeInlayParameterNameHints": "none",
+                        "importModuleSpecifierPreference": "project-relative",
                         "mockorCodeLensEnabled": true,
-                        "mockorValidationEnabled": false
+                        "mockorValidationEnabled": false,
+                        "preferTypeOnlyAutoImports": true,
+                        "quotePreference": "single"
                     }
                 }
             }),
@@ -5632,6 +5635,12 @@ mod tests {
             response["result"][0]["includeCompletionsForModuleExports"],
             false
         );
+        assert_eq!(
+            response["result"][0]["importModuleSpecifierPreference"],
+            "project-relative"
+        );
+        assert_eq!(response["result"][0]["preferTypeOnlyAutoImports"], true);
+        assert_eq!(response["result"][0]["quotePreference"], "single");
         assert_eq!(response["result"][1]["autoImports"], false);
         assert_eq!(response["result"][1]["completeFunctionCalls"], true);
         assert_eq!(response["result"][2]["parameterNames"]["enabled"], "none");
@@ -5681,7 +5690,10 @@ mod tests {
                 },
                 "preferences": {
                     "includeCompletionsForModuleExports": false,
+                    "importModuleSpecifierPreference": "relative",
                     "mockorCodeLensEnabled": true,
+                    "preferTypeOnlyAutoImports": true,
+                    "quotePreference": "double",
                 },
                 "formattingOptions": {
                     "insertSpaces": false,
@@ -5727,7 +5739,13 @@ mod tests {
             response["result"][1]["includeCompletionsForModuleExports"],
             false
         );
+        assert_eq!(
+            response["result"][1]["importModuleSpecifierPreference"],
+            "relative"
+        );
         assert_eq!(response["result"][1]["mockorCodeLensEnabled"], true);
+        assert_eq!(response["result"][1]["preferTypeOnlyAutoImports"], true);
+        assert_eq!(response["result"][1]["quotePreference"], "double");
         assert_eq!(response["result"][2]["enabled"], true);
         assert_eq!(response["result"][3]["enable"], false);
         assert_eq!(response["result"][4]["enabled"], "never");

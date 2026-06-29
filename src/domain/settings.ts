@@ -37,6 +37,12 @@ export type BackgroundRuntimePolicy =
   | "keepAlive"
   | "singleActive"
   | "suspendOnBackground";
+export type JavaScriptTypeScriptImportModuleSpecifierPreference =
+  | "shortest"
+  | "relative"
+  | "non-relative"
+  | "project-relative";
+export type JavaScriptTypeScriptQuotePreference = "auto" | "single" | "double";
 export type JavaScriptTypeScriptServiceMode = "auto" | "off";
 export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
@@ -132,8 +138,11 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptAddMissingImportsOnSave: boolean;
   javaScriptTypeScriptCodeLens: boolean;
   javaScriptTypeScriptFixAllOnSave: boolean;
+  javaScriptTypeScriptImportModuleSpecifierPreference: JavaScriptTypeScriptImportModuleSpecifierPreference;
   javaScriptTypeScriptInlayHints: boolean;
   javaScriptTypeScriptOrganizeImportsOnSave: boolean;
+  javaScriptTypeScriptPreferTypeOnlyAutoImports: boolean;
+  javaScriptTypeScriptQuotePreference: JavaScriptTypeScriptQuotePreference;
   javaScriptTypeScriptRemoveUnusedOnSave: boolean;
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
@@ -270,8 +279,11 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptAutomaticTypeAcquisition: false,
     javaScriptTypeScriptCodeLens: false,
     javaScriptTypeScriptFixAllOnSave: false,
+    javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
     javaScriptTypeScriptInlayHints: true,
     javaScriptTypeScriptOrganizeImportsOnSave: false,
+    javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
+    javaScriptTypeScriptQuotePreference: "auto",
     javaScriptTypeScriptRemoveUnusedOnSave: false,
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
@@ -416,6 +428,12 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.javaScriptTypeScriptFixAllOnSave,
       defaults.javaScriptTypeScriptFixAllOnSave,
     ),
+    javaScriptTypeScriptImportModuleSpecifierPreference:
+      isJavaScriptTypeScriptImportModuleSpecifierPreference(
+        value.javaScriptTypeScriptImportModuleSpecifierPreference,
+      )
+        ? value.javaScriptTypeScriptImportModuleSpecifierPreference
+        : defaults.javaScriptTypeScriptImportModuleSpecifierPreference,
     javaScriptTypeScriptInlayHints: normalizeBoolean(
       value.javaScriptTypeScriptInlayHints,
       defaults.javaScriptTypeScriptInlayHints,
@@ -428,6 +446,16 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.javaScriptTypeScriptRemoveUnusedOnSave,
       defaults.javaScriptTypeScriptRemoveUnusedOnSave,
     ),
+    javaScriptTypeScriptPreferTypeOnlyAutoImports: normalizeBoolean(
+      value.javaScriptTypeScriptPreferTypeOnlyAutoImports,
+      defaults.javaScriptTypeScriptPreferTypeOnlyAutoImports,
+    ),
+    javaScriptTypeScriptQuotePreference:
+      isJavaScriptTypeScriptQuotePreference(
+        value.javaScriptTypeScriptQuotePreference,
+      )
+        ? value.javaScriptTypeScriptQuotePreference
+        : defaults.javaScriptTypeScriptQuotePreference,
     javaScriptTypeScriptService: isJavaScriptTypeScriptServiceMode(
       value.javaScriptTypeScriptService,
     )
@@ -904,6 +932,23 @@ function isJavaScriptTypeScriptServiceMode(
   value: unknown,
 ): value is JavaScriptTypeScriptServiceMode {
   return value === "auto" || value === "off";
+}
+
+function isJavaScriptTypeScriptImportModuleSpecifierPreference(
+  value: unknown,
+): value is JavaScriptTypeScriptImportModuleSpecifierPreference {
+  return (
+    value === "shortest" ||
+    value === "relative" ||
+    value === "non-relative" ||
+    value === "project-relative"
+  );
+}
+
+function isJavaScriptTypeScriptQuotePreference(
+  value: unknown,
+): value is JavaScriptTypeScriptQuotePreference {
+  return value === "auto" || value === "single" || value === "double";
 }
 
 function isJavaScriptTypeScriptVersionPreference(

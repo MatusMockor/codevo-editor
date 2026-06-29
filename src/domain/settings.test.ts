@@ -49,8 +49,11 @@ describe("settings defaults", () => {
       javaScriptTypeScriptAutomaticTypeAcquisition: false,
       javaScriptTypeScriptCodeLens: false,
       javaScriptTypeScriptFixAllOnSave: false,
+      javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
       javaScriptTypeScriptInlayHints: true,
       javaScriptTypeScriptOrganizeImportsOnSave: false,
+      javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
+      javaScriptTypeScriptQuotePreference: "auto",
       javaScriptTypeScriptRemoveUnusedOnSave: false,
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
@@ -301,8 +304,11 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptAutomaticTypeAcquisition: true,
         javaScriptTypeScriptCodeLens: true,
         javaScriptTypeScriptFixAllOnSave: true,
+        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
+        javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+        javaScriptTypeScriptQuotePreference: "single",
         javaScriptTypeScriptRemoveUnusedOnSave: true,
         javaScriptTypeScriptService: "off",
         javaScriptTypeScriptValidation: false,
@@ -350,8 +356,11 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptAutomaticTypeAcquisition: true,
       javaScriptTypeScriptCodeLens: true,
       javaScriptTypeScriptFixAllOnSave: true,
+      javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
       javaScriptTypeScriptInlayHints: false,
       javaScriptTypeScriptOrganizeImportsOnSave: true,
+      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+      javaScriptTypeScriptQuotePreference: "single",
       javaScriptTypeScriptRemoveUnusedOnSave: true,
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
@@ -483,6 +492,38 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptOrganizeImportsOnSave: true,
       javaScriptTypeScriptRemoveUnusedOnSave: true,
     });
+  });
+
+  it("normalizes JS/TS import preferences", () => {
+    expect(
+      normalizeWorkspaceSettings({})
+        .javaScriptTypeScriptImportModuleSpecifierPreference,
+    ).toBe("shortest");
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptQuotePreference).toBe(
+      "auto",
+    );
+    expect(
+      normalizeWorkspaceSettings({}).javaScriptTypeScriptPreferTypeOnlyAutoImports,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
+        javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+        javaScriptTypeScriptQuotePreference: "double",
+      }),
+    ).toEqual({
+      ...defaultWorkspaceSettings(),
+      javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
+      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+      javaScriptTypeScriptQuotePreference: "double",
+    });
+    expect(
+      normalizeWorkspaceSettings({
+        javaScriptTypeScriptImportModuleSpecifierPreference: "absolute",
+        javaScriptTypeScriptPreferTypeOnlyAutoImports: "yes",
+        javaScriptTypeScriptQuotePreference: "backtick",
+      }),
+    ).toEqual(defaultWorkspaceSettings());
   });
 
   it("defaults JS/TS automatic type acquisition to false and respects explicit booleans", () => {

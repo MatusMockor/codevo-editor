@@ -910,6 +910,86 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists JavaScript and TypeScript import preferences", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptImportModuleSpecifierSelect().value =
+        "project-relative";
+      javaScriptTypeScriptImportModuleSpecifierSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierPreference:
+          "project-relative",
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptQuotePreferenceSelect().value = "single";
+      javaScriptTypeScriptQuotePreferenceSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierPreference:
+          "project-relative",
+        javaScriptTypeScriptQuotePreference: "single",
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptPreferTypeOnlyAutoImportsCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierPreference:
+          "project-relative",
+        javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
+        javaScriptTypeScriptQuotePreference: "single",
+      },
+    });
+  });
+
   it("persists JavaScript and TypeScript on-save source action changes", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -1423,6 +1503,38 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptAutoImportsCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript auto imports");
+  }
+
+  function javaScriptTypeScriptImportModuleSpecifierSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("JS/TS import module specifier"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error("JS/TS import module specifier select was not rendered.");
+    }
+
+    return select;
+  }
+
+  function javaScriptTypeScriptQuotePreferenceSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("JS/TS import quotes"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error("JS/TS import quotes select was not rendered.");
+    }
+
+    return select;
+  }
+
+  function javaScriptTypeScriptPreferTypeOnlyAutoImportsCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS prefer type-only auto imports");
   }
 
   function javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox(): HTMLInputElement {

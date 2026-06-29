@@ -2995,6 +2995,9 @@ export function useWorkbenchController(
               typeScriptVersionPreference,
               validationEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptValidation,
+              ...javaScriptTypeScriptImportPreferenceOptions(
+                workspaceSettingsRef.current,
+              ),
             },
           );
 
@@ -25134,8 +25137,14 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
+          previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference ||
           previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
             resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints ||
+          previousWorkspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports ||
+          previousWorkspaceSettings.javaScriptTypeScriptQuotePreference !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptQuotePreference ||
           previousWorkspaceSettings.javaScriptTypeScriptValidation !==
             resolvedWorkspaceSettings.javaScriptTypeScriptValidation;
         const shouldRefreshPhpLanguageServerPlan =
@@ -25429,6 +25438,7 @@ export function useWorkbenchController(
           typeScriptVersionPreference:
             currentSettings.javaScriptTypeScriptVersion,
           validationEnabled: currentSettings.javaScriptTypeScriptValidation,
+          ...javaScriptTypeScriptImportPreferenceOptions(currentSettings),
         });
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -27306,6 +27316,9 @@ export function useWorkbenchController(
             workspaceSettingsRef.current.javaScriptTypeScriptVersion,
           validationEnabled: workspaceSettingsRef.current
             .javaScriptTypeScriptValidation,
+          ...javaScriptTypeScriptImportPreferenceOptions(
+            workspaceSettingsRef.current,
+          ),
         })
         .then((status) => {
           if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -31238,6 +31251,8 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     includeAutomaticOptionalChainCompletions: true,
     includeCompletionsForImportStatements: autoImportsEnabled,
     includeCompletionsForModuleExports: autoImportsEnabled,
+    importModuleSpecifierPreference:
+      settings.javaScriptTypeScriptImportModuleSpecifierPreference,
     includeInlayEnumMemberValueHints: inlayHintsEnabled,
     includeInlayFunctionLikeReturnTypeHints: inlayHintsEnabled,
     includeInlayFunctionParameterTypeHints: inlayHintsEnabled,
@@ -31247,6 +31262,10 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     includeInlayVariableTypeHints: inlayHintsEnabled,
     includeInlayVariableTypeHintsWhenTypeMatchesName: false,
     mockorCodeLensEnabled: codeLensEnabled,
+    mockorValidationEnabled: validationEnabled,
+    preferTypeOnlyAutoImports:
+      settings.javaScriptTypeScriptPreferTypeOnlyAutoImports,
+    quotePreference: settings.javaScriptTypeScriptQuotePreference,
   };
 
   return {
@@ -31290,6 +31309,29 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       includeCompletionsForImportStatements: autoImportsEnabled,
       includeCompletionsForModuleExports: autoImportsEnabled,
     },
+  };
+}
+
+function javaScriptTypeScriptImportPreferenceOptions(
+  settings: WorkspaceSettings,
+) {
+  return {
+    ...(settings.javaScriptTypeScriptImportModuleSpecifierPreference !==
+    "shortest"
+      ? {
+          importModuleSpecifierPreference:
+            settings.javaScriptTypeScriptImportModuleSpecifierPreference,
+        }
+      : {}),
+    ...(settings.javaScriptTypeScriptPreferTypeOnlyAutoImports
+      ? {
+          preferTypeOnlyAutoImports:
+            settings.javaScriptTypeScriptPreferTypeOnlyAutoImports,
+        }
+      : {}),
+    ...(settings.javaScriptTypeScriptQuotePreference !== "auto"
+      ? { quotePreference: settings.javaScriptTypeScriptQuotePreference }
+      : {}),
   };
 }
 

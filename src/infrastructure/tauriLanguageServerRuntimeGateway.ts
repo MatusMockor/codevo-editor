@@ -113,12 +113,25 @@ export class TauriLanguageServerRuntimeGateway
       args.codeLensEnabled = options.codeLensEnabled;
     }
 
+    if (options.importModuleSpecifierPreference) {
+      args.importModuleSpecifierPreference =
+        options.importModuleSpecifierPreference;
+    }
+
     if (options.typeScriptVersionPreference) {
       args.typeScriptVersionPreference = options.typeScriptVersionPreference;
     }
 
     if (options.inlayHintsEnabled !== undefined) {
       args.inlayHintsEnabled = options.inlayHintsEnabled;
+    }
+
+    if (options.preferTypeOnlyAutoImports !== undefined) {
+      args.preferTypeOnlyAutoImports = options.preferTypeOnlyAutoImports;
+    }
+
+    if (options.quotePreference) {
+      args.quotePreference = options.quotePreference;
     }
 
     if (options.phpBackend) {

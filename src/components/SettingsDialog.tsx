@@ -17,6 +17,8 @@ import {
   type AppSettings,
   type AppTheme,
   type BackgroundRuntimePolicy,
+  type JavaScriptTypeScriptImportModuleSpecifierPreference,
+  type JavaScriptTypeScriptQuotePreference,
   type JavaScriptTypeScriptServiceMode,
   type JavaScriptTypeScriptVersionPreference,
   type PhpBackendPreference,
@@ -305,6 +307,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptCodeLens,
                     })
                   }
+                  onChangeJavaScriptTypeScriptImportModuleSpecifierPreference={(
+                    javaScriptTypeScriptImportModuleSpecifierPreference,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptImportModuleSpecifierPreference,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptAddMissingImportsOnSave={(
                     javaScriptTypeScriptAddMissingImportsOnSave,
                   ) =>
@@ -335,6 +345,22 @@ export function SettingsDialog({
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptOrganizeImportsOnSave,
+                    })
+                  }
+                  onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports={(
+                    javaScriptTypeScriptPreferTypeOnlyAutoImports,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptPreferTypeOnlyAutoImports,
+                    })
+                  }
+                  onChangeJavaScriptTypeScriptQuotePreference={(
+                    javaScriptTypeScriptQuotePreference,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptQuotePreference,
                     })
                   }
                   onChangeJavaScriptTypeScriptRemoveUnusedOnSave={(
@@ -522,8 +548,15 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
   onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
+    preference: JavaScriptTypeScriptImportModuleSpecifierPreference,
+  ): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptQuotePreference(
+    preference: JavaScriptTypeScriptQuotePreference,
+  ): void;
   onChangeJavaScriptTypeScriptRemoveUnusedOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
   onChangeJavaScriptTypeScriptVersion(
@@ -556,8 +589,11 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
   onChangeJavaScriptTypeScriptFixAllOnSave,
+  onChangeJavaScriptTypeScriptImportModuleSpecifierPreference,
   onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave,
+  onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports,
+  onChangeJavaScriptTypeScriptQuotePreference,
   onChangeJavaScriptTypeScriptRemoveUnusedOnSave,
   onChangeJavaScriptTypeScriptService,
   onChangeJavaScriptTypeScriptValidation,
@@ -650,6 +686,58 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript auto imports</span>
+      </label>
+
+      <label className="settings-field">
+        <span>JS/TS import module specifier</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
+              event.currentTarget
+                .value as JavaScriptTypeScriptImportModuleSpecifierPreference,
+            )
+          }
+          value={
+            workspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference
+          }
+        >
+          <option value="shortest">Shortest</option>
+          <option value="relative">Relative</option>
+          <option value="non-relative">Non-relative</option>
+          <option value="project-relative">Project-relative</option>
+        </select>
+      </label>
+
+      <label className="settings-field">
+        <span>JS/TS import quotes</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptQuotePreference(
+              event.currentTarget.value as JavaScriptTypeScriptQuotePreference,
+            )
+          }
+          value={workspaceSettings.javaScriptTypeScriptQuotePreference}
+        >
+          <option value="auto">Auto</option>
+          <option value="single">Single</option>
+          <option value="double">Double</option>
+        </select>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS prefer type-only auto imports</span>
       </label>
 
       <label className="settings-toggle">
