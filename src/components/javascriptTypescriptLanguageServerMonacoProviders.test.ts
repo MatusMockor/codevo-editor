@@ -3329,6 +3329,81 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.incomplete).toBe(true);
   });
 
+  it("keeps same-named TypeScript auto-import completion alternatives from different modules", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "exported from @app/ui",
+            documentation: null,
+            insertText: "Button",
+            kind: 7,
+            label: "Button",
+            labelDetails: {
+              description: "@app/ui",
+              detail: "",
+            },
+            sortText: "11",
+          },
+          {
+            detail: "exported from @app/design-system",
+            documentation: null,
+            insertText: "Button",
+            kind: 7,
+            label: "Button",
+            labelDetails: {
+              description: "@app/design-system",
+              detail: "",
+            },
+            sortText: "12",
+          },
+          {
+            detail: "exported from @app/design-system",
+            documentation: null,
+            insertText: "Button",
+            kind: 7,
+            label: "Button",
+            labelDetails: {
+              description: "@app/design-system",
+              detail: "",
+            },
+            sortText: "12",
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions).toHaveLength(2);
+    expect(
+      result.suggestions.map(
+        (suggestion: { label: unknown }) => suggestion.label,
+      ),
+    ).toEqual([
+      {
+        description: "@app/ui",
+        detail: undefined,
+        label: "Button",
+      },
+      {
+        description: "@app/design-system",
+        detail: undefined,
+        label: "Button",
+      },
+    ]);
+  });
+
   it("preserves plain TypeScript completion text edit ranges", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

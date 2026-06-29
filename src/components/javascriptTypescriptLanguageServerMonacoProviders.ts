@@ -933,7 +933,15 @@ function dedupeJavaScriptTypeScriptCompletionItems(
   const unique: Monaco.languages.CompletionItem[] = [];
 
   for (const item of items) {
-    const key = `${item.kind}:${completionItemLabelKey(item.label)}`;
+    const key = [
+      item.kind,
+      completionItemLabelKey(item.label),
+      completionItemLabelDetailKey(item.label),
+      completionItemLabelDescriptionKey(item.label),
+      item.detail ?? "",
+      item.sortText ?? "",
+      item.filterText ?? "",
+    ].join("\u0000");
 
     if (seen.has(key)) {
       continue;
@@ -950,6 +958,18 @@ function completionItemLabelKey(
   label: Monaco.languages.CompletionItem["label"],
 ): string {
   return typeof label === "string" ? label : label.label;
+}
+
+function completionItemLabelDetailKey(
+  label: Monaco.languages.CompletionItem["label"],
+): string {
+  return typeof label === "string" ? "" : label.detail ?? "";
+}
+
+function completionItemLabelDescriptionKey(
+  label: Monaco.languages.CompletionItem["label"],
+): string {
+  return typeof label === "string" ? "" : label.description ?? "";
 }
 
 function toLanguageServerCompletionContext(
