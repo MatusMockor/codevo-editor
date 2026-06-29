@@ -1210,19 +1210,30 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
 export function isLaravelEloquentBuilderMacroFromSource(
   source: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): boolean {
-  return Boolean(phpLaravelEloquentBuilderMacroFromSource(source, methodName));
+  return Boolean(
+    phpLaravelEloquentBuilderMacroFromSource(
+      source,
+      methodName,
+      workspaceSources,
+    ),
+  );
 }
 
 export function phpLaravelEloquentBuilderMacroCompletionsFromSource(
   source: string,
   declaringClassName: string,
+  workspaceSources: readonly string[] = [],
 ): PhpMethodCompletion[] {
   if (!isLaravelEloquentBuilderClassName(source, declaringClassName)) {
     return [];
   }
 
-  return phpLaravelEloquentBuilderMacrosFromSource(source).map((macro) => ({
+  return phpLaravelEloquentBuilderMacrosFromSources(
+    source,
+    workspaceSources,
+  ).map((macro) => ({
     declaringClassName,
     name: macro.name,
     parameters: macro.parameters,
@@ -1355,6 +1366,7 @@ export function phpLaravelMethodCallReturnTypeFromSource(
   receiverType: string | null,
   receiverExpression: string | null,
   callExpression: string | null = null,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   return (
     phpLaravelRepositoryMethodModelReturnTypeFromSource(
@@ -1383,6 +1395,7 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       receiverType,
       receiverExpression,
       callExpression,
+      workspaceSources,
     )
   );
 }
@@ -2977,6 +2990,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
   receiverType: string | null,
   receiverExpression: string | null,
   callExpression: string | null,
+  workspaceSources: readonly string[],
 ): string | null {
   const relationFactoryReturnType =
     phpLaravelRelationFactoryCallReturnTypeFromSource(
@@ -2998,6 +3012,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
       receiverType,
       receiverExpression,
       callExpression,
+      workspaceSources,
     );
 
   if (fluentThroughReturnType) {
@@ -3029,6 +3044,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
       source,
       relationModelType,
       methodName,
+      workspaceSources,
     );
   }
 
@@ -3044,6 +3060,7 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
       source,
       builderModelType,
       methodName,
+      workspaceSources,
     );
   }
 
@@ -3062,7 +3079,12 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
   const modelType = phpLaravelStaticModelReceiverType(source, receiverType);
 
   return modelType
-    ? phpLaravelStaticModelCallReturnType(source, modelType, methodName)
+    ? phpLaravelStaticModelCallReturnType(
+        source,
+        modelType,
+        methodName,
+        workspaceSources,
+      )
     : null;
 }
 
@@ -3172,12 +3194,18 @@ function phpLaravelStaticModelCallReturnType(
   source: string,
   modelType: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   if (isLaravelEloquentModelFluentMethod(methodName)) {
     return modelType;
   }
 
-  return phpLaravelEloquentBuilderCallReturnType(source, modelType, methodName);
+  return phpLaravelEloquentBuilderCallReturnType(
+    source,
+    modelType,
+    methodName,
+    workspaceSources,
+  );
 }
 
 function phpLaravelRelationFactoryCallReturnTypeFromSource(
@@ -3363,6 +3391,7 @@ function phpLaravelFluentThroughMethodCallReturnTypeFromSource(
   receiverType: string | null,
   receiverExpression: string | null,
   callExpression: string | null,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   const expression = callExpression ?? receiverExpression ?? "";
 
@@ -3418,6 +3447,7 @@ function phpLaravelFluentThroughMethodCallReturnTypeFromSource(
       source,
       relatedModelType,
       methodName,
+      workspaceSources,
     )
   ) {
     return phpLaravelEloquentBuilderType(relatedModelType);
@@ -3628,6 +3658,7 @@ function phpLaravelEloquentBuilderCallReturnType(
   source: string,
   modelType: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   if (isLaravelEloquentBuilderTerminalModelMethod(methodName)) {
     return modelType;
@@ -3638,7 +3669,12 @@ function phpLaravelEloquentBuilderCallReturnType(
   }
 
   if (
-    phpLaravelEloquentBuilderCallPreservesBuilder(source, modelType, methodName)
+    phpLaravelEloquentBuilderCallPreservesBuilder(
+      source,
+      modelType,
+      methodName,
+      workspaceSources,
+    )
   ) {
     return phpLaravelEloquentBuilderType(modelType);
   }
@@ -3650,10 +3686,15 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
   source: string,
   modelType: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): boolean {
   return (
     isLaravelEloquentBuilderPreservingMethod(methodName) ||
-    phpLaravelEloquentBuilderMacroPreservesBuilder(source, methodName) ||
+    phpLaravelEloquentBuilderMacroPreservesBuilder(
+      source,
+      methodName,
+      workspaceSources,
+    ) ||
     phpLaravelModelHasDynamicWhere(source, modelType, methodName) ||
     phpLaravelModelHasLocalScope(source, modelType, methodName)
   );
@@ -3662,9 +3703,14 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
 function phpLaravelEloquentBuilderMacroPreservesBuilder(
   source: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): boolean {
-  const returnType = phpLaravelEloquentBuilderMacroFromSource(source, methodName)
-    ?.returnType ?? null;
+  const returnType =
+    phpLaravelEloquentBuilderMacroFromSource(
+      source,
+      methodName,
+      workspaceSources,
+    )?.returnType ?? null;
 
   return phpLaravelGenericCarrierMatches(source, returnType, [
     "builder",
@@ -3759,6 +3805,7 @@ function phpLaravelEloquentBuilderModelTypeFromStaticExpression(
         source,
         modelType,
         methodName,
+        [],
       )
     ) {
       return null;
@@ -3839,6 +3886,7 @@ function phpLaravelEloquentBuilderCollectionTypeFromExpression(
         source,
         modelType,
         methodName,
+        [],
       )
     ) {
       continue;
@@ -3859,9 +3907,20 @@ function phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
   source: string,
   modelType: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): boolean {
-  if (isLaravelEloquentBuilderMacroFromSource(source, methodName)) {
-    return phpLaravelEloquentBuilderMacroPreservesBuilder(source, methodName);
+  if (
+    isLaravelEloquentBuilderMacroFromSource(
+      source,
+      methodName,
+      workspaceSources,
+    )
+  ) {
+    return phpLaravelEloquentBuilderMacroPreservesBuilder(
+      source,
+      methodName,
+      workspaceSources,
+    );
   }
 
   return (
@@ -3869,6 +3928,7 @@ function phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
       source,
       modelType,
       methodName,
+      workspaceSources,
     ) || phpLaravelEloquentBuilderExpressionCallMayBeScopeOrMacro(methodName)
   );
 }
@@ -3941,9 +4001,35 @@ function phpLaravelEloquentBuilderMacrosFromSource(
   return macros;
 }
 
+function phpLaravelEloquentBuilderMacrosFromSources(
+  source: string,
+  workspaceSources: readonly string[] = [],
+): PhpLaravelEloquentBuilderMacro[] {
+  const macros: PhpLaravelEloquentBuilderMacro[] = [];
+  const seen = new Set<string>();
+
+  for (const candidateSource of [source, ...workspaceSources]) {
+    for (const macro of phpLaravelEloquentBuilderMacrosFromSource(
+      candidateSource,
+    )) {
+      const key = macro.name.toLowerCase();
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      macros.push(macro);
+    }
+  }
+
+  return macros;
+}
+
 function phpLaravelEloquentBuilderMacroFromSource(
   source: string,
   methodName: string,
+  workspaceSources: readonly string[] = [],
 ): PhpLaravelEloquentBuilderMacro | null {
   const lookupName = methodName.trim().toLowerCase();
 
@@ -3952,7 +4038,7 @@ function phpLaravelEloquentBuilderMacroFromSource(
   }
 
   return (
-    phpLaravelEloquentBuilderMacrosFromSource(source).find(
+    phpLaravelEloquentBuilderMacrosFromSources(source, workspaceSources).find(
       (macro) => macro.name.toLowerCase() === lookupName,
     ) ?? null
   );

@@ -18,18 +18,21 @@ import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
   declaringClassName: string;
+  sourceContext?: PhpFrameworkSourceContext;
   source: string;
 }
 
 export interface PhpFrameworkStaticMethodContext {
   className: string;
   methodName: string;
+  sourceContext?: PhpFrameworkSourceContext;
   source: string;
 }
 
 export interface PhpFrameworkMemberMethodContext {
   methodName: string;
   receiverExpression: string;
+  sourceContext?: PhpFrameworkSourceContext;
   source: string;
 }
 
@@ -44,6 +47,7 @@ export interface PhpFrameworkMethodCallReturnTypeContext {
   methodName: string;
   receiverExpression: string | null;
   receiverType: string | null;
+  sourceContext?: PhpFrameworkSourceContext;
   source: string;
 }
 
@@ -58,6 +62,10 @@ export interface PhpFrameworkContainerBinding {
 
 export interface PhpFrameworkContainerBindingsContext {
   source: string;
+}
+
+export interface PhpFrameworkSourceContext {
+  workspaceSources?: readonly string[];
 }
 
 export interface PhpFrameworkProvider {
@@ -90,10 +98,15 @@ export interface PhpFrameworkProvider {
 export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   id: "laravel",
   completions: {
-    memberCompletionsFromSource: ({ declaringClassName, source }) => [
+    memberCompletionsFromSource: ({
+      declaringClassName,
+      source,
+      sourceContext,
+    }) => [
       ...phpLaravelEloquentBuilderMacroCompletionsFromSource(
         source,
         declaringClassName,
+        sourceContext?.workspaceSources,
       ),
       ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
       ...phpLaravelRelationPropertyCompletionsFromSource(
@@ -103,9 +116,18 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     ],
   },
   diagnostics: {
-    isKnownMemberMethod: ({ methodName, receiverExpression, source }) =>
+    isKnownMemberMethod: ({
+      methodName,
+      receiverExpression,
+      source,
+      sourceContext,
+    }) =>
       ((isLaravelEloquentBuilderMethodName(methodName) ||
-        isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
+        isLaravelEloquentBuilderMacroFromSource(
+          source,
+          methodName,
+          sourceContext?.workspaceSources,
+        )) &&
         Boolean(
           phpLaravelEloquentBuilderModelTypeFromExpression(
             source,
@@ -117,9 +139,13 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         receiverExpression,
         methodName,
       ),
-    isKnownStaticMethod: ({ className, methodName, source }) =>
+    isKnownStaticMethod: ({ className, methodName, source, sourceContext }) =>
       ((isLaravelEloquentBuilderMethodName(methodName) ||
-        isLaravelEloquentBuilderMacroFromSource(source, methodName)) &&
+        isLaravelEloquentBuilderMacroFromSource(
+          source,
+          methodName,
+          sourceContext?.workspaceSources,
+        )) &&
         isLaravelEloquentStaticBuilderReceiver(source, className)) ||
       isLaravelEloquentLocalScopeStaticMethod(source, className, methodName),
   },
@@ -136,6 +162,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       receiverExpression,
       receiverType,
       source,
+      sourceContext,
     }) =>
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -143,6 +170,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         receiverType,
         receiverExpression,
         callExpression,
+        sourceContext?.workspaceSources,
       ),
     containerExpressionClassName: ({ expression }) =>
       phpLaravelContainerExpressionClassName(expression),
@@ -180,12 +208,14 @@ export function phpFrameworkMemberCompletionsFromSource(
   source: string,
   declaringClassName: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
 ): PhpMethodCompletion[] {
   return providers.flatMap(
     (provider) =>
       provider.completions?.memberCompletionsFromSource?.({
         declaringClassName,
         source,
+        sourceContext,
       }) ??
       [],
   );
@@ -196,6 +226,7 @@ export function isKnownPhpFrameworkStaticMethod(
   className: string,
   methodName: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
   return providers.some(
     (provider) =>
@@ -203,6 +234,7 @@ export function isKnownPhpFrameworkStaticMethod(
         className,
         methodName,
         source,
+        sourceContext,
       }) ?? false,
   );
 }
@@ -212,6 +244,7 @@ export function isKnownPhpFrameworkMemberMethod(
   receiverExpression: string,
   methodName: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
   return providers.some(
     (provider) =>
@@ -219,6 +252,7 @@ export function isKnownPhpFrameworkMemberMethod(
         methodName,
         receiverExpression,
         source,
+        sourceContext,
       }) ?? false,
   );
 }
@@ -251,6 +285,7 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
   receiverExpression: string | null,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
   callExpression: string | null = null,
+  sourceContext?: PhpFrameworkSourceContext,
 ): string | null {
   for (const provider of providers) {
     const returnType = provider.semantics?.methodCallReturnTypeFromSource?.({
@@ -258,6 +293,7 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
       methodName,
       receiverExpression,
       receiverType,
+      sourceContext,
       source,
     });
 

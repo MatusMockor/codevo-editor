@@ -21,6 +21,7 @@ import {
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkPropertyTypeFromSource,
   type PhpFrameworkProvider,
+  type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
 
 export {
@@ -85,6 +86,7 @@ export interface PhpLaravelQueryCallbackContext {
 export interface PhpSemanticEngineOptions {
   contextualThisClassName?: string;
   frameworkProviders?: readonly PhpFrameworkProvider[];
+  frameworkSourceContext?: PhpFrameworkSourceContext;
 }
 
 const laravelQueryCallbackMethodNames = [
@@ -179,6 +181,7 @@ export function phpReceiverExpressionTypeInSource(
       methodCall.receiverExpression,
       options.frameworkProviders,
       normalizedExpression,
+      options.frameworkSourceContext,
     ) ?? phpSameSourceMethodCallReturnType(
       source,
       methodCall.methodName,
@@ -201,6 +204,7 @@ export function phpReceiverExpressionTypeInSource(
       normalizedExpression,
       options.frameworkProviders,
       normalizedExpression,
+      options.frameworkSourceContext,
     ) ?? phpSameSourceMethodCallReturnType(
       source,
       staticCall.methodName,
@@ -449,6 +453,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
       assignmentExpression,
       options.frameworkProviders,
       assignmentExpression,
+      options.frameworkSourceContext,
     ) ?? phpSameSourceMethodCallReturnType(
       source,
       staticCall.methodName,
@@ -478,6 +483,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
     methodCall.receiverExpression,
     options.frameworkProviders,
     assignmentExpression,
+    options.frameworkSourceContext,
   ) ?? phpSameSourceMethodCallReturnType(
     source,
     methodCall.methodName,

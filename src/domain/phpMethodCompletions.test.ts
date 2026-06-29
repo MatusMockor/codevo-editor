@@ -1840,6 +1840,57 @@ Builder::macro('published', function (bool $strict = true): Builder {
     ).toEqual([]);
   });
 
+  it("discovers workspace Laravel Eloquent builder macro completions from provider sources", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Post;
+
+Post::query()->withRela
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Builder::macro('withRelations', function (array $relations = []): \\Illuminate\\Database\\Eloquent\\Builder {
+            return $this->with($relations);
+        });
+    }
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        {
+          ...laravelCompletionOptions,
+          frameworkSourceContext: { workspaceSources: [providerSource] },
+        },
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "withRelations",
+        parameters: "array $relations = []",
+        returnType: "\\Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([]);
+  });
+
   it("maps Laravel column-like model attributes to dynamic where completions", () => {
     const source = `<?php
 use App\\Enums\\CommentType;

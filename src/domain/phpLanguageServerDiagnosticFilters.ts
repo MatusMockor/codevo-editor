@@ -4,6 +4,7 @@ import {
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   type PhpFrameworkProvider,
+  type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
@@ -88,6 +89,7 @@ export function filterPhpLanguageServerDiagnostics(
     contextualTraitHostMethods?: ReadonlySet<string>;
     contextualTraitHostProperties?: ReadonlySet<string>;
     frameworkProviders?: readonly PhpFrameworkProvider[];
+    frameworkSourceContext?: PhpFrameworkSourceContext;
     path?: string | null;
   } = {},
 ): LanguageServerDiagnostic[] {
@@ -115,6 +117,7 @@ export function filterPhpLanguageServerDiagnostics(
         source,
         diagnostic,
         options.frameworkProviders ?? defaultPhpFrameworkProviders,
+        options.frameworkSourceContext,
       ) &&
       !isPhpactorTraitHostMethodDiagnostic(
         source,
@@ -137,6 +140,7 @@ export function filterPhpLanguageServerDiagnostics(
         source,
         diagnostic,
         options.frameworkProviders ?? defaultPhpFrameworkProviders,
+        options.frameworkSourceContext,
       ),
   );
 }
@@ -161,6 +165,7 @@ function isKnownPhpFrameworkStaticMethodDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
   frameworkProviders: readonly PhpFrameworkProvider[],
+  sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
   const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
 
@@ -171,6 +176,7 @@ function isKnownPhpFrameworkStaticMethodDiagnostic(
         context.className,
         context.methodName,
         frameworkProviders,
+        sourceContext,
       ),
   );
 }
@@ -179,6 +185,7 @@ function isKnownPhpFrameworkMemberMethodDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
   frameworkProviders: readonly PhpFrameworkProvider[],
+  sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
   const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
 
@@ -189,6 +196,7 @@ function isKnownPhpFrameworkMemberMethodDiagnostic(
         context.receiverExpression,
         context.methodName,
         frameworkProviders,
+        sourceContext,
       ),
   );
 }

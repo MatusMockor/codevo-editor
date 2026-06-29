@@ -16,6 +16,7 @@ import {
   defaultPhpFrameworkProviders,
   phpFrameworkMemberCompletionsFromSource,
   type PhpFrameworkProvider,
+  type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
 
 export interface PhpMemberAccessCompletionContext {
@@ -85,6 +86,7 @@ interface PhpMethodSignatureCallContext {
 
 export interface PhpMethodCompletionOptions {
   frameworkProviders?: readonly PhpFrameworkProvider[];
+  frameworkSourceContext?: PhpFrameworkSourceContext;
 }
 
 export function phpMemberAccessCompletionContextAt(
@@ -315,6 +317,7 @@ function phpPropertyCompletionsFromSource(
       source,
       declaringClassName,
       options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      options.frameworkSourceContext,
     ),
   );
 

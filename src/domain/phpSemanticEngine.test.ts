@@ -2082,6 +2082,70 @@ $fromUnknownVariableChain->tit
     ).toBeNull();
   });
 
+  it("preserves Laravel builder return types through workspace provider macros", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+
+$query = Post::query();
+$fromProviderMacro = $query->withRelations()->first();
+$fromUnknownMacro = $query->missingMacro()->first();
+
+$fromProviderMacro->tit
+$fromUnknownMacro->tit
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Builder::macro('withRelations', function (): \\Illuminate\\Database\\Eloquent\\Builder {
+            return $this->with([]);
+        });
+    }
+}
+`;
+    const options = {
+      ...laravelOptions,
+      frameworkSourceContext: { workspaceSources: [providerSource] },
+    };
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromProviderMacro->tit"),
+        "fromProviderMacro",
+        options,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromUnknownMacro->tit"),
+        "fromUnknownMacro",
+        options,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromProviderMacro->tit"),
+        "fromProviderMacro",
+        laravelOptions,
+      ),
+    ).toBeNull();
+  });
+
   it("resolves Laravel model assignments from Eloquent collection chains", () => {
     const source = `<?php
 namespace App\\Models;

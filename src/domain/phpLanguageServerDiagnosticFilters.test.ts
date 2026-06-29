@@ -297,6 +297,79 @@ $fromUnknown = $query->missingMacro()->first();
     ).toEqual([staticMacro, memberMacro]);
   });
 
+  it("suppresses workspace Laravel builder macro diagnostics without broadening unknown methods", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+
+$fromStatic = Post::withRelations()->first();
+$fromMember = Post::query()->withRelations()->first();
+$query = Post::query();
+$fromVariable = $query->withRelations()->first();
+$fromUnknown = $query->missingWorkspaceMacro()->first();
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Builder::macro('withRelations', function (): \\Illuminate\\Database\\Eloquent\\Builder {
+            return $this->with([]);
+        });
+    }
+}
+`;
+    const staticMacro = diagnosticAt(
+      source,
+      "withRelations()->first();\n$fromMember",
+      {
+        message: "Method App\\Models\\Post::withRelations() does not exist",
+      },
+    );
+    const memberMacro = diagnosticAt(source, "withRelations()->first();\n$query", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+    });
+    const variableMacro = diagnosticAt(
+      source,
+      "withRelations()->first();\n$fromUnknown",
+      {
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+      },
+    );
+    const unknownBuilderMethod = diagnosticAt(source, "missingWorkspaceMacro", {
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingWorkspaceMacro() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [staticMacro, memberMacro, variableMacro, unknownBuilderMethod],
+        {
+          frameworkProviders: [phpLaravelFrameworkProvider],
+          frameworkSourceContext: { workspaceSources: [providerSource] },
+        },
+      ),
+    ).toEqual([unknownBuilderMethod]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [staticMacro, memberMacro], {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
+    ).toEqual([staticMacro, memberMacro]);
+  });
+
   it("suppresses same-source Laravel local scope diagnostics without broadening unknown methods", () => {
     const source = `<?php
 namespace App\\Models;
