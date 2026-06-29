@@ -198,10 +198,10 @@ impl CoalescingWorkspaceWatchEventSink {
     /// is plain data, so a poisoned guard is safe to reuse — and dropping events
     /// on a poisoned lock would violate the "events are batched, never lost"
     /// contract, so we recover instead of bailing out.
-    fn lock_state(
-        state: &Arc<Mutex<CoalesceState>>,
-    ) -> std::sync::MutexGuard<'_, CoalesceState> {
-        state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock_state(state: &Arc<Mutex<CoalesceState>>) -> std::sync::MutexGuard<'_, CoalesceState> {
+        state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Drain the buffer, disarm the window, and publish the coalesced batch.
@@ -900,8 +900,7 @@ mod tests {
             Arc::new(scheduler.clone()),
         );
 
-        let mut renamed =
-            coalesce_event(WorkspaceWatchEventKind::Renamed, "/workspace/new.ts");
+        let mut renamed = coalesce_event(WorkspaceWatchEventKind::Renamed, "/workspace/new.ts");
         renamed.previous_path = Some("/workspace/old.ts".to_string());
 
         sink.publish(WorkspaceWatchEventBatch {
@@ -934,12 +933,18 @@ mod tests {
         );
 
         sink.publish(WorkspaceWatchEventBatch {
-            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/a.ts")],
+            events: vec![coalesce_event(
+                WorkspaceWatchEventKind::Created,
+                "/workspace/a.ts",
+            )],
         });
         scheduler.run_pending();
 
         sink.publish(WorkspaceWatchEventBatch {
-            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/b.ts")],
+            events: vec![coalesce_event(
+                WorkspaceWatchEventKind::Created,
+                "/workspace/b.ts",
+            )],
         });
         scheduler.run_pending();
 
@@ -966,10 +971,16 @@ mod tests {
         );
 
         sink_a.publish(WorkspaceWatchEventBatch {
-            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/root-a/a.ts")],
+            events: vec![coalesce_event(
+                WorkspaceWatchEventKind::Created,
+                "/root-a/a.ts",
+            )],
         });
         sink_b.publish(WorkspaceWatchEventBatch {
-            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/root-b/b.ts")],
+            events: vec![coalesce_event(
+                WorkspaceWatchEventKind::Created,
+                "/root-b/b.ts",
+            )],
         });
 
         // Flushing root A must not drain or touch root B's buffer.
@@ -994,7 +1005,10 @@ mod tests {
         );
 
         sink.publish(WorkspaceWatchEventBatch {
-            events: vec![coalesce_event(WorkspaceWatchEventKind::Created, "/workspace/a.ts")],
+            events: vec![coalesce_event(
+                WorkspaceWatchEventKind::Created,
+                "/workspace/a.ts",
+            )],
         });
 
         // Session stop / drop releases the sink before the window elapses.

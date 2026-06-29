@@ -178,11 +178,9 @@ fn find_vue_typescript_plugin(workspace_root: Option<&Path>) -> Option<ToolLocat
             .map(|node_modules| (node_modules, ToolSource::BundledNodeModulesBin)),
     );
 
-    candidates
-        .into_iter()
-        .find_map(|(node_modules, source)| {
-            find_vue_typescript_plugin_in_node_modules(&node_modules, source)
-        })
+    candidates.into_iter().find_map(|(node_modules, source)| {
+        find_vue_typescript_plugin_in_node_modules(&node_modules, source)
+    })
 }
 
 fn find_vue_typescript_plugin_in_node_modules(

@@ -171,11 +171,7 @@ fn add_gitignore_scopes(
     Ok(())
 }
 
-fn matches_gitignore_scopes(
-    scopes: &[GitignoreScope],
-    path: &Path,
-    is_directory: bool,
-) -> bool {
+fn matches_gitignore_scopes(scopes: &[GitignoreScope], path: &Path, is_directory: bool) -> bool {
     let mut is_ignored = false;
 
     for scope in scopes {
@@ -309,11 +305,8 @@ mod tests {
         let root = temp_workspace("ignored-subtree-nested-gitignore");
         fs::write(root.join(".gitignore"), "ignored/\n").expect("root gitignore");
         fs::create_dir_all(root.join("ignored/deep")).expect("ignored subtree");
-        fs::write(
-            root.join("ignored/.gitignore"),
-            "!deep/Keep.php\n",
-        )
-        .expect("nested negation gitignore");
+        fs::write(root.join("ignored/.gitignore"), "!deep/Keep.php\n")
+            .expect("nested negation gitignore");
         fs::write(root.join("ignored/deep/Keep.php"), "<?php").expect("nested file");
 
         let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root).expect("matcher");

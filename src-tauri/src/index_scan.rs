@@ -813,12 +813,15 @@ mod tests {
             fs::write(root.join(format!("File{index}.php")), "<?php").expect("source file");
         }
 
-        let report = super::scan_background_workspace(&root, &database_path, None)
-            .expect("background scan");
+        let report =
+            super::scan_background_workspace(&root, &database_path, None).expect("background scan");
         let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
 
         assert_eq!(report.indexed_files, file_count);
-        assert_eq!(index.summary().expect("summary").file_count as usize, file_count);
+        assert_eq!(
+            index.summary().expect("summary").file_count as usize,
+            file_count
+        );
     }
 
     #[test]

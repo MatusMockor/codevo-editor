@@ -136,7 +136,11 @@ impl LocalHistoryStore {
         let file_dir = self.file_dir(workspace_root, relative_path);
         let index = read_index(&file_dir)?;
 
-        if !index.versions.iter().any(|version| version.id == version_id) {
+        if !index
+            .versions
+            .iter()
+            .any(|version| version.id == version_id)
+        {
             return Err(format!("Unknown local history version: {version_id}"));
         }
 
@@ -359,7 +363,10 @@ mod tests {
         let oldest_surviving = store
             .read_version("/project", "src/User.php", &versions[versions.len() - 1].id)
             .expect("read oldest surviving");
-        assert_eq!(oldest_surviving, format!("content-{}", overflow - MAX_VERSIONS_PER_FILE));
+        assert_eq!(
+            oldest_surviving,
+            format!("content-{}", overflow - MAX_VERSIONS_PER_FILE)
+        );
     }
 
     #[test]
@@ -373,8 +380,12 @@ mod tests {
             .record_snapshot("/project-b", "src/User.php", "from-b")
             .expect("record b");
 
-        let a = store.list_versions("/project-a", "src/User.php").expect("a");
-        let b = store.list_versions("/project-b", "src/User.php").expect("b");
+        let a = store
+            .list_versions("/project-a", "src/User.php")
+            .expect("a");
+        let b = store
+            .list_versions("/project-b", "src/User.php")
+            .expect("b");
         assert_eq!(a.len(), 1);
         assert_eq!(b.len(), 1);
 

@@ -34,11 +34,11 @@ pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
-    load_commit_diff, load_commit_details, load_commit_files, load_commit_log,
-    load_git_branches, safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload,
-    CommitFileChange, CommitGraphNode, GitBlameLine, GitBranch, GitBranches, GitChangedFile,
-    GitCommit, GitCommitDetails, GitCommitFilters, GitDiffHunk, GitFileDiff,
-    GitFileHistoryEntry, GitRepoStatus, GitRepositoryGateway, GitStashEntry, GitStatus,
+    load_commit_details, load_commit_diff, load_commit_files, load_commit_log, load_git_branches,
+    safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload, CommitFileChange,
+    CommitGraphNode, GitBlameLine, GitBranch, GitBranches, GitChangedFile, GitCommit,
+    GitCommitDetails, GitCommitFilters, GitDiffHunk, GitFileDiff, GitFileHistoryEntry,
+    GitRepoStatus, GitRepositoryGateway, GitStashEntry, GitStatus,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -68,11 +68,10 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
-    parse_completion_result,
-    parse_definition_result, parse_document_highlights_result, parse_document_links_result,
-    parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
-    parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
-    parse_inlay_hints_result, parse_linked_editing_ranges_result,
+    parse_completion_result, parse_definition_result, parse_document_highlights_result,
+    parse_document_links_result, parse_document_symbols_result, parse_folding_ranges_result,
+    parse_formatting_result, parse_hover_result, parse_incoming_calls_result,
+    parse_inlay_hint_result, parse_inlay_hints_result, parse_linked_editing_ranges_result,
     parse_optional_workspace_edit_result, parse_outgoing_calls_result, parse_prepare_rename_result,
     parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
     parse_type_hierarchy_items_result, parse_workspace_edit_result, parse_workspace_symbols_result,
@@ -111,8 +110,8 @@ use php_symbols::{
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{
-    ReplaceInPathResult, RipgrepTextReplacer, RipgrepTextSearcher, TextReplacer,
-    TextSearchOptions, TextSearchResult, TextSearcher,
+    ReplaceInPathResult, RipgrepTextReplacer, RipgrepTextSearcher, TextReplacer, TextSearchOptions,
+    TextSearchResult, TextSearcher,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1297,10 +1296,9 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .paste()
         .select_all()
         .build()?;
-    let increase_font =
-        MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size")
-            .accelerator("CmdOrCtrl+=")
-            .build(app)?;
+    let increase_font = MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size")
+        .accelerator("CmdOrCtrl+=")
+        .build(app)?;
     let decrease_font =
         MenuItemBuilder::with_id(FONT_ZOOM_OUT_MENU_ID, "Decrease Editor Font Size")
             .accelerator("CmdOrCtrl+-")
@@ -1308,9 +1306,11 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let reset_font = MenuItemBuilder::with_id(FONT_ZOOM_RESET_MENU_ID, "Reset Editor Font Size")
         .accelerator("CmdOrCtrl+0")
         .build(app)?;
-    let toggle_ligatures =
-        MenuItemBuilder::with_id(TOGGLE_FONT_LIGATURES_MENU_ID, "Toggle Editor Font Ligatures")
-            .build(app)?;
+    let toggle_ligatures = MenuItemBuilder::with_id(
+        TOGGLE_FONT_LIGATURES_MENU_ID,
+        "Toggle Editor Font Ligatures",
+    )
+    .build(app)?;
     let appearance_settings =
         MenuItemBuilder::with_id(OPEN_APPEARANCE_SETTINGS_MENU_ID, "Open Appearance Settings")
             .build(app)?;
@@ -1763,7 +1763,10 @@ async fn get_git_commit_graph_page(
     .await
 }
 #[tauri::command]
-async fn get_git_commit_details(root_path: String, commit_hash: String) -> Result<GitCommitDetails, String> {
+async fn get_git_commit_details(
+    root_path: String,
+    commit_hash: String,
+) -> Result<GitCommitDetails, String> {
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         load_commit_details(&root, &commit_hash).map_err(|error| error.to_string())
@@ -1772,7 +1775,10 @@ async fn get_git_commit_details(root_path: String, commit_hash: String) -> Resul
 }
 
 #[tauri::command]
-async fn get_git_commit_files(root_path: String, commit_hash: String) -> Result<Vec<CommitFileChange>, String> {
+async fn get_git_commit_files(
+    root_path: String,
+    commit_hash: String,
+) -> Result<Vec<CommitFileChange>, String> {
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())
@@ -1794,14 +1800,8 @@ async fn get_git_commit_diff(
             Some(files) => files,
             None => load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())?,
         };
-        load_commit_diff(
-            &root,
-            &commit_hash,
-            &path,
-            old_path.as_deref(),
-            &files,
-        )
-        .map_err(|error| error.to_string())
+        load_commit_diff(&root, &commit_hash, &path, old_path.as_deref(), &files)
+            .map_err(|error| error.to_string())
     })
     .await
 }
@@ -4991,32 +4991,31 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
+        apply_workspace_edit, cached_monospace_font_families, create_git_branch,
+        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
-        ensure_local_history_relative_path,
         ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_inlay_hint_payload_in_workspace,
         ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
         ensure_lsp_text_document_content_in_workspace, ensure_lsp_text_document_path_in_workspace,
         ensure_lsp_type_hierarchy_item_in_workspace, ensure_lsp_workspace_edit_paths_in_workspace,
-        cached_monospace_font_families, enumerate_monospace_font_families,
-        ensure_path_in_workspace, filter_lsp_call_hierarchy_items_to_workspace,
-        filter_lsp_code_actions_to_workspace, filter_lsp_code_lenses_to_workspace,
-        filter_lsp_completion_list_to_workspace, filter_lsp_document_links_to_workspace,
-        filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
-        filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
-        filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, create_git_branch, get_git_blame,
-        get_git_current_branch, get_git_file_commit_diff, get_git_file_history, get_git_file_hunks,
-        get_git_stash_diff, get_git_stash_list, get_git_status,
+        ensure_path_in_workspace, enumerate_monospace_font_families,
+        filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_actions_to_workspace,
+        filter_lsp_code_lenses_to_workspace, filter_lsp_completion_list_to_workspace,
+        filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
+        filter_lsp_inlay_hints_to_workspace, filter_lsp_locations_to_workspace,
+        filter_lsp_outgoing_calls_to_workspace, filter_lsp_type_hierarchy_items_to_workspace,
+        filter_lsp_workspace_edit_to_workspace, filter_lsp_workspace_symbols_to_workspace,
+        get_git_blame, get_git_current_branch, get_git_file_commit_diff, get_git_file_history,
+        get_git_file_hunks, get_git_stash_diff, get_git_stash_list, get_git_status,
         javascript_typescript_did_change_configuration_settings, list_git_branches,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
-        search_files, stage_git_files, stage_git_hunk, stash_apply_git,
-        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk, write_text_file,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        search_files, stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git,
+        stash_pop_git, switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server, write_text_file,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -6133,10 +6132,8 @@ mod tests {
         let first = root.join("first.txt");
         let second = root.join("second.txt");
 
-        let first_task = tauri::async_runtime::spawn(write_text_file(
-            path_string(&first),
-            "first".to_string(),
-        ));
+        let first_task =
+            tauri::async_runtime::spawn(write_text_file(path_string(&first), "first".to_string()));
         let second_task = tauri::async_runtime::spawn(write_text_file(
             path_string(&second),
             "second".to_string(),
@@ -6225,12 +6222,8 @@ mod tests {
         .expect("hunks");
         assert_eq!(hunks.len(), 2, "expected two hunks, got {hunks:?}");
 
-        tauri::async_runtime::block_on(stage_git_hunk(
-            path_string(&root),
-            "f.txt".to_string(),
-            0,
-        ))
-        .expect("stage hunk");
+        tauri::async_runtime::block_on(stage_git_hunk(path_string(&root), "f.txt".to_string(), 0))
+            .expect("stage hunk");
 
         // Partial staging: exactly the first hunk moved to the index while the
         // last hunk remains in the worktree diff. `git status --porcelain`
@@ -6292,7 +6285,11 @@ mod tests {
         ))
         .expect("worktree hunks");
 
-        assert_eq!(staged.len(), 1, "expected one staged hunk left, got {staged:?}");
+        assert_eq!(
+            staged.len(),
+            1,
+            "expected one staged hunk left, got {staged:?}"
+        );
         assert!(staged[0].lines.contains(&"+E".to_string()));
         assert_eq!(
             worktree.len(),
@@ -6311,10 +6308,10 @@ mod tests {
         fs::write(root_a.join("only-in-a.txt"), "a\n").expect("file in a");
         fs::write(root_b.join("only-in-b.txt"), "b\n").expect("file in b");
 
-        let status_a = tauri::async_runtime::block_on(get_git_status(path_string(&root_a)))
-            .expect("status a");
-        let status_b = tauri::async_runtime::block_on(get_git_status(path_string(&root_b)))
-            .expect("status b");
+        let status_a =
+            tauri::async_runtime::block_on(get_git_status(path_string(&root_a))).expect("status a");
+        let status_b =
+            tauri::async_runtime::block_on(get_git_status(path_string(&root_b))).expect("status b");
 
         assert!(
             status_a
@@ -6478,10 +6475,7 @@ mod tests {
 
         assert_eq!(history_a[0].subject, "a commit");
         assert_eq!(history_b[0].subject, "b commit");
-        assert_ne!(
-            history_a[0].sha, history_b[0].sha,
-            "no cross-root leakage"
-        );
+        assert_ne!(history_a[0].sha, history_b[0].sha, "no cross-root leakage");
     }
 
     #[test]
@@ -6513,8 +6507,9 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].index, 0);
 
-        let diff = tauri::async_runtime::block_on(get_git_stash_diff(path_string(&root), "0".to_string()))
-            .expect("stash diff");
+        let diff =
+            tauri::async_runtime::block_on(get_git_stash_diff(path_string(&root), "0".to_string()))
+                .expect("stash diff");
         assert!(diff.contains("file.txt"));
 
         tauri::async_runtime::block_on(stash_pop_git(path_string(&root), "0".to_string()))
@@ -6706,10 +6701,10 @@ mod tests {
         ))
         .expect("create in a");
 
-        let list_a =
-            tauri::async_runtime::block_on(list_git_branches(path_string(&root_a))).expect("list a");
-        let list_b =
-            tauri::async_runtime::block_on(list_git_branches(path_string(&root_b))).expect("list b");
+        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a)))
+            .expect("list a");
+        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b)))
+            .expect("list b");
 
         assert!(list_a.iter().any(|branch| branch.name == "only-in-a"));
         assert!(

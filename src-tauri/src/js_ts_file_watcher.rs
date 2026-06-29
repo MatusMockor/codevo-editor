@@ -164,21 +164,30 @@ fn watched_file_changes_for_event(
     event: &WorkspaceWatchEvent,
 ) -> Vec<WorkspaceFileChange> {
     match event.kind {
-        WorkspaceWatchEventKind::Created => {
-            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Created)
-                .into_iter()
-                .collect()
-        }
-        WorkspaceWatchEventKind::Modified => {
-            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Changed)
-                .into_iter()
-                .collect()
-        }
-        WorkspaceWatchEventKind::Deleted => {
-            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Deleted)
-                .into_iter()
-                .collect()
-        }
+        WorkspaceWatchEventKind::Created => watched_change(
+            root_path,
+            event,
+            &event.path,
+            WorkspaceFileChangeType::Created,
+        )
+        .into_iter()
+        .collect(),
+        WorkspaceWatchEventKind::Modified => watched_change(
+            root_path,
+            event,
+            &event.path,
+            WorkspaceFileChangeType::Changed,
+        )
+        .into_iter()
+        .collect(),
+        WorkspaceWatchEventKind::Deleted => watched_change(
+            root_path,
+            event,
+            &event.path,
+            WorkspaceFileChangeType::Deleted,
+        )
+        .into_iter()
+        .collect(),
         WorkspaceWatchEventKind::Renamed => {
             let mut changes = Vec::new();
 
@@ -422,10 +431,7 @@ mod tests {
 
     #[test]
     fn maps_directory_renames_to_delete_and_create_changes() {
-        let mut rename = event(
-            WorkspaceWatchEventKind::Renamed,
-            "/workspace/src/features",
-        );
+        let mut rename = event(WorkspaceWatchEventKind::Renamed, "/workspace/src/features");
         rename.file_kind = Some(WorkspaceWatchFileKind::Directory);
         rename.previous_path = Some("/workspace/src/components".to_string());
 

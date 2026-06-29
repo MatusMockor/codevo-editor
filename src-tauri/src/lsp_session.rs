@@ -5749,10 +5749,7 @@ mod tests {
             response["result"][1]["includeCompletionsForModuleExports"],
             false
         );
-        assert_eq!(
-            response["result"][1]["importModuleSpecifierEnding"],
-            "js"
-        );
+        assert_eq!(response["result"][1]["importModuleSpecifierEnding"], "js");
         assert_eq!(
             response["result"][1]["importModuleSpecifierPreference"],
             "relative"

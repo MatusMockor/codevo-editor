@@ -769,10 +769,7 @@ pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
     })
 }
 
-pub fn load_commit_log(
-    root: &Path,
-    filters: GitCommitFilters,
-) -> io::Result<Vec<GitCommit>> {
+pub fn load_commit_log(root: &Path, filters: GitCommitFilters) -> io::Result<Vec<GitCommit>> {
     let limit = filters.limit.unwrap_or(100);
     let mut args: Vec<String> = vec![
         "log".to_string(),
@@ -888,7 +885,8 @@ fn parse_git_labels(value: &str) -> Vec<String> {
 
 pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitCommitDetails> {
     let commit_hash = safe_commit_sha(commit_hash)?;
-    let command = "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
+    let command =
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
     let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash])?;
     let commit = output
         .split('\0')
@@ -906,7 +904,12 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
 
     let containing_local = git_output_vec(
         root,
-        vec!["branch", "--format=%(refname:short)", "--contains", &commit_hash],
+        vec![
+            "branch",
+            "--format=%(refname:short)",
+            "--contains",
+            &commit_hash,
+        ],
     )?;
     let containing_remote = git_output_vec(
         root,
@@ -1032,11 +1035,27 @@ pub fn load_commit_diff(
                 candidate.path == path
             }
         })
-        .or_else(|| files.iter().find(|candidate| candidate.path == normalized_old_path))
+        .or_else(|| {
+            files
+                .iter()
+                .find(|candidate| candidate.path == normalized_old_path)
+        })
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit file not found."))?;
 
-    let old_content = git_output_vec(root, vec!["show", "--no-color", &format!("{}^:{}", commit_hash, normalized_old_path)]).unwrap_or_default();
-    let modified_content = git_output_vec(root, vec!["show", "--no-color", &format!("{}:{}", commit_hash, path)]).unwrap_or_default();
+    let old_content = git_output_vec(
+        root,
+        vec![
+            "show",
+            "--no-color",
+            &format!("{}^:{}", commit_hash, normalized_old_path),
+        ],
+    )
+    .unwrap_or_default();
+    let modified_content = git_output_vec(
+        root,
+        vec!["show", "--no-color", &format!("{}:{}", commit_hash, path)],
+    )
+    .unwrap_or_default();
 
     Ok(CommitDiffPayload {
         commit_hash: commit_hash.to_string(),
@@ -1159,7 +1178,9 @@ fn parse_blame_porcelain(output: &[u8]) -> io::Result<Vec<GitBlameLine>> {
         }
 
         if let Some((sha, final_line)) = parse_blame_header(line) {
-            commits.entry(sha.clone()).or_insert_with(BlameCommitMeta::empty);
+            commits
+                .entry(sha.clone())
+                .or_insert_with(BlameCommitMeta::empty);
             current = Some((sha, final_line));
             continue;
         }
@@ -1272,10 +1293,7 @@ fn parse_file_history_record(line: &str) -> Option<GitFileHistoryEntry> {
 const STASH_LIST_FORMAT: &str = "%gd%x1f%ct%x1f%gs";
 
 fn parse_stash_list(output: &str) -> Vec<GitStashEntry> {
-    output
-        .lines()
-        .filter_map(parse_stash_list_record)
-        .collect()
+    output.lines().filter_map(parse_stash_list_record).collect()
 }
 
 fn parse_stash_list_record(line: &str) -> Option<GitStashEntry> {
@@ -1432,9 +1450,9 @@ pub fn safe_stash_index(index: &str) -> io::Result<u32> {
         ));
     }
 
-    trimmed.parse::<u32>().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "Git stash index is invalid.")
-    })
+    trimmed
+        .parse::<u32>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Git stash index is invalid."))
 }
 
 /// Validates a commit revision supplied by the front end before it reaches a
@@ -2104,8 +2122,8 @@ mod tests {
 
         let details = load_commit_details(repo.path(), &first_sha).expect("details");
         let files = load_commit_files(repo.path(), &first_sha).expect("files");
-        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files)
-            .expect("diff");
+        let diff =
+            load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files).expect("diff");
 
         assert_eq!(details.commit.subject, "first commit");
         assert_eq!(files.len(), 1);
@@ -2327,7 +2345,9 @@ mod tests {
         repo.run(["commit", "-m", "unrelated commit"]);
 
         let gateway = CommandGitRepositoryGateway;
-        let entries = gateway.file_history(repo.path(), "file.txt").expect("history");
+        let entries = gateway
+            .file_history(repo.path(), "file.txt")
+            .expect("history");
 
         assert_eq!(entries.len(), 2);
         // Newest commit first (git log default ordering).
@@ -2618,10 +2638,18 @@ mod tests {
         repo.write("f.txt", "A\nb\nc\nd\nE\n");
 
         let gateway = CommandGitRepositoryGateway;
-        let hunks = gateway.file_hunks(repo.path(), "f.txt", false).expect("hunks");
-        assert_eq!(hunks.len(), 2, "expected one hunk per change, got {hunks:?}");
+        let hunks = gateway
+            .file_hunks(repo.path(), "f.txt", false)
+            .expect("hunks");
+        assert_eq!(
+            hunks.len(),
+            2,
+            "expected one hunk per change, got {hunks:?}"
+        );
 
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage hunk");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage hunk");
 
         // The first line is staged; the last line is still only in the worktree.
         assert_eq!(repo.git_output(["show", ":f.txt"]), "A\nb\nc\nd\ne\n");
@@ -2639,11 +2667,15 @@ mod tests {
         repo.run(["add", "f.txt"]);
 
         let gateway = CommandGitRepositoryGateway;
-        let staged = gateway.file_hunks(repo.path(), "f.txt", true).expect("staged hunks");
+        let staged = gateway
+            .file_hunks(repo.path(), "f.txt", true)
+            .expect("staged hunks");
         assert_eq!(staged.len(), 2, "expected two staged hunks, got {staged:?}");
         assert!(staged.iter().all(|hunk| hunk.is_staged));
 
-        gateway.unstage_hunk(repo.path(), "f.txt", 0).expect("unstage hunk");
+        gateway
+            .unstage_hunk(repo.path(), "f.txt", 0)
+            .expect("unstage hunk");
 
         // First line reverts to HEAD in the index; last line stays staged.
         assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\nd\nE\n");
@@ -2659,7 +2691,9 @@ mod tests {
         repo.write("f.txt", "a\nb\nc\n");
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage addition");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage addition");
 
         assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\n");
     }
@@ -2673,7 +2707,9 @@ mod tests {
         repo.write("f.txt", "a\nc\n");
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage deletion");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage deletion");
 
         assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nc\n");
     }
@@ -2687,7 +2723,9 @@ mod tests {
         repo.write("f.txt", "one\nTWO\nthree");
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage no-eol hunk");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage no-eol hunk");
 
         assert_eq!(repo.git_output(["show", ":f.txt"]), "one\nTWO\nthree");
     }
@@ -2704,7 +2742,9 @@ mod tests {
         repo.write("f.txt", "a\r\nB\r\nc\r\n");
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage crlf hunk");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage crlf hunk");
 
         // Staging one CRLF hunk via git's own diff is byte-exact: the staged
         // blob carries the changed line and the surrounding CRLF endings.
@@ -2722,9 +2762,14 @@ mod tests {
         repo.write("f.txt", "FIRST\nsecond\nthird\n");
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.stage_hunk(repo.path(), "f.txt", 0).expect("stage first line");
+        gateway
+            .stage_hunk(repo.path(), "f.txt", 0)
+            .expect("stage first line");
 
-        assert_eq!(repo.git_output(["show", ":f.txt"]), "FIRST\nsecond\nthird\n");
+        assert_eq!(
+            repo.git_output(["show", ":f.txt"]),
+            "FIRST\nsecond\nthird\n"
+        );
     }
 
     #[test]
@@ -2987,11 +3032,17 @@ mod tests {
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
 
         assert!(names.contains(&"feature"));
-        let current = branches.iter().find(|branch| branch.is_current).expect("current");
+        let current = branches
+            .iter()
+            .find(|branch| branch.is_current)
+            .expect("current");
         // The initial checkout is the default branch (the only one with content).
         assert!(!current.name.is_empty());
         // Exactly one branch is flagged current.
-        assert_eq!(branches.iter().filter(|branch| branch.is_current).count(), 1);
+        assert_eq!(
+            branches.iter().filter(|branch| branch.is_current).count(),
+            1
+        );
     }
 
     #[test]
@@ -3017,7 +3068,9 @@ mod tests {
         let before = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.create_branch(repo.path(), "feature/new").expect("create branch");
+        gateway
+            .create_branch(repo.path(), "feature/new")
+            .expect("create branch");
 
         // The branch now exists.
         let branches = gateway.branch_list(repo.path()).expect("branch list");
@@ -3049,7 +3102,9 @@ mod tests {
         repo.run(["branch", "feature"]);
 
         let gateway = CommandGitRepositoryGateway;
-        gateway.switch_branch(repo.path(), "feature").expect("switch branch");
+        gateway
+            .switch_branch(repo.path(), "feature")
+            .expect("switch branch");
 
         let current = gateway.current_branch(repo.path()).expect("current branch");
         assert_eq!(current.as_deref(), Some("feature"));
@@ -3090,7 +3145,9 @@ mod tests {
         let gateway = CommandGitRepositoryGateway;
 
         assert!(gateway.switch_branch(repo.path(), "--orphan").is_err());
-        assert!(gateway.switch_branch(repo.path(), "no/such/branch nope").is_err());
+        assert!(gateway
+            .switch_branch(repo.path(), "no/such/branch nope")
+            .is_err());
     }
 
     fn branch_repo() -> TestGitRepo {

@@ -237,7 +237,9 @@ impl SqliteWorkspaceIndex {
     pub fn with_guarded_batch_transaction<T>(
         &self,
         action: impl FnOnce(&Self) -> rusqlite::Result<T>,
-        commit_guard: impl FnOnce(&mut dyn FnMut() -> rusqlite::Result<()>) -> Option<rusqlite::Result<()>>,
+        commit_guard: impl FnOnce(
+            &mut dyn FnMut() -> rusqlite::Result<()>,
+        ) -> Option<rusqlite::Result<()>>,
     ) -> rusqlite::Result<BatchOutcome<T>> {
         let transaction = self.connection.unchecked_transaction()?;
         let result = action(self)?;
@@ -1080,7 +1082,10 @@ mod tests {
         assert_eq!(cache_size, -16_000);
         // mmap_size > 0 confirms memory-mapped reads are enabled (the effective value may be
         // capped below the request by SQLITE_MAX_MMAP_SIZE, so we only assert it is on).
-        assert!(mmap_size > 0, "mmap_size should be enabled, got {mmap_size}");
+        assert!(
+            mmap_size > 0,
+            "mmap_size should be enabled, got {mmap_size}"
+        );
         // temp_store = MEMORY (2) keeps the symbol-search sort scratch in RAM, not on disk.
         assert_eq!(temp_store, 2);
         assert_eq!(migration_count, 2);

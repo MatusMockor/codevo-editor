@@ -859,8 +859,11 @@ mod tests {
         let database_path = temp_database_path("batch-boundary");
         for index in 0..file_count {
             let class_name = format!("Model{index}");
-            fs::write(root.join(format!("{class_name}.php")), php_fixture(&class_name))
-                .expect("php file");
+            fs::write(
+                root.join(format!("{class_name}.php")),
+                php_fixture(&class_name),
+            )
+            .expect("php file");
         }
 
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
@@ -873,7 +876,10 @@ mod tests {
         .expect("hard reindex");
         let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
 
-        assert_eq!(index.summary().expect("summary").file_count as usize, file_count);
+        assert_eq!(
+            index.summary().expect("summary").file_count as usize,
+            file_count
+        );
         assert_eq!(report.parsed_files, file_count);
         // First and last files (different batches) are both fully indexed.
         assert!(!index
@@ -881,7 +887,9 @@ mod tests {
             .expect("first symbols")
             .is_empty());
         assert!(!index
-            .list_file_symbols(&path_string(root.join(format!("Model{}.php", file_count - 1))))
+            .list_file_symbols(&path_string(
+                root.join(format!("Model{}.php", file_count - 1))
+            ))
             .expect("last symbols")
             .is_empty());
     }
@@ -896,8 +904,11 @@ mod tests {
         let database_path = temp_database_path("cancel-multi-batch");
         for index in 0..file_count {
             let class_name = format!("Model{index}");
-            fs::write(root.join(format!("{class_name}.php")), php_fixture(&class_name))
-                .expect("php file");
+            fs::write(
+                root.join(format!("{class_name}.php")),
+                php_fixture(&class_name),
+            )
+            .expect("php file");
         }
         let lifecycle = WorkspaceIndexLifecycle::new();
         let token = lifecycle.begin_workspace_run(&path_string(root.clone()));

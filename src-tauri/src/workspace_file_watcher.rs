@@ -358,8 +358,10 @@ mod tests {
 
     #[test]
     fn maps_rename_events_with_previous_path() {
-        let mut rename =
-            event(WorkspaceWatchEventKind::Renamed, "/workspace/src/Account.php");
+        let mut rename = event(
+            WorkspaceWatchEventKind::Renamed,
+            "/workspace/src/Account.php",
+        );
         rename.previous_path = Some("/workspace/src/User.php".to_string());
         rename.previous_relative_path = Some("src/User.php".to_string());
 

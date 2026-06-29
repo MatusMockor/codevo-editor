@@ -703,12 +703,7 @@ fn configure_typescript_import_preferences(
 
     preferences.insert(
         "importModuleSpecifierEnding".to_string(),
-        Value::String(
-            settings
-                .import_module_specifier_ending
-                .as_str()
-                .to_string(),
-        ),
+        Value::String(settings.import_module_specifier_ending.as_str().to_string()),
     );
     preferences.insert(
         "importModuleSpecifierPreference".to_string(),
@@ -1194,7 +1189,8 @@ mod tests {
         PhpBackendPreference, PhpInterpreterLauncher, PhpLanguageServerSettings, PhpLauncher,
         PhpactorInitializeRequestFactory, PhpactorLanguageServerPlanner,
         TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
-        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
+        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings,
+        TypeScriptQuotePreference,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
@@ -1898,8 +1894,7 @@ mod tests {
             false
         );
         assert_eq!(
-            request.params["initializationOptions"]["preferences"]
-                ["importModuleSpecifierEnding"],
+            request.params["initializationOptions"]["preferences"]["importModuleSpecifierEnding"],
             "minimal"
         );
         assert_eq!(
