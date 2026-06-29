@@ -1408,15 +1408,47 @@ export function phpLaravelContainerExpressionClassName(
   expression: string,
 ): string | null {
   const normalized = expression.trim();
-  const match =
-    new RegExp(
-      `^(?:app|resolve|make)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
-    ).exec(normalized) ??
-    new RegExp(
-      `(?:->|::)make\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
-    ).exec(normalized);
+  const helperMatch = new RegExp(
+    `^(?:app|resolve|make)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+  ).exec(normalized);
 
-  return match?.[1]?.replace(/^\\+/, "") ?? null;
+  if (helperMatch && phpLaravelContainerCallIsOutermost(normalized, helperMatch)) {
+    return helperMatch[1]?.replace(/^\\+/, "") ?? null;
+  }
+
+  const makeMatch = new RegExp(
+    `(?:->|::)(?:make|makeWith)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+  ).exec(normalized);
+
+  if (makeMatch && phpLaravelContainerCallIsOutermost(normalized, makeMatch)) {
+    return makeMatch[1]?.replace(/^\\+/, "") ?? null;
+  }
+
+  return null;
+}
+
+// The resolved instance is the expression type only when the container call is
+// the OUTERMOST operation. For `app()->make(X::class)->paginate()` the type is
+// `paginate()`'s return, not `X`, so we must not claim the container class when a
+// trailing call follows the resolution. Anchor on the container call's own
+// argument list and require nothing but whitespace after its closing paren.
+function phpLaravelContainerCallIsOutermost(
+  expression: string,
+  match: RegExpExecArray,
+): boolean {
+  const openOffset = (match.index ?? 0) + match[0].indexOf("(");
+
+  if (expression[openOffset] !== "(") {
+    return false;
+  }
+
+  const closeOffset = matchingPairOffset(expression, openOffset, "(", ")");
+
+  if (closeOffset === null) {
+    return false;
+  }
+
+  return expression.slice(closeOffset + 1).trim().length === 0;
 }
 
 export function phpLaravelContainerBindingsFromSource(
@@ -1977,6 +2009,7 @@ export function phpLaravelDynamicWhereCompletionsFromSource(
         {
           declaringClassName,
           ...(options.isStatic ? { isStatic: true } : {}),
+          kind: "magic-where" as const,
           name: `where${suffix}`,
           parameters: "$value",
           returnType: "Illuminate\\Database\\Eloquent\\Builder",

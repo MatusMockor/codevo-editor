@@ -2014,6 +2014,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereContent",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2021,6 +2022,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereParentId",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2028,6 +2030,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereIsVisible",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2035,6 +2038,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereIsPinned",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2042,6 +2046,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereType",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2116,6 +2121,7 @@ class Comment extends Model {}
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereId",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2123,6 +2129,7 @@ class Comment extends Model {}
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereContent",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2130,6 +2137,7 @@ class Comment extends Model {}
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereIsPinned",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2137,6 +2145,7 @@ class Comment extends Model {}
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereSlug",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -2257,6 +2266,12 @@ class User extends Model
         isStatic: true,
       }).map((completion) => completion.name),
     ).toEqual(["whereName", "whereActive", "whereNickname"]);
+
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "App\\Models\\User", {
+        isStatic: true,
+      }).map((completion) => completion.kind),
+    ).toEqual(["magic-where", "magic-where", "magic-where"]);
 
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
@@ -3711,6 +3726,7 @@ class Post extends Model
       {
         declaringClassName: "Post",
         isStatic: true,
+        kind: "magic-where",
         name: "wherePublishedAt",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -3718,6 +3734,7 @@ class Post extends Model
       {
         declaringClassName: "Post",
         isStatic: true,
+        kind: "magic-where",
         name: "whereArchivedAt",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -4236,6 +4253,26 @@ describe("orderPhpMemberCompletionsByCategory", () => {
       "publish",
       "save",
       "active",
+    ]);
+  });
+
+  it("places magic-where dynamic query methods in their own category after scopes", () => {
+    const ordered = orderPhpMemberCompletionsByCategory([
+      member("whereName", "magic-where"),
+      member("publish"),
+      member("active", "scope"),
+      member("title", "property"),
+      member("author", "relation"),
+      member("whereStatus", "magic-where"),
+    ]);
+
+    expect(ordered.map((completion) => completion.name)).toEqual([
+      "title",
+      "author",
+      "publish",
+      "active",
+      "whereName",
+      "whereStatus",
     ]);
   });
 

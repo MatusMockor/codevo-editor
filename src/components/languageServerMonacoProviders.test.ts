@@ -2382,6 +2382,98 @@ function store($request): void
     ]);
   });
 
+  it("orders Model:: static completions by category and above phpactor noise", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail:
+              "App\\Models\\Comment::query(): Illuminate\\Database\\Eloquent\\Builder",
+            documentation: null,
+            insertText: "query",
+            kind: 2,
+            label: "query",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        isStatic: true,
+        kind: "magic-where" as const,
+        name: "whereTitle",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        isStatic: true,
+        name: "create",
+        parameters: "array $attributes",
+        returnType: "App\\Models\\Comment",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        isStatic: true,
+        kind: "scope" as const,
+        name: "active",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nComment::\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "Comment::",
+        word: {
+          endColumn: 10,
+          startColumn: 10,
+        },
+      }),
+      {
+        column: 10,
+        lineNumber: 2,
+      },
+    );
+
+    const rows = result.suggestions.map(
+      (suggestion: {
+        kind: number;
+        label: string | { label: string };
+        sortText?: string;
+      }) => ({
+        kind: suggestion.kind,
+        name:
+          typeof suggestion.label === "string"
+            ? suggestion.label
+            : suggestion.label.label,
+        sortText: suggestion.sortText,
+      }),
+    );
+
+    // Static access shares the member category ordering: method (2) -> scope
+    // (Function 3) -> magic-where (Event 23), all on the `0_` bucket so our
+    // Laravel/OOP suggestions sit above the phpactor LSP `query` (`1_`) noise.
+    expect(rows).toEqual([
+      { kind: 2, name: "create", sortText: "0_0000" },
+      { kind: 3, name: "active", sortText: "0_0001" },
+      { kind: 23, name: "whereTitle", sortText: "0_0002" },
+      { kind: 2, name: "query", sortText: "1_0000" },
+    ]);
+  });
+
   it("uses the live Monaco model source for fresh PHP member access completions", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
@@ -2566,6 +2658,13 @@ function store($request): void
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "App\\Models\\Post",
+        kind: "magic-where" as const,
+        name: "whereTitle",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "App\\Models\\Post",
         name: "publish",
         parameters: "",
         returnType: "void",
@@ -2631,13 +2730,15 @@ function store($request): void
       }),
     );
 
-    // property (10) -> relation/Field (5) -> method (2) -> scope/Function (3),
-    // and the `sortText` index follows the category order.
+    // property (10) -> relation/Field (5) -> method (2) -> scope/Function (3) ->
+    // magic-where/Event (23), and the `sortText` index follows the category
+    // order so each group renders together and above phpactor (`1_`) noise.
     expect(rows).toEqual([
       { kind: 10, name: "title", sortText: "0_0000" },
       { kind: 5, name: "author", sortText: "0_0001" },
       { kind: 2, name: "publish", sortText: "0_0002" },
       { kind: 3, name: "active", sortText: "0_0003" },
+      { kind: 23, name: "whereTitle", sortText: "0_0004" },
     ]);
   });
 
@@ -10307,6 +10408,7 @@ function createRegisteredProviders() {
       CompletionItemKind: {
         Class: 7,
         Constant: 21,
+        Event: 23,
         Field: 5,
         File: 17,
         Function: 3,

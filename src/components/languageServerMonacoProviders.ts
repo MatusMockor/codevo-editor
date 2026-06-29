@@ -4553,6 +4553,12 @@ function phpMethodCompletionKind(
     return monaco.languages.CompletionItemKind.Function;
   }
 
+  if (item.kind === "magic-where") {
+    // Dynamic `where<Attribute>()` query magic is synthesised from model
+    // attributes, so an Event glyph marks it apart from real methods and scopes.
+    return monaco.languages.CompletionItemKind.Event;
+  }
+
   return monaco.languages.CompletionItemKind.Method;
 }
 
@@ -4684,6 +4690,10 @@ function phpMethodCompletionLabelDescription(item: PhpMethodCompletion): string 
 
   if (item.kind === "scope") {
     return `scope - ${item.declaringClassName}`;
+  }
+
+  if (item.kind === "magic-where") {
+    return `magic where - ${item.declaringClassName}`;
   }
 
   return `${visibilityPrefix}method - ${item.declaringClassName}`;

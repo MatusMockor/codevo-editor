@@ -184,6 +184,22 @@ export function phpReceiverExpressionTypeInSource(
     return phpThisPropertyType(source, thisPropertyMatch[1], options);
   }
 
+  // Laravel container resolution as a receiver: `app(X::class)`,
+  // `resolve(X::class)`, `app()->make(X::class)`, `App::make(X::class)`, … all
+  // yield an instance of `X`. This mirrors the variable-assignment path
+  // (`phpVariableTypeInSource`) so inline chains like
+  // `app()->make(X::class)->method()` resolve the receiver type and stop emitting
+  // false "undefined method" diagnostics. Gated by an active framework provider,
+  // and the resolver only fires when the container call is the outer operation.
+  const containerClassName = phpFrameworkContainerExpressionClassName(
+    normalizedExpression,
+    options.frameworkProviders,
+  );
+
+  if (containerClassName) {
+    return containerClassName;
+  }
+
   const propertyAccess = phpPropertyAccessExpression(normalizedExpression);
 
   if (propertyAccess) {

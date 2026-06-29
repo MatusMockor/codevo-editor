@@ -34836,6 +34836,386 @@ class User
     });
   });
 
+  it("infers Laravel model attributes through static builder and collection chains", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ProbeController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Comment extends Model
+{
+    protected $fillable = ['title'];
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Comment::class, 'parent_id');
+    }
+
+    public function getContent(): string {}
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class ProbeController
+{
+    public function run(Comment $model): void
+    {
+        $a = $model->findOrFail(1);
+        $a->getCon
+
+        $b = Comment::query()->where('id', 1)->first();
+        $b->getCon
+
+        $c = Comment::with('parent')->first();
+        $c->getCon
+
+        $d = Comment::with('parent')->get()->first();
+        $d->getCon
+
+        $e = Comment::query()->where('id', 1)->get()->first();
+        $e->getCon
+
+        $f = $model->findOrFail(1)->parent;
+        $f->getCon
+
+        $titleHolder = Comment::query()->where('id', 1)->first();
+        $titleHolder->titl
+
+        $inlineAttr = Comment::findOrFail(1)->titl
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "ProbeController.php"),
+      );
+    });
+
+    const getContentCompletion = {
+      declaringClassName: "App\\Models\\Comment",
+      name: "getContent",
+      parameters: "",
+      returnType: "string",
+    };
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$a->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$b->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$c->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$d->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$e->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$f->getCon"),
+      ),
+    ).resolves.toEqual([getContentCompletion]);
+    const titleHolderNames = (
+      await getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$titleHolder->titl"),
+      )
+    ).map((completion) => completion.name);
+    expect(titleHolderNames).toContain("title");
+    const inlineAttrNames = (
+      await getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Comment::findOrFail(1)->titl"),
+      )
+    ).map((completion) => completion.name);
+    expect(inlineAttrNames).toContain("title");
+  });
+
+  it("infers Laravel model attributes through builder, repository, scope, and dynamic-where chains", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/Probe2Controller.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const repoPath = "/workspace/app/Repositories/CommentRepository.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Comment extends Model
+{
+    protected $fillable = ['title'];
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Comment::class, 'parent_id');
+    }
+
+    public function scopePublished(Builder $query): void
+    {
+        $query->whereNotNull('published_at');
+    }
+
+    public function getContent(): string {}
+}
+`;
+    const repoSource = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class CommentRepository
+{
+    public function findById(int $id)
+    {
+        return Comment::findOrFail($id);
+    }
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+use App\\Repositories\\CommentRepository;
+
+class Probe2Controller
+{
+    public function run(CommentRepository $repo): void
+    {
+        $a = Comment::all()->first();
+        $a->getCon
+
+        $b = Comment::where('id', 1)->first();
+        $b->getCon
+
+        $query = Comment::query();
+        $c = $query->where('id', 1)->first();
+        $c->getCon
+
+        $d = Comment::with(['parent'])->first();
+        $d->getCon
+
+        $e = Comment::firstWhere('id', 1);
+        $e->getCon
+
+        $g = $repo->findById(1);
+        $g->getCon
+
+        $h = $repo->findById(1)->parent()->first();
+        $h->getCon
+
+        $i = Comment::whereTitle('hello')->first();
+        $i->getCon
+
+        $j = Comment::published()->first();
+        $j->getCon
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        if (path === repoPath) {
+          return repoSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "Probe2Controller.php"),
+      );
+    });
+
+    const getContentCompletion = {
+      declaringClassName: "App\\Models\\Comment",
+      name: "getContent",
+      parameters: "",
+      returnType: "string",
+    };
+
+    for (const variable of [
+      "$a",
+      "$b",
+      "$c",
+      "$d",
+      "$e",
+      "$g",
+      "$h",
+      "$i",
+      "$j",
+    ]) {
+      const names = (
+        await getWorkbench().providePhpMethodCompletions(
+          controllerSource,
+          positionAfter(controllerSource, `${variable}->getCon`),
+        )
+      ).map((completion) => completion.name);
+
+      expect({ names, variable }).toEqual({
+        names: [getContentCompletion.name],
+        variable,
+      });
+    }
+  });
+
+  it("offers Laravel relation-name completions across static, chained, member, and nested receivers", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ProbeWithController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment extends Model
+{
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Comment::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(Comment::class, 'parent_id');
+    }
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class ProbeWithController
+{
+    public function run(Comment $comment): void
+    {
+        Comment::with('');
+        Comment::query()->with('');
+        $comment->load('');
+        Comment::whereHas('');
+        Comment::with('parent.');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "ProbeWithController.php"),
+      );
+    });
+
+    const relationNamesAt = async (needle: string): Promise<string[]> =>
+      (
+        await getWorkbench().providePhpMethodCompletions(
+          controllerSource,
+          positionAfter(controllerSource, needle),
+        )
+      )
+        .map((completion) => completion.name)
+        .sort();
+
+    expect({
+      direct: await relationNamesAt("Comment::with('"),
+      member: await relationNamesAt("$comment->load('"),
+      nested: await relationNamesAt("Comment::with('parent."),
+      staticChain: await relationNamesAt("Comment::query()->with('"),
+      whereHas: await relationNamesAt("Comment::whereHas('"),
+    }).toEqual({
+      direct: ["children", "parent"],
+      member: ["children", "parent"],
+      nested: ["children", "parent"],
+      staticChain: ["children", "parent"],
+      whereHas: ["children", "parent"],
+    });
+  });
+
   it("infers Laravel enforced morph map completions from service provider files", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";
@@ -38916,6 +39296,7 @@ class Builder
       {
         declaringClassName: "App\\Models\\Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereContent",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -38931,6 +39312,7 @@ class Builder
       method: {
         declaringClassName: "App\\Models\\Comment",
         isStatic: true,
+        kind: "magic-where",
         name: "whereContent",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -38953,6 +39335,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Comment",
+        kind: "magic-where",
         name: "whereIsPinned",
         parameters: "$value",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",

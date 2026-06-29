@@ -3953,6 +3953,91 @@ class Controller
         "Container::getInstance()->make(CommentRepository::class)",
       ),
     ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "app()->makeWith(CommentRepository::class, ['fresh' => true])",
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "App::makeWith(CommentRepository::class)",
+      ),
+    ).toBe("CommentRepository");
+    // Outermost guard: when the container resolution is NOT the outer operation
+    // (a trailing call follows), the expression type is that trailing call's
+    // return, not the resolved instance, so do not claim the container class.
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "app()->make(CommentRepository::class)->paginate()",
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "app(CommentRepository::class)->handle()",
+      ),
+    ).toBeNull();
+  });
+
+  it("resolves direct container resolution chains as receiver types", () => {
+    const containerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function show(): void
+    {
+        app()->make(CommentRepository::class)->paginate();
+    }
+}
+`;
+    const position = positionAfter(
+      containerSource,
+      "app()->make(CommentRepository::class)",
+    );
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        containerSource,
+        position,
+        "app()->make(CommentRepository::class)",
+        laravelOptions,
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        containerSource,
+        position,
+        "app(CommentRepository::class)",
+        laravelOptions,
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        containerSource,
+        position,
+        "resolve(CommentRepository::class)",
+        laravelOptions,
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        containerSource,
+        position,
+        "App::make(CommentRepository::class)",
+        laravelOptions,
+      ),
+    ).toBe("CommentRepository");
+    // Gated by an active framework provider — no Laravel, no container magic.
+    expect(
+      phpReceiverExpressionTypeInSource(
+        containerSource,
+        position,
+        "app()->make(CommentRepository::class)",
+        {},
+      ),
+    ).toBeNull();
   });
 
   it("detects method and static call expressions", () => {

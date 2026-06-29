@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
+  phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
@@ -14,6 +15,43 @@ import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
+  it("resolves container resolution expressions through the framework seam", () => {
+    const providers = [phpLaravelFrameworkProvider];
+
+    expect(
+      phpFrameworkContainerExpressionClassName(
+        "app(CommentRepository::class)",
+        providers,
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpFrameworkContainerExpressionClassName(
+        "app()->make(CommentRepository::class)",
+        providers,
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpFrameworkContainerExpressionClassName(
+        "app()->makeWith(CommentRepository::class, [])",
+        providers,
+      ),
+    ).toBe("CommentRepository");
+    // Outer-operation guard: a trailing call means the type is that call's return.
+    expect(
+      phpFrameworkContainerExpressionClassName(
+        "app()->make(CommentRepository::class)->paginate()",
+        providers,
+      ),
+    ).toBeNull();
+    // Gated: without an active framework provider there is no container magic.
+    expect(
+      phpFrameworkContainerExpressionClassName(
+        "app()->make(CommentRepository::class)",
+        [],
+      ),
+    ).toBeNull();
+  });
+
   it("exposes Laravel model attributes and relations through the framework seam", () => {
     const source = `<?php
 use Illuminate\\Database\\Eloquent\\Model;

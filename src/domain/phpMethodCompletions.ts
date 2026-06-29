@@ -35,6 +35,7 @@ export interface PhpMethodCompletion {
   kind?:
     | "config"
     | "env"
+    | "magic-where"
     | "property"
     | "relation"
     | "route"
@@ -217,7 +218,8 @@ export function phpMethodCompletionsFromSource(
 
 // PhpStorm-like member grouping rank for `$receiver->`/`Class::` completion
 // lists: data first (properties incl. DB columns), then relations, then plain
-// methods, then "magic" query scopes. Lower ranks sort first.
+// methods, then "magic" query scopes, and finally dynamic `where<Attribute>()`
+// query magic. Lower ranks sort first.
 const phpMemberCompletionCategoryRanks: Record<
   NonNullable<PhpMethodCompletion["kind"]>,
   number
@@ -230,6 +232,7 @@ const phpMemberCompletionCategoryRanks: Record<
   translation: 2,
   view: 2,
   scope: 3,
+  "magic-where": 4,
 };
 
 function phpMemberCompletionCategoryRank(member: PhpMethodCompletion): number {
@@ -239,9 +242,10 @@ function phpMemberCompletionCategoryRank(member: PhpMethodCompletion): number {
 
 /**
  * Returns a new array of member completions ordered by category so callers can
- * render PhpStorm-like grouping (properties, relations, methods, then magic
- * scopes). The sort is stable, so the relative order within each category - and
- * therefore each upstream collector's intended ordering - is preserved.
+ * render PhpStorm-like grouping (properties, relations, methods, magic scopes,
+ * then dynamic `where<Attribute>()` query magic). The sort is stable, so the
+ * relative order within each category - and therefore each upstream collector's
+ * intended ordering - is preserved.
  */
 export function orderPhpMemberCompletionsByCategory(
   members: readonly PhpMethodCompletion[],
