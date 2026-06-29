@@ -160,6 +160,11 @@ export interface PhpLaravelRelationStringCompletionContext {
   receiverExpression: string | null;
 }
 
+export interface PhpLaravelRouteActionMethodCompletionContext {
+  className: string;
+  prefix: string;
+}
+
 interface IdentifierAtOffset {
   end: number;
   name: string;
@@ -502,6 +507,65 @@ export function phpLaravelRelationStringCompletionContextAt(
       ? { previousRelationNames: relationPrefix.previousRelationNames }
       : {}),
     prefix: relationPrefix.prefix,
+  };
+}
+
+export function phpLaravelRouteActionMethodCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelRouteActionMethodCompletionContext | null {
+  const offset = offsetAtPosition(source, position);
+  const literal = stringLiteralCompletionAtOffset(source, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  if (literal.prefix && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.prefix)) {
+    return null;
+  }
+
+  const controllerGroupClassName = laravelControllerGroupClassNameForRouteAction(
+    source,
+    literal,
+  );
+
+  if (controllerGroupClassName) {
+    return {
+      className: controllerGroupClassName,
+      prefix: literal.prefix,
+    };
+  }
+
+  const arrayStart = source.lastIndexOf("[", literal.quoteStart);
+
+  if (arrayStart < 0) {
+    return null;
+  }
+
+  const arrayEnd = matchingBracketOffset(source, arrayStart, "[", "]");
+
+  if (!arrayEnd || literal.quoteEnd > arrayEnd) {
+    return null;
+  }
+
+  if (!laravelRouteCallForActionArgument(source, arrayStart)) {
+    return null;
+  }
+
+  const beforeLiteral = source.slice(arrayStart + 1, literal.quoteStart);
+  const classMatch =
+    /(?:^|[,\s])((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*,\s*$/m.exec(
+      beforeLiteral,
+    );
+
+  if (!classMatch?.[1]) {
+    return null;
+  }
+
+  return {
+    className: classMatch[1],
+    prefix: literal.prefix,
   };
 }
 

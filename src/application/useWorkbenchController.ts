@@ -468,6 +468,7 @@ import {
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
+  phpLaravelRouteActionMethodCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpMethodPositionOrNull,
@@ -18865,6 +18866,42 @@ export function useWorkbenchController(
           }));
       }
 
+      const routeActionContext =
+        phpLaravelRouteActionMethodCompletionContextAt(source, position);
+
+      if (isLaravelFrameworkActive && routeActionContext) {
+        const resolvedClassName = resolvePhpClassReference(
+          source,
+          routeActionContext.className,
+        );
+
+        if (!resolvedClassName) {
+          return [];
+        }
+
+        const methods = await collectPhpMethodsForClass(resolvedClassName);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const normalizedPrefix = routeActionContext.prefix.toLowerCase();
+
+        return phpMethodCompletionsWithStableMetadata(
+          methods
+            .filter((method) =>
+              phpLaravelRouteActionMethodCompletionMatches(
+                method,
+                normalizedPrefix,
+              ),
+            )
+            .sort((left, right) =>
+              phpMethodCompletionSortOrder(left, right, normalizedPrefix),
+            )
+            .slice(0, 80),
+        );
+      }
+
       const validationRuleContext = phpLaravelValidationRuleStringContextAt(
         source,
         position,
@@ -19033,6 +19070,7 @@ export function useWorkbenchController(
       collectPhpLaravelGateAbilityTargets,
       collectPhpLaravelMiddlewareAliasTargets,
       collectPhpLaravelViewTargets,
+      collectPhpMethodsForClass,
       activeDocument,
       isLaravelFrameworkActive,
       resolvePhpClassReference,
@@ -30803,6 +30841,40 @@ function phpMethodCompletionsWithStableMetadata(
   completions: PhpMethodCompletion[],
 ): PhpMethodCompletion[] {
   return completions.map(phpMethodCompletionWithStableMetadata);
+}
+
+function phpLaravelRouteActionMethodCompletionMatches(
+  method: PhpMethodCompletion,
+  normalizedPrefix: string,
+): boolean {
+  if ((method.kind ?? "method") !== "method") {
+    return false;
+  }
+
+  if (method.isStatic) {
+    return false;
+  }
+
+  if (method.visibility && method.visibility !== "public") {
+    return false;
+  }
+
+  return method.name.toLowerCase().startsWith(normalizedPrefix);
+}
+
+function phpMethodCompletionSortOrder(
+  left: PhpMethodCompletion,
+  right: PhpMethodCompletion,
+  normalizedPrefix: string,
+): number {
+  const leftExact = left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+  const rightExact = right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+
+  if (leftExact !== rightExact) {
+    return leftExact - rightExact;
+  }
+
+  return left.name.localeCompare(right.name);
 }
 
 function phpMethodCompletionWithStableMetadata(

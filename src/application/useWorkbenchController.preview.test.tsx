@@ -41105,6 +41105,144 @@ final class CommentController
     });
   });
 
+  it("suggests Laravel controller methods inside route action strings", async () => {
+    const routesPath = "/workspace/routes/comments.php";
+    const commentControllerPath =
+      "/workspace/app/Http/Controllers/communication/CommentController.php";
+    const routesSource = `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+
+Route::post('/comments', [CommentController::class, 'st']);
+Route::post(uri: '/named-comments', action: [CommentController::class, 'sto']);
+Route::controller(CommentController::class)->group(function () {
+    Route::get('/comments/{comment}', 'sh');
+    Route::get(action: 'sho', uri: '/named-action');
+    Route::get(label: 'notAction', uri: '/ignored');
+});
+Route::view('/comments-view', 'comments.sh');
+Route::resource('comments', CommentController::class);
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return routesSource;
+        }
+
+        if (path === commentControllerPath) {
+          return `<?php
+namespace App\\Http\\Controllers\\communication;
+
+final class CommentController
+{
+    public function store(): void
+    {
+    }
+
+    public function show(): void
+    {
+    }
+
+    protected function shadow(): void
+    {
+    }
+
+    private function stale(): void
+    {
+    }
+
+    public static function status(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "comments.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "'st"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName:
+          "App\\Http\\Controllers\\communication\\CommentController",
+        name: "store",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "'sto"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName:
+          "App\\Http\\Controllers\\communication\\CommentController",
+        name: "store",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "'sh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName:
+          "App\\Http\\Controllers\\communication\\CommentController",
+        name: "show",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "'sho"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName:
+          "App\\Http\\Controllers\\communication\\CommentController",
+        name: "show",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "'notAction"),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        routesSource,
+        positionAfter(routesSource, "comments.sh"),
+      ),
+    ).resolves.toEqual([]);
+  });
+
   it("suggests Laravel named routes inside route helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";

@@ -10,6 +10,7 @@ import {
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
+  phpLaravelRouteActionMethodCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpNamedTypePosition,
@@ -1623,6 +1624,102 @@ Route::controller(CommentController::class)->group(function () {
       kind: "classIdentifier",
       name: "notAction",
     });
+  });
+
+  it("detects Laravel route action method completion contexts", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+
+Route::post('/comments', [CommentController::class, 'st']);
+Route::post(uri: '/named-comments', action: [CommentController::class, 'sto']);
+Route::controller(CommentController::class)->group(function () {
+    Route::get('/comments/{comment}', 'sh');
+    Route::get(action: 'sho', uri: '/named-action');
+});
+`;
+
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "'st"),
+      ),
+    ).toEqual({
+      className: "CommentController",
+      prefix: "st",
+    });
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "'sto"),
+      ),
+    ).toEqual({
+      className: "CommentController",
+      prefix: "sto",
+    });
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "'sh"),
+      ),
+    ).toEqual({
+      className: "CommentController",
+      prefix: "sh",
+    });
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "'sho"),
+      ),
+    ).toEqual({
+      className: "CommentController",
+      prefix: "sho",
+    });
+  });
+
+  it("keeps Laravel non-action route strings out of action method completion contexts", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+
+Route::view('/comments', 'comments.show');
+Route::redirect('/old-comments', '/comments');
+Route::resource('comments', CommentController::class);
+Route::post('/comments', [CommentController::class, 'store']);
+Route::post('/comments', ['controller' => CommentController::class, 'method' => 'store']);
+Route::controller(CommentController::class)->group(function () {
+    Route::get(label: 'notAction', uri: '/ignored');
+});
+`;
+
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "comments.show"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "/comments');"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "Route::resource('comments"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "method' => 'store"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionMethodCompletionContextAt(
+        routeSource,
+        cursorAfter(routeSource, "'notAction"),
+      ),
+    ).toBeNull();
   });
 
   it("resolves imports and typed request parameters", () => {
