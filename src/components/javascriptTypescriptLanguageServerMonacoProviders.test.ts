@@ -17,6 +17,14 @@ import {
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 
+const JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES = [
+  "javascript",
+  "typescript",
+  "javascriptreact",
+  "typescriptreact",
+  "vue",
+];
+
 describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
   it("registers VS Code-like navigation, actions, rename and formatting providers", () => {
     const monaco = createMonaco();
@@ -63,13 +71,36 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       (monaco.languages.registerCompletionItemProvider as any).mock.calls.map(
         ([language]: [string]) => language,
       ),
-    ).toEqual([
-      "javascript",
-      "typescript",
-      "javascriptreact",
-      "typescriptreact",
-      "vue",
-    ]);
+    ).toEqual(JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES);
+    for (const registerProvider of [
+      monaco.languages.registerHoverProvider,
+      monaco.languages.registerCompletionItemProvider,
+      monaco.languages.registerDeclarationProvider,
+      monaco.languages.registerDefinitionProvider,
+      monaco.languages.registerImplementationProvider,
+      monaco.languages.registerTypeDefinitionProvider,
+      monaco.languages.registerSignatureHelpProvider,
+      monaco.languages.registerReferenceProvider,
+      monaco.languages.registerRenameProvider,
+      monaco.languages.registerCodeActionProvider,
+      monaco.languages.registerDocumentFormattingEditProvider,
+      monaco.languages.registerDocumentRangeFormattingEditProvider,
+      monaco.languages.registerOnTypeFormattingEditProvider,
+      monaco.languages.registerInlayHintsProvider,
+      monaco.languages.registerDocumentHighlightProvider,
+      monaco.languages.registerDocumentSymbolProvider,
+      monaco.languages.registerLinkProvider,
+      monaco.languages.registerFoldingRangeProvider,
+      monaco.languages.registerSelectionRangeProvider,
+      monaco.languages.registerLinkedEditingRangeProvider,
+      monaco.languages.registerCodeLensProvider,
+      monaco.languages.registerDocumentSemanticTokensProvider,
+      monaco.languages.registerDocumentRangeSemanticTokensProvider,
+    ]) {
+      expect(providerLanguages(registerProvider)).toEqual(
+        JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES,
+      );
+    }
     expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls[0][1]
         .triggerCharacters,
@@ -188,9 +219,19 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.suggestions[0]).not.toHaveProperty("insertTextRules");
   });
 
-  it("routes Vue completion, hover and definition requests through the JS/TS gateway using the Vue document path", async () => {
+  it("routes Vue completion, hover, definition and code action requests through the JS/TS gateway using the Vue document path", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: null,
+          edit: null,
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Add missing import",
+        },
+      ],
       completion: {
         isIncomplete: false,
         items: [
@@ -245,6 +286,9 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const definitionProvider = (
       monaco.languages.registerDefinitionProvider as any
     ).mock.calls[4][1];
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[4][1];
 
     await completionProvider.provideCompletionItems(model, position, {
       triggerCharacter: ".",
@@ -256,6 +300,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     await definitionProvider.provideDefinition(model, position, {
       isCancellationRequested: false,
     });
+    await codeActionProvider.provideCodeActions(
+      model,
+      new monaco.Range(2, 1, 2, 8),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
 
     const expectedDocument = {
       character: 7,
@@ -272,6 +324,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
     expect(gateway.hover).toHaveBeenCalledWith("/project", expectedDocument);
     expect(gateway.definition).toHaveBeenCalledWith("/project", expectedDocument);
+    expect(gateway.codeActions).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/App.vue",
+      range(1, 0, 1, 7),
+      {
+        diagnostics: [],
+        only: ["quickfix"],
+        triggerKind: null,
+      },
+    );
   });
 
   it("does not request TypeScript completions from a rootless runtime status", async () => {
@@ -5702,6 +5764,12 @@ function createDeferred<T>(): {
       resolveValue?.(value);
     },
   };
+}
+
+function providerLanguages(registerProvider: unknown): string[] {
+  return (registerProvider as { mock: { calls: Array<[string]> } }).mock.calls.map(
+    ([language]) => language,
+  );
 }
 
 async function flushMicrotasks(ticks = 8): Promise<void> {

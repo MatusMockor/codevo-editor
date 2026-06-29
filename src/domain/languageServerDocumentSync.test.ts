@@ -27,6 +27,17 @@ describe("createLanguageServerTextDocument", () => {
       version: 4,
     });
   });
+
+  it("syncs Vue single file components with the vue language id", () => {
+    const vueDocument = document("vue", "/project/src/App.vue");
+
+    expect(createLanguageServerTextDocument(vueDocument, 7)).toEqual({
+      languageId: "vue",
+      path: "/project/src/App.vue",
+      text: "<?php echo 1;",
+      version: 7,
+    });
+  });
 });
 
 describe("isJavaScriptTypeScriptLanguageServerDocument", () => {

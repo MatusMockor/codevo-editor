@@ -607,6 +607,42 @@ mod tests {
     }
 
     #[test]
+    fn vue_typescript_plugin_detection_stays_scoped_to_workspace_root() {
+        let root_a = create_temp_dir("workspace-a-vue-typescript-plugin");
+        let root_b = create_temp_dir("workspace-b-vue-typescript-plugin");
+        let plugin_dir_a = root_a
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin");
+        let plugin_dir_b = root_b
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin");
+        fs::create_dir_all(&plugin_dir_a).expect("create root a vue plugin dir");
+        fs::create_dir_all(&plugin_dir_b).expect("create root b vue plugin dir");
+        fs::write(plugin_dir_a.join("package.json"), "{}")
+            .expect("write root a plugin package.json");
+        fs::write(plugin_dir_b.join("package.json"), "{}")
+            .expect("write root b plugin package.json");
+
+        let plugin_a = find_vue_typescript_plugin(Some(&root_a)).expect("root a vue plugin");
+        let plugin_b = find_vue_typescript_plugin(Some(&root_b)).expect("root b vue plugin");
+
+        assert_eq!(plugin_a.path, plugin_dir_a.to_string_lossy().to_string());
+        assert_eq!(plugin_b.path, plugin_dir_b.to_string_lossy().to_string());
+        assert!(matches!(
+            plugin_a.source,
+            ToolSource::WorkspaceNodeModulesBin
+        ));
+        assert!(matches!(
+            plugin_b.source,
+            ToolSource::WorkspaceNodeModulesBin
+        ));
+        fs::remove_dir_all(root_a).expect("cleanup root a");
+        fs::remove_dir_all(root_b).expect("cleanup root b");
+    }
+
+    #[test]
     fn vue_typescript_plugin_keeps_bundled_provenance_source() {
         let bundled = create_temp_dir("bundled-vue-typescript-plugin");
         let plugin_dir = bundled.join("@vue").join("typescript-plugin");

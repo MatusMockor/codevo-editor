@@ -1185,7 +1185,7 @@ fn is_launchable_file(path: &Path) -> bool {
 mod tests {
     use super::{
         file_uri, InitializeRequestFactory, JavaScriptTypeScriptLanguageServerPlanner,
-        LanguageServerPlanStatus, LanguageServerPlanner, LanguageServerProvider,
+        JsonRpcRequest, LanguageServerPlanStatus, LanguageServerPlanner, LanguageServerProvider,
         PhpBackendPreference, PhpInterpreterLauncher, PhpLanguageServerSettings, PhpLauncher,
         PhpactorInitializeRequestFactory, PhpactorLanguageServerPlanner,
         TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
@@ -1944,6 +1944,51 @@ mod tests {
     }
 
     #[test]
+    fn javascript_typescript_plan_keeps_vue_typescript_plugin_scoped_to_project_root() {
+        let root_a = create_temp_dir("lsp-typescript-vue-plugin-root-a");
+        let root_b = create_temp_dir("lsp-typescript-vue-plugin-root-b");
+        let plugin_location_a = root_a
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin")
+            .to_string_lossy()
+            .to_string();
+        let plugin_location_b = root_b
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin")
+            .to_string_lossy()
+            .to_string();
+        let planner = TypeScriptLanguageServerPlanner::new();
+
+        let plan_a = planner.plan(
+            &root_a,
+            &tools_with_vue_typescript_plugin(&root_a, &plugin_location_a),
+            TypeScriptLanguageServerSettings::default(),
+        );
+        let plan_b = planner.plan(
+            &root_b,
+            &tools_with_vue_typescript_plugin(&root_b, &plugin_location_b),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        assert_vue_typescript_plugin_location(
+            &plan_a
+                .initialize_request
+                .expect("root a initialize request"),
+            &plugin_location_a,
+        );
+        assert_vue_typescript_plugin_location(
+            &plan_b
+                .initialize_request
+                .expect("root b initialize request"),
+            &plugin_location_b,
+        );
+        fs::remove_dir_all(root_a).expect("cleanup root a");
+        fs::remove_dir_all(root_b).expect("cleanup root b");
+    }
+
+    #[test]
     fn javascript_typescript_plan_omits_plugins_when_vue_plugin_missing() {
         let root = create_temp_dir("lsp-typescript-without-vue-plugin");
         fs::write(root.join("package.json"), "{}").expect("write package.json");
@@ -2231,6 +2276,19 @@ mod tests {
             source: ToolSource::WorkspaceNodeModulesBin,
         });
         tools
+    }
+
+    fn assert_vue_typescript_plugin_location(request: &JsonRpcRequest, location: &str) {
+        let plugins = request.params["initializationOptions"]["plugins"]
+            .as_array()
+            .expect("plugins array");
+        let vue_plugin = plugins
+            .iter()
+            .find(|plugin| plugin["name"] == "@vue/typescript-plugin")
+            .expect("vue plugin entry");
+
+        assert_eq!(vue_plugin["location"], location);
+        assert_eq!(vue_plugin["languages"], json!(["vue"]));
     }
 
     fn create_temp_dir(prefix: &str) -> std::path::PathBuf {
