@@ -18386,10 +18386,20 @@ export function useWorkbenchController(
         return null;
       }
 
+      const parameters = phpMethodParameters(method.parameters);
+      const namedArgumentIndex = signatureContext.argumentName
+        ? parameters.findIndex(
+            (parameter) => parameter.name === `$${signatureContext.argumentName}`,
+          )
+        : -1;
+
       return {
-        argumentIndex: signatureContext.argumentIndex,
+        argumentIndex:
+          namedArgumentIndex >= 0
+            ? namedArgumentIndex
+            : signatureContext.argumentIndex,
         method: phpMethodCompletionWithStableMetadata(method),
-        parameters: phpMethodParameters(method.parameters),
+        parameters,
       };
     },
     [

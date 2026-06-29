@@ -1487,6 +1487,52 @@ class Controller
     });
   });
 
+  it("detects PHP named arguments in method signature contexts", () => {
+    const source = `<?php
+class Controller
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->get(default: null, key: 'id'
+    }
+}
+`;
+
+    expect(
+      phpMethodSignatureContextAt(source, positionAfter(source, "key: 'id'")),
+    ).toEqual({
+      argumentIndex: 1,
+      argumentName: "key",
+      className: null,
+      methodName: "get",
+      receiverExpression: "$request",
+      variableName: "request",
+    });
+  });
+
+  it("ignores nested named arguments when detecting the current argument name", () => {
+    const source = `<?php
+class Controller
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->get(default: route(name: 'comments.show', parameters: ['id' => $id]), key:
+    }
+}
+`;
+
+    expect(
+      phpMethodSignatureContextAt(source, positionAfter(source, "key:")),
+    ).toEqual({
+      argumentIndex: 1,
+      argumentName: "key",
+      className: null,
+      methodName: "get",
+      receiverExpression: "$request",
+      variableName: "request",
+    });
+  });
+
   it("detects nullsafe method signature context", () => {
     const source = "<?php\n$user?->setName(";
 

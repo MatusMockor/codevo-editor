@@ -38,6 +38,7 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
         definitions: true,
         diagnostics: true,
         hovers: true,
+        onTypeFormattingEdits: true,
         rename: true,
       }),
     );
@@ -78,6 +79,7 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
         completionItems: true,
         diagnostics: false,
         hovers: true,
+        onTypeFormattingEdits: true,
       }),
     );
   });
@@ -107,6 +109,7 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
         completionItems: true,
         diagnostics: true,
         hovers: true,
+        onTypeFormattingEdits: true,
       }),
     );
     expect(javascriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
@@ -114,11 +117,12 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
         completionItems: true,
         diagnostics: true,
         hovers: true,
+        onTypeFormattingEdits: true,
       }),
     );
   });
 
-  it("disables Monaco built-in JS/TS providers and diagnostics while the matching-root managed runtime owns them", () => {
+  it("keeps on-type formatting but disables Monaco semantic JS/TS providers and diagnostics while the matching-root managed runtime owns them", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
@@ -143,7 +147,7 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
       documentSymbols: false,
       hovers: false,
       inlayHints: false,
-      onTypeFormattingEdits: false,
+      onTypeFormattingEdits: true,
       references: false,
       rename: false,
       signatureHelp: false,

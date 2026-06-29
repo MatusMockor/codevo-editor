@@ -26141,6 +26141,50 @@ class Request
       ],
     });
 
+    const namedDefaultSignatureSource = controllerSource.replace(
+      "$request->get",
+      "$request->get(default: null",
+    );
+
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        namedDefaultSignatureSource,
+        positionAfter(namedDefaultSignatureSource, "default: null"),
+      ),
+    ).resolves.toMatchObject({
+      argumentIndex: 1,
+      method: {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+      },
+      parameters: [
+        { name: "$key" },
+        { name: "$default" },
+      ],
+    });
+
+    const namedKeySignatureSource = controllerSource.replace(
+      "$request->get",
+      "$request->get(default: null, key: 'id'",
+    );
+
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        namedKeySignatureSource,
+        positionAfter(namedKeySignatureSource, "key: 'id'"),
+      ),
+    ).resolves.toMatchObject({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+      },
+      parameters: [
+        { name: "$key" },
+        { name: "$default" },
+      ],
+    });
+
     const inlaySource = controllerSource.replace(
       "$request->get",
       "$request->get($id, 5)",

@@ -1232,7 +1232,7 @@ function f()
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
-  // --- false-positive guards: destructuring / foreach key-value ---
+  // --- false-positive guards: destructuring ---
 
   it("does not flag list()/[] destructuring assignment targets", () => {
     const source = `<?php
@@ -1260,12 +1260,77 @@ function f($pair)
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
-  it("does not flag an unused foreach value (may be intentional)", () => {
+  // --- foreach bindings ---
+
+  it("flags an unread foreach value binding", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $value) {
+        echo 'item';
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$value".',
+    ]);
+  });
+
+  it("flags unread foreach key and value bindings", () => {
     const source = `<?php
 
 function f($items)
 {
     foreach ($items as $key => $value) {
+        echo 'item';
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$key".',
+      'Unused variable "$value".',
+    ]);
+  });
+
+  it("flags only the unread foreach binding when the other binding is read", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $key => $value) {
+        echo $key;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$value".',
+    ]);
+  });
+
+  it("does not flag foreach bindings that are read in the loop body", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $key => $value) {
+        echo $key . $value;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("does not flag a foreach by-reference value in a key-value loop", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $key => &$value) {
         echo $key;
     }
 }
@@ -1398,6 +1463,24 @@ function f($obj)
 `;
     const cursor = offsetOf(source, "$value");
 
+    expect(phpUnusedVariableRemovalAt(source, cursor)).toBeNull();
+  });
+
+  it("does NOT offer a remove for an unused foreach binding", () => {
+    const source = `<?php
+
+function f($items)
+{
+    foreach ($items as $value) {
+        echo 'item';
+    }
+}
+`;
+    const cursor = offsetOf(source, "$value");
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$value".',
+    ]);
     expect(phpUnusedVariableRemovalAt(source, cursor)).toBeNull();
   });
 

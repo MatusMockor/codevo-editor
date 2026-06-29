@@ -55,6 +55,7 @@ export interface PhpMethodParameter {
 }
 
 export interface PhpMethodSignatureContext {
+  argumentName?: string;
   argumentIndex: number;
   className: string | null;
   methodName: string;
@@ -143,6 +144,7 @@ export function phpMethodSignatureContextAt(
   }
 
   return {
+    ...phpArgumentName(context.argumentsSource),
     argumentIndex: phpArgumentIndex(context.argumentsSource),
     className: context.className,
     methodName: context.methodName,
@@ -783,6 +785,116 @@ function phpArgumentIndex(argumentsSource: string): number {
   }
 
   return argumentIndex;
+}
+
+function phpArgumentName(
+  argumentsSource: string,
+): Pick<PhpMethodSignatureContext, "argumentName"> {
+  const segmentStart = phpCurrentArgumentSegmentStart(argumentsSource);
+  const argumentSegment = argumentsSource.slice(segmentStart);
+  const colonOffset = phpTopLevelNamedArgumentColonOffset(argumentSegment);
+
+  if (colonOffset < 0) {
+    return {};
+  }
+
+  const name = argumentSegment.slice(0, colonOffset).trim();
+
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { argumentName: name } : {};
+}
+
+function phpCurrentArgumentSegmentStart(argumentsSource: string): number {
+  let segmentStart = 0;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < argumentsSource.length; index += 1) {
+    const character = argumentsSource[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      segmentStart = index + 1;
+    }
+  }
+
+  return segmentStart;
+}
+
+function phpTopLevelNamedArgumentColonOffset(argumentSegment: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < argumentSegment.length; index += 1) {
+    const character = argumentSegment[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== ":" || depth !== 0) {
+      continue;
+    }
+
+    if (argumentSegment[index + 1] === ":") {
+      index += 1;
+      continue;
+    }
+
+    return index;
+  }
+
+  return -1;
 }
 
 function phpActiveMethodSignatureCallContext(

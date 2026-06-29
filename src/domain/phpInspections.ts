@@ -531,9 +531,10 @@ function hasDynamicDispatch(masked: string): boolean {
 }
 
 /**
- * One conservatively-detected unused local variable: a `$name = <rhs>;`
- * assignment in a function/method body whose `$name` is never referenced again
- * anywhere in that body (in code or string interpolation).
+ * One conservatively-detected unused local variable binding in a
+ * function/method body whose `$name` is never referenced again anywhere in that
+ * body (in code or string interpolation). Assignment bindings may be removable
+ * when their RHS is safe; foreach bindings are warning-only.
  */
 interface UnusedVariable {
   /** Character offset of the `$` of the assignment-target variable. */
@@ -766,12 +767,12 @@ function collectUnusedVariablesInBody(
 
   const byRefNames = collectByRefNames(structural, body);
 
-  for (const assignment of findAssignments(structural, body)) {
-    if (NEVER_UNUSED_VARIABLES.has(assignment.name)) {
+  for (const binding of findVariableBindings(structural, body)) {
+    if (NEVER_UNUSED_VARIABLES.has(binding.name)) {
       continue;
     }
 
-    if (byRefNames.has(assignment.name)) {
+    if (byRefNames.has(binding.name)) {
       continue;
     }
 
@@ -780,14 +781,14 @@ function collectUnusedVariablesInBody(
         structural,
         interpolated,
         body,
-        assignment.name,
-        assignment.nameOffset,
+        binding.name,
+        binding.nameOffset,
       )
     ) {
       continue;
     }
 
-    results.push(assignment);
+    results.push(binding);
   }
 }
 
@@ -796,6 +797,16 @@ interface AssignmentSite {
   nameOffset: number;
   removable: boolean;
   statementEnd: number;
+}
+
+function findVariableBindings(
+  structural: string,
+  body: FunctionBodySpan,
+): AssignmentSite[] {
+  return [
+    ...findAssignments(structural, body),
+    ...findForeachBindings(structural, body),
+  ];
 }
 
 /**
@@ -841,6 +852,200 @@ function findAssignments(
   }
 
   return assignments;
+}
+
+/**
+ * Every simple non-reference `foreach (... as $value)` or
+ * `foreach (... as $key => $value)` binding inside a body. These are
+ * warning-only because deleting or rewriting a foreach binding safely would
+ * require broader control-flow and syntax transforms than this lightweight
+ * inspection owns.
+ */
+function findForeachBindings(
+  structural: string,
+  body: FunctionBodySpan,
+): AssignmentSite[] {
+  const bindings: AssignmentSite[] = [];
+  const region = structural.slice(body.openBrace + 1, body.closeBrace);
+  const base = body.openBrace + 1;
+  const pattern = /\bforeach\b/g;
+
+  for (const match of region.matchAll(pattern)) {
+    const keywordOffset = base + (match.index ?? 0);
+    const parenOpen = nextNonWhitespaceOffset(
+      structural,
+      keywordOffset + "foreach".length,
+      body.closeBrace,
+    );
+
+    if (parenOpen === null || structural[parenOpen] !== "(") {
+      continue;
+    }
+
+    const parenClose = matchingPairOffset(structural, parenOpen, "(", ")");
+
+    if (parenClose === null || parenClose > body.closeBrace) {
+      continue;
+    }
+
+    bindings.push(...readForeachBindings(structural, parenOpen, parenClose));
+  }
+
+  return bindings;
+}
+
+function readForeachBindings(
+  structural: string,
+  parenOpen: number,
+  parenClose: number,
+): AssignmentSite[] {
+  const asOffset = topLevelAsOffset(structural, parenOpen + 1, parenClose);
+
+  if (asOffset === null) {
+    return [];
+  }
+
+  const bindingStart = asOffset + "as".length;
+  const arrowOffset = topLevelArrowOffset(structural, bindingStart, parenClose);
+
+  if (arrowOffset === null) {
+    const value = readForeachVariableBinding(
+      structural,
+      bindingStart,
+      parenClose,
+    );
+
+    return value ? [value] : [];
+  }
+
+  const key = readForeachVariableBinding(structural, bindingStart, arrowOffset);
+  const value = readForeachVariableBinding(
+    structural,
+    arrowOffset + "=>".length,
+    parenClose,
+  );
+  const bindings: AssignmentSite[] = [];
+
+  if (key) {
+    bindings.push(key);
+  }
+
+  if (value) {
+    bindings.push(value);
+  }
+
+  return bindings;
+}
+
+function readForeachVariableBinding(
+  structural: string,
+  start: number,
+  end: number,
+): AssignmentSite | null {
+  let index = start;
+
+  while (index < end && isInlineWhitespace(structural[index])) {
+    index += 1;
+  }
+
+  if (structural[index] === "&") {
+    return null;
+  }
+
+  const match = /^\$[A-Za-z_][A-Za-z0-9_]*/.exec(structural.slice(index, end));
+
+  if (!match) {
+    return null;
+  }
+
+  const name = match[0];
+  const afterName = index + name.length;
+
+  if (!/^[\s]*$/.test(structural.slice(afterName, end))) {
+    return null;
+  }
+
+  return {
+    name,
+    nameOffset: index,
+    removable: false,
+    statementEnd: afterName,
+  };
+}
+
+function topLevelAsOffset(
+  structural: string,
+  start: number,
+  end: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = structural[index];
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth -= 1;
+      continue;
+    }
+
+    if (
+      depth === 0 &&
+      structural.slice(index, index + 2).toLowerCase() === "as" &&
+      !isIdentifierCharacter(structural[index - 1]) &&
+      !isIdentifierCharacter(structural[index + 2])
+    ) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function topLevelArrowOffset(
+  structural: string,
+  start: number,
+  end: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = start; index < end - 1; index += 1) {
+    const character = structural[index];
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth -= 1;
+      continue;
+    }
+
+    if (depth === 0 && character === "=" && structural[index + 1] === ">") {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function nextNonWhitespaceOffset(
+  source: string,
+  start: number,
+  end: number,
+): number | null {
+  for (let index = start; index < end; index += 1) {
+    if (!isInlineWhitespace(source[index])) {
+      return index;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -1102,6 +1307,10 @@ function isInlineWhitespace(character: string | undefined): boolean {
     character === "\n" ||
     character === "\r"
   );
+}
+
+function isIdentifierCharacter(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z0-9_]/.test(character);
 }
 
 /**

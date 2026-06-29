@@ -18,6 +18,7 @@ export function configureTypescriptJavascriptDefaults(
   const managedLanguageServerActive =
     options.managedLanguageServerActive ?? false;
   const builtInProvidersEnabled = !managedLanguageServerActive;
+  const builtInOnTypeFormattingEnabled = true;
   const validationEnabled = options.validationEnabled ?? true;
   const builtInDiagnosticsEnabled =
     builtInProvidersEnabled && validationEnabled;
@@ -58,7 +59,7 @@ export function configureTypescriptJavascriptDefaults(
     documentSymbols: builtInProvidersEnabled,
     hovers: builtInProvidersEnabled,
     inlayHints: builtInProvidersEnabled,
-    onTypeFormattingEdits: builtInProvidersEnabled,
+    onTypeFormattingEdits: builtInOnTypeFormattingEnabled,
     references: builtInProvidersEnabled,
     rename: builtInProvidersEnabled,
     signatureHelp: builtInProvidersEnabled,
