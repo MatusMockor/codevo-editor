@@ -55,7 +55,10 @@ import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import type { PhpFileOutlineGateway } from "../domain/phpFileOutline";
+import {
+  emptyPhpFileOutline,
+  type PhpFileOutlineGateway,
+} from "../domain/phpFileOutline";
 import type { PhpTreeGateway } from "../domain/phpTree";
 import type {
   ProjectSymbolSearchGateway,
@@ -12265,6 +12268,90 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().includedGitChangePaths.size).toBe(0);
   });
 
+  it("drops delayed Git status results after switching workspaces", async () => {
+    const workspaceAStatus = createDeferred<ReturnType<typeof emptyGitStatus>>();
+    const workspaceAChange: GitChangedFile = {
+      ...gitChangedFile("src/WorkspaceA.php", false),
+      path: "/workspace-a/src/WorkspaceA.php",
+    };
+    const workspaceBChange: GitChangedFile = {
+      ...gitChangedFile("src/WorkspaceB.php", false),
+      path: "/workspace-b/src/WorkspaceB.php",
+    };
+    const workspaceBStatus = {
+      branch: "workspace-b",
+      changes: [workspaceBChange],
+      isRepository: true,
+      rootPath: "/workspace-b",
+    };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn((rootPath) => {
+      if (rootPath === "/workspace-a") {
+        return workspaceAStatus.promise;
+      }
+
+      return Promise.resolve(workspaceBStatus);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await vi.waitFor(() => {
+      expect(gitGateway.getStatus).toHaveBeenCalledWith("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().gitStatus.branch).toBe("workspace-b");
+    expect(getWorkbench().gitStatus.changes).toEqual([workspaceBChange]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    await act(async () => {
+      void getWorkbench().refreshGitStatus();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(gitGateway.getStatus).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().gitStatus.branch).toBe("workspace-b");
+    expect(getWorkbench().gitStatus.changes).toEqual([workspaceBChange]);
+
+    workspaceAStatus.resolve({
+      branch: "workspace-a",
+      changes: [workspaceAChange],
+      isRepository: true,
+      rootPath: "/workspace-a",
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().gitStatus.branch).toBe("workspace-b");
+    expect(getWorkbench().gitStatus.changes).toEqual([workspaceBChange]);
+    expect(getWorkbench().gitStatus.branch).not.toBe("workspace-a");
+    expect(getWorkbench().gitStatus.changes).not.toContainEqual(workspaceAChange);
+  });
+
   it("keeps post-commit status visible and reports when push fails", async () => {
     const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
@@ -18712,6 +18799,93 @@ describe("useWorkbenchController preview tabs", () => {
     expect(method?.visibility).toBe("public");
     expect(method?.returnType).toBe("void");
     expect(method?.parameters).toEqual([{ name: "$request", type: "Request" }]);
+  });
+
+  it("drops delayed current PHP file structure outlines after switching project tabs", async () => {
+    const workspaceAPath = "/workspace-a/app/UserService.php";
+    const workspaceBPath = "/workspace-b/app/OrderService.php";
+    const workspaceAOutline =
+      createDeferred<
+        Awaited<ReturnType<PhpFileOutlineGateway["parsePhpFileOutline"]>>
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === workspaceAPath
+          ? "<?php\nclass UserService { public function staleWorkspaceA() {} }\n"
+          : "<?php\nclass OrderService {}\n",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    dependencies.phpFileOutlineGateway.parsePhpFileOutline = vi.fn(
+      async (path) => {
+        if (path === workspaceAPath) {
+          return workspaceAOutline.promise;
+        }
+
+        return emptyPhpFileOutline();
+      },
+    );
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(workspaceAPath, "UserService.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+      ).toHaveBeenCalledWith(
+        workspaceAPath,
+        expect.stringContaining("staleWorkspaceA"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(workspaceBPath, "OrderService.php"));
+    });
+    await flushAsyncTurns();
+
+    workspaceAOutline.resolve({
+      nodes: [
+        {
+          children: [],
+          column: 1,
+          fullyQualifiedName: "UserService",
+          id: "stale-workspace-a-service",
+          kind: "class",
+          label: "StaleWorkspaceAService",
+          lineNumber: 1,
+          path: workspaceAPath,
+          relativePath: "app/UserService.php",
+        },
+      ],
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).toBe(workspaceBPath);
+    expect(getWorkbench().fileStructureOutline).toBeNull();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().activePath).toBe(workspaceAPath);
+    expect(getWorkbench().fileStructureOutline).toBeNull();
   });
 
   it("stops reading stale inherited PHP file structure candidates after switching project tabs", async () => {
