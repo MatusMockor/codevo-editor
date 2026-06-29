@@ -39974,6 +39974,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -39987,6 +39988,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "popular",
         parameters: "",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40026,6 +40028,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40130,6 +40133,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40183,6 +40187,7 @@ class Builder
       {
         declaringClassName: "App\\Models\\Album",
         isStatic: true,
+        kind: "scope",
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
@@ -40198,6 +40203,7 @@ class Builder
       method: {
         declaringClassName: "App\\Models\\Album",
         isStatic: true,
+        kind: "scope",
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
@@ -40213,6 +40219,7 @@ class Builder
       {
         declaringClassName: "App\\Models\\Album",
         isStatic: true,
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40228,6 +40235,7 @@ class Builder
       method: {
         declaringClassName: "App\\Models\\Album",
         isStatic: true,
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40318,6 +40326,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -40743,6 +40752,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Track",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40782,6 +40792,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Track",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40795,6 +40806,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Post",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40808,6 +40820,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Artist",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40873,6 +40886,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40912,6 +40926,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -40951,6 +40966,7 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Album",
+        kind: "scope",
         name: "published",
         parameters: "",
         returnType: "Builder",
@@ -42139,6 +42155,7 @@ class Comment extends Model
         },
         {
           declaringClassName: "App\\Models\\Comment",
+          kind: "scope",
           name: "visible",
           parameters: "bool $pinned = false",
           returnType: "Builder",
@@ -42201,6 +42218,147 @@ class Comment extends Model
         source: "phpactor",
       },
     ]);
+  });
+
+  it("surfaces derived local scopes as their own category without raw or duplicate members", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ReportController.php";
+    const reportRunPath = "/workspace/app/Models/ReportRun.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\ReportRun;
+
+class ReportController
+{
+    public function index(): void
+    {
+        /** @var ReportRun $report */
+        $report->
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === reportRunPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasOne;
+
+class ReportRun extends Model
+{
+    public string $status;
+
+    public function owner(): HasOne
+    {
+        return $this->hasOne(User::class);
+    }
+
+    public function process(): void {}
+
+    public function scopeInFlight(Builder $query): Builder {}
+
+    #[Scope]
+    protected function failed(Builder $query): void {}
+
+    public function scopeStale(Builder $query): Builder {}
+
+    public function scopeStatus(Builder $query): Builder {}
+
+    public function scopeOwner(Builder $query): Builder {}
+
+    public function scopeProcess(Builder $query): Builder {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "ReportController.php"));
+    });
+
+    const completions = await getWorkbench().providePhpMethodCompletions(
+      controllerSource,
+      positionAfter(controllerSource, "$report->"),
+    );
+    const byName = (name: string) =>
+      completions.filter((completion) => completion.name === name);
+
+    // Derived scopes (classic `scopeX` and `#[Scope]`) carry `kind: "scope"` so
+    // the ordering layer can group them into their own category.
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "inFlight",
+          parameters: "",
+          returnType: "Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "failed",
+          parameters: "",
+          returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "stale",
+          parameters: "",
+          returnType: "Builder",
+        },
+      ]),
+    );
+
+    // No raw `scopeX` source method leaks alongside the derived scope.
+    expect(
+      completions.filter((completion) =>
+        completion.name.toLowerCase().startsWith("scope"),
+      ),
+    ).toEqual([]);
+
+    // The `#[Scope]` source method `failed` is represented exactly once - the
+    // derived scope - never duplicated by the raw attributed method.
+    expect(byName("failed")).toHaveLength(1);
+    expect(byName("inFlight")).toHaveLength(1);
+    expect(byName("stale")).toHaveLength(1);
+
+    // A scope whose name collides with a property keeps both, each in its own
+    // kind, and still drops the raw `scopeX` source.
+    expect(byName("status").map((completion) => completion.kind).sort()).toEqual([
+      "property",
+      "scope",
+    ]);
+
+    // A scope whose name collides with a relation or a plain method survives the
+    // collision: the derived scope is present exactly once (the raw `scopeX`
+    // source is already proven dropped above) and the colliding member remains.
+    expect(byName("owner").filter((completion) => completion.kind === "scope")).toHaveLength(1);
+    expect(byName("owner").some((completion) => completion.kind !== "scope")).toBe(true);
+    expect(byName("process").filter((completion) => completion.kind === "scope")).toHaveLength(1);
+    expect(
+      byName("process").some((completion) => (completion.kind ?? "method") === "method"),
+    ).toBe(true);
   });
 
   it("uses filename lookup when Composer PSR-4 points at a missing model path", async () => {

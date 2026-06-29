@@ -1923,17 +1923,36 @@ export function phpLaravelScopeMethodName(scopeName: string): string | null {
   return `scope${normalizedScopeName[0]?.toUpperCase() ?? ""}${normalizedScopeName.slice(1)}`;
 }
 
+function phpLaravelLocalScopeNameForMethod(
+  method: PhpMethodCompletion,
+): string | null {
+  if (method.kind === "property" || method.isStatic) {
+    return null;
+  }
+
+  return method.kind === "scope"
+    ? method.name
+    : laravelLocalScopeName(method.name);
+}
+
+/**
+ * Reports whether a member is a raw local-scope source method - either the
+ * classic `scopeX` convention or a `#[Scope]`-attributed method - that the
+ * derived scope completion replaces. Callers drop these from the receiver's
+ * own members so the canonical derived scope is the only representation.
+ */
+export function isPhpLaravelLocalScopeSourceMethod(
+  method: PhpMethodCompletion,
+): boolean {
+  return phpLaravelLocalScopeNameForMethod(method) !== null;
+}
+
 export function phpLaravelLocalScopeCompletionsFromMethods(
   methods: PhpMethodCompletion[],
 ): PhpMethodCompletion[] {
   return dedupePhpMembers(
     methods.flatMap((method) => {
-      if (method.kind === "property" || method.isStatic) {
-        return [];
-      }
-
-      const scopeName =
-        method.kind === "scope" ? method.name : laravelLocalScopeName(method.name);
+      const scopeName = phpLaravelLocalScopeNameForMethod(method);
 
       if (!scopeName) {
         return [];
@@ -1942,6 +1961,7 @@ export function phpLaravelLocalScopeCompletionsFromMethods(
       return [
         {
           declaringClassName: method.declaringClassName,
+          kind: "scope" as const,
           name: scopeName,
           parameters: splitPhpParameterList(method.parameters).slice(1).join(", "),
           returnType:

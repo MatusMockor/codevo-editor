@@ -17,6 +17,7 @@ import {
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
   isLaravelEloquentBuilderTerminalModelMethod,
+  isPhpLaravelLocalScopeSourceMethod,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
@@ -1814,6 +1815,7 @@ class Comment
     expect(phpLaravelLocalScopeCompletionsFromMethods(methods)).toEqual([
       {
         declaringClassName: "Comment",
+        kind: "scope",
         name: "published",
         parameters: "bool $strict = true",
         returnType: "Builder",
@@ -1821,6 +1823,7 @@ class Comment
       },
       {
         declaringClassName: "Comment",
+        kind: "scope",
         name: "recentlyCreated",
         parameters: "int $days = 7",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -1828,6 +1831,7 @@ class Comment
       },
       {
         declaringClassName: "Comment",
+        kind: "scope",
         name: "popular",
         parameters: "bool $featured = false",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
@@ -1860,6 +1864,7 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "scope",
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
@@ -1868,12 +1873,109 @@ class Comment
       {
         declaringClassName: "Comment",
         isStatic: true,
+        kind: "scope",
         name: "popular",
         parameters: "",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
         visibility: "protected",
       },
     ]);
+  });
+
+  it("places derived local scopes in the scope category after plain methods", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+
+class ReportRun
+{
+    public string $status;
+
+    public function getStatus(): string {}
+
+    public function scopeInFlight(Builder $query): Builder {}
+    #[Scope]
+    protected function failed(Builder $query): void {}
+}
+`,
+      "App\\Models\\ReportRun",
+    );
+
+    // The merge layer replaces the raw scope source methods with the derived
+    // scope completions; mirror that here before checking category placement.
+    const baseMembers = methods.filter(
+      (method) => !isPhpLaravelLocalScopeSourceMethod(method),
+    );
+    const derivedScopes = phpLaravelLocalScopeCompletionsFromMethods(methods);
+
+    expect(derivedScopes).toEqual([
+      {
+        declaringClassName: "App\\Models\\ReportRun",
+        kind: "scope",
+        name: "inFlight",
+        parameters: "",
+        returnType: "Builder",
+        visibility: "public",
+      },
+      {
+        declaringClassName: "App\\Models\\ReportRun",
+        kind: "scope",
+        name: "failed",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        visibility: "protected",
+      },
+    ]);
+
+    // Raw `scopeInFlight` and the `#[Scope]` source method `failed` are dropped
+    // from the base members so only the derived scopes represent them.
+    expect(baseMembers.map((member) => member.name)).toEqual(["getStatus", "status"]);
+    expect(
+      baseMembers.some((member) => member.name === "scopeInFlight"),
+    ).toBe(false);
+
+    const ordered = orderPhpMemberCompletionsByCategory([
+      ...baseMembers,
+      ...derivedScopes,
+    ]);
+
+    expect(
+      ordered.map((member) => ({ kind: member.kind, name: member.name })),
+    ).toEqual([
+      { kind: "property", name: "status" },
+      { kind: undefined, name: "getStatus" },
+      { kind: "scope", name: "inFlight" },
+      { kind: "scope", name: "failed" },
+    ]);
+  });
+
+  it("flags raw scope source methods but not plain or static members", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+
+class ReportRun
+{
+    public function scopeInFlight(Builder $query): Builder {}
+    #[Scope]
+    protected function failed(Builder $query): void {}
+    public function plainMethod(): void {}
+    public static function scopeGlobalOnly(Builder $query): Builder {}
+}
+`,
+      "App\\Models\\ReportRun",
+    );
+
+    const sourceNames = methods
+      .filter((method) => isPhpLaravelLocalScopeSourceMethod(method))
+      .map((method) => method.name)
+      .sort();
+
+    // Static `scopeGlobalOnly` has no derived (non-static) scope replacement, so
+    // it must not be flagged as a source the merge would drop.
+    expect(sourceNames).toEqual(["failed", "scopeInFlight"]);
   });
 
   it("discovers same-source Laravel Eloquent builder macro completions", () => {

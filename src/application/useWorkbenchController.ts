@@ -270,6 +270,7 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
+  isPhpLaravelLocalScopeSourceMethod,
   phpLaravelCollectionModelTypeCandidate,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
@@ -18724,8 +18725,21 @@ export function useWorkbenchController(
         ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
         : [];
 
+      // When the receiver is the model itself, its own members include the raw
+      // scope source methods (`scopeX` / `#[Scope]`) that `localScopeMethods`
+      // already represents as canonical `kind: "scope"` completions. Drop the
+      // raw sources so each scope surfaces once, in its own category. Elsewhere
+      // we still strip bare `#[Scope]` source methods (which carry no derived
+      // replacement here) so they never leak as raw members.
+      const receiverMethodsForMerge =
+        localScopeModelType && localScopeModelType === resolvedReceiverType
+          ? receiverMethods.filter(
+              (method) => !isPhpLaravelLocalScopeSourceMethod(method),
+            )
+          : receiverMethods.filter((method) => method.kind !== "scope");
+
       return mergePhpMethodCompletions(
-        receiverMethods,
+        receiverMethodsForMerge,
         localScopeMethods,
         dynamicWhereMethods,
       );
@@ -31306,10 +31320,6 @@ function mergePhpMethodCompletions(
 
   for (const group of groups) {
     for (const completion of group) {
-      if (completion.kind === "scope") {
-        continue;
-      }
-
       const key = `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
 
       if (!completions.has(key)) {
