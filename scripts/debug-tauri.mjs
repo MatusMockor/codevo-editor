@@ -3,7 +3,14 @@ import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 
 const repoRoot = process.cwd();
-const devAppExecutable = path.join(
+const debugExecutable = path.join(
+  repoRoot,
+  "src-tauri",
+  "target",
+  "debug",
+  "mockor-editor",
+);
+const bundledDebugExecutable = path.join(
   repoRoot,
   "src-tauri",
   "target",
@@ -15,6 +22,10 @@ const devAppExecutable = path.join(
   "MacOS",
   "mockor-editor",
 );
+const devAppExecutables = [
+  debugExecutable,
+  bundledDebugExecutable,
+];
 
 let cleanedUp = false;
 let shuttingDown = false;
@@ -79,10 +90,18 @@ function cleanupDevAppProcesses() {
   }
   cleanedUp = true;
 
+  killDevAppProcesses();
+}
+
+function killDevAppProcesses() {
   const processes = listProcesses();
   const appPids = new Set(
     processes
-      .filter((processInfo) => processInfo.command.includes(devAppExecutable))
+      .filter((processInfo) =>
+        devAppExecutables.some((executable) =>
+          processInfo.command.includes(executable),
+        ),
+      )
       .map((processInfo) => processInfo.pid),
   );
 
@@ -104,7 +123,13 @@ function cleanupDevAppProcesses() {
   }, 750).unref();
 }
 
-const tauri = spawn("npm", ["run", "debug:tauri", "--"], {
+killDevAppProcesses();
+
+execFileSync("npm", ["run", "debug:build"], {
+  stdio: "inherit",
+});
+
+const tauri = spawn(bundledDebugExecutable, {
   stdio: "inherit",
 });
 

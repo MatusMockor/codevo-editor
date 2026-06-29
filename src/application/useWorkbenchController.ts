@@ -26770,6 +26770,7 @@ export function useWorkbenchController(
       id: "editor.findFileReferences",
       title: "Find File References",
       category: "Editor",
+      shortcut: shortcut("editor.findFileReferences"),
       isEnabled: () =>
         Boolean(
           activeDocument &&
@@ -27942,6 +27943,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.findFileReferences")) {
+        event.preventDefault();
+        void openFileReferencesPanel();
+        return;
+      }
+
       if (matches("editor.nextProblem")) {
         event.preventDefault();
         void goToNextProblem();
@@ -28059,6 +28066,7 @@ export function useWorkbenchController(
     openFileStructure,
     openRecentFilesSwitcher,
     openRecentLocationsPanel,
+    openFileReferencesPanel,
     openReferencesPanel,
     openSettingsPanel,
     openWorkspaceSymbols,
