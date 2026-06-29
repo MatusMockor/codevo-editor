@@ -18277,6 +18277,7 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
       expect.objectContaining({
         preferences: expect.objectContaining({
+          includeCompletionsWithSnippetText: true,
           importModuleSpecifierEnding: "minimal",
           importModuleSpecifierPreference: "relative",
           preferTypeOnlyAutoImports: true,

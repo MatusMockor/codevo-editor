@@ -31525,6 +31525,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
   const parameterNameHints = inlayHintsEnabled ? "literals" : "none";
   const preferences = {
     includeAutomaticOptionalChainCompletions: true,
+    includeCompletionsWithSnippetText: true,
     includeCompletionsForImportStatements: autoImportsEnabled,
     includeCompletionsForModuleExports: autoImportsEnabled,
     importModuleSpecifierEnding:
