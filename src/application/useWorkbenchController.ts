@@ -1582,6 +1582,12 @@ export function useWorkbenchController(
       _expression: string,
     ): Promise<string | null> => null,
   );
+  const resolvePhpClassPropertyOrRelationTypeRef = useRef(
+    async (
+      _className: string,
+      _propertyName: string,
+    ): Promise<string | null> => null,
+  );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   // Whether the active document is a PHP test file (under the tests root or a
@@ -15652,6 +15658,284 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpTraitHostPropertyMethodExists = useCallback(
+    async (
+      traitClassName: string,
+      propertyName: string,
+      methodName: string,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return false;
+      }
+
+      const normalizedTraitClassName = traitClassName
+        .trim()
+        .replace(/^\\+/, "");
+      const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+      const normalizedMethodName = methodName.trim();
+
+      if (
+        !normalizedTraitClassName ||
+        !normalizedPropertyName ||
+        !normalizedMethodName
+      ) {
+        return false;
+      }
+
+      const sourceUsesTrait = (
+        source: string,
+        targetTraitClassName: string,
+      ): boolean => {
+        const targetLookup = targetTraitClassName.toLowerCase();
+
+        return phpTraitClassNames(source).some((traitName) => {
+          const resolvedTraitName = resolvePhpClassReference(source, traitName);
+
+          return resolvedTraitName?.toLowerCase() === targetLookup;
+        });
+      };
+      const classHierarchyPropertyHasMethod = async (
+        className: string,
+      ): Promise<boolean> => {
+        const propertyType = await resolvePhpClassPropertyOrRelationTypeRef.current(
+          className,
+          normalizedPropertyName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return propertyType
+          ? phpClassHierarchyHasMethod(propertyType, normalizedMethodName)
+          : false;
+      };
+      const descendantClassHierarchyHasPropertyMethod = async (
+        className: string,
+        visitedClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedClassName = className.trim().replace(/^\\+/, "");
+        const classLookup = normalizedClassName.toLowerCase();
+
+        if (
+          !normalizedClassName ||
+          visitedClassNames.has(classLookup) ||
+          visitedClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedClassNames.add(classLookup);
+
+        const results = await textSearch.searchText(
+          requestedRoot,
+          shortPhpName(normalizedClassName),
+          200,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            if (phpCurrentTypeKind(content) !== "class") {
+              continue;
+            }
+
+            const candidateClassName = phpCurrentClassName(content);
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+
+            if (
+              !candidateClassName ||
+              resolvedParentClassName?.toLowerCase() !== classLookup
+            ) {
+              continue;
+            }
+
+            if (
+              (await classHierarchyPropertyHasMethod(candidateClassName)) ||
+              (await descendantClassHierarchyHasPropertyMethod(
+                candidateClassName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return false;
+      };
+      const traitConcreteUserHierarchyHasPropertyMethod = async (
+        targetTraitClassName: string,
+        visitedTraitClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedTargetTraitClassName = targetTraitClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const traitLookup = normalizedTargetTraitClassName.toLowerCase();
+
+        if (
+          !normalizedTargetTraitClassName ||
+          visitedTraitClassNames.has(traitLookup) ||
+          visitedTraitClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedTraitClassNames.add(traitLookup);
+
+        const results = await textSearch.searchText(
+          requestedRoot,
+          shortPhpName(normalizedTargetTraitClassName),
+          200,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            if (!sourceUsesTrait(content, normalizedTargetTraitClassName)) {
+              continue;
+            }
+
+            const userTypeKind = phpCurrentTypeKind(content);
+            const userClassName = phpCurrentClassName(content);
+
+            if (!userTypeKind || !userClassName) {
+              continue;
+            }
+
+            if (userTypeKind === "trait") {
+              if (
+                await traitConcreteUserHierarchyHasPropertyMethod(
+                  userClassName,
+                  visitedTraitClassNames,
+                )
+              ) {
+                return true;
+              }
+
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
+              continue;
+            }
+
+            if (userTypeKind !== "class" && userTypeKind !== "enum") {
+              continue;
+            }
+
+            if (
+              (await classHierarchyPropertyHasMethod(userClassName)) ||
+              (userTypeKind === "class" &&
+                (await descendantClassHierarchyHasPropertyMethod(
+                  userClassName,
+                  new Set<string>(),
+                )))
+            ) {
+              return true;
+            }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return false;
+      };
+
+      const exists = await traitConcreteUserHierarchyHasPropertyMethod(
+        normalizedTraitClassName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return exists;
+    },
+    [
+      phpClassHierarchyHasMethod,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const phpTraitHostConstantExists = useCallback(
     async (traitClassName: string, constantName: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
@@ -16022,11 +16306,33 @@ export function useWorkbenchController(
                 memberMethodContext.methodName,
               )
             : false;
+          const receiverPropertyAccess =
+            phpCurrentTypeKind(source) === "trait"
+              ? phpPropertyAccessExpression(
+                  memberMethodContext.receiverExpression,
+                )
+              : null;
+          const traitClassName =
+            receiverPropertyAccess &&
+            phpNormalizedReceiverExpressionIsThis(
+              receiverPropertyAccess.receiverExpression,
+            )
+              ? phpCurrentClassName(source)
+              : null;
+          const hasContextualTraitHostPropertyMethod =
+            traitClassName && receiverPropertyAccess
+              ? await phpTraitHostPropertyMethodExists(
+                  traitClassName,
+                  receiverPropertyAccess.propertyName,
+                  memberMethodContext.methodName,
+                )
+              : false;
 
           if (
             hasContextualScopeMethod ||
             hasContextualDynamicWhereMethod ||
-            hasContextualExistingMemberMethod
+            hasContextualExistingMemberMethod ||
+            hasContextualTraitHostPropertyMethod
           ) {
             contextualMemberMethods.add(
               phpMemberMethodDiagnosticKey(
@@ -16201,6 +16507,7 @@ export function useWorkbenchController(
       phpClassHierarchyHasProperty,
       phpTraitHostConstantExists,
       phpTraitHostMethodExists,
+      phpTraitHostPropertyMethodExists,
       phpTraitHostPropertyExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -16967,6 +17274,11 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
+
+  useEffect(() => {
+    resolvePhpClassPropertyOrRelationTypeRef.current =
+      resolvePhpClassPropertyOrRelationType;
+  }, [resolvePhpClassPropertyOrRelationType]);
 
   const resolvePhpLaravelRelationPathOwnerType = useCallback(
     async (

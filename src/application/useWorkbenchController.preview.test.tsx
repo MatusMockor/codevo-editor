@@ -36574,6 +36574,210 @@ class Comment extends Model
     ).toEqual([missingDiagnostic]);
   });
 
+  it("suppresses trait host chained-method diagnostics through implemented interface PHPDoc properties", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
+    const publisherPath = "/workspace/app/Services/CommentPublisher.php";
+    const traitPath = "/workspace/app/Support/PublishesFromHost.php";
+    const traitSource = `<?php
+namespace App\\Support;
+
+trait PublishesFromHost
+{
+    public function publishFromHost(): void
+    {
+        $this->publish();
+        echo $this->publisher;
+        $this->publisher->publishNow();
+        $this->missingPublisher->publishNow();
+        $this->missingMagic();
+    }
+}
+`;
+    const missingDiagnostic = {
+      character: 34,
+      line: lineNumberOf(traitSource, "$this->missingPublisher->publishNow") - 1,
+      message:
+        'Method "publishNow" does not exist on trait "App\\Support\\PublishesFromHost"',
+      severity: "error" as const,
+      source: "phpactor",
+    };
+    const missingMagicDiagnostic = {
+      character: 15,
+      line: lineNumberOf(traitSource, "missingMagic") - 1,
+      message:
+        'Method "missingMagic" does not exist on trait "App\\Support\\PublishesFromHost"',
+      severity: "error" as const,
+      source: "phpactor",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 43,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\PublishesComments",
+          kind: "interface",
+          lineNumber: 10,
+          name: "PublishesComments",
+          path: interfacePath,
+          relativePath: "app/Contracts/PublishesComments.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Services\\CommentPublisher",
+          kind: "class",
+          lineNumber: 5,
+          name: "CommentPublisher",
+          path: publisherPath,
+          relativePath: "app/Services/CommentPublisher.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Contracts\\PublishesComments;
+use App\\Support\\PublishesFromHost;
+
+class Comment implements PublishesComments
+{
+    use PublishesFromHost;
+}
+`;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+use App\\Services\\CommentPublisher;
+
+/**
+ * @method void publish()
+ * @property-read CommentPublisher $publisher
+ */
+interface PublishesComments
+{
+}
+`;
+        }
+
+        if (path === publisherPath) {
+          return `<?php
+namespace App\\Services;
+
+class CommentPublisher
+{
+    public function publishNow(): void {}
+}
+`;
+        }
+
+        if (path === traitPath) {
+          return traitSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText: vi.fn(async (_root, query) =>
+        query === "PublishesFromHost"
+          ? [
+              {
+                column: 5,
+                lineNumber: 8,
+                lineText: "    use PublishesFromHost;",
+                path: commentPath,
+                relativePath: "app/Models/Comment.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 15,
+            line: lineNumberOf(traitSource, "$this->publish") - 1,
+            message:
+              'Method "publish" does not exist on trait "App\\Support\\PublishesFromHost"',
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 21,
+            line: lineNumberOf(traitSource, "publisher") - 1,
+            message:
+              'Property "$publisher" does not exist on trait "App\\Support\\PublishesFromHost"',
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 27,
+            line: lineNumberOf(traitSource, "$this->publisher->publishNow") - 1,
+            message:
+              'Method "publishNow" does not exist on trait "App\\Support\\PublishesFromHost"',
+            severity: "error",
+            source: "phpactor",
+          },
+          missingDiagnostic,
+          missingMagicDiagnostic,
+        ],
+        rootPath: "/workspace",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(traitPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[traitPath],
+    ).toEqual([missingDiagnostic, missingMagicDiagnostic]);
+  });
+
   it("suppresses static trait host-property diagnostics when the host declares the property", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
