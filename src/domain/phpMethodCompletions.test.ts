@@ -612,6 +612,14 @@ class Album extends Model
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
+        "toQuery",
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
         "findOr",
         "Album",
         "Album::findOr(1, fn () => null)",

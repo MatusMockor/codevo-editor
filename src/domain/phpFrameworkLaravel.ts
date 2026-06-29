@@ -3084,6 +3084,10 @@ function phpLaravelCollectionMethodCallReturnTypeFromSource(
     return modelType;
   }
 
+  if (methodName.toLowerCase() === "toquery") {
+    return phpLaravelEloquentBuilderType(modelType);
+  }
+
   if (isLaravelCollectionFluentMethod(methodName)) {
     return receiverType;
   }

@@ -2099,6 +2099,7 @@ class Album extends Model
         $fromCursor = Album::cursor()->first();
         $fromLazyById = Album::query()->lazyById()->first();
         $fromHydrated = Album::hydrate([])->first();
+        $fromToQuery = Album::query()->get()->toQuery()->first();
 
         $fromAssignedCollection->tit
         $fromDirectCollection->tit
@@ -2106,6 +2107,7 @@ class Album extends Model
         $fromCursor->tit
         $fromLazyById->tit
         $fromHydrated->tit
+        $fromToQuery->tit
     }
 }
 `;
@@ -2163,6 +2165,22 @@ class Album extends Model
         source,
         positionAfter(source, "$fromHydrated->tit"),
         "fromHydrated",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$fromToQuery->tit"),
+        "Album::query()->get()->toQuery()",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromToQuery->tit"),
+        "fromToQuery",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
