@@ -17263,6 +17263,132 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
+  it("does not apply stale JavaScript TypeScript rename edits to an active nested project tab", async () => {
+    const parentRoot = "/workspace";
+    const childRoot = "/workspace/packages/app";
+    const oldPath = "/workspace/src/User.ts";
+    const childConsumerPath = "/workspace/packages/app/src/Consumer.ts";
+    const initialConsumerSource = "import { User } from '../../src/User';\n";
+    const staleRenameEdit: LanguageServerWorkspaceEdit = {
+      changes: {
+        [fileUriFromPath(childConsumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const applyClosedFiles = createDeferred<number>();
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockResolvedValue(staleRenameEdit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: parentRoot,
+      sessionId: 46,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: parentRoot,
+        workspaceTabs: [parentRoot, childRoot],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        if (path === childConsumerPath) {
+          return initialConsumerSource;
+        }
+
+        return `// ${path}\n`;
+      }),
+      settingsGateway: {
+        loadAppSettings: vi.fn(async () => ({
+          ...defaultAppSettings(),
+          recentWorkspacePath: parentRoot,
+          workspaceTabs: [parentRoot, childRoot],
+        })),
+        loadWorkspaceSettings: vi.fn(async (rootPath: string) => {
+          if (rootPath === childRoot) {
+            return {
+              ...defaultWorkspaceSettings(),
+              session: {
+                ...defaultWorkspaceSettings().session,
+                activePath: childConsumerPath,
+                openPaths: [childConsumerPath],
+              },
+            };
+          }
+
+          return defaultWorkspaceSettings();
+        }),
+        saveAppSettings: vi.fn(async () => undefined),
+        saveWorkspaceSettings: vi.fn(async () => undefined),
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+    vi.mocked(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).mockImplementationOnce(async () => applyClosedFiles.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.applyWorkspaceEdit,
+      ).toHaveBeenCalledWith(
+        parentRoot,
+        staleRenameEdit,
+        expect.arrayContaining([oldPath]),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(childRoot);
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      applyClosedFiles.resolve(0);
+      await renamePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe(childRoot);
+    expect(getWorkbench().activeDocument?.path).toBe(childConsumerPath);
+    expect(getWorkbench().activeDocument?.content).toBe(initialConsumerSource);
+    expect(dependencies.workspaceGateways.files.renamePath).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).not.toHaveBeenCalled();
+  });
+
   it("drops stale JavaScript TypeScript rename edits after same-root session restart", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";

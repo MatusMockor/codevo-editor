@@ -19,6 +19,16 @@ describe("extractLocalSchemaReference", () => {
     );
   });
 
+  it("returns a relative local path declared in a JSON document's $schema", () => {
+    const content = JSON.stringify({
+      $schema: "./schemas/phpactor.schema.json",
+    });
+
+    expect(extractLocalSchemaReference(content)).toBe(
+      "./schemas/phpactor.schema.json",
+    );
+  });
+
   it("ignores http(s) $schema references (those are remote, not local files)", () => {
     const content = JSON.stringify({
       $schema: "https://json.schemastore.org/composer.json",
@@ -80,6 +90,22 @@ describe("buildJsonSchemaRegistration", () => {
     );
     expect(fileMatches.some((pattern) => pattern.includes(".phpactor.json"))).toBe(
       true,
+    );
+  });
+
+  it("registers relative schema references under raw and document-relative URI candidates", () => {
+    const registration = buildJsonSchemaRegistration({
+      documentPath: "/Users/me/project/.phpactor.json",
+      schemaReference: "./schemas/phpactor.schema.json",
+      schemaContent: JSON.stringify({ type: "object" }),
+    });
+
+    expect(registration).not.toBeNull();
+    const uris = registration!.schemas.map((entry) => entry.uri);
+    expect(uris).toContain("./schemas/phpactor.schema.json");
+    expect(uris).toContain("/Users/me/project/schemas/phpactor.schema.json");
+    expect(uris).toContain(
+      "file:///Users/me/project/schemas/phpactor.schema.json",
     );
   });
 
@@ -147,6 +173,24 @@ describe("isSchemaReferenceRegistered", () => {
         reference,
       ),
     ).toBe(false);
+  });
+
+  it("checks document-relative schema candidates when the reference is relative", () => {
+    const reference = "./schema.json";
+    const documentPath = "/Users/me/project/.phpactor.json";
+    const registration = buildJsonSchemaRegistration({
+      documentPath,
+      schemaReference: reference,
+      schemaContent: JSON.stringify({ type: "object" }),
+    })!;
+    const options = mergeJsonSchemaIntoDiagnosticsOptions(
+      { validate: true, schemas: [] },
+      registration,
+    );
+
+    expect(isSchemaReferenceRegistered(options, reference, documentPath)).toBe(
+      true,
+    );
   });
 });
 

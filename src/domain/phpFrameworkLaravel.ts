@@ -1950,6 +1950,10 @@ export function phpLaravelDynamicWhereCompletionsFromSource(
     attributes.add(attribute);
   }
 
+  for (const attribute of phpLaravelDateAttributes(source, declaringClassName)) {
+    attributes.add(attribute);
+  }
+
   for (const [attribute] of phpLaravelCastAttributes(source, declaringClassName)) {
     attributes.add(attribute);
   }
@@ -2085,6 +2089,10 @@ export function phpLaravelModelAttributeCompletionsFromSource(
     declaringClassName,
   )) {
     attributes.set(attribute, returnType);
+  }
+
+  for (const attribute of phpLaravelDateAttributes(source, declaringClassName)) {
+    attributes.set(attribute, "\\Illuminate\\Support\\Carbon");
   }
 
   for (const attribute of phpLaravelAppendedAttributes(
@@ -4756,6 +4764,7 @@ function phpLaravelDynamicWhereAttributeOccurrences(
 ): PhpLaravelDynamicWhereAttributeOccurrence[] {
   const occurrences: PhpLaravelDynamicWhereAttributeOccurrence[] = [
     ...phpArrayStringValueOccurrences(source, "fillable"),
+    ...phpArrayStringValueOccurrences(source, "dates"),
     ...phpArrayKeyOccurrences(source, "attributes"),
     ...phpArrayKeyOccurrences(source, "casts"),
   ];
@@ -4828,6 +4837,19 @@ function phpLaravelAppendedAttributes(
   declaringClassName = "",
 ): string[] {
   return phpArrayAssignmentBodies(source, "appends").flatMap((body) =>
+    splitPhpParameterList(body)
+      .map((item) =>
+        phpLaravelAttributeNameFromExpression(source, declaringClassName, item),
+      )
+      .filter(isPhpAttributeName),
+  );
+}
+
+function phpLaravelDateAttributes(
+  source: string,
+  declaringClassName = "",
+): string[] {
+  return phpArrayAssignmentBodies(source, "dates").flatMap((body) =>
     splitPhpParameterList(body)
       .map((item) =>
         phpLaravelAttributeNameFromExpression(source, declaringClassName, item),

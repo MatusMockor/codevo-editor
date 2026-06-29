@@ -294,6 +294,51 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("offers cursor position and git branch status bar toggles in settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(checkboxWithLabel("Cursor position").checked).toBe(true);
+    expect(checkboxWithLabel("Git branch").checked).toBe(true);
+
+    await act(async () => {
+      checkboxWithLabel("Cursor position").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        statusBar: {
+          ...defaultWorkspaceSettings().statusBar,
+          cursorPosition: false,
+        },
+      },
+    });
+  });
+
   it("persists JavaScript and TypeScript service mode changes", async () => {
     const onSave = vi.fn(async () => undefined);
 

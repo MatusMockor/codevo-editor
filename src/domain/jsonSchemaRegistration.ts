@@ -5,13 +5,13 @@
  * Background / root cause
  * -----------------------
  * Monaco's JSON worker validates a document against the schema named by its
- * `$schema` property. When that value is a local disk path (e.g.
- * `.phpactor.json` -> ".../phpactor.schema.json"), the worker tries to *fetch*
- * the schema through a "schema request service". The editor never configures
- * one (`enableSchemaRequest` defaults to `false`), so the worker reports
- * `SchemaResolveError` (code 768): "Unable to load schema from '...'. No schema
- * request service available". That surfaces as a yellow squiggle + hover error
- * on the `$schema` line.
+ * `$schema` property. When that value is a local disk path (absolute or
+ * relative, e.g. `.phpactor.json` -> ".../phpactor.schema.json"), the worker
+ * tries to *fetch* the schema through a "schema request service". The editor
+ * never configures one (`enableSchemaRequest` defaults to `false`), so the
+ * worker reports `SchemaResolveError` (code 768): "Unable to load schema from
+ * '...'. No schema request service available". That surfaces as a yellow
+ * squiggle + hover error on the `$schema` line.
  *
  * Fetching is also a dead end inside the Tauri webview: the JSON worker fetches
  * over http(s), and `file://` fetches do not work there. So instead of enabling
@@ -26,9 +26,9 @@
  * because the value carries no URI scheme - resolving it relative to the
  * document resource before normalizing it with `URI.parse(...).toString()`.
  * Depending on how the model URI was built, the normalized id can be the raw
- * POSIX path or a `file://` URI. We register the same schema content under every
- * plausible id so the lookup hits regardless of normalization. Registering the
- * same content under multiple ids is harmless.
+ * reference, the resolved POSIX path, or a `file://` URI. We register the same
+ * schema content under every plausible id so the lookup hits regardless of
+ * normalization. Registering the same content under multiple ids is harmless.
  *
  * This module is intentionally free of Monaco / Tauri imports so it can be unit
  * tested in isolation and reused by any call site.
@@ -65,10 +65,10 @@ const BOM = "﻿";
 
 /**
  * Reads a JSON document's `$schema` and returns it only when it points at a
- * local disk path (an absolute path with no URI scheme). Remote (`http(s)://`)
- * and already-resolved (`file://`) references are not our concern: the former
- * is handled by a real schema store if/when one is added, the latter is already
- * a URI. Returns `null` for anything we cannot or should not load from disk.
+ * local disk path with no URI scheme. Remote (`http(s)://`) and
+ * already-resolved (`file://`) references are not our concern: the former is
+ * handled by a real schema store if/when one is added, the latter is already a
+ * URI. Returns `null` for anything we cannot or should not load from disk.
  *
  * Never throws: malformed JSON yields `null` so callers can skip silently.
  */
@@ -150,7 +150,7 @@ function buildRegistration(
   schemaReference: string,
   schema: unknown,
 ): JsonSchemaRegistration | null {
-  const uris = candidateSchemaUris(schemaReference);
+  const uris = candidateSchemaUris(schemaReference, documentPath);
 
   if (uris.length === 0) {
     return null;
@@ -205,15 +205,44 @@ export function mergeJsonSchemaIntoDiagnosticsOptions(
  * Exported so callers can cheaply check whether a reference is already
  * registered before doing expensive work (e.g. a disk read).
  */
-export function candidateSchemaUris(schemaReference: string): string[] {
+export function candidateSchemaUris(
+  schemaReference: string,
+  documentPath?: string,
+): string[] {
+  return candidateSchemaUrisForDocument(schemaReference, documentPath);
+}
+
+export function candidateSchemaUrisForDocument(
+  schemaReference: string,
+  documentPath?: string,
+): string[] {
   const uris = new Set<string>();
   uris.add(schemaReference);
+  const resolvedReference = documentPath
+    ? resolveLocalSchemaReferencePath(documentPath, schemaReference)
+    : schemaReference;
+  uris.add(resolvedReference);
 
-  if (schemaReference.startsWith("/")) {
-    uris.add(`file://${schemaReference}`);
+  if (resolvedReference.startsWith("/")) {
+    uris.add(`file://${resolvedReference}`);
   }
 
   return [...uris];
+}
+
+export function resolveLocalSchemaReferencePath(
+  documentPath: string,
+  schemaReference: string,
+): string {
+  const normalizedReference = normalizePath(schemaReference);
+
+  if (normalizedReference.startsWith("/")) {
+    return normalizePathSegments(normalizedReference);
+  }
+
+  return normalizePathSegments(
+    `${parentDirectory(normalizePath(documentPath))}/${normalizedReference}`,
+  );
 }
 
 /**
@@ -225,11 +254,12 @@ export function candidateSchemaUris(schemaReference: string): string[] {
 export function isSchemaReferenceRegistered(
   options: JsonDiagnosticsOptionsLike,
   schemaReference: string,
+  documentPath?: string,
 ): boolean {
   const registered = new Set((options.schemas ?? []).map((entry) => entry.uri));
 
-  return candidateSchemaUris(schemaReference).every((uri) =>
-    registered.has(uri),
+  return candidateSchemaUrisForDocument(schemaReference, documentPath).every(
+    (uri) => registered.has(uri),
   );
 }
 
@@ -243,6 +273,52 @@ function fileMatchPatternFor(documentPath: string): string {
   const fileName = segments[segments.length - 1] || documentPath;
 
   return `**/${fileName}`;
+}
+
+function parentDirectory(path: string): string {
+  const index = path.lastIndexOf("/");
+
+  if (index <= 0) {
+    return path.startsWith("/") ? "/" : ".";
+  }
+
+  return path.slice(0, index);
+}
+
+function normalizePath(path: string): string {
+  return path.split("\\").join("/");
+}
+
+function normalizePathSegments(path: string): string {
+  const normalized = normalizePath(path);
+  const absolute = normalized.startsWith("/");
+  const parts: string[] = [];
+
+  for (const part of normalized.split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+
+    if (part === "..") {
+      if (parts.length > 0 && parts[parts.length - 1] !== "..") {
+        parts.pop();
+        continue;
+      }
+
+      if (!absolute) {
+        parts.push(part);
+      }
+      continue;
+    }
+
+    parts.push(part);
+  }
+
+  if (absolute) {
+    return `/${parts.join("/")}`;
+  }
+
+  return parts.join("/") || ".";
 }
 
 function safeParseObject(content: string): Record<string, unknown> | null {

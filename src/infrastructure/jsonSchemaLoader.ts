@@ -5,6 +5,7 @@ import {
   extractLocalSchemaReference,
   isSchemaReferenceRegistered,
   mergeJsonSchemaIntoDiagnosticsOptions,
+  resolveLocalSchemaReferencePath,
   type JsonDiagnosticsOptionsLike,
   type JsonSchemaRegistration,
 } from "../domain/jsonSchemaRegistration";
@@ -78,11 +79,15 @@ export async function loadJsonSchemaForDocument(
   // Already wired up (e.g. this effect re-fired on a keystroke in the same
   // document): skip before touching the disk so we never re-read the schema
   // file per character typed.
-  if (isSchemaReferenceRegistered(current, schemaReference)) {
+  if (isSchemaReferenceRegistered(current, schemaReference, document.path)) {
     return;
   }
 
-  const schemaContent = await readSchemaContent(deps, schemaReference);
+  const schemaPath = resolveLocalSchemaReferencePath(
+    document.path,
+    schemaReference,
+  );
+  const schemaContent = await readSchemaContent(deps, schemaPath);
 
   // The workspace/document may have changed while the file was read; drop the
   // result rather than registering a schema for a tab the user already left.

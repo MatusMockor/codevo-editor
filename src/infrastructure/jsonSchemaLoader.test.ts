@@ -60,6 +60,32 @@ describe("loadJsonSchemaForDocument", () => {
     expect(uris).toContain(PHPACTOR_SCHEMA);
   });
 
+  it("resolves relative local $schema paths against the JSON document before reading and registering", async () => {
+    const jsonDefaults = fakeJsonDefaults();
+    const readTextFile = vi.fn(async () => SCHEMA_CONTENT);
+    const documentPath = "/project/config/.phpactor.json";
+
+    await loadJsonSchemaForDocument(
+      monacoWith(jsonDefaults),
+      {
+        path: documentPath,
+        content: JSON.stringify({ $schema: "./schemas/phpactor.schema.json" }),
+        language: "json",
+      },
+      deps({ readTextFile }),
+    );
+
+    expect(readTextFile).toHaveBeenCalledWith(
+      "/project/config/schemas/phpactor.schema.json",
+    );
+    expect(jsonDefaults.setDiagnosticsOptions).toHaveBeenCalledTimes(1);
+    const options = jsonDefaults.setDiagnosticsOptions.mock.calls[0][0];
+    const uris = options.schemas.map((entry: { uri: string }) => entry.uri);
+    expect(uris).toContain("./schemas/phpactor.schema.json");
+    expect(uris).toContain("/project/config/schemas/phpactor.schema.json");
+    expect(uris).toContain("file:///project/config/schemas/phpactor.schema.json");
+  });
+
   it("does nothing for non-JSON documents", async () => {
     const jsonDefaults = fakeJsonDefaults();
     const readTextFile = vi.fn(async () => SCHEMA_CONTENT);

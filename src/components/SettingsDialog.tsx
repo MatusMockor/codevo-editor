@@ -1085,6 +1085,8 @@ const statusBarItems: Array<{
   { key: "workspaceTrust", label: "Trust" },
   { key: "mode", label: "Mode" },
   { key: "language", label: "Language" },
+  { key: "cursorPosition", label: "Cursor position" },
+  { key: "gitBranch", label: "Git branch" },
   { key: "dirtyCount", label: "Unsaved files" },
   { key: "message", label: "Messages" },
 ];

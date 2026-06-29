@@ -85,6 +85,10 @@ export function applyEditorChangeRevert(
 }
 
 function normalizedLines(content: string): string[] {
+  if (content.length === 0) {
+    return [];
+  }
+
   return content.replace(/\r\n/g, "\n").split("\n");
 }
 

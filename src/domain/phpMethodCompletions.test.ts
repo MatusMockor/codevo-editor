@@ -32,13 +32,21 @@ const laravelCompletionOptions = {
 };
 
 function positionAfter(source: string, needle: string) {
+  return positionOn(source, needle, needle.length);
+}
+
+function positionOn(source: string, needle: string, inner = 0) {
   const offset = source.indexOf(needle);
 
   if (offset < 0) {
     throw new Error(`Missing test needle: ${needle}`);
   }
 
-  const before = source.slice(0, offset + needle.length);
+  return positionAt(source, offset + inner);
+}
+
+function positionAt(source: string, offset: number) {
+  const before = source.slice(0, offset);
   const lines = before.split("\n");
   const lastLine = lines[lines.length - 1] ?? "";
 
@@ -3658,6 +3666,85 @@ class Comment extends Model
         returnType: "int",
       },
     ]);
+  });
+
+  it("extracts legacy Laravel date attributes as Carbon properties and dynamic wheres", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+    protected $dates = [
+        'published_at',
+        'archived_at',
+    ];
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(source, "Post", laravelCompletionOptions),
+    ).toEqual([
+      {
+        declaringClassName: "Post",
+        kind: "property",
+        name: "published_at",
+        parameters: "",
+        returnType: "\\Illuminate\\Support\\Carbon",
+      },
+      {
+        declaringClassName: "Post",
+        kind: "property",
+        name: "archived_at",
+        parameters: "",
+        returnType: "\\Illuminate\\Support\\Carbon",
+      },
+    ]);
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "Post", {
+        isStatic: true,
+      }),
+    ).toEqual([
+      {
+        declaringClassName: "Post",
+        isStatic: true,
+        name: "wherePublishedAt",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Post",
+        isStatic: true,
+        name: "whereArchivedAt",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "wherePublishedAt",
+        "App\\Models\\Post",
+        "Post::wherePublishedAt(now())",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Post>");
+    expect(
+      phpLaravelModelPropertyClassTypeFromSource(
+        source,
+        "published_at",
+        "App\\Models\\Post",
+      ),
+    ).toBe("Illuminate\\Support\\Carbon");
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(
+        source,
+        "whereArchivedAt",
+      ),
+    ).toEqual({
+      attributeName: "archived_at",
+      position: positionOn(source, "'archived_at", 1),
+    });
   });
 
   it("extracts Laravel model attributes from local string constants in metadata", () => {

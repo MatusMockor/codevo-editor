@@ -8066,6 +8066,11 @@ export function useWorkbenchController(
           rootEdit,
           openDocumentPaths,
         );
+
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return true;
+        }
+
         const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
           rootEdit,
           requestedRoot,

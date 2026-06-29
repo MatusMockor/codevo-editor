@@ -54,6 +54,21 @@ describe("editorChangeHunks", () => {
     ]);
   });
 
+  it("detects a new file as added instead of modified", () => {
+    const hunks = editorChangeHunks("", "first\nsecond");
+
+    expect(hunks).toEqual([
+      expect.objectContaining({
+        currentLines: ["first", "second"],
+        endLineNumber: 2,
+        kind: "added",
+        originalLines: [],
+        originalStartLineNumber: 1,
+        startLineNumber: 1,
+      }),
+    ]);
+  });
+
   it("detects modified lines", () => {
     const hunks = editorChangeHunks("one\ntwo\nthree", "one\nchanged\nthree");
 
