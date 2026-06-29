@@ -1,6 +1,6 @@
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import type { EditorPosition } from "./languageServerFeatures";
-import { phpDocReturnTypeToken } from "./phpDocTemplates";
+import { firstPhpDocTypeToken, phpDocReturnTypeToken } from "./phpDocTemplates";
 import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
@@ -1357,6 +1357,10 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   return returnTypes
     .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
     .find((returnType): returnType is string => Boolean(returnType)) ??
+    phpLaravelRepositoryGenericInheritanceModelTypeFromReceiver(
+      source,
+      receiverType,
+    ) ??
     phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType);
 }
 
@@ -2889,7 +2893,11 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
       "illuminate\\database\\eloquent\\builder",
     ]),
   )
-    ? phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType)
+    ? (phpLaravelRepositoryGenericInheritanceModelTypeFromReceiver(
+        source,
+        receiverType,
+      ) ??
+        phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType))
     : null;
 
   return conventionModelType
@@ -2962,7 +2970,11 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
       "illuminate\\support\\lazycollection",
     ]),
   )
-    ? phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType)
+    ? (phpLaravelRepositoryGenericInheritanceModelTypeFromReceiver(
+        source,
+        receiverType,
+      ) ??
+        phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType))
     : null;
 
   return conventionModelType
@@ -2982,6 +2994,43 @@ function phpLaravelRepositoryMethodReturnExpressions(
         methodName,
       ),
   );
+}
+
+function phpLaravelRepositoryGenericInheritanceModelTypeFromReceiver(
+  source: string,
+  receiverType: string | null,
+): string | null {
+  const receiverClassName =
+    phpLaravelResolvedClassName(source, receiverType ?? "") ??
+    receiverType?.trim().replace(/^\\+/, "") ??
+    null;
+
+  if (!isLaravelRepositoryType(receiverClassName)) {
+    return null;
+  }
+
+  return phpLaravelRepositoryTypeDocBlocks(source, receiverClassName)
+    .flatMap((docBlock) => phpLaravelGenericInheritanceModelTypes(docBlock))
+    .map((typeName) => phpLaravelResolvedModelTypeCandidate(source, typeName))
+    .find((modelType): modelType is string => Boolean(modelType)) ?? null;
+}
+
+function phpLaravelGenericInheritanceModelTypes(docBlock: string): string[] {
+  const modelTypes: string[] = [];
+
+  for (const match of docBlock.matchAll(
+    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements|use)\s+([^\r\n*]+)/g,
+  )) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? "");
+
+    if (!typeName) {
+      continue;
+    }
+
+    modelTypes.push(...phpDeclaredGenericTypeCandidates(typeName));
+  }
+
+  return modelTypes;
 }
 
 function phpLaravelEloquentMethodCallReturnTypeFromSource(

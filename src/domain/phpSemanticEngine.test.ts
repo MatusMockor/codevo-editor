@@ -118,6 +118,36 @@ trait HasHostHooks
     ).toBe("App\\Models\\User");
   });
 
+  it("resolves $this to the class containing the cursor in multi-class files", () => {
+    const source = `<?php
+namespace App\\Models;
+
+class FirstModel
+{
+    public function one(): void
+    {
+        $this->fir
+    }
+}
+
+class SecondModel
+{
+    public function two(): void
+    {
+        $this->sec
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->sec"),
+        "$this",
+      ),
+    ).toBe("App\\Models\\SecondModel");
+  });
+
   it("resolves property type from the property declaration, not a same-named plain constructor param", () => {
     const source = `<?php
 namespace App\\Http\\Controllers;
@@ -3733,6 +3763,77 @@ class Album extends Model
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
+  it("resolves Laravel repository models from PHPDoc inheritance generics before name conventions", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+/**
+ * @template TModel
+ */
+abstract class BaseRepository
+{
+}
+
+/**
+ * @extends BaseRepository<Album>
+ */
+class ReadAlbumRepository extends BaseRepository
+{
+    public function findOrFail(int $id)
+    {
+    }
+
+    public function query(): Builder
+    {
+    }
+
+    public function matching(): Collection
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+        $fromQuery = $this->query()->whereKey($id)->firstOrFail();
+        $fromCollection = $this->matching()->first();
+
+        $album->tit
+        $fromQuery->tit
+        $fromCollection->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromQuery->tit"),
+        "fromQuery",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromCollection->tit"),
+        "fromCollection",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

@@ -1141,6 +1141,62 @@ class AlbumRepository
     ).toBe("App\\Models\\Album");
   });
 
+  it("prefers Laravel repository PHPDoc inheritance generics over naming conventions", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+/**
+ * @template TModel
+ */
+abstract class BaseRepository
+{
+}
+
+/**
+ * @extends BaseRepository<Album>
+ */
+class ReadAlbumRepository extends BaseRepository
+{
+    public function query(): Builder
+    {
+    }
+
+    public function matching(): Collection
+    {
+    }
+}
+`;
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findOrFail",
+        "ReadAlbumRepository",
+        "$this->findOrFail($id)",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "query",
+        "ReadAlbumRepository",
+        "$this->query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "matching",
+        "ReadAlbumRepository",
+        "$this->matching()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+  });
+
   it("infers Laravel relation factory and relation chain return types", () => {
     const source = `<?php
 namespace App\\Models;

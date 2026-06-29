@@ -125,6 +125,43 @@ export function phpCurrentClassName(source: string): string | null {
   return namespace ? `${namespace}\\${classMatch[1]}` : classMatch[1];
 }
 
+function phpCurrentClassNameAtPosition(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const offset = offsetAtPosition(source, position);
+  const pattern =
+    /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{;]*/g;
+  let containingClassName: string | null = null;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const className = match[1];
+
+    if (!className) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", pattern.lastIndex);
+
+    if (bodyStart < 0 || offset < bodyStart) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null || offset > bodyEnd) {
+      continue;
+    }
+
+    const namespace = phpNamespaceBeforeOffset(source, match.index ?? 0);
+    containingClassName = namespace ? `${namespace}\\${className}` : className;
+    pattern.lastIndex = bodyEnd + 1;
+  }
+
+  return containingClassName;
+}
+
 export function phpReceiverExpressionTypeInSource(
   source: string,
   position: EditorPosition,
@@ -135,6 +172,7 @@ export function phpReceiverExpressionTypeInSource(
 
   if (normalizedExpression === "$this") {
     return options.contextualThisClassName?.trim().replace(/^\\+/, "") ||
+      phpCurrentClassNameAtPosition(source, position) ||
       phpCurrentClassName(source);
   }
 

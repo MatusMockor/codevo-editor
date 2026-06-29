@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { TauriLanguageServerDocumentSyncGateway } from "./tauriLanguageServerDocumentSyncGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
+  TauriLanguageServerDocumentSyncGateway,
+} from "./tauriLanguageServerDocumentSyncGateway";
 import type { LanguageServerTextDocument } from "../domain/languageServerDocumentSync";
 
 type SyncGatewayConstructor = ConstructorParameters<
@@ -52,6 +55,55 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
       document: { path: "/project/src/User.php" },
       rootPath: "/project",
     });
+  });
+
+  it("delegates JavaScript and TypeScript document sync with the requested workspace root", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => undefined);
+    const gateway = new TauriLanguageServerDocumentSyncGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
+    );
+    const syncedDocument: LanguageServerTextDocument = {
+      languageId: "typescript",
+      path: "/workspace-a/src/App.ts",
+      text: "export const app = true;\n",
+      version: 3,
+    };
+
+    await gateway.didOpen("/workspace-a", syncedDocument);
+    await gateway.didChange("/workspace-a", syncedDocument);
+    await gateway.didSave("/workspace-a", syncedDocument);
+    await gateway.didClose("/workspace-a", syncedDocument.path);
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_document_did_open",
+      {
+        document: syncedDocument,
+        rootPath: "/workspace-a",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_document_did_change",
+      {
+        document: syncedDocument,
+        rootPath: "/workspace-a",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_document_did_save",
+      {
+        document: syncedDocument,
+        rootPath: "/workspace-a",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_document_did_close",
+      {
+        document: { path: "/workspace-a/src/App.ts" },
+        rootPath: "/workspace-a",
+      },
+    );
   });
 });
 
