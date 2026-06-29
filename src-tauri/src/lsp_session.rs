@@ -2566,6 +2566,16 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .pointer("/initializationOptions/preferences")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let formatting_options = initialize_request
+        .params
+        .pointer("/initializationOptions/formattingOptions")
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "insertSpaces": true,
+                "tabSize": 2,
+            })
+        });
     let auto_imports_enabled = preferences
         .get("includeCompletionsForModuleExports")
         .and_then(Value::as_bool)
@@ -2606,10 +2616,7 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
             "placeOpenBraceOnNewLineForFunctions": false,
             "semicolons": "ignore",
         },
-        "formattingOptions": {
-            "insertSpaces": true,
-            "tabSize": 2,
-        },
+        "formattingOptions": formatting_options,
         "implicitProjectConfiguration": {
             "checkJs": false,
             "experimentalDecorators": false,
@@ -5524,6 +5531,10 @@ mod tests {
             method: "initialize".to_string(),
             params: json!({
                 "initializationOptions": {
+                    "formattingOptions": {
+                        "insertSpaces": false,
+                        "tabSize": 8
+                    },
                     "preferences": {
                         "includeCompletionsForModuleExports": false,
                         "includeInlayFunctionLikeReturnTypeHints": false,
@@ -5591,8 +5602,8 @@ mod tests {
         );
         assert_eq!(response["result"][7]["semicolons"], "ignore");
         assert_eq!(response["result"][8]["enabled"], "never");
-        assert_eq!(response["result"][9]["tabSize"], 2);
-        assert_eq!(response["result"][9]["insertSpaces"], true);
+        assert_eq!(response["result"][9]["tabSize"], 8);
+        assert_eq!(response["result"][9]["insertSpaces"], false);
         assert_eq!(response["result"][10]["strict"], true);
         assert_eq!(response["result"][10]["module"], 99);
         assert_eq!(response["result"][10]["target"], 11);
@@ -5628,6 +5639,10 @@ mod tests {
                     "includeCompletionsForModuleExports": false,
                     "mockorCodeLensEnabled": true,
                 },
+                "formattingOptions": {
+                    "insertSpaces": false,
+                    "tabSize": 8,
+                },
                 "referencesCodeLens": {
                     "enabled": true,
                     "showOnAllFunctions": false,
@@ -5653,7 +5668,8 @@ mod tests {
                         { "section": "javascript.preferences" },
                         { "section": "typescript.referencesCodeLens" },
                         { "section": "javascript.validate" },
-                        { "section": "javascript.updateImportsOnFileMove" }
+                        { "section": "javascript.updateImportsOnFileMove" },
+                        { "section": "formattingOptions" }
                     ]
                 }
             }),
@@ -5671,6 +5687,8 @@ mod tests {
         assert_eq!(response["result"][2]["enabled"], true);
         assert_eq!(response["result"][3]["enable"], false);
         assert_eq!(response["result"][4]["enabled"], "never");
+        assert_eq!(response["result"][5]["insertSpaces"], false);
+        assert_eq!(response["result"][5]["tabSize"], 8);
     }
 
     #[test]

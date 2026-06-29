@@ -145,6 +145,7 @@ import { formattingOptionsFromContent } from "../domain/formattingOptionsFromCon
 import {
   applyEditorConfigOnSave,
   editorConfigDirectoriesForFile,
+  editorConfigFormattingOptions,
   editorConfigPathForDirectory,
   parseEditorConfig,
   resolveEditorConfigSettings,
@@ -24889,6 +24890,8 @@ export function useWorkbenchController(
               requestedRoot,
               javaScriptTypeScriptLanguageServerConfiguration(
                 resolvedWorkspaceSettings,
+                activeEditorConfigRef.current,
+                activeDocumentRef.current,
               ),
             );
           } catch (error) {
@@ -30916,11 +30919,18 @@ function phpNamedRouteCompletionInsertText(
 
 function javaScriptTypeScriptLanguageServerConfiguration(
   settings: WorkspaceSettings,
+  activeEditorConfig: ResolvedEditorConfig = {},
+  activeDocument: EditorDocument | null = null,
 ): LanguageServerConfigurationSettings {
   const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
   const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
   const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
   const validationEnabled = settings.javaScriptTypeScriptValidation;
+  const formattingOptions = formattingOptionsForActiveJavaScriptTypeScriptDocument(
+    settings,
+    activeEditorConfig,
+    activeDocument,
+  );
   const parameterNameHints = inlayHintsEnabled ? "literals" : "none";
   const preferences = {
     includeAutomaticOptionalChainCompletions: true,
@@ -30938,10 +30948,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
   };
 
   return {
-    formattingOptions: {
-      insertSpaces: true,
-      tabSize: 2,
-    },
+    formattingOptions,
     implicitProjectConfiguration: {
       checkJs: false,
       experimentalDecorators: false,
@@ -30982,6 +30989,20 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       includeCompletionsForModuleExports: autoImportsEnabled,
     },
   };
+}
+
+function formattingOptionsForActiveJavaScriptTypeScriptDocument(
+  settings: WorkspaceSettings,
+  activeEditorConfig: ResolvedEditorConfig,
+  activeDocument: EditorDocument | null,
+) {
+  return (
+    editorConfigFormattingOptions(activeEditorConfig) ??
+    formattingOptionsFromContent(activeDocument?.content ?? "", {
+      insertSpaces: settings.defaultInsertSpaces,
+      tabSize: settings.defaultTabSize,
+    })
+  );
 }
 
 function phpLanguageServerOptions(settings: WorkspaceSettings) {

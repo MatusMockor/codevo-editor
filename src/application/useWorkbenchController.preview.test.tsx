@@ -17265,6 +17265,107 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("includes active EditorConfig formatting options in JavaScript and TypeScript configuration changes", async () => {
+    const path = "/workspace/src/App.ts";
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 15,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === "/workspace/.editorconfig") {
+          return [
+            "root = true",
+            "[*.ts]",
+            "indent_style = space",
+            "indent_size = 4",
+          ].join("\n");
+        }
+
+        if (requestedPath.endsWith("/.editorconfig")) {
+          throw new Error(`No .editorconfig at ${requestedPath}`);
+        }
+
+        return ["export function run() {", "    return 1;", "}", ""].join(
+          "\n",
+        );
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: true,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().activeEditorConfig).toEqual(
+        expect.objectContaining({
+          indentStyle: "space",
+          indentSize: 4,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptAutoImports: false,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        formattingOptions: {
+          insertSpaces: true,
+          tabSize: 4,
+        },
+      }),
+    );
+  });
+
   it("ignores stale JavaScript and TypeScript configuration errors after same-root session restart", async () => {
     const configurationChange = createDeferred<void>();
     const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({

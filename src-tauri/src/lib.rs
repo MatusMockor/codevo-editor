@@ -4816,8 +4816,8 @@ mod tests {
                 "insertSpaceAfterCommaDelimiter": true,
             },
             "formattingOptions": {
-                "insertSpaces": true,
-                "tabSize": 2,
+                "insertSpaces": false,
+                "tabSize": 8,
             },
             "implicitProjectConfiguration": {
                 "checkJs": false,
@@ -4874,7 +4874,8 @@ mod tests {
                 .is_none());
         }
         assert_eq!(notification["implicitProjectConfiguration"]["strict"], true);
-        assert_eq!(notification["formattingOptions"]["tabSize"], 2);
+        assert_eq!(notification["formattingOptions"]["insertSpaces"], false);
+        assert_eq!(notification["formattingOptions"]["tabSize"], 8);
     }
 
     #[test]
