@@ -187,6 +187,78 @@ describe("SearchEverywhere", () => {
     expect(onActivate.mock.calls[0][0].kind).toBe("symbol");
   });
 
+  it("activates the visible item when async search results shrink", () => {
+    const onChangeQuery = vi.fn();
+    const onClose = vi.fn();
+    const onActivate = vi.fn<(item: SearchEverywhereItem) => void>();
+    const initialModel = buildSearchEverywhereModel({
+      query: "user",
+      files: [fileResult("User.ts")],
+      symbols: [symbolResult("User")],
+      commands: [command("editor.save", "Save File")],
+      context,
+    });
+    const narrowedModel = buildSearchEverywhereModel({
+      query: "save",
+      files: [],
+      symbols: [],
+      commands: [command("editor.save", "Save File")],
+      context,
+    });
+
+    act(() => {
+      root.render(
+        <SearchEverywhere
+          isOpen
+          isLoading={false}
+          query="user"
+          model={initialModel}
+          onChangeQuery={onChangeQuery}
+          onClose={onClose}
+          onActivate={onActivate}
+        />,
+      );
+    });
+
+    const field = input();
+    for (let press = 0; press < 2; press += 1) {
+      act(() => {
+        field?.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+        );
+      });
+    }
+
+    act(() => {
+      root.render(
+        <SearchEverywhere
+          isOpen
+          isLoading={false}
+          query="save"
+          model={narrowedModel}
+          onChangeQuery={onChangeQuery}
+          onClose={onClose}
+          onActivate={onActivate}
+        />,
+      );
+    });
+
+    const rows = host.querySelectorAll(".search-everywhere-result");
+    expect(rows[0]?.className).toContain("active");
+
+    act(() => {
+      input()?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate.mock.calls[0][0]).toMatchObject({
+      kind: "action",
+      label: "Save File",
+    });
+  });
+
   it("activates a file result on Enter from the default selection", () => {
     const { onActivate } = render();
     const field = input();

@@ -67,7 +67,10 @@ export function SearchEverywhere({
     return null;
   }
 
-  const activeItem = flatItems[activeIndex];
+  const safeActiveIndex =
+    flatItems.length === 0 ? -1 : Math.min(activeIndex, flatItems.length - 1);
+  const activeItem =
+    safeActiveIndex >= 0 ? flatItems[safeActiveIndex] : undefined;
   const hasResults = flatItems.length > 0;
 
   const handleActivate = (item: SearchEverywhereItem) => {
@@ -142,7 +145,7 @@ export function SearchEverywhere({
                 return (
                   <button
                     className={
-                      index === activeIndex
+                      index === safeActiveIndex
                         ? "quick-open-result search-everywhere-result active"
                         : "quick-open-result search-everywhere-result"
                     }
