@@ -22967,6 +22967,59 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("enables JavaScript and TypeScript navigation commands for TSX documents", async () => {
+    const sourcePath = "/workspace/src/App.tsx";
+    const source =
+      "import { User } from './User';\nexport function App() { return <User />; }\n";
+    const cursorPosition = positionAfter(source, "Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        sourceDefinition: true,
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 803,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === sourcePath ? source : "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "App.tsx"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    expect(
+      getWorkbench()
+        .commands.find(
+          (candidate) => candidate.id === "editor.goToSourceDefinition",
+        )
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(true);
+    expect(
+      getWorkbench()
+        .commands.find(
+          (candidate) => candidate.id === "editor.goToTypeDefinition",
+        )
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(true);
+  });
+
   it("external JavaScript TypeScript definitions open read-only without syncing the external document", async () => {
     const sourcePath = "/workspace/src/main.ts";
     const externalPath = "/external/types/pkg.d.ts";
@@ -23074,6 +23127,103 @@ describe("useWorkbenchController preview tabs", () => {
         line: cursorPosition.lineNumber - 1,
         path: sourcePath,
       });
+      expect(getWorkbench().activePath).toBe(externalPath);
+      expect(getWorkbench().activeDocument).toEqual(
+        expect.objectContaining({
+          path: externalPath,
+          readOnly: true,
+        }),
+      );
+      expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path: externalPath }),
+      );
+    }
+  });
+
+  it("external JSX and TSX definitions open read-only without syncing the external document", async () => {
+    const sourcePath = "/workspace/src/App.tsx";
+    const jsxExternalPath = "/external/pkg/Widget.jsx";
+    const tsxExternalPath = "/external/pkg/UserCard.tsx";
+    const source =
+      "import { Widget, UserCard } from 'pkg';\n<Widget />;\n<UserCard />;\n";
+    const external = "export function Component() { return <main />; }\n";
+    const cursorPosition = positionAfter(source, "Wid");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 804,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    )
+      .mockResolvedValueOnce([
+        {
+          range: range(0, 16, 0, 25),
+          uri: fileUriFromPath(jsxExternalPath),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          range: range(0, 16, 0, 25),
+          uri: fileUriFromPath(tsxExternalPath),
+        },
+      ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (
+          requestedPath === jsxExternalPath ||
+          requestedPath === tsxExternalPath
+        ) {
+          return external;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "App.tsx"));
+    });
+    await flushAsyncTurns(24);
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+
+    for (const externalPath of [jsxExternalPath, tsxExternalPath]) {
+      act(() => {
+        getWorkbench().setActivePath(sourcePath);
+        getWorkbench().updateActiveEditorPosition(cursorPosition);
+      });
+      await flushAsyncTurns();
+      vi.mocked(syncGateway.didOpen).mockClear();
+
+      await act(async () => {
+        await getWorkbench().commands
+          .find((candidate) => candidate.id === "editor.goToDefinition")
+          ?.run();
+      });
+      await flushAsyncTurns(24);
+
       expect(getWorkbench().activePath).toBe(externalPath);
       expect(getWorkbench().activeDocument).toEqual(
         expect.objectContaining({
@@ -59158,7 +59308,13 @@ class PostRepository
 
       act(() => {
         getWorkbench().setTextSearchOpen(true);
-        getWorkbench().setTextSearchQuery("needle");
+        getWorkbench().setTextSearchOptions({
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: false,
+          fileMask: "*.php",
+        });
+        getWorkbench().setTextSearchQuery("  needle  ");
         getWorkbench().setTextReplacement("thread");
       });
       await vi.waitFor(() => {
@@ -59174,7 +59330,12 @@ class PostRepository
         "/workspace",
         "needle",
         "thread",
-        expect.objectContaining({ fileMask: "" }),
+        {
+          caseSensitive: true,
+          wholeWord: true,
+          isRegex: false,
+          fileMask: "*.php",
+        },
         undefined,
       );
       expect(getWorkbench().message).toBe(
@@ -59182,20 +59343,21 @@ class PostRepository
       );
     });
 
-    it("scopes a single-file replace to that exact file out-of-band", async () => {
+    it("scopes a single-file replace to matching preview results and exact path", async () => {
       const replaceInPath = vi.fn(async () => ({
         files: [
           { path: "/workspace/a.php", relativePath: "a.php", replacements: 1 },
         ],
         totalReplacements: 1,
       }));
+      const confirm = vi.fn(() => true);
       const { getWorkbench } = renderController({
         appSettings: {
           ...defaultAppSettings(),
           recentWorkspacePath: "/workspace",
           workspaceTabs: ["/workspace"],
         },
-        prompter: { confirm: vi.fn(() => true), prompt: vi.fn(() => null) },
+        prompter: { confirm, prompt: vi.fn(() => null) },
         searchText: vi.fn(async () => [
           {
             column: 1,
@@ -59225,6 +59387,12 @@ class PostRepository
 
       act(() => {
         getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchOptions({
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
+          fileMask: "*.php",
+        });
         getWorkbench().setTextSearchQuery("needle");
         getWorkbench().setTextReplacement("thread");
       });
@@ -59237,13 +59405,21 @@ class PostRepository
       });
       await flushAsyncTurns();
 
+      expect(confirm).toHaveBeenCalledWith(
+        "Replace 1 occurrence in a.php? This rewrites files on disk and cannot be undone.",
+      );
       // The single-file scope is passed as an exact path (5th arg), never as a
       // widened file mask, so an active mask cannot escape the chosen file.
       expect(replaceInPath).toHaveBeenCalledWith(
         "/workspace",
         "needle",
         "thread",
-        expect.anything(),
+        {
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
+          fileMask: "*.php",
+        },
         "/workspace/a.php",
       );
     });
@@ -59683,6 +59859,7 @@ class PostRepository
       query: string,
       replacement: string,
       options?: TextSearchOptions,
+      scopePath?: string,
     ) => Promise<ReplaceInPathResult>;
     settingsGateway?: SettingsGateway;
     smartModeGateway?: SmartModeGateway;
@@ -60098,6 +60275,7 @@ function createControllerDependencies({
     query: string,
     replacement: string,
     options?: TextSearchOptions,
+    scopePath?: string,
   ): Promise<ReplaceInPathResult>;
   settingsGateway?: SettingsGateway;
   smartModeGateway?: SmartModeGateway;

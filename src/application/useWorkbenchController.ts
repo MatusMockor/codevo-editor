@@ -31423,7 +31423,12 @@ function shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
 function isJavaScriptTypeScriptNavigationPath(path: string): boolean {
   const language = detectLanguage(path);
 
-  return language === "javascript" || language === "typescript";
+  return (
+    language === "javascript" ||
+    language === "javascriptreact" ||
+    language === "typescript" ||
+    language === "typescriptreact"
+  );
 }
 
 function normalizedSessionPath(path: string): string {
