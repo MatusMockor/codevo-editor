@@ -324,6 +324,7 @@ export function phpThisPropertyType(
     phpPromotedPropertyType(source, propertyName) ??
     phpDeclaredPropertyType(source, propertyName) ??
     phpDocTypeForProperty(source, propertyName) ??
+    phpConstructorAssignedPropertyType(source, propertyName) ??
     phpFrameworkPropertyTypeFromSource(
       source,
       propertyName,
@@ -866,6 +867,162 @@ function phpDocTypeForProperty(
   }
 
   return typeName;
+}
+
+function phpConstructorAssignedPropertyType(
+  source: string,
+  propertyName: string,
+): string | null {
+  if (!phpUntypedDeclaredPropertyExists(source, propertyName)) {
+    return null;
+  }
+
+  const constructor = phpConstructorDeclaration(source);
+
+  if (!constructor?.body) {
+    return null;
+  }
+
+  const assignedParameterName = phpConstructorAssignedParameterName(
+    constructor.body,
+    propertyName,
+  );
+
+  if (!assignedParameterName) {
+    return null;
+  }
+
+  return phpConstructorParameterType(
+    constructor.parameters,
+    assignedParameterName,
+  );
+}
+
+function phpConstructorDeclaration(
+  source: string,
+): { body: string | null; parameters: string } | null {
+  const match = /\bfunction\s+__construct\s*\(/.exec(source);
+
+  if (!match) {
+    return null;
+  }
+
+  const parametersStart = match.index + match[0].length - 1;
+  const parametersEnd = matchingPairOffset(source, parametersStart, "(", ")");
+
+  if (parametersEnd === null) {
+    return null;
+  }
+
+  let bodyStart = parametersEnd + 1;
+
+  while (/\s/.test(source[bodyStart] ?? "")) {
+    bodyStart += 1;
+  }
+
+  if (source[bodyStart] !== "{") {
+    return {
+      body: null,
+      parameters: source.slice(parametersStart + 1, parametersEnd),
+    };
+  }
+
+  const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+  if (bodyEnd === null) {
+    return null;
+  }
+
+  return {
+    body: source.slice(bodyStart + 1, bodyEnd),
+    parameters: source.slice(parametersStart + 1, parametersEnd),
+  };
+}
+
+function phpUntypedDeclaredPropertyExists(
+  source: string,
+  propertyName: string,
+): boolean {
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*(?:public|protected|private)\\s+(?:static\\s+)?\\$${escapeRegExp(
+      propertyName,
+    )}\\b\\s*(?:=[^;]*)?;`,
+    "g",
+  );
+
+  return pattern.test(source);
+}
+
+function phpConstructorAssignedParameterName(
+  constructorBody: string,
+  propertyName: string,
+): string | null {
+  const pattern = new RegExp(
+    `\\$this\\s*->\\s*${escapeRegExp(propertyName)}\\s*=`,
+    "g",
+  );
+  const assignments: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(constructorBody)) !== null) {
+    const equalsOffset = (match.index ?? 0) + match[0].length;
+    const expression =
+      phpAssignmentExpressionAfterEquals(constructorBody, equalsOffset)?.trim() ??
+      "";
+    const parameterMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression);
+
+    if (!parameterMatch?.[1]) {
+      return null;
+    }
+
+    assignments.push(parameterMatch[1]);
+  }
+
+  return assignments.length === 1 ? (assignments[0] ?? null) : null;
+}
+
+function phpConstructorParameterType(
+  parametersSource: string,
+  parameterName: string,
+): string | null {
+  for (const parameter of splitPhpList(parametersSource)) {
+    const variableMatch = new RegExp(
+      `\\$${escapeRegExp(parameterName)}\\b`,
+    ).exec(parameter);
+
+    if (!variableMatch) {
+      continue;
+    }
+
+    const typeSource = parameter.slice(0, variableMatch.index);
+
+    return phpUnambiguousDeclaredTypeCandidate(typeSource);
+  }
+
+  return null;
+}
+
+function phpUnambiguousDeclaredTypeCandidate(typeName: string): string | null {
+  const normalized = typeName
+    .trim()
+    .replace(/\b(?:public|protected|private|readonly|static)\b/g, " ")
+    .replace(/^\s*&\s*/, "")
+    .trim();
+  const typeParts = normalized
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (!typeParts.length) {
+    return null;
+  }
+
+  const candidates = typeParts
+    .map((part) => phpDeclaredTypeCandidate(part))
+    .filter((part): part is string => Boolean(part));
+  const uniqueCandidates = [...new Set(candidates)];
+
+  return uniqueCandidates.length === 1 ? (uniqueCandidates[0] ?? null) : null;
 }
 
 function phpDocNormalizeType(rawTypeName: string): string {

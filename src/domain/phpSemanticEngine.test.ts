@@ -222,6 +222,125 @@ class PostController
     expect(phpThisPropertyType(source, "postRepository")).toBeNull();
   });
 
+  it("infers an untyped declared property from a typed constructor parameter assignment", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\PostRepositoryInterface;
+
+class PostController
+{
+    private $repo;
+
+    public function __construct(PostRepositoryInterface $repo)
+    {
+        $this->repo = $repo;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "repo")).toBe(
+      "PostRepositoryInterface",
+    );
+  });
+
+  it("supports nullable, FQCN and unambiguous union constructor parameter assignment types", () => {
+    const source = `<?php
+class PostController
+{
+    private $nullableRepo;
+    private $fqcnRepo;
+    private $unionRepo;
+
+    public function __construct(
+        ?PostRepositoryInterface $nullableRepo,
+        \\App\\Repositories\\PostRepositoryInterface $fqcnRepo,
+        PostRepositoryInterface|null $unionRepo,
+    ) {
+        $this->nullableRepo = $nullableRepo;
+        $this->fqcnRepo = $fqcnRepo;
+        $this->unionRepo = $unionRepo;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "nullableRepo")).toBe(
+      "PostRepositoryInterface",
+    );
+    expect(phpThisPropertyType(source, "fqcnRepo")).toBe(
+      "App\\Repositories\\PostRepositoryInterface",
+    );
+    expect(phpThisPropertyType(source, "unionRepo")).toBe(
+      "PostRepositoryInterface",
+    );
+  });
+
+  it("keeps declared property types and PHPDoc property types ahead of constructor assignment inference", () => {
+    const source = `<?php
+class PostController
+{
+    private DeclaredRepository $declaredRepo;
+
+    /** @var DocumentedRepository */
+    private $documentedRepo;
+
+    public function __construct(
+        AssignedRepository $declaredRepo,
+        AssignedRepository $documentedRepo,
+    ) {
+        $this->declaredRepo = $declaredRepo;
+        $this->documentedRepo = $documentedRepo;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "declaredRepo")).toBe(
+      "DeclaredRepository",
+    );
+    expect(phpThisPropertyType(source, "documentedRepo")).toBe(
+      "DocumentedRepository",
+    );
+  });
+
+  it("does not infer constructor assignment property types for dynamic, outside-constructor, untyped or ambiguous cases", () => {
+    const source = `<?php
+class PostController
+{
+    private $assignedOutside;
+    private $assignedFromUntyped;
+    private $assignedFromAmbiguousUnion;
+    private $assignedTwice;
+    private $assignedDynamically;
+
+    public function __construct(
+        $assignedFromUntyped,
+        FirstRepository|SecondRepository $assignedFromAmbiguousUnion,
+        PostRepositoryInterface $assignedTwice,
+        PostRepositoryInterface $assignedDynamically,
+    ) {
+        $this->assignedFromUntyped = $assignedFromUntyped;
+        $this->assignedFromAmbiguousUnion = $assignedFromAmbiguousUnion;
+        $this->assignedTwice = $assignedTwice;
+        $this->assignedTwice = $assignedTwice;
+        $name = 'assignedDynamically';
+        $this->$name = $assignedDynamically;
+    }
+
+    public function boot(PostRepositoryInterface $assignedOutside): void
+    {
+        $this->assignedOutside = $assignedOutside;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "dynamicRepo")).toBeNull();
+    expect(phpThisPropertyType(source, "assignedOutside")).toBeNull();
+    expect(phpThisPropertyType(source, "assignedFromUntyped")).toBeNull();
+    expect(phpThisPropertyType(source, "assignedFromAmbiguousUnion")).toBeNull();
+    expect(phpThisPropertyType(source, "assignedTwice")).toBeNull();
+    expect(phpThisPropertyType(source, "assignedDynamically")).toBeNull();
+  });
+
   it("resolves a PHPDoc @var property type when the property has no PHP type", () => {
     const source = `<?php
 class PostController
@@ -638,6 +757,48 @@ class AlbumController
         "album",
       ),
     ).toBeNull();
+  });
+
+  it("resolves Laravel repository finder assignments from legacy constructor property assignments", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\AlbumRepositoryInterface;
+
+class AlbumController
+{
+    private $albums;
+
+    public function __construct(AlbumRepositoryInterface $albums)
+    {
+        $this->albums = $albums;
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->albums->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "$this->albums",
+        laravelOptions,
+      ),
+    ).toBe("AlbumRepositoryInterface");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
   });
 
   it("resolves Laravel repository convention models in package namespaces", () => {
