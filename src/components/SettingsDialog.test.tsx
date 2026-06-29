@@ -908,6 +908,27 @@ describe("SettingsDialog", () => {
         javaScriptTypeScriptValidation: false,
       },
     });
+
+    await act(async () => {
+      javaScriptTypeScriptReferencesCodeLensOnAllFunctionsCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptAutomaticTypeAcquisition: true,
+        javaScriptTypeScriptCodeLens: true,
+        javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
+        javaScriptTypeScriptValidation: false,
+      },
+    });
   });
 
   it("persists JavaScript and TypeScript import preferences", async () => {
@@ -1586,6 +1607,10 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptCodeLensCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript CodeLens");
+  }
+
+  function javaScriptTypeScriptReferencesCodeLensOnAllFunctionsCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JS/TS reference CodeLens on all functions");
   }
 
   function javaScriptTypeScriptOrganizeImportsOnSaveCheckbox(): HTMLInputElement {

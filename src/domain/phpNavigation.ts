@@ -1283,6 +1283,15 @@ function laravelRouteActionContextAt(
   source: string,
   identifier: IdentifierAtOffset,
 ): PhpIdentifierContext | null {
+  const invokableRouteAction = laravelInvokableRouteActionContextAt(
+    source,
+    identifier,
+  );
+
+  if (invokableRouteAction) {
+    return invokableRouteAction;
+  }
+
   const literal = stringLiteralAtOffset(source, identifier.start);
 
   if (!literal) {
@@ -1337,6 +1346,119 @@ function laravelRouteActionContextAt(
     kind: "laravelRouteActionMethod",
     methodName: literal.value,
   };
+}
+
+function laravelInvokableRouteActionContextAt(
+  source: string,
+  identifier: IdentifierAtOffset,
+): PhpIdentifierContext | null {
+  const classReference = classConstantReferenceAtIdentifier(source, identifier);
+
+  if (!classReference) {
+    return null;
+  }
+
+  const routeCall = laravelRouteCallForActionArgument(
+    source,
+    classReference.start,
+  );
+
+  if (!routeCall) {
+    return null;
+  }
+
+  if (!isTopLevelBetween(source, routeCall.openParen + 1, classReference.start)) {
+    return null;
+  }
+
+  return {
+    className: classReference.className,
+    kind: "laravelRouteActionMethod",
+    methodName: "__invoke",
+  };
+}
+
+function classConstantReferenceAtIdentifier(
+  source: string,
+  identifier: IdentifierAtOffset,
+): { className: string; start: number } | null {
+  const classConstantPattern =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\b/g;
+
+  for (const match of source.matchAll(classConstantPattern)) {
+    const matchStart = match.index ?? 0;
+    const className = match[1];
+
+    if (!className) {
+      continue;
+    }
+
+    const classStart = matchStart + match[0].indexOf(className);
+    const classEnd = classStart + className.length;
+    const magicStart = matchStart + match[0].lastIndexOf("class");
+    const magicEnd = magicStart + "class".length;
+    const isOnClassName =
+      identifier.start >= classStart && identifier.end <= classEnd;
+    const isOnMagicClass =
+      identifier.start >= magicStart && identifier.end <= magicEnd;
+
+    if (!isOnClassName && !isOnMagicClass) {
+      continue;
+    }
+
+    return {
+      className,
+      start: classStart,
+    };
+  }
+
+  return null;
+}
+
+function laravelRouteCallForActionArgument(
+  source: string,
+  targetOffset: number,
+): { openParen: number } | null {
+  const routePattern = /\bRoute\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of source.matchAll(routePattern)) {
+    const routeStart = match.index ?? 0;
+    const routeMethod = match[1]?.toLowerCase() ?? "";
+
+    if (!laravelControllerGroupRouteMethods.has(routeMethod)) {
+      continue;
+    }
+
+    const openParen = routeStart + match[0].lastIndexOf("(");
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (
+      closeParen === null ||
+      targetOffset <= openParen ||
+      targetOffset >= closeParen
+    ) {
+      continue;
+    }
+
+    const argumentName = topLevelCallArgumentNameAtOffset(
+      source,
+      openParen,
+      closeParen,
+      targetOffset,
+    );
+    const argumentIndex = topLevelCallArgumentIndexAt(
+      source,
+      openParen,
+      closeParen,
+      targetOffset,
+    );
+
+    if (argumentIndex === 1 || argumentName?.toLowerCase() === "action") {
+      return { openParen };
+    }
+  }
+
+  return null;
 }
 
 function laravelControllerGroupClassNameForRouteAction(

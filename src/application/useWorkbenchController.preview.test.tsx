@@ -14471,6 +14471,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14481,6 +14482,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14547,6 +14549,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14715,6 +14718,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14837,6 +14841,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14858,6 +14863,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14915,6 +14921,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14973,6 +14980,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -14983,6 +14991,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -15036,6 +15045,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
       validationEnabled: true,
@@ -15046,6 +15056,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
       validationEnabled: true,
@@ -17850,6 +17861,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -17901,6 +17913,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: true,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
@@ -18239,6 +18252,7 @@ describe("useWorkbenchController preview tabs", () => {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptAutoImports: true,
         javaScriptTypeScriptCodeLens: false,
+        javaScriptTypeScriptReferencesCodeLensOnAllFunctions: false,
         javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
         javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
         javaScriptTypeScriptInlayHints: true,
@@ -18259,6 +18273,7 @@ describe("useWorkbenchController preview tabs", () => {
           ...defaultWorkspaceSettings(),
           javaScriptTypeScriptAutoImports: false,
           javaScriptTypeScriptCodeLens: true,
+          javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
           javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
           javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
           javaScriptTypeScriptInlayHints: false,
@@ -18287,7 +18302,7 @@ describe("useWorkbenchController preview tabs", () => {
         implementationsCodeLens: { enabled: true },
         referencesCodeLens: {
           enabled: true,
-          showOnAllFunctions: false,
+          showOnAllFunctions: true,
         },
         updateImportsOnFileMove: {
           enabled: "never",
@@ -18318,6 +18333,78 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).not.toHaveBeenCalled();
+  });
+
+  it("notifies the running JavaScript and TypeScript language service when reference CodeLens scope changes", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 15,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptCodeLens: true,
+        javaScriptTypeScriptReferencesCodeLensOnAllFunctions: false,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptCodeLens: true,
+          javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        referencesCodeLens: {
+          enabled: true,
+          showOnAllFunctions: true,
+        },
+      }),
+    );
   });
 
   it("restarts JavaScript and TypeScript instead of notifying configuration when automatic type acquisition changes", async () => {
@@ -18870,6 +18957,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: false,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
       validationEnabled: true,
@@ -18880,6 +18968,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: false,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
       validationEnabled: true,
@@ -18954,6 +19043,7 @@ describe("useWorkbenchController preview tabs", () => {
       autoImportsEnabled: false,
       automaticTypeAcquisitionEnabled: false,
       codeLensEnabled: false,
+      completeFunctionCalls: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
       validationEnabled: true,
@@ -40813,6 +40903,96 @@ Route::post('/reactions', [ReactionController::class, 'store']);
       position: {
         column: 21,
         lineNumber: 12,
+      },
+    });
+  });
+
+  it("resolves Laravel invokable route controller classes to __invoke before LSP fallback", async () => {
+    const routesPath = "/workspace/routes/web.php";
+    const dashboardControllerPath =
+      "/workspace/app/Http/Controllers/DashboardController.php";
+    const routesSource = `<?php
+use App\\Http\\Controllers\\DashboardController;
+
+Route::get('/dashboard', DashboardController::class);
+Route::get(uri: '/named-dashboard', action: DashboardController::class);
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 21,
+        containerName: "App\\Http\\Controllers\\DashboardController",
+        fullyQualifiedName: "App\\Http\\Controllers\\DashboardController::__invoke",
+        kind: "method",
+        lineNumber: 8,
+        name: "__invoke",
+        path: dashboardControllerPath,
+        relativePath: "app/Http/Controllers/DashboardController.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return routesSource;
+        }
+
+        return `<?php
+namespace App\\Http\\Controllers;
+
+final class DashboardController
+{
+    public function __invoke(): void
+    {
+    }
+}
+`;
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(routesSource, "DashboardController::class"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "__invoke", 50);
+    expect(getWorkbench().activePath).toBe(dashboardControllerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: dashboardControllerPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
       },
     });
   });

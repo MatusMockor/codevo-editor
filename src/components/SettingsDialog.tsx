@@ -308,6 +308,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptCodeLens,
                     })
                   }
+                  onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions={(
+                    javaScriptTypeScriptReferencesCodeLensOnAllFunctions,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptReferencesCodeLensOnAllFunctions,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptCompleteFunctionCalls={(
                     javaScriptTypeScriptCompleteFunctionCalls,
                   ) =>
@@ -564,6 +572,9 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(enabled: boolean): void;
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions(
+    enabled: boolean,
+  ): void;
   onChangeJavaScriptTypeScriptCompleteFunctionCalls(enabled: boolean): void;
   onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
@@ -609,6 +620,7 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition,
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
+  onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions,
   onChangeJavaScriptTypeScriptCompleteFunctionCalls,
   onChangeJavaScriptTypeScriptFixAllOnSave,
   onChangeJavaScriptTypeScriptImportModuleSpecifierEnding,
@@ -820,6 +832,22 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript CodeLens</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={
+            workspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions
+          }
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS reference CodeLens on all functions</span>
       </label>
 
       <label className="settings-toggle">

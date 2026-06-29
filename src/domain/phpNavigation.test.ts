@@ -1476,6 +1476,82 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     });
   });
 
+  it("detects Laravel invokable route controller class actions", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\DashboardController;
+
+Route::get('/dashboard', DashboardController::class);
+Route::get(uri: '/named-dashboard', action: DashboardController::class);
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "DashboardController::class"),
+      ),
+    ).toEqual({
+      className: "DashboardController",
+      kind: "laravelRouteActionMethod",
+      methodName: "__invoke",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "action: DashboardController::class"),
+      ),
+    ).toEqual({
+      className: "DashboardController",
+      kind: "laravelRouteActionMethod",
+      methodName: "__invoke",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "::class")),
+    ).toEqual({
+      className: "DashboardController",
+      kind: "laravelRouteActionMethod",
+      methodName: "__invoke",
+    });
+  });
+
+  it("keeps Laravel non-action Route class arguments out of invokable navigation", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\CommentController;
+
+Route::get('/comments', [CommentController::class, 'index']);
+Route::view('/dashboard', 'dashboard', ['controller' => CommentController::class]);
+Route::redirect('/old-dashboard', '/dashboard');
+Route::resource('comments', CommentController::class);
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "[CommentController"),
+      ),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "CommentController",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "['controller' => CommentController"),
+      ),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "CommentController",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "Route::resource('comments', CommentController"),
+      ),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "CommentController",
+    });
+  });
+
   it("detects Laravel controller group route action strings as controller methods", () => {
     const routeSource = `<?php
 use App\\Http\\Controllers\\communication\\CommentController;

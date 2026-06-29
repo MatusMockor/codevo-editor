@@ -25356,6 +25356,8 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
+          previousWorkspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions ||
           previousWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls ||
           previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding !==
@@ -31514,6 +31516,8 @@ function javaScriptTypeScriptLanguageServerConfiguration(
 ): LanguageServerConfigurationSettings {
   const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
   const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
+  const showReferencesCodeLensOnAllFunctions =
+    settings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions;
   const completeFunctionCalls = settings.javaScriptTypeScriptCompleteFunctionCalls;
   const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
   const validationEnabled = settings.javaScriptTypeScriptValidation;
@@ -31583,7 +31587,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     },
     referencesCodeLens: {
       enabled: codeLensEnabled,
-      showOnAllFunctions: false,
+      showOnAllFunctions: showReferencesCodeLensOnAllFunctions,
     },
     suggest: {
       autoImports: autoImportsEnabled,
