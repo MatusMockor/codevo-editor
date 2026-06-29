@@ -249,7 +249,8 @@ export function phpVariableTypeInSource(
       variableName,
       assignmentExpression,
       options,
-    )
+    ) ??
+    phpForeachValueTypeForVariableBefore(source, position, variableName, options)
   );
 }
 
@@ -482,6 +483,126 @@ function phpFrameworkMethodCallAssignmentReturnType(
     methodCall.methodName,
     receiverType,
   );
+}
+
+function phpForeachValueTypeForVariableBefore(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+  options: PhpSemanticEngineOptions,
+): string | null {
+  const offset = offsetAtPosition(source, position);
+  const foreachPattern = /\bforeach\s*\(/g;
+  let typeName: string | null = null;
+
+  for (const match of source.matchAll(foreachPattern)) {
+    const openOffset = source.indexOf("(", match.index ?? 0);
+
+    if (openOffset < 0 || openOffset > offset) {
+      continue;
+    }
+
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (
+      closeOffset === null ||
+      closeOffset > offset ||
+      !phpForeachBodyContainsOffset(source, closeOffset, offset)
+    ) {
+      continue;
+    }
+
+    const header = source.slice(openOffset + 1, closeOffset);
+    const asOffset = topLevelKeywordOffset(header, "as");
+
+    if (asOffset === null) {
+      continue;
+    }
+
+    const iterableExpression = header.slice(0, asOffset).trim();
+    const valueExpression = phpForeachValueExpression(
+      header.slice(asOffset + "as".length),
+    );
+    const valueVariableName = /^\s*&?\s*\$([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
+      valueExpression,
+    )?.[1];
+
+    if (valueVariableName !== variableName) {
+      continue;
+    }
+
+    typeName =
+      phpForeachIterableValueType(source, position, iterableExpression, options) ??
+      typeName;
+  }
+
+  return typeName;
+}
+
+function phpForeachValueExpression(source: string): string {
+  const arrowOffset = topLevelFatArrowOffset(source);
+
+  return (arrowOffset === null ? source : source.slice(arrowOffset + 2)).trim();
+}
+
+function phpForeachIterableValueType(
+  source: string,
+  position: EditorPosition,
+  iterableExpression: string,
+  options: PhpSemanticEngineOptions,
+): string | null {
+  const variableName = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+    iterableExpression.trim(),
+  )?.[1];
+  const rawDocType = variableName
+    ? phpDocRawTypeForVariableBefore(source, position, variableName)
+    : null;
+
+  return (
+    phpGenericValueTypeCandidate(rawDocType) ??
+    phpGenericValueTypeCandidate(
+      phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        iterableExpression,
+        options,
+      ),
+    )
+  );
+}
+
+function phpGenericValueTypeCandidate(typeName: string | null): string | null {
+  const candidates = phpDeclaredGenericTypeCandidates(typeName ?? "");
+
+  return candidates[candidates.length - 1] ?? null;
+}
+
+function phpForeachBodyContainsOffset(
+  source: string,
+  headerCloseOffset: number,
+  offset: number,
+): boolean {
+  let bodyStart = headerCloseOffset + 1;
+
+  while (/\s/.test(source[bodyStart] ?? "")) {
+    bodyStart += 1;
+  }
+
+  if (source[bodyStart] === "{") {
+    const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+    return bodyEnd !== null && offset > bodyStart && offset <= bodyEnd;
+  }
+
+  if (source[bodyStart] === ":") {
+    const bodyEnd = source.indexOf("endforeach", bodyStart + 1);
+
+    return bodyEnd >= 0 && offset > bodyStart && offset <= bodyEnd;
+  }
+
+  const statementEnd = source.indexOf(";", bodyStart);
+
+  return statementEnd >= 0 && offset >= bodyStart && offset <= statementEnd;
 }
 
 function phpSameSourceMethodCallReturnType(
@@ -1554,6 +1675,72 @@ function phpParameterListHasVariable(
   return new RegExp(String.raw`(?:^|[,\s&])\$${escapeRegExp(variableName)}\b`).test(
     parametersSource,
   );
+}
+
+function topLevelKeywordOffset(source: string, keyword: string): number | null {
+  const pattern = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "g");
+
+  for (const match of source.matchAll(pattern)) {
+    const offset = match.index ?? 0;
+
+    if (isTopLevelExpressionOffset(source, offset)) {
+      return offset;
+    }
+  }
+
+  return null;
+}
+
+function topLevelFatArrowOffset(source: string): number | null {
+  for (let index = 0; index < source.length - 1; index += 1) {
+    if (
+      source[index] === "=" &&
+      source[index + 1] === ">" &&
+      isTopLevelExpressionOffset(source, index)
+    ) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function isTopLevelExpressionOffset(source: string, offset: number): boolean {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = 0; index < offset; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth === 0 && !quote;
 }
 
 function phpCallbackMethodCallContext(

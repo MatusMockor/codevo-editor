@@ -2193,6 +2193,185 @@ class Album extends Model
     ).toBeNull();
   });
 
+  it("infers foreach value types from assigned and direct Laravel collections", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+    public function preview(): void
+    {
+        $albums = Album::query()->where('published', true)->get();
+
+        foreach ($albums as $assignedAlbum) {
+            $assignedAlbum->tit
+        }
+
+        foreach ($albums->filter() as $filteredAlbum) {
+            $filteredAlbum->tit
+        }
+
+        foreach (Album::query()->latest()->get() as $directAlbum) {
+            $directAlbum->tit
+        }
+
+        foreach (Album::all() as $staticAlbum) {
+            $staticAlbum->tit
+        }
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$assignedAlbum->tit"),
+        "assignedAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$filteredAlbum->tit"),
+        "filteredAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$directAlbum->tit"),
+        "directAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$staticAlbum->tit"),
+        "staticAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$directAlbum->tit"),
+        "directAlbum",
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$assignedAlbum->tit"),
+        "assignedAlbum",
+      ),
+    ).toBeNull();
+  });
+
+  it("infers foreach value types from generic PHPDoc arrays and collections without Laravel", () => {
+    const source = `<?php
+namespace App\\Reports;
+
+class PreviewReport
+{
+    public function render(): void
+    {
+        /** @var array<int, \\App\\Models\\Album> $albums */
+        foreach ($albums as $album) {
+            $album->tit
+        }
+
+        /** @var \\Illuminate\\Support\\Collection<int, \\App\\Models\\Track> $tracks */
+        foreach ($tracks as $index => $track) {
+            $track->tit
+        }
+
+        /** @var Collection<\\App\\Models\\Comment> $comments */
+        foreach ($comments as $comment) {
+            $comment->tit
+        }
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$track->tit"),
+        "track",
+      ),
+    ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$comment->tit"),
+        "comment",
+      ),
+    ).toBe("App\\Models\\Comment");
+  });
+
+  it("keeps explicit foreach value params PHPDoc and assignments ahead of inferred collection values", () => {
+    const source = `<?php
+namespace App\\Reports;
+
+class PreviewReport
+{
+    public function render(\\App\\DTO\\PinnedAlbum $paramAlbum): void
+    {
+        /** @var array<int, \\App\\Models\\Album> $albums */
+        foreach ($albums as $paramAlbum) {
+            $paramAlbum->tit
+        }
+
+        /** @var array<int, \\App\\Models\\Album> $documentedAlbums */
+        foreach ($documentedAlbums as $documentedAlbum) {
+            /** @var \\App\\DTO\\DocumentedAlbum $documentedAlbum */
+            $documentedAlbum->tit
+        }
+
+        /** @var array<int, \\App\\Models\\Album> $assignedAlbums */
+        foreach ($assignedAlbums as $assignedAlbum) {
+            $assignedAlbum = new \\App\\DTO\\AssignedAlbum();
+            $assignedAlbum->tit
+        }
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$paramAlbum->tit"),
+        "paramAlbum",
+      ),
+    ).toBe("App\\DTO\\PinnedAlbum");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$documentedAlbum->tit"),
+        "documentedAlbum",
+      ),
+    ).toBe("App\\DTO\\DocumentedAlbum");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$assignedAlbum->tit"),
+        "assignedAlbum",
+      ),
+    ).toBe("App\\DTO\\AssignedAlbum");
+  });
+
   it("resolves Laravel relation factory chains to related model assignments", () => {
     const source = `<?php
 namespace App\\Models;
