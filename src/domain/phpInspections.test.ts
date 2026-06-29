@@ -488,6 +488,82 @@ class Foo
     ).toEqual([]);
   });
 
+  it("does not flag a private method referenced as a static callable string", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function run(): callable
+    {
+        return 'self::helper';
+    }
+
+    private static function helper(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpInspectionDiagnostics(source).filter(
+        (diagnostic) => diagnostic.kind === "unused-private-method",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not flag a private method referenced through method_exists", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function run(): bool
+    {
+        return method_exists($this, 'helper');
+    }
+
+    private function helper(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpInspectionDiagnostics(source).filter(
+        (diagnostic) => diagnostic.kind === "unused-private-method",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not flag any private method when an array callable uses a variable method name", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function run(string $method): void
+    {
+        $callback = [$this, $method];
+        $callback();
+    }
+
+    private function helper(): void
+    {
+    }
+}
+`;
+
+    expect(
+      phpInspectionDiagnostics(source).filter(
+        (diagnostic) => diagnostic.kind === "unused-private-method",
+      ),
+    ).toEqual([]);
+  });
+
   it("does not flag any private method in a class that adopts a trait (trait may call it)", () => {
     const source = `<?php
 
@@ -758,6 +834,33 @@ class Foo
     expect(flagged).toHaveLength(1);
     expect(flagged[0].message).toBe('Unused private method "helper".');
   });
+
+  it("does not keep a private method alive for an arbitrary quoted string or quoted comment", () => {
+    const source = `<?php
+
+namespace App;
+
+class Foo
+{
+    public function go(): string
+    {
+        // 'helper' is only documentation.
+        return 'helper';
+    }
+
+    private function helper(): void
+    {
+    }
+}
+`;
+
+    const flagged = phpInspectionDiagnostics(source).filter(
+      (diagnostic) => diagnostic.kind === "unused-private-method",
+    );
+
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].message).toBe('Unused private method "helper".');
+  });
 });
 
 describe("phpInspectionDiagnostics - safety", () => {
@@ -1010,6 +1113,19 @@ function f()
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
+  it("does not flag a variable used in legacy dollar-brace interpolation", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return "hello \${name}!";
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
   it("does not flag a variable used in a heredoc body", () => {
     const source = `<?php
 
@@ -1023,6 +1139,53 @@ function f()
 `;
 
     expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("flags a variable mentioned only in a single-quoted string", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return 'hello $name';
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$name".',
+    ]);
+  });
+
+  it("flags a variable mentioned only in a nowdoc body", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return <<<'TXT'
+        hello $name
+        TXT;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$name".',
+    ]);
+  });
+
+  it("flags a variable mentioned only as an escaped dollar in an encapsed string", () => {
+    const source = `<?php
+
+function f()
+{
+    $name = 'world';
+    return "hello \\$name";
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$name".',
+    ]);
   });
 
   // --- false-positive guards: closures / arrow fns ---
@@ -1056,6 +1219,60 @@ function f()
 `;
 
     expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("flags an outer variable read only inside a closure without a use clause", () => {
+    const source = `<?php
+
+function f()
+{
+    $outer = 5;
+    $callback = function () {
+        return $outer;
+    };
+    return $callback;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$outer".',
+    ]);
+  });
+
+  it("does not duplicate a local variable assigned inside a nested closure", () => {
+    const source = `<?php
+
+function f()
+{
+    $callback = function () {
+        $inner = 5;
+        return 1;
+    };
+    return $callback;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$inner".',
+    ]);
+  });
+
+  it("does not let extract inside a nested closure suppress the outer scope", () => {
+    const source = `<?php
+
+function f()
+{
+    $outer = 5;
+    $callback = function ($data) {
+        extract($data);
+    };
+    return $callback;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$outer".',
+    ]);
   });
 
   it("does not flag a variable used by an arrow function auto-capture", () => {
@@ -1173,6 +1390,20 @@ function f()
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
+  it("does not flag either side of an unread reference alias assignment", () => {
+    const source = `<?php
+
+function f()
+{
+    $x = 5;
+    $ref =& $x;
+    return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
   // --- false-positive guards: superglobals / this / global / static ---
 
   it("does not flag \$this", () => {
@@ -1234,7 +1465,7 @@ function f()
 
   // --- false-positive guards: destructuring ---
 
-  it("does not flag list()/[] destructuring assignment targets", () => {
+  it("flags unread [] destructuring assignment targets", () => {
     const source = `<?php
 
 function f($pair)
@@ -1244,16 +1475,51 @@ function f($pair)
 }
 `;
 
-    expect(unusedVariableMessages(source)).toEqual([]);
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$a".',
+      'Unused variable "$b".',
+    ]);
   });
 
-  it("does not flag list(...) destructuring targets", () => {
+  it("flags unread list(...) destructuring targets", () => {
     const source = `<?php
 
 function f($pair)
 {
     list($a, $b) = $pair;
     return 1;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$a".',
+      'Unused variable "$b".',
+    ]);
+  });
+
+  it("flags only unread destructuring targets", () => {
+    const source = `<?php
+
+function f($pair)
+{
+    [$a, $b] = $pair;
+    return $a;
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$b".',
+    ]);
+  });
+
+  it("does not treat an array-offset assignment as destructuring", () => {
+    const source = `<?php
+
+function f()
+{
+    $key = 'id';
+    $items[$key] = 1;
+    return $items;
 }
 `;
 
@@ -1337,6 +1603,39 @@ function f($items)
 `;
 
     expect(unusedVariableMessages(source)).toEqual([]);
+  });
+
+  it("flags unread foreach destructuring value bindings", () => {
+    const source = `<?php
+
+function f($rows)
+{
+    foreach ($rows as [$id, $name]) {
+        echo 'row';
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$id".',
+      'Unused variable "$name".',
+    ]);
+  });
+
+  it("flags only unread foreach destructuring bindings", () => {
+    const source = `<?php
+
+function f($rows)
+{
+    foreach ($rows as list($id, $name)) {
+        echo $id;
+    }
+}
+`;
+
+    expect(unusedVariableMessages(source)).toEqual([
+      'Unused variable "$name".',
+    ]);
   });
 
   // --- false-positive guards: side-effect assignment still warned, but no remove ---

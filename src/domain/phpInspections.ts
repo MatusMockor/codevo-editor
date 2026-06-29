@@ -60,12 +60,15 @@ const MAGIC_METHOD_PATTERN = /^__/;
  *  - `$this->$x(` / `$obj->$x(`        variable method name
  *  - `static::$x(` / `self::$x(`        variable static method name
  *  - `call_user_func` / `call_user_func_array`  reflective dispatch
+ *  - `[$this, $x]` / `[self::class, $x]` variable callable method name
  *  - `->{`  /  `::{`                    dynamic member expression
  */
 const DYNAMIC_DISPATCH_PATTERNS: readonly RegExp[] = [
   /->\s*\$[A-Za-z_]/,
   /::\s*\$[A-Za-z_]/,
   /\bcall_user_func(?:_array)?\b/,
+  /\[\s*(?:\$this|(?:self|static|[A-Za-z_\\][A-Za-z0-9_\\]*)::class)\s*,\s*\$[A-Za-z_]/,
+  /\bmethod_exists\s*\([^,]+,\s*\$[A-Za-z_]/,
   /->\s*\{/,
   /::\s*\{/,
 ];
@@ -492,8 +495,9 @@ function buildUnusedMethodDiagnostic(
 /**
  * True when `name` is referenced as a method anywhere in `masked` other than at
  * its own declaration. Checks the structural call forms (`->name(`, `::name(`)
- * plus the string-callable form (`'name'` / `"name"`), the latter against the
- * ORIGINAL source because the masked source has blanked string interiors.
+ * plus conservatively recognizable callable string/array forms, the latter
+ * against a comment-masked source so a quoted name in a comment does not keep a
+ * dead method alive.
  *
  * Declarations (`function name(`) are excluded so a method never counts as
  * calling itself.
@@ -515,15 +519,43 @@ function isMethodReferenced(
     return true;
   }
 
-  // String callable: `[$this, 'name']`, `'name'` passed to a callable slot, or
-  // a `@method`/closure reference. Matched against the original source so the
-  // quoted name survives (it is blanked in `masked`). Conservative: any quoted
-  // occurrence of the bare name keeps the method.
-  const stringCallablePattern = new RegExp(
-    `(['"])${escaped}\\1`,
-  );
+  return isMethodReferencedByCallableString(source, escaped);
+}
 
-  return stringCallablePattern.test(source);
+function isMethodReferencedByCallableString(
+  source: string,
+  escapedName: string,
+): boolean {
+  const searchable = maskCommentsKeepingAllStrings(source);
+  const receiver =
+    String.raw`\$this|(?:self|static|[A-Za-z_\\][A-Za-z0-9_\\]*)::class`;
+  const quotedName = String.raw`(['"])${escapedName}\1`;
+
+  // Array callable: `[$this, 'name']`, `[self::class, 'name']`,
+  // `[Foo::class, 'name']`.
+  if (
+    new RegExp(String.raw`\[\s*(?:${receiver})\s*,\s*${quotedName}\s*\]`).test(
+      searchable,
+    )
+  ) {
+    return true;
+  }
+
+  // Static callable string: `'self::name'`, `'static::name'`,
+  // `'Foo::name'`, including namespaced class names.
+  if (
+    new RegExp(
+      String.raw`(['"])(?:self|static|[A-Za-z_\\][A-Za-z0-9_\\]*)::${escapedName}\1`,
+    ).test(searchable)
+  ) {
+    return true;
+  }
+
+  // Reflection/introspection references often exist specifically to reach a
+  // private method by name.
+  return new RegExp(
+    String.raw`\b(?:method_exists|new\s+\\?ReflectionMethod)\s*\(\s*(?:${receiver})\s*,\s*${quotedName}`,
+  ).test(searchable);
 }
 
 function hasDynamicDispatch(masked: string): boolean {
@@ -604,7 +636,6 @@ const NEVER_UNUSED_VARIABLES: ReadonlySet<string> = new Set([
  *  - `$$x` / `${`          variable variables (read/write via a dynamic name)
  *  - `eval(`               arbitrary code that can read/write any local
  *  - `get_defined_vars(`   reflects over every local
- *  - `list(` / `[ ... ] =` destructuring assignment targets (skip - too varied)
  */
 const SCOPE_SUPPRESSING_PATTERNS: readonly RegExp[] = [
   /\bextract\s*\(/,
@@ -626,11 +657,18 @@ const SCOPE_SUPPRESSING_PATTERNS: readonly RegExp[] = [
  */
 function findUnusedVariables(source: string): UnusedVariable[] {
   const structural = maskStringsKeepingDelimiters(source);
-  const interpolated = maskCommentsKeepingStrings(source);
+  const interpolated = maskCommentsKeepingInterpolatedStrings(source);
+  const bodies = findFunctionBodies(structural);
   const results: UnusedVariable[] = [];
 
-  for (const body of findFunctionBodies(structural)) {
-    collectUnusedVariablesInBody(structural, interpolated, body, results);
+  for (const body of bodies) {
+    collectUnusedVariablesInBody(
+      structural,
+      interpolated,
+      body,
+      nestedBodiesFor(body, bodies),
+      results,
+    );
   }
 
   return results;
@@ -653,10 +691,9 @@ interface FunctionBodySpan {
  * keyword, its parameter list, and the brace-balanced `{ ... }` that follows.
  * Abstract / interface declarations (`function foo();`) have no body and are
  * skipped. Bodies are returned in source order; nested closures are reported as
- * their own bodies AND remain inside their enclosing body, which is intentional
- * - a variable read inside a nested closure still counts as a read of the outer
- * variable (the outer body scan sees the inner `$x` token), while the inner
- * body is also analysed on its own.
+ * their own bodies. The variable scan masks nested bodies while inspecting the
+ * outer scope, so closure locals do not leak into their parent, but closure
+ * `use (...)` clauses remain visible as outer-scope reads.
  */
 function findFunctionBodies(masked: string): FunctionBodySpan[] {
   const bodies: FunctionBodySpan[] = [];
@@ -747,6 +784,36 @@ function matchingPairOffset(
   return null;
 }
 
+function nestedBodiesFor(
+  body: FunctionBodySpan,
+  bodies: readonly FunctionBodySpan[],
+): FunctionBodySpan[] {
+  return bodies.filter(
+    (candidate) =>
+      candidate.openBrace > body.openBrace &&
+      candidate.closeBrace < body.closeBrace,
+  );
+}
+
+function maskNestedBodyRanges(
+  source: string,
+  nestedBodies: readonly FunctionBodySpan[],
+): string {
+  if (nestedBodies.length === 0) {
+    return source;
+  }
+
+  const characters = source.split("");
+
+  for (const body of nestedBodies) {
+    for (let index = body.openBrace; index <= body.closeBrace; index += 1) {
+      characters[index] = characters[index] === "\n" ? "\n" : " ";
+    }
+  }
+
+  return characters.join("");
+}
+
 /**
  * Scans a single function body for unused locals and appends them to `results`.
  * The whole body is skipped (no warnings) when it contains any
@@ -757,17 +824,29 @@ function collectUnusedVariablesInBody(
   structural: string,
   interpolated: string,
   body: FunctionBodySpan,
+  nestedBodies: readonly FunctionBodySpan[],
   results: UnusedVariable[],
 ): void {
-  const bodyText = structural.slice(body.openBrace, body.closeBrace + 1);
+  const currentScopeStructural = maskNestedBodyRanges(
+    structural,
+    nestedBodies,
+  );
+  const currentScopeInterpolated = maskNestedBodyRanges(
+    interpolated,
+    nestedBodies,
+  );
+  const bodyText = currentScopeStructural.slice(
+    body.openBrace,
+    body.closeBrace + 1,
+  );
 
   if (SCOPE_SUPPRESSING_PATTERNS.some((pattern) => pattern.test(bodyText))) {
     return;
   }
 
-  const byRefNames = collectByRefNames(structural, body);
+  const byRefNames = collectByRefNames(currentScopeStructural, body);
 
-  for (const binding of findVariableBindings(structural, body)) {
+  for (const binding of findVariableBindings(currentScopeStructural, body)) {
     if (NEVER_UNUSED_VARIABLES.has(binding.name)) {
       continue;
     }
@@ -778,8 +857,8 @@ function collectUnusedVariablesInBody(
 
     if (
       isVariableReadInBody(
-        structural,
-        interpolated,
+        currentScopeStructural,
+        currentScopeInterpolated,
         body,
         binding.name,
         binding.nameOffset,
@@ -805,6 +884,7 @@ function findVariableBindings(
 ): AssignmentSite[] {
   return [
     ...findAssignments(structural, body),
+    ...findDestructuringAssignments(structural, body),
     ...findForeachBindings(structural, body),
   ];
 }
@@ -852,6 +932,142 @@ function findAssignments(
   }
 
   return assignments;
+}
+
+/**
+ * Simple `[$a, $b] = ...;` and `list($a, $b) = ...;` targets. These are
+ * warning-only bindings: they behave like assignments for diagnostics, but
+ * quick-fixing one target out of a destructuring statement is intentionally out
+ * of scope for this lightweight inspection.
+ */
+function findDestructuringAssignments(
+  structural: string,
+  body: FunctionBodySpan,
+): AssignmentSite[] {
+  const bindings: AssignmentSite[] = [];
+  const region = structural.slice(body.openBrace + 1, body.closeBrace);
+  const base = body.openBrace + 1;
+
+  for (const match of region.matchAll(/\blist\s*\(|\[/g)) {
+    const start = base + (match.index ?? 0);
+    const listParen = structural.slice(start, start + 4).toLowerCase() === "list";
+
+    if (!isStatementStartLike(structural, body, start)) {
+      continue;
+    }
+
+    const openOffset = listParen ? structural.indexOf("(", start) : start;
+    const closeOffset = matchingPairOffset(
+      structural,
+      openOffset,
+      listParen ? "(" : "[",
+      listParen ? ")" : "]",
+    );
+
+    if (closeOffset === null || closeOffset > body.closeBrace) {
+      continue;
+    }
+
+    const assignment = readDestructuringAssignmentAfter(
+      structural,
+      body,
+      closeOffset + 1,
+    );
+
+    if (!assignment) {
+      continue;
+    }
+
+    bindings.push(
+      ...readDestructuringVariableBindings(
+        structural,
+        openOffset + 1,
+        closeOffset,
+        assignment.statementEnd,
+      ),
+    );
+  }
+
+  return bindings;
+}
+
+function isStatementStartLike(
+  structural: string,
+  body: FunctionBodySpan,
+  offset: number,
+): boolean {
+  let index = offset - 1;
+
+  while (index > body.openBrace && isInlineWhitespace(structural[index])) {
+    index -= 1;
+  }
+
+  return (
+    index <= body.openBrace ||
+    structural[index] === ";" ||
+    structural[index] === "{" ||
+    structural[index] === "}" ||
+    structural[index] === ":"
+  );
+}
+
+function readDestructuringAssignmentAfter(
+  structural: string,
+  body: FunctionBodySpan,
+  afterTarget: number,
+): { statementEnd: number } | null {
+  let index = afterTarget;
+
+  while (index < body.closeBrace && isInlineWhitespace(structural[index])) {
+    index += 1;
+  }
+
+  if (structural[index] !== "=" || structural[index + 1] === "=" || structural[index + 1] === ">") {
+    return null;
+  }
+
+  const semicolon = statementSemicolon(structural, index + 1, body.closeBrace);
+
+  return semicolon === null ? null : { statementEnd: semicolon + 1 };
+}
+
+function readDestructuringVariableBindings(
+  structural: string,
+  start: number,
+  end: number,
+  statementEnd: number,
+): AssignmentSite[] {
+  const target = structural.slice(start, end);
+
+  if (target.includes("&") || target.includes("->")) {
+    return [];
+  }
+
+  const bindings: AssignmentSite[] = [];
+  const pattern = /\$[A-Za-z_][A-Za-z0-9_]*/g;
+
+  for (const match of target.matchAll(pattern)) {
+    const name = match[0];
+    const nameOffset = start + (match.index ?? 0);
+    const afterName = nextNonWhitespaceOffset(
+      structural,
+      nameOffset + name.length,
+      end,
+    );
+
+    if (afterName !== null && structural[afterName] === "[") {
+      continue;
+    }
+
+    bindings.push({
+      name,
+      nameOffset,
+      removable: false,
+      statementEnd,
+    });
+  }
+
+  return bindings;
 }
 
 /**
@@ -909,32 +1125,40 @@ function readForeachBindings(
   const arrowOffset = topLevelArrowOffset(structural, bindingStart, parenClose);
 
   if (arrowOffset === null) {
-    const value = readForeachVariableBinding(
+    return readForeachBindingTargets(
       structural,
       bindingStart,
       parenClose,
     );
-
-    return value ? [value] : [];
   }
 
-  const key = readForeachVariableBinding(structural, bindingStart, arrowOffset);
-  const value = readForeachVariableBinding(
+  const key = readForeachBindingTargets(structural, bindingStart, arrowOffset);
+  const value = readForeachBindingTargets(
     structural,
     arrowOffset + "=>".length,
     parenClose,
   );
   const bindings: AssignmentSite[] = [];
 
-  if (key) {
-    bindings.push(key);
-  }
-
-  if (value) {
-    bindings.push(value);
-  }
+  bindings.push(...key, ...value);
 
   return bindings;
+}
+
+function readForeachBindingTargets(
+  structural: string,
+  start: number,
+  end: number,
+): AssignmentSite[] {
+  const variable = readForeachVariableBinding(structural, start, end);
+
+  if (variable) {
+    return [variable];
+  }
+
+  const destructuring = readForeachDestructuringBindings(structural, start, end);
+
+  return destructuring;
 }
 
 function readForeachVariableBinding(
@@ -971,6 +1195,44 @@ function readForeachVariableBinding(
     removable: false,
     statementEnd: afterName,
   };
+}
+
+function readForeachDestructuringBindings(
+  structural: string,
+  start: number,
+  end: number,
+): AssignmentSite[] {
+  let index = start;
+
+  while (index < end && isInlineWhitespace(structural[index])) {
+    index += 1;
+  }
+
+  const listParen = structural.slice(index, index + 4).toLowerCase() === "list";
+  const openOffset = listParen ? structural.indexOf("(", index) : index;
+  const open = listParen ? "(" : "[";
+  const close = listParen ? ")" : "]";
+
+  if (structural[openOffset] !== open) {
+    return [];
+  }
+
+  const closeOffset = matchingPairOffset(structural, openOffset, open, close);
+
+  if (closeOffset === null || closeOffset >= end) {
+    return [];
+  }
+
+  if (!/^[\s]*$/.test(structural.slice(closeOffset + 1, end))) {
+    return [];
+  }
+
+  return readDestructuringVariableBindings(
+    structural,
+    openOffset + 1,
+    closeOffset,
+    closeOffset + 1,
+  );
 }
 
 function topLevelAsOffset(
@@ -1276,7 +1538,25 @@ function isVariableReadInBody(
   // survive. The self assignment's code occurrence is present in BOTH masks at
   // the same offset, so it is excluded here too; any OTHER occurrence (a `$x`
   // inside a string / heredoc, or a later code read) is a genuine use.
-  return hasReferenceOtherThanSelf(interpolated, body, pattern, selfOffset);
+  if (hasReferenceOtherThanSelf(interpolated, body, pattern, selfOffset)) {
+    return true;
+  }
+
+  // Legacy encapsed syntax `${name}` references `$name` without spelling the
+  // variable token literally. Keep this check interpolation-only so normal
+  // dynamic variables in code remain covered by the scope-suppression guard.
+  const bareName = escapeRegExp(name.slice(1));
+  const dollarBracePattern = new RegExp(
+    String.raw`\$\{\s*${bareName}\s*\}`,
+    "g",
+  );
+
+  return hasReferenceOtherThanSelf(
+    interpolated,
+    body,
+    dollarBracePattern,
+    selfOffset,
+  );
 }
 
 function hasReferenceOtherThanSelf(
@@ -1313,13 +1593,6 @@ function isIdentifierCharacter(character: string | undefined): boolean {
   return character !== undefined && /[A-Za-z0-9_]/.test(character);
 }
 
-/**
- * Masks string and comment INTERIORS (so a method name inside a comment is not
- * mistaken for a call) while preserving newlines for stable line math. String
- * delimiters are kept so the callable-name check against the original source
- * still finds quoted names; this helper is used only for the structural
- * call/dynamic checks.
- */
 /**
  * Offset-preserving mask used for the unused-variable STRUCTURAL scan: blanks
  * the interiors of comments, string literals AND heredoc/nowdoc bodies to
@@ -1435,13 +1708,157 @@ function maskStringsKeepingDelimiters(source: string): string {
 }
 
 /**
- * Offset-preserving mask used for the unused-variable INTERPOLATION scan: blanks
- * comment interiors to spaces (newlines preserved) but KEEPS string and heredoc
- * bodies intact, so a `$x` inside `"... $x ..."`, `"{$x}"` or a heredoc body
- * still appears and counts as a use. Comments are removed so a `$x` mentioned
- * only in a comment is never treated as a use.
+ * Offset-preserving mask used for the unused-variable INTERPOLATION scan:
+ * blanks comment interiors and non-interpolating string bodies (single-quoted
+ * strings and nowdocs), but keeps double-quoted strings, backticks and heredoc
+ * bodies intact. Comments are removed so a `$x` mentioned only in a comment is
+ * never treated as a use.
  */
-function maskCommentsKeepingStrings(source: string): string {
+function maskCommentsKeepingInterpolatedStrings(source: string): string {
+  let output = "";
+  let quote: string | null = null;
+  let heredocTerminator: string | null = null;
+  let heredocInterpolates = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+    const next = source[index + 1] || "";
+
+    if (heredocTerminator !== null) {
+      const closing = heredocClosingLength(source, index, heredocTerminator);
+
+      if (closing > 0) {
+        output += heredocInterpolates
+          ? source.slice(index, index + closing)
+          : " ".repeat(closing);
+        index += closing - 1;
+        heredocTerminator = null;
+        heredocInterpolates = false;
+        continue;
+      }
+
+      if (heredocInterpolates && character === "\\" && next === "$") {
+        output += "\\ ";
+        index += 1;
+        continue;
+      }
+
+      if (!heredocInterpolates) {
+        output += character === "\n" ? "\n" : " ";
+        continue;
+      }
+
+      output += character;
+      continue;
+    }
+
+    if (inLineComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "\n") {
+        inLineComment = false;
+      }
+
+      continue;
+    }
+
+    if (inBlockComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "*" && next === "/") {
+        output += " ";
+        index += 1;
+        inBlockComment = false;
+      }
+
+      continue;
+    }
+
+    if (quote) {
+      if (quote === "'") {
+        output += character === "\n" ? "\n" : " ";
+
+        if (character === "\\" && next !== "") {
+          output += next === "\n" ? "\n" : " ";
+          index += 1;
+          continue;
+        }
+
+        if (character === quote) {
+          quote = null;
+        }
+
+        continue;
+      }
+
+      if (character === "\\" && next === "$") {
+        output += "\\ ";
+        index += 1;
+        continue;
+      }
+
+      output += character;
+
+      if (character === "\\" && quote !== "`") {
+        output += next;
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      output += "  ";
+      index += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (character === "#" && next !== "[" && source[index - 1] !== "$") {
+      output += " ";
+      inLineComment = true;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      output += "  ";
+      index += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    const heredocStart = heredocOpening(source, index);
+
+    if (heredocStart) {
+      output += heredocStart.interpolates
+        ? source.slice(index, index + heredocStart.length)
+        : " ".repeat(heredocStart.length);
+      index += heredocStart.length - 1;
+      heredocTerminator = heredocStart.terminator;
+      heredocInterpolates = heredocStart.interpolates;
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === "`") {
+      output += character;
+      quote = character;
+      continue;
+    }
+
+    output += character;
+  }
+
+  return output;
+}
+
+function maskCommentsKeepingAllStrings(source: string): string {
   let output = "";
   let quote: string | null = null;
   let heredocTerminator: string | null = null;
@@ -1456,8 +1873,6 @@ function maskCommentsKeepingStrings(source: string): string {
       const closing = heredocClosingLength(source, index, heredocTerminator);
 
       if (closing > 0) {
-        // Emit the closing line verbatim and leave heredoc mode. Content above
-        // (with any interpolated `$x`) was already emitted verbatim below.
         output += source.slice(index, index + closing);
         index += closing - 1;
         heredocTerminator = null;
@@ -1761,7 +2176,7 @@ function maskPhpForBraceMatching(source: string): string {
 function heredocOpening(
   source: string,
   index: number,
-): { length: number; terminator: string } | null {
+): { interpolates: boolean; length: number; terminator: string } | null {
   if (source.slice(index, index + 3) !== "<<<") {
     return null;
   }
@@ -1775,7 +2190,11 @@ function heredocOpening(
     return null;
   }
 
-  return { length: match[0].length, terminator };
+  return {
+    interpolates: match[1] !== "'",
+    length: match[0].length,
+    terminator,
+  };
 }
 
 function heredocClosingLength(
