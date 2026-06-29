@@ -10595,6 +10595,7 @@ function featuresGateway(
     documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),
+    executeCommandLocations: vi.fn(async () => []),
     foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),

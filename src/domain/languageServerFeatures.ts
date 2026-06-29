@@ -493,6 +493,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     command: LanguageServerCodeActionCommand,
   ): Promise<LanguageServerWorkspaceEdit | null>;
+  executeCommandLocations(
+    rootPath: string,
+    command: LanguageServerCodeActionCommand,
+  ): Promise<LanguageServerLocation[]>;
   willCreateFiles(
     rootPath: string,
     path: string,

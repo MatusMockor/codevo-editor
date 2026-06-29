@@ -20147,6 +20147,203 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().referencesView).toBeNull();
   });
 
+  it("finds JavaScript and TypeScript file references through tsserver and filters to the active project", async () => {
+    const path = "/workspace/src/userService.ts";
+    const callerPath = "/workspace/src/app.ts";
+    const outsidePath = "/workspace-other/src/app.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 229,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).mockResolvedValue([
+      {
+        uri: fileUriFromPath(path),
+        range: range(0, 0, 0, 17),
+      },
+      {
+        uri: fileUriFromPath(callerPath),
+        range: range(2, 25, 2, 38),
+      },
+      {
+        uri: fileUriFromPath(outsidePath),
+        range: range(4, 2, 4, 15),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === callerPath) {
+          return "import { UserService } from './userService';\n";
+        }
+
+        return "export class UserService {}\n";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.findFileReferences",
+    );
+    expect(command?.title).toBe("Find File References");
+    expect(command?.category).toBe("Editor");
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).toHaveBeenCalledWith("/workspace", {
+      arguments: [fileUriFromPath(path)],
+      command: "_typescript.findAllFileReferences",
+      title: "Find File References",
+    });
+    expect(getWorkbench().referencesView?.symbol).toBe("userService.ts");
+    expect(
+      getWorkbench().referencesView?.locations.map((location) => location.uri),
+    ).toEqual([fileUriFromPath(path), fileUriFromPath(callerPath)]);
+  });
+
+  it("no-ops Find File References with a friendly message outside JavaScript and TypeScript files", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nfinal class UserService {}\n"),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.findFileReferences",
+    );
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(false);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().message).toBe(
+      "Find File References is available for JavaScript and TypeScript files.",
+    );
+  });
+
+  it("drops stale JavaScript and TypeScript file reference results after switching project tabs", async () => {
+    const path = "/workspace-a/src/userService.ts";
+    const fileReferences =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["executeCommandLocations"]>
+        >
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 230,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).mockImplementationOnce(async () => fileReferences.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.findFileReferences")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations,
+    ).toHaveBeenCalledWith("/workspace-a", {
+      arguments: [fileUriFromPath(path)],
+      command: "_typescript.findAllFileReferences",
+      title: "Find File References",
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    fileReferences.resolve([
+      {
+        uri: fileUriFromPath(path),
+        range: range(0, 0, 0, 17),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().referencesView).toBeNull();
+  });
+
   it("keeps PHP call hierarchy open for rows from inactive project tabs", async () => {
     const path = "/workspace-b/app/Services/UserService.php";
     const callerPath = "/workspace-b/app/Http/Controllers/UserController.php";
@@ -59955,6 +60152,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
+    executeCommandLocations: vi.fn(async () => []),
     foldingRanges: vi.fn(async () => []),
     formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),

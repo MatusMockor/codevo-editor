@@ -65,6 +65,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   documentLinks: "text_document_document_links",
   documentSymbols: "text_document_document_symbols",
   executeCommand: "language_server_execute_command",
+  executeCommandLocations: "language_server_execute_command_locations",
   foldingRanges: "text_document_folding_ranges",
   formatting: "text_document_formatting",
   hover: "text_document_hover",
@@ -117,6 +118,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   documentLinks: "javascript_typescript_text_document_document_links",
   documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
+  executeCommandLocations:
+    "javascript_typescript_language_server_execute_command_locations",
   foldingRanges: "javascript_typescript_text_document_folding_ranges",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
@@ -172,6 +175,7 @@ export interface TauriLanguageServerFeatureCommands {
   documentLinks: string;
   documentSymbols: string;
   executeCommand: string;
+  executeCommandLocations: string;
   foldingRanges: string;
   formatting: string;
   hover: string;
@@ -593,6 +597,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.executeCommand,
       { command, rootPath },
       null,
+    );
+  }
+
+  executeCommandLocations(
+    rootPath: string,
+    command: LanguageServerCodeActionCommand,
+  ): Promise<LanguageServerLocation[]> {
+    return this.invokeWhenAvailable(
+      this.commands.executeCommandLocations,
+      { command, rootPath },
+      [],
     );
   }
 

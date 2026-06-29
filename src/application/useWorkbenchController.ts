@@ -131,6 +131,10 @@ import {
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
+  filterFileReferenceLocationsToWorkspace,
+  findAllFileReferencesCommand,
+} from "../domain/javascriptTypeScriptFileReferences";
+import {
   planFormatOnSave,
   type FormatOnSavePlan,
 } from "../domain/formatOnSave";
@@ -24347,6 +24351,104 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const openFileReferencesPanel = useCallback(async () => {
+    const document = activeDocumentRef.current;
+
+    if (!document || !workspaceRoot) {
+      setMessage("Open a JavaScript or TypeScript file to find file references.");
+      return;
+    }
+
+    if (!isJavaScriptTypeScriptLanguageServerDocument(document)) {
+      setMessage(
+        "Find File References is available for JavaScript and TypeScript files.",
+      );
+      return;
+    }
+
+    if (
+      !isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
+      setMessage(
+        "JavaScript/TypeScript service is starting. Try find file references again in a moment.",
+      );
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const requestedPath = document.path;
+    const requestedSessionId =
+      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+    const isRequestedSessionActive = () =>
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+        requestedRoot,
+        requestedSessionId,
+      );
+
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setTextSearchOpen(false);
+    setSettingsOpen(false);
+    setFileStructureOpen(false);
+    setImplementationChooser(null);
+    setCallHierarchyView(null);
+    setTypeHierarchyView(null);
+    setReferencesView(null);
+
+    try {
+      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
+
+      if (!isRequestedSessionActive()) {
+        return;
+      }
+
+      const locations =
+        await javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations(
+          requestedRoot,
+          findAllFileReferencesCommand(requestedPath),
+        );
+
+      if (!isRequestedSessionActive()) {
+        return;
+      }
+
+      const workspaceLocations = filterFileReferenceLocationsToWorkspace(
+        locations,
+        requestedRoot,
+      );
+      const symbol = document.name;
+
+      if (workspaceLocations.length === 0) {
+        setReferencesView({ locations: [], symbol });
+        setMessage(`No file references found for ${symbol}.`);
+        return;
+      }
+
+      setReferencesView({ locations: workspaceLocations, symbol });
+      setMessage(null);
+    } catch (error) {
+      if (!isRequestedSessionActive()) {
+        return;
+      }
+
+      reportError("Find File References", error);
+    }
+  }, [
+    flushPendingJavaScriptTypeScriptDocumentChange,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    reportError,
+    workspaceRoot,
+  ]);
+
   const applyNavigationLocation = useCallback(
     async (location: NavigationLocation) => {
       const opened = await openPathForNavigation(location.path, {
@@ -26665,6 +26767,23 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.findFileReferences",
+      title: "Find File References",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument) &&
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ),
+        ),
+      run: openFileReferencesPanel,
+    });
+
+    registry.register({
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
@@ -26934,6 +27053,7 @@ export function useWorkbenchController(
     navigateForwardInHistory,
     openCallHierarchy,
     openAppearanceSettingsPanel,
+    openFileReferencesPanel,
     openFileStructure,
     openReferencesPanel,
     openRecentFilesSwitcher,
@@ -29389,6 +29509,7 @@ export function useWorkbenchController(
     openFile,
     openCallHierarchy,
     openCallHierarchyRow,
+    openFileReferencesPanel,
     openTypeHierarchy,
     openTypeHierarchyRow,
     openReferencesPanel,

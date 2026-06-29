@@ -449,6 +449,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return rename;
       }
 
+      if (command === "language_server_execute_command_locations") {
+        return definition;
+      }
+
       if (command === "text_document_will_create_files") {
         return rename;
       }
@@ -658,6 +662,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
+    await expect(
+      gateway.executeCommandLocations("/project", command()),
+    ).resolves.toEqual(definition);
     await expect(
       gateway.willCreateFiles("/project", "/project/src/User.ts"),
     ).resolves.toEqual(rename);
@@ -902,6 +909,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       command: command(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "language_server_execute_command_locations",
+      {
+        command: command(),
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_will_create_files", {
       path: "/project/src/User.ts",
       rootPath: "/project",
@@ -1057,6 +1071,35 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       {
         path: "/project/src/User.ts",
         range: range(),
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("delegates JavaScript and TypeScript execute-command locations through the JS/TS command map", async () => {
+    const locations = [
+      {
+        range: {
+          end: { character: 8, line: 1 },
+          start: { character: 2, line: 1 },
+        },
+        uri: "file:///project/src/User.ts",
+      },
+    ];
+    const invokeCommand = vi.fn<InvokeCommand>(async () => locations);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+
+    await expect(
+      gateway.executeCommandLocations("/project", command()),
+    ).resolves.toEqual(locations);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_language_server_execute_command_locations",
+      {
+        command: command(),
         rootPath: "/project",
       },
     );

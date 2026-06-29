@@ -3629,6 +3629,26 @@ async fn language_server_execute_command(
 }
 
 #[tauri::command]
+async fn language_server_execute_command_locations(
+    root_path: String,
+    command: LanguageServerCodeActionCommand,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.execute_command(&command);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+}
+
+#[tauri::command]
 async fn javascript_typescript_language_server_execute_command(
     root_path: String,
     command: LanguageServerCodeActionCommand,
@@ -3649,6 +3669,26 @@ async fn javascript_typescript_language_server_execute_command(
         &root_path,
         parse_optional_workspace_edit_result(&result)?,
     )
+}
+
+#[tauri::command]
+async fn javascript_typescript_language_server_execute_command_locations(
+    root_path: String,
+    command: LanguageServerCodeActionCommand,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.execute_command(&command);
+    let Some(result) = registry
+        .send_request_async(&root_path, &request.method, request.params)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -7348,6 +7388,7 @@ pub fn run() {
             javascript_typescript_document_did_open,
             javascript_typescript_document_did_save,
             javascript_typescript_language_server_execute_command,
+            javascript_typescript_language_server_execute_command_locations,
             javascript_typescript_workspace_did_change_configuration,
             javascript_typescript_workspace_did_change_watched_files,
             javascript_typescript_workspace_did_create_files,
@@ -7394,6 +7435,7 @@ pub fn run() {
             javascript_typescript_text_document_type_definition,
             javascript_typescript_workspace_symbols,
             language_server_execute_command,
+            language_server_execute_command_locations,
             text_document_code_action_resolve,
             text_document_code_actions,
             text_document_code_lens_resolve,
