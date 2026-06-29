@@ -50,6 +50,47 @@ const ignoredPhpactorDocblockDiagnosticCodes = new Set([
   "worse.docblock_missing_return_type",
 ]);
 
+/**
+ * Marker `source` stamped on a diagnostic that we classify as Laravel framework
+ * "magic" (a known builder/macro/scope/static member the static analyser cannot
+ * resolve but the framework provides at runtime). It is surfaced as a soft hint
+ * rather than dropped, so the user can tell "probably framework magic" apart
+ * from a real error without losing the marker entirely.
+ */
+export const LARAVEL_MAGIC_DIAGNOSTIC_SOURCE = "laravel-magic";
+
+/**
+ * Why a PHP diagnostic was reclassified away from its raw phpactor severity.
+ *
+ * - `parse-artifact`: a phpactor false positive (docblock hygiene, keyword/return
+ *   mis-parse, stale return parse) — dropped; it never reflects a real defect.
+ * - `contextual-existing`: the member/constant/property genuinely exists once the
+ *   surrounding workspace context is resolved (semantic confirmation or trait
+ *   host) — dropped as a confirmed false positive.
+ * - `framework-magic`: a known Laravel builder/macro/scope/static member whose
+ *   existence cannot be statically confirmed but is framework-provided — kept and
+ *   downgraded to a soft hint instead of an error.
+ *
+ * A diagnostic with no matching reason is a `real` error and is left untouched.
+ */
+export type PhpDiagnosticClassificationReason =
+  | "parse-artifact"
+  | "contextual-existing"
+  | "framework-magic";
+
+export interface PhpLanguageServerDiagnosticFilterOptions {
+  allowDependencyTraitFallback?: boolean;
+  contextualExistingMethods?: ReadonlySet<string>;
+  contextualMemberMethods?: ReadonlySet<string>;
+  contextualMemberProperties?: ReadonlySet<string>;
+  contextualTraitHostConstants?: ReadonlySet<string>;
+  contextualTraitHostMethods?: ReadonlySet<string>;
+  contextualTraitHostProperties?: ReadonlySet<string>;
+  frameworkProviders?: readonly PhpFrameworkProvider[];
+  frameworkSourceContext?: PhpFrameworkSourceContext;
+  path?: string | null;
+}
+
 const unresolvedMethodDiagnosticPattern =
   /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bmethod\b|\bmethod\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
 const unresolvedPropertyDiagnosticPattern =
@@ -80,69 +121,157 @@ const memberPropertyAccessPattern = new RegExp(
 export function filterPhpLanguageServerDiagnostics(
   source: string,
   diagnostics: LanguageServerDiagnostic[],
-  options: {
-    allowDependencyTraitFallback?: boolean;
-    contextualExistingMethods?: ReadonlySet<string>;
-    contextualMemberMethods?: ReadonlySet<string>;
-    contextualMemberProperties?: ReadonlySet<string>;
-    contextualTraitHostConstants?: ReadonlySet<string>;
-    contextualTraitHostMethods?: ReadonlySet<string>;
-    contextualTraitHostProperties?: ReadonlySet<string>;
-    frameworkProviders?: readonly PhpFrameworkProvider[];
-    frameworkSourceContext?: PhpFrameworkSourceContext;
-    path?: string | null;
-  } = {},
+  options: PhpLanguageServerDiagnosticFilterOptions = {},
 ): LanguageServerDiagnostic[] {
-  return diagnostics.filter(
-    (diagnostic) =>
-      !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
-      !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
-      !isPhpactorStaleReturnParseDiagnostic(source, diagnostic) &&
-      !isContextualExistingMethodDiagnostic(
-        source,
-        diagnostic,
-        options.contextualExistingMethods,
-      ) &&
-      !isContextualExistingMemberMethodDiagnostic(
-        source,
-        diagnostic,
-        options.contextualMemberMethods,
-      ) &&
-      !isContextualExistingMemberPropertyDiagnostic(
-        source,
-        diagnostic,
-        options.contextualMemberProperties,
-      ) &&
-      !isKnownPhpFrameworkMemberMethodDiagnostic(
-        source,
-        diagnostic,
-        options.frameworkProviders ?? defaultPhpFrameworkProviders,
-        options.frameworkSourceContext,
-      ) &&
-      !isPhpactorTraitHostMethodDiagnostic(
-        source,
-        diagnostic,
-        Boolean(options.allowDependencyTraitFallback),
-        options.contextualTraitHostMethods,
-        options.path,
-      ) &&
-      !isPhpactorTraitHostConstantDiagnostic(
-        source,
-        diagnostic,
-        options.contextualTraitHostConstants,
-      ) &&
-      !isPhpactorTraitHostPropertyDiagnostic(
-        source,
-        diagnostic,
-        options.contextualTraitHostProperties,
-      ) &&
-      !isKnownPhpFrameworkStaticMethodDiagnostic(
-        source,
-        diagnostic,
-        options.frameworkProviders ?? defaultPhpFrameworkProviders,
-        options.frameworkSourceContext,
-      ),
+  return diagnostics.flatMap((diagnostic) =>
+    applyPhpDiagnosticClassification(
+      diagnostic,
+      classifyPhpLanguageServerDiagnostic(source, diagnostic, options),
+    ),
   );
+}
+
+/**
+ * Classifies a single diagnostic by the FIRST matching reason, in the same
+ * precedence order the previous suppression filter used: parse artifacts and
+ * contextually-confirmed members win over a framework-magic guess, so a
+ * confirmed false positive is dropped rather than surfaced as a hint.
+ */
+export function classifyPhpLanguageServerDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  options: PhpLanguageServerDiagnosticFilterOptions = {},
+): PhpDiagnosticClassificationReason | null {
+  if (isIgnoredPhpactorDocblockDiagnostic(diagnostic)) {
+    return "parse-artifact";
+  }
+
+  if (isPhpactorKeywordMethodDiagnostic(source, diagnostic)) {
+    return "parse-artifact";
+  }
+
+  if (isPhpactorStaleReturnParseDiagnostic(source, diagnostic)) {
+    return "parse-artifact";
+  }
+
+  if (
+    isContextualExistingMethodDiagnostic(
+      source,
+      diagnostic,
+      options.contextualExistingMethods,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isContextualExistingMemberMethodDiagnostic(
+      source,
+      diagnostic,
+      options.contextualMemberMethods,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isContextualExistingMemberPropertyDiagnostic(
+      source,
+      diagnostic,
+      options.contextualMemberProperties,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isKnownPhpFrameworkMemberMethodDiagnostic(
+      source,
+      diagnostic,
+      options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      options.frameworkSourceContext,
+    )
+  ) {
+    return "framework-magic";
+  }
+
+  if (
+    isPhpactorTraitHostMethodDiagnostic(
+      source,
+      diagnostic,
+      Boolean(options.allowDependencyTraitFallback),
+      options.contextualTraitHostMethods,
+      options.path,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isPhpactorTraitHostConstantDiagnostic(
+      source,
+      diagnostic,
+      options.contextualTraitHostConstants,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isPhpactorTraitHostPropertyDiagnostic(
+      source,
+      diagnostic,
+      options.contextualTraitHostProperties,
+    )
+  ) {
+    return "contextual-existing";
+  }
+
+  if (
+    isKnownPhpFrameworkStaticMethodDiagnostic(
+      source,
+      diagnostic,
+      options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      options.frameworkSourceContext,
+    )
+  ) {
+    return "framework-magic";
+  }
+
+  return null;
+}
+
+/**
+ * Turns a classification into the published diagnostic(s): drop false positives,
+ * downgrade framework magic to a soft hint, and leave real errors untouched.
+ */
+function applyPhpDiagnosticClassification(
+  diagnostic: LanguageServerDiagnostic,
+  reason: PhpDiagnosticClassificationReason | null,
+): LanguageServerDiagnostic[] {
+  if (reason === "parse-artifact") {
+    return [];
+  }
+
+  if (reason === "contextual-existing") {
+    return [];
+  }
+
+  if (reason === "framework-magic") {
+    return [downgradePhpDiagnosticToFrameworkMagicHint(diagnostic)];
+  }
+
+  return [diagnostic];
+}
+
+function downgradePhpDiagnosticToFrameworkMagicHint(
+  diagnostic: LanguageServerDiagnostic,
+): LanguageServerDiagnostic {
+  return {
+    ...diagnostic,
+    severity: "hint",
+    source: LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+  };
 }
 
 function isIgnoredPhpactorDocblockDiagnostic(

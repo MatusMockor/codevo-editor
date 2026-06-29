@@ -2123,7 +2123,7 @@ class Post extends Model
 }
 
 $query = Post::query();
-$fromProviderMacro = $query->withRelations()->first();
+$fromProviderMacro = $query->customHelper()->first();
 $fromUnknownMacro = $query->missingMacro()->first();
 
 $fromProviderMacro->tit
@@ -2139,7 +2139,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        Builder::macro('withRelations', function (): \\Illuminate\\Database\\Eloquent\\Builder {
+        Builder::macro('customHelper', function (): \\Illuminate\\Database\\Eloquent\\Builder {
             return $this->with([]);
         });
     }
@@ -2173,7 +2173,7 @@ class AppServiceProvider extends ServiceProvider
         "fromProviderMacro",
         laravelOptions,
       ),
-    ).toBe("App\\Models\\Post");
+    ).toBeNull();
   });
 
   it("resolves Laravel model assignments from Eloquent collection chains", () => {

@@ -188,7 +188,7 @@ use App\\Services\\FooService;
       ),
     ).toBe(false);
     expect(
-      isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", [
+      isKnownPhpFrameworkStaticMethod(source, "Album", "withCount", [
         phpLaravelFrameworkProvider,
       ]),
     ).toBe(true);
@@ -214,7 +214,7 @@ class Album extends Model
       isKnownPhpFrameworkMemberMethod(source, "Album::query()", "whereNull", []),
     ).toBe(false);
     expect(
-      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "withRelations", [
+      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "withCount", [
         phpLaravelFrameworkProvider,
       ]),
     ).toBe(true);

@@ -29838,6 +29838,423 @@ class UsageController
     });
   });
 
+  describe("Laravel provider-backed Eloquent Builder macro completions", () => {
+    const providersDirFor = (root: string) => `${root}/app/Providers`;
+    const providerFileName = "AppServiceProvider.php";
+    const providerPathFor = (root: string) =>
+      `${providersDirFor(root)}/${providerFileName}`;
+    const postModelPathFor = (root: string) => `${root}/app/Models/Post.php`;
+    const controllerPathFor = (root: string) =>
+      `${root}/app/Http/Controllers/PostController.php`;
+
+    const postModel = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+}
+`;
+
+    // Minimal vendor stub so the controller can resolve the Eloquent Builder
+    // class (the receiver type of Post::query()) to a source file. The macro is
+    // NOT declared here - it is contributed via the provider sources merged into
+    // the workspace source context.
+    const builderStub = `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+}
+`;
+
+    const appServiceProvider = (extraMacro = "") => `<?php
+namespace App\\Providers;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Builder::macro('withDashboardScope', function (array $relations = []): Builder {
+            return $this->with($relations);
+        });${extraMacro}
+    }
+}
+`;
+
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Post;
+
+class PostController
+{
+    public function index(): void
+    {
+        Post::query()->withDash
+    }
+}
+`;
+    const completionPosition = positionAfter(controllerSource, "withDash");
+
+    async function completionNames(
+      getWorkbench: () => WorkbenchController,
+    ): Promise<string[]> {
+      const completions = await getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        completionPosition,
+      );
+
+      return completions.map((completion) => completion.name);
+    }
+
+    it("surfaces a provider-registered Builder::macro once the per-root cache warms", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === providersDirFor(root)
+          ? [fileEntry(providerPathFor(root), providerFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === postModelPathFor(root)) {
+          return postModel;
+        }
+
+        if (path === providerPathFor(root)) {
+          return appServiceProvider();
+        }
+
+        if (path.endsWith("Builder.php")) {
+          return builderStub;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "PostController.php"),
+        );
+      });
+
+      // First completion warms the cache off the hot path; it is served from the
+      // (empty) cache, so it may not yet carry the provider macro.
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(providerPathFor(root));
+      });
+
+      const warm = await completionNames(getWorkbench);
+
+      expect(warm).toContain("withDashboardScope");
+    });
+
+    it("falls back without crashing when no providers exist", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async () => []);
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === postModelPathFor(root)) {
+          return postModel;
+        }
+
+        if (path.endsWith("Builder.php")) {
+          return builderStub;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "PostController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await flushAsyncTurns();
+
+      const names = await completionNames(getWorkbench);
+
+      // No providers -> no provider-defined macro, and no crash.
+      expect(names).not.toContain("withDashboardScope");
+    });
+
+    it("reads the providers directory once and serves later completions from cache", async () => {
+      const root = "/workspace";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === providersDirFor(root)
+          ? [fileEntry(providerPathFor(root), providerFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === postModelPathFor(root)) {
+          return postModel;
+        }
+
+        if (path === providerPathFor(root)) {
+          return appServiceProvider();
+        }
+
+        if (path.endsWith("Builder.php")) {
+          return builderStub;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "PostController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(providerPathFor(root));
+      });
+
+      await completionNames(getWorkbench);
+      await completionNames(getWorkbench);
+      await completionNames(getWorkbench);
+
+      const providerDirReads = readDirectory.mock.calls.filter(
+        ([path]) => path === providersDirFor(root),
+      );
+      expect(providerDirReads).toHaveLength(1);
+    });
+
+    it("reloads provider sources after a provider file change", async () => {
+      const root = "/workspace";
+      let publishFileChange:
+        | ((event: WorkspaceFileChangeEvent) => void)
+        | null = null;
+      let providerSource = appServiceProvider();
+      const readDirectory = vi.fn(async (path: string) =>
+        path === providersDirFor(root)
+          ? [fileEntry(providerPathFor(root), providerFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return controllerSource;
+        }
+
+        if (path === postModelPathFor(root)) {
+          return postModel;
+        }
+
+        if (path === providerPathFor(root)) {
+          return providerSource;
+        }
+
+        if (path.endsWith("Builder.php")) {
+          return builderStub;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+        {
+          startWatching: vi.fn(async () => undefined),
+          subscribeFileChanges: vi.fn(async (listener) => {
+            publishFileChange = listener;
+            return () => undefined;
+          }),
+        };
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        readDirectory,
+        readTextFile,
+        workspaceFileChangeGateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "PostController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(providerPathFor(root));
+      });
+
+      expect(await completionNames(getWorkbench)).not.toContain("withDashboardCounts");
+
+      // A new macro lands on disk and the watcher reports the change.
+      providerSource = appServiceProvider(
+        `\n        Builder::macro('withDashboardCounts', function (): Builder {\n            return $this;\n        });`,
+      );
+      await act(async () => {
+        publishFileChange?.({
+          kind: "modified",
+          path: providerPathFor(root),
+          relativePath: `app/Providers/${providerFileName}`,
+          rootPath: root,
+        });
+        await flushAsyncTurns();
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(async () => {
+        expect(await completionNames(getWorkbench)).toContain("withDashboardCounts");
+      });
+    });
+
+    it("keeps provider sources isolated per workspace tab", async () => {
+      const rootA = "/workspace-a";
+      const rootB = "/workspace-b";
+      const readDirectory = vi.fn(async (path: string) =>
+        path === providersDirFor(rootA)
+          ? [fileEntry(providerPathFor(rootA), providerFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (
+          path === controllerPathFor(rootA) ||
+          path === controllerPathFor(rootB)
+        ) {
+          return controllerSource;
+        }
+
+        if (
+          path === postModelPathFor(rootA) ||
+          path === postModelPathFor(rootB)
+        ) {
+          return postModel;
+        }
+
+        if (path === providerPathFor(rootA)) {
+          return appServiceProvider();
+        }
+
+        if (path.endsWith("Builder.php")) {
+          return builderStub;
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: rootA,
+          workspaceTabs: [rootA, rootB],
+        },
+        readDirectory,
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe(rootA);
+      });
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(rootA), "PostController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await vi.waitFor(async () => {
+        expect(await completionNames(getWorkbench)).toContain("withDashboardScope");
+      });
+
+      // Switch to workspace B, which has no providers: A's macro must not leak
+      // into B's completions.
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab(rootB);
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe(rootB);
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(rootB), "PostController.php"),
+        );
+      });
+
+      await act(async () => {
+        await completionNames(getWorkbench);
+      });
+      await flushAsyncTurns();
+
+      expect(await completionNames(getWorkbench)).not.toContain("withDashboardScope");
+    });
+  });
+
   it("stops stale PHP class source resolver fallback after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
     const controllerSource = `<?php
@@ -42210,6 +42627,19 @@ class Comment extends Model
     await flushAsyncTurns();
 
     expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...diagnosticPosition("where"),
+        message: "Method App\\Models\\Comment::where() does not exist",
+        severity: "hint",
+        source: "laravel-magic",
+      },
+      {
+        ...diagnosticPosition("findOrFail"),
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::findOrFail() does not exist",
+        severity: "hint",
+        source: "laravel-magic",
+      },
       {
         ...diagnosticPosition("definitelyMissingMagic"),
         message:

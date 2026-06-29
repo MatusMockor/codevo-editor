@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyPhpLanguageServerDiagnostic,
   filterPhpLanguageServerDiagnostics,
+  LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
   phpMemberMethodDiagnosticKey,
   phpMemberPropertyDiagnosticKey,
   phpMethodDiagnosticKey,
@@ -17,29 +19,130 @@ import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
-  it("suppresses unresolved global Laravel Eloquent static builder methods", () => {
+  it("downgrades unresolved global Laravel Eloquent static builder methods to soft hints", () => {
     const source = `<?php
 use App\\Models\\Album;
 
 $queryBuilder = Album::whereNull('parent_id');
-$album = Album::withRelations()->findOrFail($id);
+$album = Album::withCount()->findOrFail($id);
 `;
+    const whereNull = diagnostic({
+      character: 23,
+      line: 3,
+      message: "Method App\\Models\\Album::whereNull() does not exist",
+    });
+    const withCount = diagnostic({
+      character: 16,
+      line: 4,
+      message: "Method App\\Models\\Album::withCount() does not exist",
+    });
+
     expect(
-      filterPhpLanguageServerDiagnostics(source, [
-        diagnostic({
-          character: 23,
-          line: 3,
-          message: "Method App\\Models\\Album::whereNull() does not exist",
-        }),
-        diagnostic({
-          character: 16,
-          line: 4,
-          message: "Method App\\Models\\Album::withRelations() does not exist",
-        }),
-      ], {
+      filterPhpLanguageServerDiagnostics(source, [whereNull, withCount], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([]);
+    ).toEqual([frameworkMagicHint(whereNull), frameworkMagicHint(withCount)]);
+  });
+
+  it("stamps downgraded framework magic with a soft hint severity and laravel-magic source", () => {
+    const source = `<?php
+use App\\Models\\Album;
+
+$queryBuilder = Album::whereNull('parent_id');
+`;
+    const magic = diagnostic({
+      character: 23,
+      line: 3,
+      message: "Method App\\Models\\Album::whereNull() does not exist",
+    });
+
+    const [classified, ...rest] = filterPhpLanguageServerDiagnostics(
+      source,
+      [magic],
+      { frameworkProviders: [phpLaravelFrameworkProvider] },
+    );
+
+    expect(rest).toEqual([]);
+    expect(classified?.severity).toBe("hint");
+    expect(classified?.source).toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
+    expect(classified?.message).toBe(magic.message);
+  });
+
+  it("keeps a real unresolved error as an error alongside downgraded framework magic", () => {
+    const source = `<?php
+use App\\Models\\Album;
+
+$ok = Album::whereNull('parent_id');
+$bad = Album::whereNulll('parent_id');
+`;
+    const magic = diagnosticAt(source, "whereNull('parent_id');\n$bad", {
+      message: "Method App\\Models\\Album::whereNull() does not exist",
+    });
+    const real = diagnosticAt(source, "whereNulll", {
+      message: "Method App\\Models\\Album::whereNulll() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [magic, real], {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
+    ).toEqual([frameworkMagicHint(magic), real]);
+  });
+
+  it("classifies diagnostics by reason: parse-artifact, contextual-existing, framework-magic, and real", () => {
+    const docblockArtifact = diagnostic({
+      character: 20,
+      code: "worse.docblock_missing_return_type",
+      line: 4,
+      message: 'Method "loadByCredentials" is missing docblock return type: void',
+    });
+    expect(
+      classifyPhpLanguageServerDiagnostic("<?php\n", docblockArtifact),
+    ).toBe("parse-artifact");
+
+    const contextualSource = `<?php
+
+$album = Album::published()->first();
+`;
+    const contextual = diagnostic({
+      character: 16,
+      line: 2,
+      message: "Method App\\Models\\Album::published() does not exist",
+    });
+    expect(
+      classifyPhpLanguageServerDiagnostic(contextualSource, contextual, {
+        contextualExistingMethods: new Set([
+          phpMethodDiagnosticKey("Album", "published"),
+        ]),
+      }),
+    ).toBe("contextual-existing");
+
+    const magicSource = `<?php
+use App\\Models\\Album;
+
+$queryBuilder = Album::whereNull('parent_id');
+`;
+    const magic = diagnostic({
+      character: 23,
+      line: 3,
+      message: "Method App\\Models\\Album::whereNull() does not exist",
+    });
+    expect(
+      classifyPhpLanguageServerDiagnostic(magicSource, magic, {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
+    ).toBe("framework-magic");
+
+    const realSource = `<?php
+
+$queryBuilder = Album::whereNulll('parent_id');
+`;
+    const real = diagnostic({
+      character: 23,
+      line: 2,
+      message: "Method App\\Models\\Album::whereNulll() does not exist",
+    });
+    expect(classifyPhpLanguageServerDiagnostic(realSource, real)).toBeNull();
   });
 
   it("keeps Laravel static builder method diagnostics for non-model receivers", () => {
@@ -192,7 +295,7 @@ $album = Album::query()?->missingMagic()?->first();
     ).toEqual([unknown]);
   });
 
-  it("suppresses global Laravel builder member method diagnostics through the framework provider", () => {
+  it("downgrades global Laravel builder member method diagnostics through the framework provider", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -203,7 +306,7 @@ class Album extends Model
 }
 
 $album = Album::query()->whereNull('parent_id')->first();
-$album = Album::query()->withRelations()->first();
+$album = Album::query()->withCount()->first();
 `;
     const globalBuilderMethod = diagnostic({
       character: 26,
@@ -211,18 +314,21 @@ $album = Album::query()->withRelations()->first();
       message:
         "Method Illuminate\\Database\\Eloquent\\Builder::whereNull() does not exist",
     });
-    const localScope = diagnostic({
+    const globalAggregateMethod = diagnostic({
       character: 26,
       line: 10,
       message:
-        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+        "Method Illuminate\\Database\\Eloquent\\Builder::withCount() does not exist",
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod, localScope], {
+      filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod, globalAggregateMethod], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([]);
+    ).toEqual([
+      frameworkMagicHint(globalBuilderMethod),
+      frameworkMagicHint(globalAggregateMethod),
+    ]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod], {
         frameworkProviders: [],
@@ -230,7 +336,7 @@ $album = Album::query()->withRelations()->first();
     ).toEqual([globalBuilderMethod]);
   });
 
-  it("suppresses discovered Laravel builder macro diagnostics without broadening unknown methods", () => {
+  it("downgrades discovered Laravel builder macro diagnostics without broadening unknown methods", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -283,7 +389,12 @@ $fromUnknown = $query->missingMacro()->first();
           frameworkProviders: [phpLaravelFrameworkProvider],
         },
       ),
-    ).toEqual([unknownBuilderMethod]);
+    ).toEqual([
+      frameworkMagicHint(staticMacro),
+      frameworkMagicHint(memberMacro),
+      frameworkMagicHint(variableMacro),
+      unknownBuilderMethod,
+    ]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [staticMacro, memberMacro], {
         frameworkProviders: [],
@@ -291,7 +402,7 @@ $fromUnknown = $query->missingMacro()->first();
     ).toEqual([staticMacro, memberMacro]);
   });
 
-  it("suppresses workspace Laravel builder macro diagnostics without broadening unknown methods", () => {
+  it("downgrades workspace Laravel builder macro diagnostics without broadening unknown methods", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -356,7 +467,12 @@ class AppServiceProvider extends ServiceProvider
           frameworkSourceContext: { workspaceSources: [providerSource] },
         },
       ),
-    ).toEqual([unknownBuilderMethod]);
+    ).toEqual([
+      frameworkMagicHint(staticMacro),
+      frameworkMagicHint(memberMacro),
+      frameworkMagicHint(variableMacro),
+      unknownBuilderMethod,
+    ]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [staticMacro, memberMacro], {
         frameworkProviders: [phpLaravelFrameworkProvider],
@@ -364,7 +480,7 @@ class AppServiceProvider extends ServiceProvider
     ).toEqual([staticMacro, memberMacro]);
   });
 
-  it("suppresses same-source Laravel local scope diagnostics without broadening unknown methods", () => {
+  it("downgrades same-source Laravel local scope diagnostics without broadening unknown methods", () => {
     const source = `<?php
 namespace App\\Models;
 
@@ -443,7 +559,14 @@ $fromNonModel = Report::published();
           frameworkProviders: [phpLaravelFrameworkProvider],
         },
       ),
-    ).toEqual([missingScope, nonModelScope]);
+    ).toEqual([
+      frameworkMagicHint(staticScope),
+      frameworkMagicHint(memberScope),
+      frameworkMagicHint(variableScope),
+      frameworkMagicHint(attributeScope),
+      missingScope,
+      nonModelScope,
+    ]);
   });
 
   it("suppresses confirmed unresolved member method diagnostics on multiline chains", () => {
@@ -1539,6 +1662,16 @@ function diagnostic(
     severity: "error",
     source: "PHPactor",
     ...overrides,
+  };
+}
+
+function frameworkMagicHint(
+  source: LanguageServerDiagnostic,
+): LanguageServerDiagnostic {
+  return {
+    ...source,
+    severity: "hint",
+    source: LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
   };
 }
 

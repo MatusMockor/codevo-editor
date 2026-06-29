@@ -2745,6 +2745,7 @@ class InvoiceServiceTest extends TestCase
           endColumn: 18,
           endLineNumber: 2,
           message: "'unused' is declared but its value is never read.",
+          severity: monaco.MarkerSeverity.Hint,
           startColumn: 7,
           startLineNumber: 1,
           relatedInformation: [
