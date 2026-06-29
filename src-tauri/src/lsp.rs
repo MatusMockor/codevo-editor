@@ -405,11 +405,40 @@ pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
     pub automatic_type_acquisition: bool,
     pub code_lens: bool,
+    pub import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding,
     pub import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference,
     pub inlay_hints: bool,
     pub prefer_type_only_auto_imports: bool,
     pub quote_preference: TypeScriptQuotePreference,
     pub validation: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TypeScriptImportModuleSpecifierEnding {
+    Auto,
+    Minimal,
+    Index,
+    Js,
+}
+
+impl TypeScriptImportModuleSpecifierEnding {
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("minimal") => Self::Minimal,
+            Some("index") => Self::Index,
+            Some("js") => Self::Js,
+            _ => Self::Auto,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Minimal => "minimal",
+            Self::Index => "index",
+            Self::Js => "js",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -471,6 +500,7 @@ impl Default for TypeScriptLanguageServerSettings {
             auto_imports: true,
             automatic_type_acquisition: false,
             code_lens: false,
+            import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::Auto,
             import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::Shortest,
             inlay_hints: true,
             prefer_type_only_auto_imports: false,
@@ -665,6 +695,15 @@ fn configure_typescript_import_preferences(
         return;
     };
 
+    preferences.insert(
+        "importModuleSpecifierEnding".to_string(),
+        Value::String(
+            settings
+                .import_module_specifier_ending
+                .as_str()
+                .to_string(),
+        ),
+    );
     preferences.insert(
         "importModuleSpecifierPreference".to_string(),
         Value::String(
@@ -1140,8 +1179,8 @@ mod tests {
         LanguageServerPlanStatus, LanguageServerPlanner, LanguageServerProvider,
         PhpBackendPreference, PhpInterpreterLauncher, PhpLanguageServerSettings, PhpLauncher,
         PhpactorInitializeRequestFactory, PhpactorLanguageServerPlanner,
-        TypeScriptImportModuleSpecifierPreference, TypeScriptLanguageServerPlanner,
-        TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
+        TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
+        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
@@ -1793,6 +1832,7 @@ mod tests {
                 auto_imports: false,
                 automatic_type_acquisition: true,
                 code_lens: true,
+                import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::Minimal,
                 import_module_specifier_preference:
                     TypeScriptImportModuleSpecifierPreference::Relative,
                 inlay_hints: false,
@@ -1833,6 +1873,11 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["mockorValidationEnabled"],
             false
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["importModuleSpecifierEnding"],
+            "minimal"
         );
         assert_eq!(
             request.params["initializationOptions"]["preferences"]

@@ -113,6 +113,10 @@ export class TauriLanguageServerRuntimeGateway
       args.codeLensEnabled = options.codeLensEnabled;
     }
 
+    if (options.importModuleSpecifierEnding) {
+      args.importModuleSpecifierEnding = options.importModuleSpecifierEnding;
+    }
+
     if (options.importModuleSpecifierPreference) {
       args.importModuleSpecifierPreference =
         options.importModuleSpecifierPreference;

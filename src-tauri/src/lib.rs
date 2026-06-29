@@ -59,8 +59,8 @@ use lsp::{
     JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
     PhpLanguageServerSettings, PhpactorLanguageServerPlanner,
-    TypeScriptImportModuleSpecifierPreference, TypeScriptLanguageServerPlanner,
-    TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
+    TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
+    TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
 };
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
@@ -1424,6 +1424,7 @@ fn build_javascript_typescript_language_server_plan(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_ending: Option<&str>,
     import_module_specifier_preference: Option<&str>,
     inlay_hints_enabled: Option<bool>,
     prefer_type_only_auto_imports: Option<bool>,
@@ -1437,6 +1438,9 @@ fn build_javascript_typescript_language_server_plan(
         auto_imports: auto_imports_enabled.unwrap_or(true),
         automatic_type_acquisition: automatic_type_acquisition_enabled.unwrap_or(false),
         code_lens: code_lens_enabled.unwrap_or(false),
+        import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::from_setting(
+            import_module_specifier_ending,
+        ),
         import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::from_setting(
             import_module_specifier_preference,
         ),
@@ -1485,6 +1489,7 @@ fn plan_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_ending: Option<String>,
     import_module_specifier_preference: Option<String>,
     inlay_hints_enabled: Option<bool>,
     prefer_type_only_auto_imports: Option<bool>,
@@ -1497,6 +1502,7 @@ fn plan_javascript_typescript_language_server(
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
         code_lens_enabled,
+        import_module_specifier_ending.as_deref(),
         import_module_specifier_preference.as_deref(),
         inlay_hints_enabled,
         prefer_type_only_auto_imports,
@@ -2389,6 +2395,7 @@ fn start_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
+    import_module_specifier_ending: Option<String>,
     import_module_specifier_preference: Option<String>,
     inlay_hints_enabled: Option<bool>,
     prefer_type_only_auto_imports: Option<bool>,
@@ -2404,6 +2411,7 @@ fn start_javascript_typescript_language_server(
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
         code_lens_enabled,
+        import_module_specifier_ending.as_deref(),
         import_module_specifier_preference.as_deref(),
         inlay_hints_enabled,
         prefer_type_only_auto_imports,
@@ -5034,6 +5042,9 @@ mod tests {
                 "enabled": true,
                 "showOnAllFunctions": false,
             },
+            "preferences": {
+                "importModuleSpecifierEnding": "minimal",
+            },
             "suggest": {
                 "autoImports": false,
                 "includeCompletionsForModuleExports": false,
@@ -5062,6 +5073,10 @@ mod tests {
             assert_eq!(
                 notification[language]["format"]["insertSpaceAfterCommaDelimiter"],
                 true
+            );
+            assert_eq!(
+                notification[language]["preferences"]["importModuleSpecifierEnding"],
+                "minimal"
             );
             assert_eq!(notification[language]["validate"]["enable"], false);
             assert!(notification[language].get("formattingOptions").is_none());

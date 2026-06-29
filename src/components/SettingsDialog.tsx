@@ -17,6 +17,7 @@ import {
   type AppSettings,
   type AppTheme,
   type BackgroundRuntimePolicy,
+  type JavaScriptTypeScriptImportModuleSpecifierEnding,
   type JavaScriptTypeScriptImportModuleSpecifierPreference,
   type JavaScriptTypeScriptQuotePreference,
   type JavaScriptTypeScriptServiceMode,
@@ -315,6 +316,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptImportModuleSpecifierPreference,
                     })
                   }
+                  onChangeJavaScriptTypeScriptImportModuleSpecifierEnding={(
+                    javaScriptTypeScriptImportModuleSpecifierEnding,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptImportModuleSpecifierEnding,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptAddMissingImportsOnSave={(
                     javaScriptTypeScriptAddMissingImportsOnSave,
                   ) =>
@@ -551,6 +560,9 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
     preference: JavaScriptTypeScriptImportModuleSpecifierPreference,
   ): void;
+  onChangeJavaScriptTypeScriptImportModuleSpecifierEnding(
+    ending: JavaScriptTypeScriptImportModuleSpecifierEnding,
+  ): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports(enabled: boolean): void;
@@ -589,6 +601,7 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
   onChangeJavaScriptTypeScriptFixAllOnSave,
+  onChangeJavaScriptTypeScriptImportModuleSpecifierEnding,
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference,
   onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptOrganizeImportsOnSave,
@@ -706,6 +719,25 @@ function GeneralSettings({
           <option value="relative">Relative</option>
           <option value="non-relative">Non-relative</option>
           <option value="project-relative">Project-relative</option>
+        </select>
+      </label>
+
+      <label className="settings-field">
+        <span>JS/TS import module specifier ending</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptImportModuleSpecifierEnding(
+              event.currentTarget
+                .value as JavaScriptTypeScriptImportModuleSpecifierEnding,
+            )
+          }
+          value={workspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding}
+        >
+          <option value="auto">Auto</option>
+          <option value="minimal">Minimal</option>
+          <option value="index">Index</option>
+          <option value="js">JS</option>
         </select>
       </label>
 

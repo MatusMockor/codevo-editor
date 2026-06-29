@@ -42,6 +42,11 @@ export type JavaScriptTypeScriptImportModuleSpecifierPreference =
   | "relative"
   | "non-relative"
   | "project-relative";
+export type JavaScriptTypeScriptImportModuleSpecifierEnding =
+  | "auto"
+  | "minimal"
+  | "index"
+  | "js";
 export type JavaScriptTypeScriptQuotePreference = "auto" | "single" | "double";
 export type JavaScriptTypeScriptServiceMode = "auto" | "off";
 export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
@@ -138,6 +143,7 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptAddMissingImportsOnSave: boolean;
   javaScriptTypeScriptCodeLens: boolean;
   javaScriptTypeScriptFixAllOnSave: boolean;
+  javaScriptTypeScriptImportModuleSpecifierEnding: JavaScriptTypeScriptImportModuleSpecifierEnding;
   javaScriptTypeScriptImportModuleSpecifierPreference: JavaScriptTypeScriptImportModuleSpecifierPreference;
   javaScriptTypeScriptInlayHints: boolean;
   javaScriptTypeScriptOrganizeImportsOnSave: boolean;
@@ -279,6 +285,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptAutomaticTypeAcquisition: false,
     javaScriptTypeScriptCodeLens: false,
     javaScriptTypeScriptFixAllOnSave: false,
+    javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
     javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
     javaScriptTypeScriptInlayHints: true,
     javaScriptTypeScriptOrganizeImportsOnSave: false,
@@ -428,6 +435,12 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.javaScriptTypeScriptFixAllOnSave,
       defaults.javaScriptTypeScriptFixAllOnSave,
     ),
+    javaScriptTypeScriptImportModuleSpecifierEnding:
+      isJavaScriptTypeScriptImportModuleSpecifierEnding(
+        value.javaScriptTypeScriptImportModuleSpecifierEnding,
+      )
+        ? value.javaScriptTypeScriptImportModuleSpecifierEnding
+        : defaults.javaScriptTypeScriptImportModuleSpecifierEnding,
     javaScriptTypeScriptImportModuleSpecifierPreference:
       isJavaScriptTypeScriptImportModuleSpecifierPreference(
         value.javaScriptTypeScriptImportModuleSpecifierPreference,
@@ -942,6 +955,17 @@ function isJavaScriptTypeScriptImportModuleSpecifierPreference(
     value === "relative" ||
     value === "non-relative" ||
     value === "project-relative"
+  );
+}
+
+function isJavaScriptTypeScriptImportModuleSpecifierEnding(
+  value: unknown,
+): value is JavaScriptTypeScriptImportModuleSpecifierEnding {
+  return (
+    value === "auto" ||
+    value === "minimal" ||
+    value === "index" ||
+    value === "js"
   );
 }
 

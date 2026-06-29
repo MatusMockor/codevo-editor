@@ -952,6 +952,25 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
+      javaScriptTypeScriptImportModuleSpecifierEndingSelect().value = "minimal";
+      javaScriptTypeScriptImportModuleSpecifierEndingSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
+        javaScriptTypeScriptImportModuleSpecifierPreference:
+          "project-relative",
+      },
+    });
+
+    await act(async () => {
       javaScriptTypeScriptQuotePreferenceSelect().value = "single";
       javaScriptTypeScriptQuotePreferenceSelect().dispatchEvent(
         new Event("change", { bubbles: true }),
@@ -964,6 +983,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
         javaScriptTypeScriptImportModuleSpecifierPreference:
           "project-relative",
         javaScriptTypeScriptQuotePreference: "single",
@@ -982,6 +1002,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
         javaScriptTypeScriptImportModuleSpecifierPreference:
           "project-relative",
         javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
@@ -1514,6 +1535,22 @@ describe("SettingsDialog", () => {
 
     if (!select) {
       throw new Error("JS/TS import module specifier select was not rendered.");
+    }
+
+    return select;
+  }
+
+  function javaScriptTypeScriptImportModuleSpecifierEndingSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("JS/TS import module specifier ending"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error(
+        "JS/TS import module specifier ending select was not rendered.",
+      );
     }
 
     return select;

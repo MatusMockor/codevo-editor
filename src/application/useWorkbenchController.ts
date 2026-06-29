@@ -25137,6 +25137,8 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
+          previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding ||
           previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference !==
             resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference ||
           previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
@@ -31251,6 +31253,8 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     includeAutomaticOptionalChainCompletions: true,
     includeCompletionsForImportStatements: autoImportsEnabled,
     includeCompletionsForModuleExports: autoImportsEnabled,
+    importModuleSpecifierEnding:
+      settings.javaScriptTypeScriptImportModuleSpecifierEnding,
     importModuleSpecifierPreference:
       settings.javaScriptTypeScriptImportModuleSpecifierPreference,
     includeInlayEnumMemberValueHints: inlayHintsEnabled,
@@ -31321,6 +31325,12 @@ function javaScriptTypeScriptImportPreferenceOptions(
       ? {
           importModuleSpecifierPreference:
             settings.javaScriptTypeScriptImportModuleSpecifierPreference,
+        }
+      : {}),
+    ...(settings.javaScriptTypeScriptImportModuleSpecifierEnding !== "auto"
+      ? {
+          importModuleSpecifierEnding:
+            settings.javaScriptTypeScriptImportModuleSpecifierEnding,
         }
       : {}),
     ...(settings.javaScriptTypeScriptPreferTypeOnlyAutoImports

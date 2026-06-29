@@ -49,6 +49,7 @@ describe("settings defaults", () => {
       javaScriptTypeScriptAutomaticTypeAcquisition: false,
       javaScriptTypeScriptCodeLens: false,
       javaScriptTypeScriptFixAllOnSave: false,
+      javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
       javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
       javaScriptTypeScriptInlayHints: true,
       javaScriptTypeScriptOrganizeImportsOnSave: false,
@@ -304,6 +305,7 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptAutomaticTypeAcquisition: true,
         javaScriptTypeScriptCodeLens: true,
         javaScriptTypeScriptFixAllOnSave: true,
+        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
         javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptOrganizeImportsOnSave: true,
@@ -356,6 +358,7 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptAutomaticTypeAcquisition: true,
       javaScriptTypeScriptCodeLens: true,
       javaScriptTypeScriptFixAllOnSave: true,
+      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
       javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
       javaScriptTypeScriptInlayHints: false,
       javaScriptTypeScriptOrganizeImportsOnSave: true,
@@ -497,6 +500,10 @@ describe("normalizeWorkspaceSettings", () => {
   it("normalizes JS/TS import preferences", () => {
     expect(
       normalizeWorkspaceSettings({})
+        .javaScriptTypeScriptImportModuleSpecifierEnding,
+    ).toBe("auto");
+    expect(
+      normalizeWorkspaceSettings({})
         .javaScriptTypeScriptImportModuleSpecifierPreference,
     ).toBe("shortest");
     expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptQuotePreference).toBe(
@@ -507,18 +514,21 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({
+        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
         javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
         javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
         javaScriptTypeScriptQuotePreference: "double",
       }),
     ).toEqual({
       ...defaultWorkspaceSettings(),
+      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
       javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
       javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
       javaScriptTypeScriptQuotePreference: "double",
     });
     expect(
       normalizeWorkspaceSettings({
+        javaScriptTypeScriptImportModuleSpecifierEnding: "explicit",
         javaScriptTypeScriptImportModuleSpecifierPreference: "absolute",
         javaScriptTypeScriptPreferTypeOnlyAutoImports: "yes",
         javaScriptTypeScriptQuotePreference: "backtick",

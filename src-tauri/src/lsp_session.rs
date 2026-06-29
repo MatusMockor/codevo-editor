@@ -5583,6 +5583,7 @@ mod tests {
                         "includeCompletionsForModuleExports": false,
                         "includeInlayFunctionLikeReturnTypeHints": false,
                         "includeInlayParameterNameHints": "none",
+                        "importModuleSpecifierEnding": "minimal",
                         "importModuleSpecifierPreference": "project-relative",
                         "mockorCodeLensEnabled": true,
                         "mockorValidationEnabled": false,
@@ -5634,6 +5635,10 @@ mod tests {
         assert_eq!(
             response["result"][0]["includeCompletionsForModuleExports"],
             false
+        );
+        assert_eq!(
+            response["result"][0]["importModuleSpecifierEnding"],
+            "minimal"
         );
         assert_eq!(
             response["result"][0]["importModuleSpecifierPreference"],
@@ -5690,6 +5695,7 @@ mod tests {
                 },
                 "preferences": {
                     "includeCompletionsForModuleExports": false,
+                    "importModuleSpecifierEnding": "js",
                     "importModuleSpecifierPreference": "relative",
                     "mockorCodeLensEnabled": true,
                     "preferTypeOnlyAutoImports": true,
@@ -5738,6 +5744,10 @@ mod tests {
         assert_eq!(
             response["result"][1]["includeCompletionsForModuleExports"],
             false
+        );
+        assert_eq!(
+            response["result"][1]["importModuleSpecifierEnding"],
+            "js"
         );
         assert_eq!(
             response["result"][1]["importModuleSpecifierPreference"],

@@ -1,4 +1,5 @@
 import type {
+  JavaScriptTypeScriptImportModuleSpecifierEnding,
   JavaScriptTypeScriptImportModuleSpecifierPreference,
   JavaScriptTypeScriptQuotePreference,
   JavaScriptTypeScriptVersionPreference,
@@ -37,6 +38,7 @@ export interface JavaScriptTypeScriptLanguageServerPlanOptions {
   autoImportsEnabled?: boolean;
   automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
+  importModuleSpecifierEnding?: JavaScriptTypeScriptImportModuleSpecifierEnding;
   importModuleSpecifierPreference?: JavaScriptTypeScriptImportModuleSpecifierPreference;
   inlayHintsEnabled?: boolean;
   preferTypeOnlyAutoImports?: boolean;

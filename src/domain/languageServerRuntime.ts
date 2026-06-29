@@ -1,4 +1,5 @@
 import type {
+  JavaScriptTypeScriptImportModuleSpecifierEnding,
   JavaScriptTypeScriptImportModuleSpecifierPreference,
   JavaScriptTypeScriptQuotePreference,
   JavaScriptTypeScriptVersionPreference,
@@ -72,6 +73,7 @@ export interface LanguageServerRuntimeStartOptions {
   automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
+  importModuleSpecifierEnding?: JavaScriptTypeScriptImportModuleSpecifierEnding;
   importModuleSpecifierPreference?: JavaScriptTypeScriptImportModuleSpecifierPreference;
   intelephensePath?: string | null;
   preferTypeOnlyAutoImports?: boolean;
