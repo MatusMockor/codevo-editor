@@ -175,6 +175,7 @@ interface EditorSurfaceProps {
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+  javaScriptTypeScriptCompleteFunctionCalls?: boolean;
   javaScriptTypeScriptValidationEnabled?: boolean;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
@@ -280,6 +281,7 @@ function EditorSurfaceComponent({
   javaScriptTypeScriptLanguageServerRefreshGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+  javaScriptTypeScriptCompleteFunctionCalls = false,
   javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
@@ -803,6 +805,7 @@ function EditorSurfaceComponent({
       {
         applyWorkspaceEdit: (edit, editContext) =>
           applyJavaScriptTypeScriptWorkspaceEditRef.current(edit, editContext),
+        completeFunctionCalls: javaScriptTypeScriptCompleteFunctionCalls,
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
         flushPendingDocumentChange: (path) =>
           flushPendingJavaScriptTypeScriptRef.current(path),
@@ -823,6 +826,7 @@ function EditorSurfaceComponent({
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRefreshGateway,
     javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+    javaScriptTypeScriptCompleteFunctionCalls,
     monacoApi,
     workspaceRoot,
   ]);

@@ -142,6 +142,7 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptAutomaticTypeAcquisition: boolean;
   javaScriptTypeScriptAddMissingImportsOnSave: boolean;
   javaScriptTypeScriptCodeLens: boolean;
+  javaScriptTypeScriptCompleteFunctionCalls: boolean;
   javaScriptTypeScriptFixAllOnSave: boolean;
   javaScriptTypeScriptImportModuleSpecifierEnding: JavaScriptTypeScriptImportModuleSpecifierEnding;
   javaScriptTypeScriptImportModuleSpecifierPreference: JavaScriptTypeScriptImportModuleSpecifierPreference;
@@ -284,6 +285,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptAutoImports: true,
     javaScriptTypeScriptAutomaticTypeAcquisition: false,
     javaScriptTypeScriptCodeLens: false,
+    javaScriptTypeScriptCompleteFunctionCalls: false,
     javaScriptTypeScriptFixAllOnSave: false,
     javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
     javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
@@ -430,6 +432,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     javaScriptTypeScriptCodeLens: normalizeBoolean(
       value.javaScriptTypeScriptCodeLens,
       defaults.javaScriptTypeScriptCodeLens,
+    ),
+    javaScriptTypeScriptCompleteFunctionCalls: normalizeBoolean(
+      value.javaScriptTypeScriptCompleteFunctionCalls,
+      defaults.javaScriptTypeScriptCompleteFunctionCalls,
     ),
     javaScriptTypeScriptFixAllOnSave: normalizeBoolean(
       value.javaScriptTypeScriptFixAllOnSave,

@@ -229,6 +229,7 @@ const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
+  completeFunctionCalls?: boolean;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
@@ -842,6 +843,7 @@ async function provideCompletionItems(
         request.sessionId,
         request.path,
         range,
+        context.completeFunctionCalls === true,
         `0_${String(index).padStart(4, "0")}`,
       ),
     );
@@ -1037,6 +1039,7 @@ async function resolveCompletionItem(
         backedItem.__languageServerSessionId,
         backedItem.__sourcePath,
         backedItem.__completionRange ?? item.range,
+        context.completeFunctionCalls === true,
         item.sortText,
       ),
     };
@@ -3871,10 +3874,11 @@ function toMonacoCompletionItem(
   sessionId: number,
   sourcePath: string | undefined,
   fallbackRange: Monaco.IRange | Monaco.languages.CompletionItemRanges,
+  completeFunctionCalls: boolean,
   fallbackSortText?: string,
 ): LanguageServerBackedCompletionItem {
   const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
-  const insert = completionInsert(monaco, item, kind);
+  const insert = completionInsert(monaco, item, kind, completeFunctionCalls);
   const additionalTextEdits =
     item.additionalTextEdits && item.additionalTextEdits.length > 0
       ? item.additionalTextEdits.map((edit) => toMonacoTextEdit(monaco, edit))
@@ -4010,6 +4014,7 @@ function completionInsert(
     textEditText?: string | null;
   },
   kind: Monaco.languages.CompletionItemKind,
+  completeFunctionCalls: boolean,
 ): {
   command?: Monaco.languages.Command;
   insertText: string;
@@ -4034,6 +4039,7 @@ function completionInsert(
   }
 
   if (
+    !completeFunctionCalls ||
     hasExplicitInsertText ||
     (kind !== monaco.languages.CompletionItemKind.Method &&
       kind !== monaco.languages.CompletionItemKind.Function)

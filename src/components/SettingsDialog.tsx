@@ -308,6 +308,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptCodeLens,
                     })
                   }
+                  onChangeJavaScriptTypeScriptCompleteFunctionCalls={(
+                    javaScriptTypeScriptCompleteFunctionCalls,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptCompleteFunctionCalls,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference={(
                     javaScriptTypeScriptImportModuleSpecifierPreference,
                   ) =>
@@ -556,6 +564,7 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(enabled: boolean): void;
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptCompleteFunctionCalls(enabled: boolean): void;
   onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
     preference: JavaScriptTypeScriptImportModuleSpecifierPreference,
@@ -600,6 +609,7 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition,
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave,
   onChangeJavaScriptTypeScriptCodeLens,
+  onChangeJavaScriptTypeScriptCompleteFunctionCalls,
   onChangeJavaScriptTypeScriptFixAllOnSave,
   onChangeJavaScriptTypeScriptImportModuleSpecifierEnding,
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference,
@@ -810,6 +820,20 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript CodeLens</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptCompleteFunctionCalls(
+              event.currentTarget.checked,
+            )
+          }
+          type="checkbox"
+        />
+        <span>JS/TS complete function calls</span>
       </label>
 
       <label className="settings-toggle">

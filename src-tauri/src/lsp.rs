@@ -405,6 +405,7 @@ pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
     pub automatic_type_acquisition: bool,
     pub code_lens: bool,
+    pub complete_function_calls: bool,
     pub import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding,
     pub import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference,
     pub inlay_hints: bool,
@@ -500,6 +501,7 @@ impl Default for TypeScriptLanguageServerSettings {
             auto_imports: true,
             automatic_type_acquisition: false,
             code_lens: false,
+            complete_function_calls: false,
             import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::Auto,
             import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::Shortest,
             inlay_hints: true,
@@ -544,6 +546,10 @@ where
             settings.automatic_type_acquisition,
         );
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
+        configure_typescript_complete_function_calls(
+            &mut initialize_request,
+            settings.complete_function_calls,
+        );
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
         configure_typescript_import_preferences(&mut initialize_request, settings);
         configure_typescript_validation(&mut initialize_request, settings.validation);
@@ -753,6 +759,14 @@ fn configure_typescript_code_lens(request: &mut JsonRpcRequest, enabled: bool) {
     };
 
     preferences.insert("mockorCodeLensEnabled".to_string(), Value::Bool(enabled));
+}
+
+fn configure_typescript_complete_function_calls(request: &mut JsonRpcRequest, enabled: bool) {
+    let Some(preferences) = typescript_preferences_mut(request) else {
+        return;
+    };
+
+    preferences.insert("completeFunctionCalls".to_string(), Value::Bool(enabled));
 }
 
 fn configure_typescript_validation(request: &mut JsonRpcRequest, enabled: bool) {
@@ -1597,6 +1611,10 @@ mod tests {
             true
         );
         assert_eq!(
+            request.params["initializationOptions"]["preferences"]["completeFunctionCalls"],
+            false
+        );
+        assert_eq!(
             request.params["initializationOptions"]["preferences"]
                 ["includeCompletionsWithSnippetText"],
             true
@@ -1832,6 +1850,7 @@ mod tests {
                 auto_imports: false,
                 automatic_type_acquisition: true,
                 code_lens: true,
+                complete_function_calls: true,
                 import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::Minimal,
                 import_module_specifier_preference:
                     TypeScriptImportModuleSpecifierPreference::Relative,
@@ -1868,6 +1887,10 @@ mod tests {
         );
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["mockorCodeLensEnabled"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["completeFunctionCalls"],
             true
         );
         assert_eq!(

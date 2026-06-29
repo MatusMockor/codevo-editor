@@ -3627,7 +3627,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
   });
 
-  it("detects required method parameters from TypeScript label details", async () => {
+  it("keeps TypeScript function completions as plain labels by default", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
       completion: {
@@ -3650,6 +3650,53 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "setUser",
+        label: {
+          description: "void",
+          detail: "(user: User)",
+          label: "setUser",
+        },
+      }),
+    );
+    expect(result.suggestions[0]).not.toHaveProperty("command");
+    expect(result.suggestions[0]).not.toHaveProperty("insertTextRules");
+  });
+
+  it("detects required method parameters from TypeScript label details when complete-function-call completions are enabled", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: null,
+            kind: 2,
+            label: "setUser",
+            labelDetails: {
+              description: "void",
+              detail: "(user: User)",
+            },
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ completeFunctionCalls: true, featuresGateway: gateway }),
     );
     const completionProvider = (
       monaco.languages.registerCompletionItemProvider as any
@@ -5428,6 +5475,7 @@ function providerContext(
 ): JavaScriptTypeScriptLanguageServerProviderContext {
   return {
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
+    completeFunctionCalls: overrides.completeFunctionCalls,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),

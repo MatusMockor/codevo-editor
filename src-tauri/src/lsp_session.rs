@@ -2600,6 +2600,10 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .get("mockorValidationEnabled")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let complete_function_calls = preferences
+        .get("completeFunctionCalls")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     json!({
         "format": {
@@ -2644,7 +2648,7 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         },
         "suggest": {
             "autoImports": auto_imports_enabled,
-            "completeFunctionCalls": true,
+            "completeFunctionCalls": complete_function_calls,
             "includeAutomaticOptionalChainCompletions": true,
             "includeCompletionsForImportStatements": auto_imports_enabled,
             "includeCompletionsForModuleExports": auto_imports_enabled,
@@ -4290,7 +4294,7 @@ mod tests {
         let response_b = wait_for_captured_response(&capture_b, 52);
 
         assert_eq!(response_a["result"][0]["autoImports"], true);
-        assert_eq!(response_a["result"][0]["completeFunctionCalls"], true);
+        assert_eq!(response_a["result"][0]["completeFunctionCalls"], false);
         assert_eq!(response_a["result"][1]["enable"], true);
         assert_eq!(response_b["result"][0]["autoImports"], false);
         assert_eq!(response_b["result"][0]["completeFunctionCalls"], true);
@@ -5647,7 +5651,7 @@ mod tests {
         assert_eq!(response["result"][0]["preferTypeOnlyAutoImports"], true);
         assert_eq!(response["result"][0]["quotePreference"], "single");
         assert_eq!(response["result"][1]["autoImports"], false);
-        assert_eq!(response["result"][1]["completeFunctionCalls"], true);
+        assert_eq!(response["result"][1]["completeFunctionCalls"], false);
         assert_eq!(response["result"][2]["parameterNames"]["enabled"], "none");
         assert_eq!(response["result"][3]["enabled"], true);
         assert_eq!(response["result"][3]["showOnAllFunctions"], false);

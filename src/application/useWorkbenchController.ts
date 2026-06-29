@@ -2999,6 +2999,9 @@ export function useWorkbenchController(
                   .javaScriptTypeScriptAutomaticTypeAcquisition,
               codeLensEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptCodeLens,
+              completeFunctionCalls:
+                workspaceSettingsRef.current
+                  .javaScriptTypeScriptCompleteFunctionCalls,
               inlayHintsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
               typeScriptVersionPreference,
@@ -25304,6 +25307,8 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
+          previousWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls ||
           previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding !==
             resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding ||
           previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference !==
@@ -25603,6 +25608,8 @@ export function useWorkbenchController(
           automaticTypeAcquisitionEnabled:
             currentSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
           codeLensEnabled: currentSettings.javaScriptTypeScriptCodeLens,
+          completeFunctionCalls:
+            currentSettings.javaScriptTypeScriptCompleteFunctionCalls,
           inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
           typeScriptVersionPreference:
             currentSettings.javaScriptTypeScriptVersion,
@@ -27498,6 +27505,8 @@ export function useWorkbenchController(
             .javaScriptTypeScriptAutomaticTypeAcquisition,
           codeLensEnabled: workspaceSettingsRef.current
             .javaScriptTypeScriptCodeLens,
+          completeFunctionCalls: workspaceSettingsRef.current
+            .javaScriptTypeScriptCompleteFunctionCalls,
           inlayHintsEnabled: workspaceSettingsRef.current
             .javaScriptTypeScriptInlayHints,
           typeScriptVersionPreference:
@@ -27583,6 +27592,7 @@ export function useWorkbenchController(
     workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
     workspaceSettings.javaScriptTypeScriptCodeLens,
+    workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls,
     workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceSettings.javaScriptTypeScriptVersion,
@@ -31455,6 +31465,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
 ): LanguageServerConfigurationSettings {
   const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
   const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
+  const completeFunctionCalls = settings.javaScriptTypeScriptCompleteFunctionCalls;
   const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
   const validationEnabled = settings.javaScriptTypeScriptValidation;
   const formattingOptions = formattingOptionsForActiveJavaScriptTypeScriptDocument(
@@ -31522,7 +31533,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
     },
     suggest: {
       autoImports: autoImportsEnabled,
-      completeFunctionCalls: true,
+      completeFunctionCalls,
       includeAutomaticOptionalChainCompletions: true,
       includeCompletionsForImportStatements: autoImportsEnabled,
       includeCompletionsForModuleExports: autoImportsEnabled,

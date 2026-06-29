@@ -38,6 +38,7 @@ export interface JavaScriptTypeScriptLanguageServerPlanOptions {
   autoImportsEnabled?: boolean;
   automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
+  completeFunctionCalls?: boolean;
   importModuleSpecifierEnding?: JavaScriptTypeScriptImportModuleSpecifierEnding;
   importModuleSpecifierPreference?: JavaScriptTypeScriptImportModuleSpecifierPreference;
   inlayHintsEnabled?: boolean;

@@ -72,6 +72,7 @@ export interface LanguageServerRuntimeStartOptions {
   autoImportsEnabled?: boolean;
   automaticTypeAcquisitionEnabled?: boolean;
   codeLensEnabled?: boolean;
+  completeFunctionCalls?: boolean;
   inlayHintsEnabled?: boolean;
   importModuleSpecifierEnding?: JavaScriptTypeScriptImportModuleSpecifierEnding;
   importModuleSpecifierPreference?: JavaScriptTypeScriptImportModuleSpecifierPreference;

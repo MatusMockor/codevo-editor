@@ -1228,6 +1228,9 @@ function App() {
             javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
               javaScriptTypeScriptLanguageServerWorkspaceEditGateway
             }
+            javaScriptTypeScriptCompleteFunctionCalls={
+              workbench.workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls
+            }
             javaScriptTypeScriptValidationEnabled={
               workbench.workspaceSettings.javaScriptTypeScriptValidation
             }
