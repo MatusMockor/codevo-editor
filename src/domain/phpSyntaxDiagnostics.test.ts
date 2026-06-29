@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { suspiciousPhpBareIdentifierDiagnostics } from "./phpSyntaxDiagnostics";
+import {
+  structuralPhpSyntaxDiagnostics,
+  suspiciousPhpBareIdentifierDiagnostics,
+} from "./phpSyntaxDiagnostics";
 
 describe("suspiciousPhpBareIdentifierDiagnostics", () => {
   it("flags a bare identifier statement after valid PHP code", () => {
@@ -22,6 +25,30 @@ describe("suspiciousPhpBareIdentifierDiagnostics", () => {
     expect(
       suspiciousPhpBareIdentifierDiagnostics(
         "<?php\nreturn $value;\nPHP_EOL;\ntrue;\n",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("structuralPhpSyntaxDiagnostics", () => {
+  it("flags an unclosed delimiter at end of file", () => {
+    expect(structuralPhpSyntaxDiagnostics("<?php\n\nfunction codevoQaBroken(")).toEqual(
+      [
+        {
+          character: 23,
+          endCharacter: 24,
+          endLine: 2,
+          line: 2,
+          message: 'Unclosed delimiter, expected ")".',
+        },
+      ],
+    );
+  });
+
+  it("ignores balanced delimiters inside strings and comments", () => {
+    expect(
+      structuralPhpSyntaxDiagnostics(
+        "<?php\n// (\n$text = \"{\";\nfunction ok(): void {}\n",
       ),
     ).toEqual([]);
   });

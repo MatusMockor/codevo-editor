@@ -12,6 +12,7 @@ interface DiagnosticNoticeLike {
 
 const javaScriptTypeScriptDiagnosticGroupPrefix =
   "javascript-typescript-diagnostics:";
+const phpLocalDiagnosticGroupPrefix = "php-local-diagnostics:";
 
 export function isDiagnosticNotice(notice: DiagnosticNoticeLike): boolean {
   const groupKey = notice.groupKey;
@@ -24,7 +25,10 @@ export function isDiagnosticNotice(notice: DiagnosticNoticeLike): boolean {
     return true;
   }
 
-  return groupKey.startsWith(javaScriptTypeScriptDiagnosticGroupPrefix);
+  return (
+    groupKey.startsWith(javaScriptTypeScriptDiagnosticGroupPrefix) ||
+    groupKey.startsWith(phpLocalDiagnosticGroupPrefix)
+  );
 }
 
 export function summarizeDiagnostics(

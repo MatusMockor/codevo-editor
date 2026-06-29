@@ -22,9 +22,9 @@ export interface PhpEditTick {
  * so all consumers parse from the same coalesced snapshot instead of racing
  * three timers.
  *
- * Returns `null` until the first debounce window settles for the given path (or
- * when `path`/`content` is `null`, i.e. no eligible document). A `null` path
- * (e.g. the document is not PHP, or there is no active document) clears any
+ * Publishes immediately when a PHP document is first opened or when the path
+ * changes, then debounces subsequent content changes in the same file. A `null`
+ * path (e.g. the document is not PHP, or there is no active document) clears any
  * pending timer and resets the tick to `null` synchronously so a consumer never
  * acts on a stale snapshot after the document becomes ineligible.
  *
@@ -56,10 +56,23 @@ export function useDebouncedPhpEditTick(
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      const current = tickRef.current;
+    const current = tickRef.current;
 
-      if (current && current.path === path && current.content === content) {
+    if (current && current.path === path && current.content === content) {
+      return;
+    }
+
+    if (!current || current.path !== path) {
+      const next: PhpEditTick = { content, path };
+      tickRef.current = next;
+      setTick(next);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const latest = tickRef.current;
+
+      if (latest && latest.path === path && latest.content === content) {
         return;
       }
 

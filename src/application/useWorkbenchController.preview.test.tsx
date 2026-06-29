@@ -4531,6 +4531,138 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("includes local PHP diagnostics in Problems and status without folding them into LSP marker state", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const path = "/workspace/app/Broken.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "PHPactor warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 71,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().updateLocalPhpDiagnostics(path, [
+        {
+          character: 9,
+          endCharacter: 10,
+          endLine: 2,
+          line: 2,
+          message: "syntax error, unexpected end of file",
+          severity: "error",
+          source: "PHP Syntax",
+        },
+      ]);
+    });
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 1,
+    });
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toEqual([
+      {
+        character: 0,
+        line: 0,
+        message: "PHPactor warning",
+        severity: "warning",
+        source: "phpactor",
+      },
+    ]);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.groupKey?.startsWith("php-local-diagnostics:") &&
+          notice.message.includes("syntax error, unexpected end of file"),
+      ),
+    ).toBe(true);
+
+    act(() => {
+      getWorkbench().updateLocalPhpDiagnostics(path, []);
+    });
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 1,
+    });
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.groupKey?.startsWith("php-local-diagnostics:"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+  });
+
+  it("derives active PHP diagnostics from the open document so Problems and status do not wait for parser callbacks", async () => {
+    const path = "/workspace/routes/codevo_qa_broken.php";
+    const source = "<?php  \n\nfunction codevoQaBroken(\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => source),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "codevo_qa_broken.php"),
+      );
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.groupKey?.startsWith("php-local-diagnostics:") &&
+          notice.message.includes("Unclosed delimiter"),
+      ),
+    ).toBe(true);
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+  });
+
   it("coalesces a burst of PHP diagnostics events into a single batched flush", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
@@ -11814,6 +11946,79 @@ describe("useWorkbenchController preview tabs", () => {
         source: "Git Push",
       }),
     );
+  });
+
+  it("refreshes Git status after external deletes so stale unversioned files disappear", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    let filesDeleted = false;
+    const firstUnversioned = {
+      ...gitChangedFile("tmp/first.txt", false),
+      isUnversioned: true,
+      status: "untracked" as const,
+    };
+    const secondUnversioned = {
+      ...gitChangedFile("tmp/second.txt", false),
+      isUnversioned: true,
+      status: "untracked" as const,
+    };
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: filesDeleted ? [] : [firstUnversioned, secondUnversioned],
+      isRepository: true,
+      rootPath,
+    }));
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().gitStatus.changes).toEqual([
+      firstUnversioned,
+      secondUnversioned,
+    ]);
+
+    filesDeleted = true;
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/workspace/tmp/first.txt",
+        relativePath: "tmp/first.txt",
+        rootPath: "/workspace",
+      });
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/workspace/tmp/second.txt",
+        relativePath: "tmp/second.txt",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(gitGateway.getStatus).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().gitStatus.changes).toEqual([]);
   });
 
   it("reuses a clean preview tab for search result opens", async () => {

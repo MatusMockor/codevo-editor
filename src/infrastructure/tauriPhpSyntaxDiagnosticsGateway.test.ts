@@ -15,7 +15,28 @@ describe("TauriPhpSyntaxDiagnosticsGateway", () => {
     );
 
     await expect(gateway.validate("<?php")).resolves.toEqual([]);
-    expect(invokeCommand).not.toHaveBeenCalled();
+    expect(invokeCommand).toHaveBeenCalledWith("parse_php_syntax", {
+      source: "<?php",
+    });
+  });
+
+  it("uses invoke diagnostics when the Tauri detector is unavailable but invoke works", async () => {
+    const diagnostics = [
+      {
+        character: 3,
+        endCharacter: 4,
+        endLine: 0,
+        line: 0,
+        message: "PHP syntax error.",
+      },
+    ];
+    const invokeCommand = vi.fn<InvokeCommand>(async () => diagnostics);
+    const gateway = new TauriPhpSyntaxDiagnosticsGateway(
+      invokeCommand,
+      () => false,
+    );
+
+    await expect(gateway.validate("<?php ?")).resolves.toEqual(diagnostics);
   });
 
   it("delegates syntax validation inside Tauri", async () => {

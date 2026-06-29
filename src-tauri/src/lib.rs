@@ -6895,6 +6895,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_php_syntax_reports_diagnostics_for_unclosed_function_off_thread() {
+        let diagnostics = tauri::async_runtime::block_on(parse_php_syntax(
+            "<?php\n\nfunction codevoQaBroken(\n".to_string(),
+        ))
+        .expect("syntax result");
+
+        assert!(
+            !diagnostics.is_empty(),
+            "incomplete PHP function should produce syntax diagnostics"
+        );
+    }
+
+    #[test]
     fn parse_php_file_outline_handles_concurrent_requests_off_thread() {
         let first_future = parse_php_file_outline(
             "/workspace/src/First.php".to_string(),

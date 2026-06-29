@@ -21,12 +21,22 @@ export class TauriPhpSyntaxDiagnosticsGateway
   ) {}
 
   async validate(source: string): Promise<PhpSyntaxDiagnostic[]> {
-    if (!this.isRuntimeAvailable()) {
-      return [];
+    if (this.isRuntimeAvailable()) {
+      return (await this.invokeSyntaxCommand("parse_php_syntax", {
+        source,
+      })) as PhpSyntaxDiagnostic[];
     }
 
-    return (await this.invokeSyntaxCommand("parse_php_syntax", {
-      source,
-    })) as PhpSyntaxDiagnostic[];
+    try {
+      const diagnostics = await this.invokeSyntaxCommand("parse_php_syntax", {
+        source,
+      });
+
+      return Array.isArray(diagnostics)
+        ? (diagnostics as PhpSyntaxDiagnostic[])
+        : [];
+    } catch {
+      return [];
+    }
   }
 }

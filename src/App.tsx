@@ -1264,6 +1264,7 @@ function App() {
             onOpenFileStructure={workbench.openFileStructure}
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}
+            onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}

@@ -52,6 +52,128 @@ export function suspiciousPhpBareIdentifierDiagnostics(
     });
 }
 
+export function structuralPhpSyntaxDiagnostics(
+  source: string,
+): PhpSyntaxDiagnostic[] {
+  const stack: Array<{ character: number; expected: string; line: number }> = [];
+  let line = 0;
+  let character = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaping = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index] ?? "";
+    const next = source[index + 1] ?? "";
+
+    if (inLineComment) {
+      if (char === "\n") {
+        inLineComment = false;
+        line += 1;
+        character = 0;
+      } else {
+        character += 1;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        index += 1;
+        character += 2;
+        continue;
+      }
+
+      if (char === "\n") {
+        line += 1;
+        character = 0;
+      } else {
+        character += 1;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+
+      if (char === "\n") {
+        line += 1;
+        character = 0;
+      } else {
+        character += 1;
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      index += 1;
+      character += 2;
+      continue;
+    }
+
+    if (char === "#") {
+      inLineComment = true;
+      character += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      index += 1;
+      character += 2;
+      continue;
+    }
+
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      character += 1;
+      continue;
+    }
+
+    if (char === "(" || char === "[" || char === "{") {
+      stack.push({ character, expected: closingDelimiterFor(char), line });
+    } else if (char === ")" || char === "]" || char === "}") {
+      const opening = stack[stack.length - 1];
+
+      if (opening?.expected === char) {
+        stack.pop();
+      }
+    }
+
+    if (char === "\n") {
+      line += 1;
+      character = 0;
+    } else {
+      character += 1;
+    }
+  }
+
+  const unclosed = stack[stack.length - 1];
+
+  if (!unclosed) {
+    return [];
+  }
+
+  return [
+    {
+      character: unclosed.character,
+      endCharacter: unclosed.character + 1,
+      endLine: unclosed.line,
+      line: unclosed.line,
+      message: `Unclosed delimiter, expected "${unclosed.expected}".`,
+    },
+  ];
+}
+
 function shouldReportBareIdentifier(identifier: string): boolean {
   if (!identifier) {
     return false;
@@ -62,6 +184,18 @@ function shouldReportBareIdentifier(identifier: string): boolean {
   }
 
   return !likelyConstantIdentifierPattern.test(identifier);
+}
+
+function closingDelimiterFor(delimiter: string): string {
+  if (delimiter === "(") {
+    return ")";
+  }
+
+  if (delimiter === "[") {
+    return "]";
+  }
+
+  return "}";
 }
 
 function lineCharacterAt(

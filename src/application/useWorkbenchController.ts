@@ -71,6 +71,11 @@ import {
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
+import { phpInspectionDiagnostics } from "../domain/phpInspections";
+import {
+  structuralPhpSyntaxDiagnostics,
+  suspiciousPhpBareIdentifierDiagnostics,
+} from "../domain/phpSyntaxDiagnostics";
 import {
   DiagnosticsCoalescer,
   animationFrameDiagnosticsFlushScheduler,
@@ -151,6 +156,7 @@ import {
   isPrefetchableContentSize,
   shouldPrefetchFileContent,
 } from "../domain/filePrefetchCache";
+import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
   collectBareKeyShortcutKeys,
   eventCanMatchKeymapShortcut,
@@ -708,6 +714,7 @@ const PHP_INLAY_HINT_CALL_LIMIT = 40;
 // changes so a burst (e.g. `git checkout`) reloads each affected directory
 // once instead of thrashing the tree on every event.
 const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
+const WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS = 120;
 
 interface PhpClassMemberReadResult {
   content: string;
@@ -910,7 +917,8 @@ function isCappableDiagnosticNotice(notice: WorkbenchNotice): boolean {
 
   return (
     groupKey.startsWith("language-server-diagnostics:") ||
-    groupKey.startsWith("javascript-typescript-diagnostics:")
+    groupKey.startsWith("javascript-typescript-diagnostics:") ||
+    groupKey.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX)
   );
 }
 
@@ -969,6 +977,8 @@ const WORKSPACE_TODO_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
   "tsx",
   "vue",
 ]);
+const PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX = "php-local-diagnostics:";
+const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -1074,6 +1084,8 @@ export function useWorkbenchController(
     javaScriptTypeScriptDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
   ] = useState<Record<string, LanguageServerDiagnostic[]>>({});
+  const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] =
+    useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
     initialIndexProgress,
   );
@@ -1490,6 +1502,13 @@ export function useWorkbenchController(
   const workspaceDirectoryRefreshTimerRef = useRef<
     ReturnType<typeof setTimeout> | null
   >(null);
+  const workspaceGitStatusRefreshTimerRef = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
+  const phpLocalDiagnosticValidationGenerationRef = useRef(0);
+  const phpLocalDiagnosticRetryTimersRef = useRef<
+    ReturnType<typeof setTimeout>[]
+  >([]);
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
@@ -2192,6 +2211,16 @@ export function useWorkbenchController(
     );
   }, []);
 
+  const clearPhpLocalDiagnostics = useCallback(() => {
+    setPhpLocalDiagnosticsByPath({});
+    setNotices((current) =>
+      current.filter(
+        (notice) =>
+          !notice.groupKey?.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX),
+      ),
+    );
+  }, []);
+
   const restoreJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
     (rootPath: string | null | undefined) => {
       const rootKey = normalizedWorkspaceRootKey(rootPath);
@@ -2314,20 +2343,253 @@ export function useWorkbenchController(
         });
       }
 
+      setPhpLocalDiagnosticsByPath((current) => {
+        if (!(diagnosticPath in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[diagnosticPath];
+        return next;
+      });
+
       const uri = fileUriFromPath(diagnosticPath);
       const phpGroupKey = languageServerDiagnosticNoticeGroup(uri);
       const javaScriptTypeScriptGroupKey =
         javaScriptTypeScriptDiagnosticNoticeGroup(uri);
+      const phpLocalGroupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
 
       setNotices((current) =>
         current.filter(
           (notice) =>
             notice.groupKey !== phpGroupKey &&
-            notice.groupKey !== javaScriptTypeScriptGroupKey,
+            notice.groupKey !== javaScriptTypeScriptGroupKey &&
+            notice.groupKey !== phpLocalGroupKey,
         ),
       );
     },
     [],
+  );
+
+  const updateLocalPhpDiagnostics = useCallback(
+    (diagnosticPath: string, diagnostics: LanguageServerDiagnostic[]) => {
+      // Local PHP diagnostics are emitted only by the mounted EditorSurface for
+      // the active document. Do not re-guard by workspaceRelativePath here:
+      // reopened projects can hand the editor a canonicalized model path while
+      // the persisted workspace root is still the user-selected alias, and that
+      // would drop visible local markers from Problems/status.
+      setPhpLocalDiagnosticsByPath((current) => {
+        const hasCurrent = diagnosticPath in current;
+
+        if (diagnostics.length === 0) {
+          if (!hasCurrent) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[diagnosticPath];
+          return next;
+        }
+
+        return {
+          ...current,
+          [diagnosticPath]: diagnostics,
+        };
+      });
+
+      const uri = fileUriFromPath(diagnosticPath);
+      const groupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
+      const diagnosticNotices = capDiagnosticNotices(
+        diagnostics.map((diagnostic) =>
+          createWorkbenchNotice(
+            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+            diagnostic.source || "PHP",
+            languageServerDiagnosticNoticeMessage(diagnostic, uri),
+            groupKey,
+            diagnosticNoticeNavigationTarget(uri, diagnostic),
+          ),
+        ),
+        DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+        (hiddenCount) =>
+          buildDiagnosticOverflowNotice("PHP", groupKey, hiddenCount),
+      );
+
+      setNotices((current) =>
+        capWorkbenchNotices(
+          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+          GLOBAL_NOTICE_LIMIT,
+          isCappableDiagnosticNotice,
+        ),
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    phpLocalDiagnosticRetryTimersRef.current.forEach((timer) =>
+      clearTimeout(timer),
+    );
+    phpLocalDiagnosticRetryTimersRef.current = [];
+
+    const document = activeDocument;
+    const generation = phpLocalDiagnosticValidationGenerationRef.current + 1;
+    phpLocalDiagnosticValidationGenerationRef.current = generation;
+
+    if (!document || document.language !== "php") {
+      if (document?.path) {
+        updateLocalPhpDiagnostics(document.path, []);
+      }
+
+      return;
+    }
+
+    let disposed = false;
+    let applied = false;
+    const validateActivePhpDocument = () => {
+      if (disposed || applied) {
+        return;
+      }
+
+      const currentDocument = activeDocumentRef.current;
+
+      if (
+        phpLocalDiagnosticValidationGenerationRef.current !== generation ||
+        currentDocument?.path !== document.path ||
+        currentDocument.content !== document.content ||
+        currentDocument.language !== "php"
+      ) {
+        return;
+      }
+
+      updateLocalPhpDiagnostics(
+        document.path,
+        localPhpDiagnosticsFromSource(currentDocument.content, []),
+      );
+
+      void (async () => {
+        const latestBeforeRead = activeDocumentRef.current;
+
+        if (
+          disposed ||
+          applied ||
+          phpLocalDiagnosticValidationGenerationRef.current !== generation ||
+          latestBeforeRead?.path !== document.path ||
+          latestBeforeRead.language !== "php"
+        ) {
+          return;
+        }
+
+        const source = latestBeforeRead.content;
+
+        const latestBeforeValidate = activeDocumentRef.current;
+
+        if (
+          disposed ||
+          applied ||
+          phpLocalDiagnosticValidationGenerationRef.current !== generation ||
+          latestBeforeValidate?.path !== document.path ||
+          latestBeforeValidate.language !== "php"
+        ) {
+          return;
+        }
+
+        return {
+          source,
+          syntaxDiagnostics: await phpLocalSyntaxDiagnosticsGateway.validate(source),
+        };
+      })()
+        .then((syntaxDiagnostics) => {
+          if (!syntaxDiagnostics) {
+            return;
+          }
+
+          const latestDocument = activeDocumentRef.current;
+
+          if (
+            disposed ||
+            applied ||
+            phpLocalDiagnosticValidationGenerationRef.current !== generation ||
+            latestDocument?.path !== document.path ||
+            latestDocument.language !== "php"
+          ) {
+            return;
+          }
+
+          applied = true;
+          updateLocalPhpDiagnostics(
+            document.path,
+            localPhpDiagnosticsFromSource(
+              syntaxDiagnostics.source,
+              syntaxDiagnostics.syntaxDiagnostics,
+            ),
+          );
+        })
+        .catch(() => {
+          // Local syntax parsing is best-effort. Startup races are covered by the
+          // scheduled retries below; a failed parse must never surface an error
+          // toast or block PHPactor diagnostics.
+          if (
+            phpLocalDiagnosticValidationGenerationRef.current === generation &&
+            activeDocumentRef.current?.path === document.path
+          ) {
+            applied = false;
+          }
+        });
+    };
+
+    validateActivePhpDocument();
+    phpLocalDiagnosticRetryTimersRef.current = [120, 360].map((delay) =>
+      setTimeout(validateActivePhpDocument, delay),
+    );
+
+    return () => {
+      disposed = true;
+      phpLocalDiagnosticRetryTimersRef.current.forEach((timer) =>
+        clearTimeout(timer),
+      );
+      phpLocalDiagnosticRetryTimersRef.current = [];
+    };
+  }, [
+    activeDocument?.content,
+    activeDocument?.language,
+    activeDocument?.path,
+    updateLocalPhpDiagnostics,
+  ]);
+
+  const refreshLocalPhpDiagnosticsForContent = useCallback(
+    (path: string, content: string, language: string) => {
+      if (language !== "php") {
+        updateLocalPhpDiagnostics(path, []);
+        return;
+      }
+
+      updateLocalPhpDiagnostics(path, localPhpDiagnosticsFromSource(content, []));
+
+      void phpLocalSyntaxDiagnosticsGateway
+        .validate(content)
+        .then((syntaxDiagnostics) => {
+          const currentDocument = documentsRef.current[path];
+
+          if (
+            activeDocumentRef.current?.path !== path ||
+            !currentDocument ||
+            currentDocument.content !== content ||
+            currentDocument.language !== "php"
+          ) {
+            return;
+          }
+
+          updateLocalPhpDiagnostics(
+            path,
+            localPhpDiagnosticsFromSource(content, syntaxDiagnostics),
+          );
+        })
+        .catch(() => {
+          // Local PHP diagnostics are best-effort; PHPactor diagnostics continue
+          // to own language-server failures.
+        });
+    },
+    [updateLocalPhpDiagnostics],
   );
 
   const isLanguageServerSessionCurrentForRoot = useCallback(
@@ -3834,6 +4096,7 @@ export function useWorkbenchController(
     setNotices([]);
     clearLanguageServerDiagnostics();
     clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    clearPhpLocalDiagnostics();
     setPhpIdeReadinessVersion(0);
     applyWorkspaceSettings(defaultWorkspaceSettings());
     setIntelligenceMode("basic");
@@ -3844,6 +4107,7 @@ export function useWorkbenchController(
     clearIndexWorkspaceState,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearLanguageServerDiagnostics,
+    clearPhpLocalDiagnostics,
     resetFilePrefetchState,
     stopProjectRuntimes,
   ]);
@@ -4845,11 +5109,24 @@ export function useWorkbenchController(
         restoredPaths.push(path);
       });
 
+      const nextActivePath = restoredActivePath(session.activePath, restoredPaths);
+
       setDocuments(restoredDocuments);
       setOpenPaths(restoredPaths);
-      setActivePath(restoredActivePath(session.activePath, restoredPaths));
+      setActivePath(nextActivePath);
       setSidebarView(session.sidebarView);
       setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
+
+      const restoredActiveDocument = nextActivePath
+        ? restoredDocuments[nextActivePath]
+        : null;
+
+      if (restoredActiveDocument?.language === "php") {
+        updateLocalPhpDiagnostics(
+          restoredActiveDocument.path,
+          localPhpDiagnosticsFromSource(restoredActiveDocument.content, []),
+        );
+      }
 
       if (failedCount === 0) {
         return;
@@ -4864,7 +5141,7 @@ export function useWorkbenchController(
         ...current,
       ]);
     },
-    [workspaceFiles],
+    [updateLocalPhpDiagnostics, workspaceFiles],
   );
 
   const openWorkspacePath = useCallback(
@@ -4912,6 +5189,7 @@ export function useWorkbenchController(
       setActiveEditorPosition(null);
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
+      clearPhpLocalDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
 
       try {
@@ -5273,6 +5551,7 @@ export function useWorkbenchController(
       resetLanguageServerDocuments,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       clearLanguageServerDiagnostics,
+      clearPhpLocalDiagnostics,
       closeSyncedJavaScriptTypeScriptDocumentsForRoot,
       closeSyncedLanguageServerDocumentsForRoot,
       settingsGateway,
@@ -5768,6 +6047,11 @@ export function useWorkbenchController(
                 },
               };
             });
+            refreshLocalPhpDiagnosticsForContent(
+              refreshedDocument.path,
+              refreshedDocument.content,
+              refreshedDocument.language,
+            );
           };
 
           void refreshEmptyDocument();
@@ -5827,6 +6111,11 @@ export function useWorkbenchController(
                 savedContent: refreshedContent,
               },
             }));
+            refreshLocalPhpDiagnosticsForContent(
+              refreshedDocument.path,
+              refreshedDocument.content,
+              refreshedDocument.language,
+            );
           } else if (refreshedContent === "" && stillEmptyAndUnedited) {
             scheduleEmptyDocumentRefresh(entry.path);
           }
@@ -5871,6 +6160,13 @@ export function useWorkbenchController(
 
         setSelectedGitChange(null);
         setGitDiffPreview(null);
+        const activatedDocument =
+          documentsRef.current[entry.path] ?? documents[entry.path] ?? openedDocument;
+        refreshLocalPhpDiagnosticsForContent(
+          activatedDocument.path,
+          activatedDocument.content,
+          activatedDocument.language,
+        );
         setActivePath(entry.path);
         recordRecentFile({ name: entry.name, path: entry.path });
         return true;
@@ -5974,6 +6270,11 @@ export function useWorkbenchController(
         activeDocumentRef.current = document;
         openPathsRef.current = nextOpenPaths;
         previewPathRef.current = nextPreviewPath;
+        refreshLocalPhpDiagnosticsForContent(
+          document.path,
+          document.content,
+          document.language,
+        );
 
         setDocuments((current) => {
           const next = { ...current, [entry.path]: document };
@@ -6039,6 +6340,7 @@ export function useWorkbenchController(
       openPaths,
       recordCurrentNavigationLocation,
       recordRecentFile,
+      refreshLocalPhpDiagnosticsForContent,
       reportError,
       reportErrorForActiveWorkspaceRoot,
       syncClosedDocument,
@@ -8757,6 +9059,10 @@ export function useWorkbenchController(
       if (activeDocument.language === "php") {
         phpFrameworkBindingCacheRef.current = {};
         phpLaravelMorphMapModelTypeCacheRef.current = {};
+        updateLocalPhpDiagnostics(
+          activeDocument.path,
+          localPhpDiagnosticsFromSource(content, []),
+        );
       }
       const updatedDocument = {
         ...activeDocument,
@@ -8779,7 +9085,7 @@ export function useWorkbenchController(
         };
       });
     },
-    [activeDocument, pinDocument],
+    [activeDocument, pinDocument, updateLocalPhpDiagnostics],
   );
 
   const revertActiveEditorChangeHunk = useCallback(
@@ -24113,6 +24419,34 @@ export function useWorkbenchController(
     [flushPendingWorkspaceDirectoryRefreshes],
   );
 
+  const queueWorkspaceGitStatusRefresh = useCallback(
+    (requestedRoot: string) => {
+      if (sidebarView !== "git") {
+        return;
+      }
+
+      if (workspaceGitStatusRefreshTimerRef.current) {
+        clearTimeout(workspaceGitStatusRefreshTimerRef.current);
+      }
+
+      workspaceGitStatusRefreshTimerRef.current = setTimeout(() => {
+        workspaceGitStatusRefreshTimerRef.current = null;
+
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
+
+        void refreshGitStatus();
+      }, WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS);
+    },
+    [refreshGitStatus, sidebarView],
+  );
+
   const handleExternalRemovedPath = useCallback(
     (requestedRoot: string, removedPath: string) => {
       closeDocument(removedPath);
@@ -24204,6 +24538,8 @@ export function useWorkbenchController(
         return;
       }
 
+      queueWorkspaceGitStatusRefresh(requestedRoot);
+
       if (event.kind === "deleted") {
         handleExternalRemovedPath(requestedRoot, event.path);
         return;
@@ -24228,6 +24564,7 @@ export function useWorkbenchController(
     },
     [
       handleExternalRemovedPath,
+      queueWorkspaceGitStatusRefresh,
       queueWorkspaceDirectoryRefresh,
       refreshOpenDocumentFromExternalFileChange,
     ],
@@ -27977,6 +28314,11 @@ export function useWorkbenchController(
         clearTimeout(workspaceDirectoryRefreshTimerRef.current);
         workspaceDirectoryRefreshTimerRef.current = null;
       }
+
+      if (workspaceGitStatusRefreshTimerRef.current) {
+        clearTimeout(workspaceGitStatusRefreshTimerRef.current);
+        workspaceGitStatusRefreshTimerRef.current = null;
+      }
     },
     [],
   );
@@ -28376,9 +28718,119 @@ export function useWorkbenchController(
       ),
     [javaScriptTypeScriptDiagnosticsByPath, languageServerDiagnosticsByPath],
   );
+  const activePhpLocalDiagnosticsByPath = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return {};
+    }
+
+    const diagnostics = localPhpDiagnosticsFromSource(activeDocument.content, []);
+
+    if (diagnostics.length === 0) {
+      return {};
+    }
+
+    return {
+      [activeDocument.path]: diagnostics,
+    };
+  }, [activeDocument?.content, activeDocument?.language, activeDocument?.path]);
+  const effectivePhpLocalDiagnosticsByPath = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return phpLocalDiagnosticsByPath;
+    }
+
+    if (activeDocument.path in activePhpLocalDiagnosticsByPath) {
+      return {
+        ...phpLocalDiagnosticsByPath,
+        ...activePhpLocalDiagnosticsByPath,
+      };
+    }
+
+    if (!(activeDocument.path in phpLocalDiagnosticsByPath)) {
+      return phpLocalDiagnosticsByPath;
+    }
+
+    const next = { ...phpLocalDiagnosticsByPath };
+    delete next[activeDocument.path];
+    return next;
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    activePhpLocalDiagnosticsByPath,
+    phpLocalDiagnosticsByPath,
+  ]);
+  const activePhpLocalDiagnosticNotices = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return [];
+    }
+
+    const diagnostics =
+      activePhpLocalDiagnosticsByPath[activeDocument.path] ?? [];
+
+    if (diagnostics.length === 0) {
+      return [];
+    }
+
+    const uri = fileUriFromPath(activeDocument.path);
+    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
+
+    return capDiagnosticNotices(
+      diagnostics.map((diagnostic) =>
+        createWorkbenchNotice(
+          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+          diagnostic.source || "PHP",
+          languageServerDiagnosticNoticeMessage(diagnostic, uri),
+          groupKey,
+          diagnosticNoticeNavigationTarget(uri, diagnostic),
+        ),
+      ),
+      DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+      (hiddenCount) =>
+        buildDiagnosticOverflowNotice("PHP", groupKey, hiddenCount),
+    );
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    activePhpLocalDiagnosticsByPath,
+  ]);
+  const effectiveNotices = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return notices;
+    }
+
+    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
+    const withoutActiveLocalDiagnostics = notices.filter(
+      (notice) => notice.groupKey !== groupKey,
+    );
+
+    if (activePhpLocalDiagnosticNotices.length === 0) {
+      return withoutActiveLocalDiagnostics;
+    }
+
+    return capWorkbenchNotices(
+      [...withoutActiveLocalDiagnostics, ...activePhpLocalDiagnosticNotices],
+      GLOBAL_NOTICE_LIMIT,
+      isCappableDiagnosticNotice,
+    );
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    activePhpLocalDiagnosticNotices,
+    notices,
+  ]);
   const diagnosticsSummary = useMemo<DiagnosticsSummary>(
-    () => summarizeDiagnosticsByPath(mergedLanguageServerDiagnosticsByPath),
-    [mergedLanguageServerDiagnosticsByPath],
+    () => {
+      return summarizeDiagnosticsByPath(
+        mergeDiagnosticsByPath(
+          mergedLanguageServerDiagnosticsByPath,
+          effectivePhpLocalDiagnosticsByPath,
+        ),
+      );
+    },
+    [
+      activeDocument?.path,
+      effectivePhpLocalDiagnosticsByPath,
+      mergedLanguageServerDiagnosticsByPath,
+    ],
   );
 
   return {
@@ -28499,6 +28951,7 @@ export function useWorkbenchController(
     cancelFilePrefetch,
     clearLanguageServerDiagnosticsForPath: (path: string) =>
       clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
+    updateLocalPhpDiagnostics,
     previewFile,
     previewPath,
     applyPhpCodeActionNewFile,
@@ -28596,7 +29049,7 @@ export function useWorkbenchController(
     revertLocalHistoryVersion,
     closeLocalHistory,
     clearNotices: () => setNotices([]),
-    notices,
+    notices: effectiveNotices,
     navigateBackward,
     navigateForwardInHistory,
     navigationHistory,
@@ -28961,6 +29414,56 @@ function uniqueProjectSymbols(
 
 function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {
   return `javascript-typescript-diagnostics:${uri}`;
+}
+
+function phpLocalDiagnosticNoticeGroup(path: string): string {
+  return `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`;
+}
+
+function localPhpDiagnosticsFromSource(
+  source: string,
+  syntaxDiagnostics: Array<{
+    character: number;
+    endCharacter: number;
+    endLine: number;
+    line: number;
+    message: string;
+  }>,
+): LanguageServerDiagnostic[] {
+  const localSyntaxDiagnostics = [
+    ...(syntaxDiagnostics.length === 0
+      ? structuralPhpSyntaxDiagnostics(source)
+      : []),
+    ...suspiciousPhpBareIdentifierDiagnostics(source),
+  ];
+  const inspectionDiagnostics = phpInspectionDiagnostics(source);
+  const diagnostics: LanguageServerDiagnostic[] = [
+    ...syntaxDiagnostics,
+    ...localSyntaxDiagnostics,
+  ].map((diagnostic) => ({
+    character: diagnostic.character,
+    endCharacter: diagnostic.endCharacter,
+    endLine: diagnostic.endLine,
+    line: diagnostic.line,
+    message: diagnostic.message,
+    severity: "error" as const,
+    source: "PHP Syntax",
+  }));
+
+  diagnostics.push(
+    ...inspectionDiagnostics.map((diagnostic) => ({
+      character: diagnostic.character,
+      endCharacter: diagnostic.endCharacter,
+      endLine: diagnostic.endLine,
+      line: diagnostic.line,
+      message: diagnostic.message,
+      severity: "warning" as const,
+      source: "PHP Inspection",
+      tags: diagnostic.unnecessary ? [1] : undefined,
+    })),
+  );
+
+  return diagnostics;
 }
 
 function diagnosticNoticeNavigationTarget(

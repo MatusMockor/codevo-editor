@@ -79,6 +79,7 @@ interface FakeEditor {
       ) => void)
     | null;
   modelChangeHandler: (() => void) | null;
+  modelChangeHandlers: Array<() => void>;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
   onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
@@ -3391,6 +3392,190 @@ class Foo
     );
     // The marker sits on line 6 (1-based), the unused `use` statement line.
     expect(inspectionMarker.startLineNumber).toBe(6);
+  });
+
+  it("reports local PHP syntax diagnostics to the workbench aggregation callback", async () => {
+    const content = "<?php\n\nfunction codevoQaBroken(";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "Broken.php",
+      path: "/workspace/app/Broken.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const onLocalPhpDiagnosticsChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onLocalPhpDiagnosticsChange={onLocalPhpDiagnosticsChange}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{
+            validate: vi.fn(async () => [
+              {
+                character: 9,
+                endCharacter: 10,
+                endLine: 2,
+                line: 2,
+                message: "syntax error, unexpected end of file",
+              },
+            ]),
+          }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.resolve();
+    });
+
+    const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner]) => owner === "php-syntax",
+    );
+    const markers = syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
+      | any[]
+      | undefined;
+
+    expect(markers?.[0]).toMatchObject({
+      message: "syntax error, unexpected end of file",
+      severity: monaco.MarkerSeverity.Error,
+      source: "PHP Syntax",
+    });
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      [
+        expect.objectContaining({
+          character: 9,
+          line: 2,
+          message: "syntax error, unexpected end of file",
+          severity: "error",
+          source: "PHP Syntax",
+        }),
+      ],
+    );
+  });
+
+  it("retries open-time local PHP diagnostics when the first parser run fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const content = "<?php\n\nfunction codevoQaBroken(";
+      const activeDocument: EditorDocument = {
+        content,
+        language: "php",
+        name: "Broken.php",
+        path: "/workspace/app/Broken.php",
+        savedContent: content,
+      };
+      const model: FakeModel = {
+        getValue: vi.fn(() => content),
+        uri: { fsPath: activeDocument.path, path: activeDocument.path },
+      };
+      const monaco = createMonaco(model);
+      const onLocalPhpDiagnosticsChange = vi.fn();
+      const validate = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("parser warming up"))
+        .mockResolvedValue([
+          {
+            character: 9,
+            endCharacter: 10,
+            endLine: 2,
+            line: 2,
+            message: "syntax error, unexpected end of file",
+          },
+        ]);
+      editorSurfaceMocks.editor = createEditor(model);
+      editorSurfaceMocks.monaco = monaco;
+
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onLocalPhpDiagnosticsChange={onLocalPhpDiagnosticsChange}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+        vi.advanceTimersByTime(80);
+        await Promise.resolve();
+      });
+
+      expect(validate).toHaveBeenCalledTimes(2);
+      expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
+        activeDocument.path,
+        [
+          expect.objectContaining({
+            message: "syntax error, unexpected end of file",
+            severity: "error",
+            source: "PHP Syntax",
+          }),
+        ],
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders unused-variable inspections as warning markers tagged Unnecessary", async () => {
@@ -10023,6 +10208,7 @@ function createEditor(model: FakeModel): FakeEditor {
     mouseDownHandler: null,
     modelContentChangeHandler: null,
     modelChangeHandler: null,
+    modelChangeHandlers: [],
     onDidChangeCursorPosition: vi.fn(
       (handler: (event: { position: EditorPosition }) => void) => {
         editor.cursorPositionHandler = handler;
@@ -10031,9 +10217,20 @@ function createEditor(model: FakeModel): FakeEditor {
       },
     ),
     onDidChangeModel: vi.fn((handler: () => void) => {
-      editor.modelChangeHandler = handler;
+      editor.modelChangeHandlers.push(handler);
+      editor.modelChangeHandler = () => {
+        editor.modelChangeHandlers.forEach((registeredHandler) =>
+          registeredHandler(),
+        );
+      };
 
-      return { dispose: vi.fn() };
+      return {
+        dispose: vi.fn(() => {
+          editor.modelChangeHandlers = editor.modelChangeHandlers.filter(
+            (registeredHandler) => registeredHandler !== handler,
+          );
+        }),
+      };
     }),
     onDidChangeModelContent: vi.fn(
       (handler: (event: { changes: Array<{ text: string }> }) => void) => {

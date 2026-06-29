@@ -29,8 +29,12 @@ describe("diagnosticsSummary", () => {
           groupKey: "javascript-typescript-diagnostics:file:///b.ts",
           severity: "warning",
         },
+        {
+          groupKey: "php-local-diagnostics:file:///c.php",
+          severity: "error",
+        },
       ]),
-    ).toEqual({ errors: 2, warnings: 3 });
+    ).toEqual({ errors: 3, warnings: 3 });
   });
 
   it("ignores info-severity diagnostics and non-diagnostic notices", () => {
@@ -90,6 +94,12 @@ describe("diagnosticsSummary", () => {
       isDiagnosticNotice({
         groupKey: "javascript-typescript-diagnostics:file:///b.ts",
         severity: "warning",
+      }),
+    ).toBe(true);
+    expect(
+      isDiagnosticNotice({
+        groupKey: "php-local-diagnostics:file:///c.php",
+        severity: "error",
       }),
     ).toBe(true);
     expect(isDiagnosticNotice({ groupKey: "index:scan", severity: "error" })).toBe(
