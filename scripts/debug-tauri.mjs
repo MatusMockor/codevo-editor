@@ -26,6 +26,18 @@ const devAppExecutables = [
   debugExecutable,
   bundledDebugExecutable,
 ];
+const managedPhpactorMarker = path.join(
+  "Application Support",
+  "Mockor Editor",
+  "tools",
+  "phpactor",
+);
+const bundledTypescriptServerMarker = path.join(
+  repoRoot,
+  "node_modules",
+  ".bin",
+  "typescript-language-server",
+);
 
 let cleanedUp = false;
 let shuttingDown = false;
@@ -91,6 +103,7 @@ function cleanupDevAppProcesses() {
   cleanedUp = true;
 
   killDevAppProcesses();
+  killRuntimeProcesses();
 }
 
 function killDevAppProcesses() {
@@ -123,7 +136,41 @@ function killDevAppProcesses() {
   }, 750).unref();
 }
 
+function killRuntimeProcesses() {
+  const processes = listProcesses();
+  const runtimePids = processes
+    .filter((processInfo) => {
+      if (
+        processInfo.command.includes(managedPhpactorMarker) &&
+        processInfo.command.includes("language-server")
+      ) {
+        return true;
+      }
+
+      return (
+        processInfo.command.includes(bundledTypescriptServerMarker) &&
+        processInfo.command.includes("--stdio")
+      );
+    })
+    .map((processInfo) => processInfo.pid);
+
+  if (runtimePids.length === 0) {
+    return;
+  }
+
+  killPids(runtimePids, "SIGTERM");
+  setTimeout(() => {
+    const survivors = new Set(
+      listProcesses()
+        .filter((processInfo) => runtimePids.includes(processInfo.pid))
+        .map((processInfo) => processInfo.pid),
+    );
+    killPids(survivors, "SIGKILL");
+  }, 750).unref();
+}
+
 killDevAppProcesses();
+killRuntimeProcesses();
 
 execFileSync("npm", ["run", "debug:build"], {
   stdio: "inherit",

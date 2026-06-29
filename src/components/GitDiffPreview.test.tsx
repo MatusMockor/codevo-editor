@@ -113,6 +113,31 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 1);
   });
 
+  it("clears loaded hunks and diff rows when rerendered without a diff", async () => {
+    const loadFileHunks = vi.fn(async () => [
+      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+    ]);
+
+    await renderPreview(diff(), {
+      loadFileHunks,
+      onStageHunk: vi.fn(),
+      onUnstageHunk: vi.fn(),
+    });
+
+    expect(hunkCheckboxes()).toHaveLength(1);
+    expect(host.textContent).toContain("const value = 2;");
+
+    await renderPreview(null, {
+      loadFileHunks,
+      onStageHunk: vi.fn(),
+      onUnstageHunk: vi.fn(),
+    });
+
+    expect(hunkCheckboxes()).toHaveLength(0);
+    expect(host.textContent).toContain("Select a changed file to preview diff.");
+    expect(host.textContent).not.toContain("const value = 2;");
+  });
+
   it("unstages the clicked hunk when the change is staged", async () => {
     const loadFileHunks = vi.fn(async () => [
       { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: true },
@@ -241,7 +266,7 @@ describe("GitDiffPreview", () => {
   });
 
   async function renderPreview(
-    current: GitFileDiff,
+    current: GitFileDiff | null,
     overrides: Partial<ComponentProps<typeof GitDiffPreview>> = {},
   ): Promise<void> {
     await act(async () => {

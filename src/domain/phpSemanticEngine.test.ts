@@ -652,6 +652,206 @@ class Controller
     ).toBe("Domain\\Post");
   });
 
+  it("infers same-source method returns from constructor assigned property receivers", () => {
+    const source = `<?php
+class Controller
+{
+    private $factory;
+
+    public function __construct(PostFactory $factory)
+    {
+        $this->factory = $factory;
+    }
+
+    public function show(): void
+    {
+        $post = $this->factory->makePost();
+
+        $post->tit
+    }
+}
+
+class PostFactory
+{
+    public function makePost(): Post
+    {
+    }
+}
+
+class Post
+{
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBe("Post");
+  });
+
+  it("infers same-source method returns from promoted property receivers", () => {
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->factory->makePost();
+
+        $post->tit
+    }
+}
+
+class PostFactory
+{
+    public function makePost(): Post
+    {
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBe("Post");
+  });
+
+  it("infers same-source method returns from static calls", () => {
+    const source = `<?php
+class Controller
+{
+    public function show(): void
+    {
+        $post = PostFactory::makePost();
+
+        $post->tit
+    }
+}
+
+class PostFactory
+{
+    public static function makePost(): Post
+    {
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBe("Post");
+  });
+
+  it("infers same-source method returns from current this calls", () => {
+    const source = `<?php
+class Controller
+{
+    public function makePost(): Post
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->makePost();
+
+        $post->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBe("Post");
+  });
+
+  it("does not infer same-source method returns from a different receiver class", () => {
+    const source = `<?php
+class Controller
+{
+    public function show(): void
+    {
+        $post = $this->makePost();
+
+        $post->tit
+    }
+}
+
+class PostFactory
+{
+    public function makePost(): Post
+    {
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps framework provider method semantics ahead of same-source returns", () => {
+    const semanticProvider: PhpFrameworkProvider = {
+      id: "provider-precedence-test",
+      semantics: {
+        methodCallReturnTypeFromSource: ({ methodName, receiverType }) =>
+          methodName === "makePost" && receiverType === "PostFactory"
+            ? "ProviderPost"
+            : null,
+      },
+    };
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->factory->makePost();
+
+        $post->tit
+    }
+}
+
+class PostFactory
+{
+    public function makePost(): LocalPost
+    {
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+        { frameworkProviders: [semanticProvider] },
+      ),
+    ).toBe("ProviderPost");
+  });
+
   it("resolves Laravel repository finder assignments from model return types", () => {
     const source = `<?php
 namespace App\\Repositories;

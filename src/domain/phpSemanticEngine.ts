@@ -106,6 +106,7 @@ const laravelQueryCallbackMethodNames = [
 ];
 const laravelQueryCallbackMethods = laravelQueryCallbackMethodNames.join("|");
 const laravelCurrentBuilderCallbackMethods = new Set(["when", "unless", "tap"]);
+const phpFrameworkOwnedMethodReturnNames = new Set(["findOrFail"]);
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
@@ -164,24 +165,35 @@ export function phpReceiverExpressionTypeInSource(
   const methodCall = phpMethodCallExpression(normalizedExpression);
 
   if (methodCall) {
+    const receiverType = phpReceiverExpressionTypeInSource(
+      source,
+      position,
+      methodCall.receiverExpression,
+      options,
+    );
+
     return phpFrameworkMethodCallReturnTypeFromSource(
       source,
       methodCall.methodName,
-      phpReceiverExpressionTypeInSource(
-        source,
-        position,
-        methodCall.receiverExpression,
-        options,
-      ),
+      receiverType,
       methodCall.receiverExpression,
       options.frameworkProviders,
       normalizedExpression,
+    ) ?? phpSameSourceMethodCallReturnType(
+      source,
+      methodCall.methodName,
+      receiverType,
     );
   }
 
   const staticCall = phpStaticCallExpression(normalizedExpression);
 
   if (staticCall) {
+    const fallbackReceiverType = phpStaticCallReceiverType(
+      source,
+      staticCall.className,
+    );
+
     return phpFrameworkMethodCallReturnTypeFromSource(
       source,
       staticCall.methodName,
@@ -189,6 +201,10 @@ export function phpReceiverExpressionTypeInSource(
       normalizedExpression,
       options.frameworkProviders,
       normalizedExpression,
+    ) ?? phpSameSourceMethodCallReturnType(
+      source,
+      staticCall.methodName,
+      fallbackReceiverType,
     );
   }
 
@@ -420,6 +436,11 @@ function phpFrameworkMethodCallAssignmentReturnType(
       return null;
     }
 
+    const fallbackReceiverType = phpStaticCallReceiverType(
+      source,
+      staticCall.className,
+    );
+
     return phpFrameworkMethodCallReturnTypeFromSource(
       source,
       staticCall.methodName,
@@ -427,6 +448,10 @@ function phpFrameworkMethodCallAssignmentReturnType(
       assignmentExpression,
       options.frameworkProviders,
       assignmentExpression,
+    ) ?? phpSameSourceMethodCallReturnType(
+      source,
+      staticCall.methodName,
+      fallbackReceiverType,
     );
   }
 
@@ -438,19 +463,301 @@ function phpFrameworkMethodCallAssignmentReturnType(
     return null;
   }
 
+  const receiverType = phpReceiverExpressionTypeInSource(
+    source,
+    position,
+    methodCall.receiverExpression,
+    options,
+  );
+
   return phpFrameworkMethodCallReturnTypeFromSource(
     source,
     methodCall.methodName,
-    phpReceiverExpressionTypeInSource(
-      source,
-      position,
-      methodCall.receiverExpression,
-      options,
-    ),
+    receiverType,
     methodCall.receiverExpression,
     options.frameworkProviders,
     assignmentExpression,
+  ) ?? phpSameSourceMethodCallReturnType(
+    source,
+    methodCall.methodName,
+    receiverType,
   );
+}
+
+function phpSameSourceMethodCallReturnType(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  if (phpFrameworkOwnedMethodReturnNames.has(methodName)) {
+    return null;
+  }
+
+  const normalizedReceiverType = phpNormalizeClassName(receiverType);
+
+  if (!normalizedReceiverType) {
+    return null;
+  }
+
+  for (const classBody of phpSameSourceClassBodies(source)) {
+    if (
+      !phpClassNameMatchesReceiverType(classBody.className, normalizedReceiverType)
+    ) {
+      continue;
+    }
+
+    const returnType = phpDeclaredMethodReturnType(classBody.body, methodName);
+
+    if (returnType) {
+      return returnType;
+    }
+  }
+
+  return null;
+}
+
+function phpStaticCallReceiverType(
+  source: string,
+  className: string,
+): string | null {
+  const normalizedClassName = phpNormalizeClassName(className);
+
+  if (normalizedClassName === "self" || normalizedClassName === "static") {
+    return phpCurrentClassName(source);
+  }
+
+  if (normalizedClassName === "parent") {
+    return null;
+  }
+
+  return normalizedClassName;
+}
+
+function phpSameSourceClassBodies(
+  source: string,
+): { body: string; className: string }[] {
+  const bodies: { body: string; className: string }[] = [];
+  const pattern =
+    /\b(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{;]*/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const className = match[1];
+
+    if (!className) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", pattern.lastIndex);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    const namespace = phpNamespaceBeforeOffset(source, match.index ?? 0);
+
+    bodies.push({
+      body: source.slice(bodyStart + 1, bodyEnd),
+      className: namespace ? `${namespace}\\${className}` : className,
+    });
+
+    pattern.lastIndex = bodyEnd + 1;
+  }
+
+  return bodies;
+}
+
+function phpDeclaredMethodReturnType(
+  classBody: string,
+  methodName: string,
+): string | null {
+  const pattern = new RegExp(
+    `\\bfunction\\s+&?\\s*${escapeRegExp(methodName)}\\s*\\(`,
+    "g",
+  );
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(classBody)) !== null) {
+    if (!phpIsTopLevelClassBodyOffset(classBody, match.index ?? 0)) {
+      continue;
+    }
+
+    const parametersStart = (match.index ?? 0) + match[0].length - 1;
+    const parametersEnd = matchingPairOffset(
+      classBody,
+      parametersStart,
+      "(",
+      ")",
+    );
+
+    if (parametersEnd === null) {
+      continue;
+    }
+
+    let returnStart = parametersEnd + 1;
+
+    while (/\s/.test(classBody[returnStart] ?? "")) {
+      returnStart += 1;
+    }
+
+    if (classBody[returnStart] !== ":") {
+      continue;
+    }
+
+    returnStart += 1;
+
+    const returnEnd = phpMethodReturnTypeEndOffset(classBody, returnStart);
+
+    if (returnEnd === null) {
+      continue;
+    }
+
+    const returnType = phpDeclaredTypeCandidate(
+      classBody.slice(returnStart, returnEnd),
+    );
+
+    if (returnType) {
+      return returnType;
+    }
+  }
+
+  return null;
+}
+
+function phpMethodReturnTypeEndOffset(
+  source: string,
+  startOffset: number,
+): number | null {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = startOffset; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "<") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === ">") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if ((character === "{" || character === ";") && depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function phpIsTopLevelClassBodyOffset(source: string, offset: number): boolean {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = 0; index < offset; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth === 0;
+}
+
+function phpClassNameMatchesReceiverType(
+  className: string,
+  receiverType: string,
+): boolean {
+  const normalizedClassName = phpNormalizeClassName(className);
+  const normalizedReceiverType = phpNormalizeClassName(receiverType);
+
+  if (!normalizedClassName || !normalizedReceiverType) {
+    return false;
+  }
+
+  return (
+    normalizedClassName === normalizedReceiverType ||
+    phpShortClassName(normalizedClassName) ===
+      phpShortClassName(normalizedReceiverType)
+  );
+}
+
+function phpNormalizeClassName(
+  className: string | null | undefined,
+): string | null {
+  const normalized = className?.trim().replace(/^\\+/, "") ?? "";
+
+  return normalized || null;
+}
+
+function phpShortClassName(className: string): string {
+  return className.split("\\").pop() ?? className;
+}
+
+function phpNamespaceBeforeOffset(source: string, offset: number): string | null {
+  let namespace: string | null = null;
+  const pattern = /\bnamespace\s+([^;{]+)[;{]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    if ((match.index ?? 0) > offset) {
+      break;
+    }
+
+    namespace = match[1]?.trim().replace(/^\\+/, "") || null;
+  }
+
+  return namespace;
 }
 
 export function phpClassStringCallExpression(

@@ -1399,6 +1399,57 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("closes an open Git diff tab when a status refresh no longer contains that diff", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    let statusChanges: GitChangedFile[] = [change];
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getDiff = vi.fn(async (_rootPath, requestedChange) => ({
+      change: requestedChange,
+      language: "php",
+      modifiedContent: "<?php\nfinal class UserChanged {}\n",
+      originalContent: "<?php\nfinal class User {}\n",
+    }));
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      branch: "main",
+      changes: statusChanges,
+      isRepository: true,
+      rootPath,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+
+    const diffPath = "mockor-git-diff:worktree:/workspace/src/User.php";
+    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        modifiedContent: "<?php\nfinal class UserChanged {}\n",
+        originalContent: "<?php\nfinal class User {}\n",
+      }),
+    );
+
+    statusChanges = [];
+    await act(async () => {
+      await getWorkbench().refreshGitStatus();
+    });
+
+    expect(getWorkbench().gitStatus.changes).toEqual([]);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().activePath).toBeNull();
+  });
+
   it("clears the active Git diff tab state when opening a real file", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");
