@@ -780,6 +780,182 @@ class Controller
     ).toBe("Post");
   });
 
+  it("infers same-source method returns from PHPDoc magic method assignment", () => {
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->factory->makePost();
+
+        $post->tit
+    }
+}
+
+/**
+ * @method Post makePost()
+ */
+class PostFactory
+{
+}
+
+class Post
+{
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBe("Post");
+  });
+
+  it("infers chained receiver types from same-source PHPDoc magic methods", () => {
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $author = $this->factory->makePost()->author();
+
+        $author->nam
+    }
+}
+
+/**
+ * @method Post makePost()
+ */
+class PostFactory
+{
+}
+
+class Post
+{
+    public function author(): Author
+    {
+    }
+}
+
+class Author
+{
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$author->nam"),
+        "$this->factory->makePost()",
+      ),
+    ).toBe("Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$author->nam"),
+        "author",
+      ),
+    ).toBe("Author");
+  });
+
+  it("infers same-source method returns from phpstan and psalm method tags", () => {
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $draft = $this->factory->makeDraft();
+        $published = $this->factory->makePublished();
+
+        $draft->tit
+        $published->tit
+    }
+}
+
+/**
+ * @phpstan-method DraftPost makeDraft()
+ * @psalm-method PublishedPost makePublished()
+ */
+class PostFactory
+{
+}
+
+class DraftPost
+{
+}
+
+class PublishedPost
+{
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$draft->tit"),
+        "draft",
+      ),
+    ).toBe("DraftPost");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$published->tit"),
+        "published",
+      ),
+    ).toBe("PublishedPost");
+  });
+
+  it("does not infer same-source PHPDoc magic methods without return types", () => {
+    const source = `<?php
+class Controller
+{
+    public function __construct(private PostFactory $factory)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->factory->makePost();
+
+        $post->tit
+    }
+}
+
+/**
+ * @method makePost()
+ */
+class PostFactory
+{
+}
+
+class Post
+{
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+      ),
+    ).toBeNull();
+  });
+
   it("does not infer same-source method returns from a different receiver class", () => {
     const source = `<?php
 class Controller

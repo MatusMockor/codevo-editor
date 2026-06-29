@@ -511,6 +511,14 @@ function phpSameSourceMethodCallReturnType(
     if (returnType) {
       return returnType;
     }
+
+    const phpDocReturnType = classBody.docBlock
+      ? phpDocMethodReturnType(classBody.docBlock, methodName)
+      : null;
+
+    if (phpDocReturnType) {
+      return phpDocReturnType;
+    }
   }
 
   return null;
@@ -535,8 +543,12 @@ function phpStaticCallReceiverType(
 
 function phpSameSourceClassBodies(
   source: string,
-): { body: string; className: string }[] {
-  const bodies: { body: string; className: string }[] = [];
+): { body: string; className: string; docBlock: string | null }[] {
+  const bodies: {
+    body: string;
+    className: string;
+    docBlock: string | null;
+  }[] = [];
   const pattern =
     /\b(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{;]*/g;
   let match: RegExpExecArray | null;
@@ -565,6 +577,7 @@ function phpSameSourceClassBodies(
     bodies.push({
       body: source.slice(bodyStart + 1, bodyEnd),
       className: namespace ? `${namespace}\\${className}` : className,
+      docBlock: phpDocBlockBefore(source, match.index ?? 0),
     });
 
     pattern.lastIndex = bodyEnd + 1;
@@ -628,6 +641,60 @@ function phpDeclaredMethodReturnType(
   }
 
   return null;
+}
+
+function phpDocMethodReturnType(
+  docBlock: string,
+  methodName: string,
+): string | null {
+  for (const line of docBlock.split(/\r?\n/)) {
+    const tagMatch = /@(?:(?:phpstan|psalm)-)?method\s+([^\r\n*]+)/.exec(line);
+
+    if (!tagMatch?.[1]) {
+      continue;
+    }
+
+    const signature = phpDocNormalizeType(tagMatch[1]).replace(/\s+/g, " ");
+    const returnType = phpDocMethodSignatureReturnType(signature, methodName);
+
+    if (returnType) {
+      return returnType;
+    }
+  }
+
+  return null;
+}
+
+function phpDocMethodSignatureReturnType(
+  signature: string,
+  methodName: string,
+): string | null {
+  const methodMatch = new RegExp(
+    `\\b${escapeRegExp(methodName)}\\s*\\(`,
+  ).exec(signature);
+
+  if (!methodMatch) {
+    return null;
+  }
+
+  const parametersStart = signature.indexOf("(", methodMatch.index);
+  const parametersEnd = matchingPairOffset(signature, parametersStart, "(", ")");
+
+  if (parametersEnd === null) {
+    return null;
+  }
+
+  const afterParameters = signature.slice(parametersEnd + 1).trim();
+  const colonReturnMatch = /^:\s*(.+)$/.exec(afterParameters);
+
+  if (colonReturnMatch?.[1]) {
+    return phpDeclaredTypeCandidate(colonReturnMatch[1]);
+  }
+
+  const beforeMethod = signature.slice(0, methodMatch.index).trim();
+  const returnType = beforeMethod.replace(/^static\s+/, "").trim();
+
+  return returnType ? phpDeclaredTypeCandidate(returnType) : null;
 }
 
 function phpMethodReturnTypeEndOffset(

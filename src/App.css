@@ -46,6 +46,7 @@
   --symbol-trait: #6cb6c9;
   --symbol-variable: #8b94a3;
   --symbol-keyword: #b48ead;
+  --symbol-icon-foreground: #000000;
   --vis-public: #8fbf7f;
   --vis-private: #d07f7f;
   --vis-protected: #d8b977;
@@ -117,7 +118,7 @@
   --symbol-const: #2f6fb0;
   --symbol-class: #3f7a3f;
   --symbol-interface: #1d7a86;
-  --symbol-enum: #b07d18;
+  --symbol-enum: #9a7016;
   --symbol-function: #8250c4;
   --symbol-trait: #2a7d6f;
   --symbol-variable: #6b727d;
@@ -498,13 +499,13 @@
   --change-modified-soft: rgba(223, 142, 29, 0.16);
   --change-modified-strong: #8a5a05;
   --symbol-method: #8839ef;
-  --symbol-property: #fe640b;
+  --symbol-property: #c24e00;
   --symbol-const: #1e66f5;
-  --symbol-class: #40a02b;
-  --symbol-interface: #209fb5;
-  --symbol-enum: #df8e1d;
+  --symbol-class: #2e7d20;
+  --symbol-interface: #16798a;
+  --symbol-enum: #9a6200;
   --symbol-function: #8839ef;
-  --symbol-trait: #179299;
+  --symbol-trait: #147a80;
   --symbol-variable: #6c6f85;
   --symbol-keyword: #8839ef;
   --vis-public: #40a02b;
@@ -555,11 +556,11 @@
   --symbol-method: #a626a4;
   --symbol-property: #d75f00;
   --symbol-const: #0184bc;
-  --symbol-class: #50a14f;
-  --symbol-interface: #0997b3;
-  --symbol-enum: #c18401;
+  --symbol-class: #3f8c3e;
+  --symbol-interface: #08788f;
+  --symbol-enum: #9a6801;
   --symbol-function: #a626a4;
-  --symbol-trait: #0997b3;
+  --symbol-trait: #08788f;
   --symbol-variable: #696c77;
   --symbol-keyword: #a626a4;
   --vis-public: #3f8c3e;
@@ -613,11 +614,11 @@
     --symbol-const: #2f6fb0;
     --symbol-class: #3f7a3f;
     --symbol-interface: #1d7a86;
-    --symbol-enum: #b07d18;
+    --symbol-enum: #9a7016;
     --symbol-function: #8250c4;
     --symbol-trait: #2a7d6f;
     --symbol-variable: #5d6b7a;
-    --symbol-keyword: #b48ead;
+    --symbol-keyword: #8a5c8f;
     --vis-public: #3f8a3f;
     --vis-private: #c2484a;
     --vis-protected: #b07d18;
@@ -851,7 +852,7 @@ button {
 
 .window-control-close:hover {
   background: var(--color-error);
-  color: var(--color-white);
+  color: var(--symbol-icon-foreground);
 }
 
 .window-chrome-action-spacer {

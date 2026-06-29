@@ -7,6 +7,19 @@ import {
 import { contrastRatio } from "./themeContrast";
 
 const minimumTextContrast = 4.5;
+const minimumIconContrast = 3;
+const themeSelectors: Array<[string, string]> = [
+  ["dark", ":root"],
+  ["light", '.app-shell[data-theme="light"]'],
+  ["system", '.app-shell[data-theme="system"]'],
+  ["ayuMirage", '.app-shell[data-theme="ayuMirage"]'],
+  ["materialDeepOcean", '.app-shell[data-theme="materialDeepOcean"]'],
+  ["oneDarkPro", '.app-shell[data-theme="oneDarkPro"]'],
+  ["dracula", '.app-shell[data-theme="dracula"]'],
+  ["catppuccinMocha", '.app-shell[data-theme="catppuccinMocha"]'],
+  ["catppuccinLatte", '.app-shell[data-theme="catppuccinLatte"]'],
+  ["oneLight", '.app-shell[data-theme="oneLight"]'],
+];
 const terminalTextColorKeys = [
   "black",
   "blue",
@@ -25,6 +38,18 @@ const terminalTextColorKeys = [
   "red",
   "white",
   "yellow",
+] as const;
+const symbolColorKeys = [
+  "--symbol-method",
+  "--symbol-property",
+  "--symbol-const",
+  "--symbol-class",
+  "--symbol-interface",
+  "--symbol-enum",
+  "--symbol-function",
+  "--symbol-trait",
+  "--symbol-variable",
+  "--symbol-keyword",
 ] as const;
 
 describe("contrastRatio", () => {
@@ -153,19 +178,6 @@ describe("calm design tokens", () => {
   });
 
   it("keeps text readable on the rendered accent-soft active tint", () => {
-    const themeSelectors: Array<[string, string]> = [
-      ["dark", ":root"],
-      ["light", '.app-shell[data-theme="light"]'],
-      ["system", '.app-shell[data-theme="system"]'],
-      ["ayuMirage", '.app-shell[data-theme="ayuMirage"]'],
-      ["materialDeepOcean", '.app-shell[data-theme="materialDeepOcean"]'],
-      ["oneDarkPro", '.app-shell[data-theme="oneDarkPro"]'],
-      ["dracula", '.app-shell[data-theme="dracula"]'],
-      ["catppuccinMocha", '.app-shell[data-theme="catppuccinMocha"]'],
-      ["catppuccinLatte", '.app-shell[data-theme="catppuccinLatte"]'],
-      ["oneLight", '.app-shell[data-theme="oneLight"]'],
-    ];
-
     for (const [name, selector] of themeSelectors) {
       const accent = cssVariable(appCss, selector, "--color-accent");
       const panel = cssVariable(appCss, selector, "--color-panel");
@@ -181,7 +193,77 @@ describe("calm design tokens", () => {
       }
     }
   });
+
+  it("keeps popup and palette text readable on theme surfaces", () => {
+    for (const [name, selector] of themeSelectors) {
+      const modal = cssVariable(appCss, selector, "--color-modal");
+      const hover = cssVariable(appCss, selector, "--color-hover");
+      const accentSoft = accentSoftColor(appCss, selector);
+
+      const textPairs: Array<[string, string, string]> = [
+        ["--color-text", "modal", modal],
+        ["--color-text-strong", "modal", modal],
+        ["--color-text", "hover", hover],
+        ["--color-text-strong", "accent-soft", accentSoft],
+      ];
+
+      for (const [textKey, backgroundName, background] of textPairs) {
+        const text = cssVariable(appCss, selector, textKey);
+        expect(
+          contrastRatio(text, background),
+          `${name}: ${textKey} on ${backgroundName} ${background}`,
+        ).toBeGreaterThanOrEqual(minimumTextContrast);
+      }
+    }
+  });
+
+  it("keeps symbol icons readable next to popup and palette labels", () => {
+    for (const [name, selector] of themeSelectors) {
+      const modal = cssVariable(appCss, selector, "--color-modal");
+      const accentSoft = accentSoftColor(appCss, selector);
+
+      for (const symbolKey of symbolColorKeys) {
+        const symbol = cssVariable(appCss, selector, symbolKey);
+        for (const [backgroundName, background] of [
+          ["modal", modal],
+          ["accent-soft", accentSoft],
+        ] as const) {
+          expect(
+            contrastRatio(symbol, background),
+            `${name}: ${symbolKey} on ${backgroundName} ${background}`,
+          ).toBeGreaterThanOrEqual(minimumIconContrast);
+        }
+      }
+    }
+  });
+
+  it("keeps circular symbol icon glyphs readable on their kind backgrounds", () => {
+    for (const [name, selector] of themeSelectors) {
+      const foreground = cssVariableWithRootFallback(
+        appCss,
+        selector,
+        "--symbol-icon-foreground",
+      );
+
+      for (const symbolKey of symbolColorKeys) {
+        const symbol = cssVariable(appCss, selector, symbolKey);
+
+        expect(
+          contrastRatio(foreground, symbol),
+          `${name}: --symbol-icon-foreground on ${symbolKey} ${symbol}`,
+        ).toBeGreaterThanOrEqual(minimumIconContrast);
+      }
+    }
+  });
 });
+
+function accentSoftColor(css: string, selector: string): string {
+  const accent = cssVariable(css, selector, "--color-accent");
+  const panel = cssVariable(css, selector, "--color-panel");
+
+  // --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel))
+  return mixHex(accent, panel, 0.14);
+}
 
 function mixHex(foreground: string, background: string, weight: number): string {
   const a = hexChannels(foreground);
@@ -222,6 +304,22 @@ function cssVariable(css: string, selector: string, variable: string): string {
   }
 
   return match[1];
+}
+
+function cssVariableWithRootFallback(
+  css: string,
+  selector: string,
+  variable: string,
+): string {
+  try {
+    return cssVariable(css, selector, variable);
+  } catch (error) {
+    if (selector === ":root") {
+      throw error;
+    }
+
+    return cssVariable(css, ":root", variable);
+  }
 }
 
 function cssBlock(css: string, selector: string): string {
