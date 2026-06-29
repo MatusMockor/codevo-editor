@@ -1150,7 +1150,6 @@ function App() {
         {shouldShowGitDiff ? (
           <ErrorBoundary
             title="Could not render this diff"
-            onReset={closeGitDiff}
             resetKeys={[
               gitDiffPreview?.change.relativePath ?? null,
               gitDiffPreview?.change.isStaged ?? false,

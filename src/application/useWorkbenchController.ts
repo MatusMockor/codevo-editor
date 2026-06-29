@@ -156,6 +156,7 @@ import {
   isPrefetchableContentSize,
   shouldPrefetchFileContent,
 } from "../domain/filePrefetchCache";
+import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
   collectBareKeyShortcutKeys,
@@ -1743,6 +1744,10 @@ export function useWorkbenchController(
   }, [intelligenceMode]);
 
   const reportError = useCallback((source: string, error: unknown) => {
+    if (isBenignError(error)) {
+      return;
+    }
+
     const nextMessage = String(error);
     setMessage(nextMessage);
     setNotices((current) => [
@@ -1802,6 +1807,7 @@ export function useWorkbenchController(
       // errors, and UnknownDocument for a document that is still open, fall
       // through unchanged.
       if (
+        isBenignError(error) ||
         isUnknownDocumentForUnsyncedPath(currentWorkspaceRootRef.current, error)
       ) {
         return;

@@ -163,27 +163,27 @@ pub struct PhpLauncher {
     pub ini_scan_dir_path: String,
 }
 
-/// Resolves an isolated PHP launcher for the managed PHPactor engine. Returning
-/// `None` is an explicit, supported signal to launch PHPactor directly (the
-/// pre-existing behaviour), keeping the transport-level startup-noise resilience
-/// as the fallback safety net so there is no regression when PHP cannot be
-/// resolved.
+/// Resolves an isolated PHP launcher for the managed PHPactor engine. Failures
+/// are surfaced to the planner instead of falling back to a direct PHPactor
+/// launch, because direct launch bypasses the managed `codevo-php.ini` and can
+/// reintroduce PHP startup noise on the LSP JSON channel.
 pub trait PhpInterpreterLauncher {
-    fn resolve(&self) -> Option<PhpLauncher>;
+    fn resolve(&self) -> Result<PhpLauncher, String>;
 }
 
 /// Default launcher: resolves a `php` interpreter and ensures the managed minimal
-/// `php.ini` exists next to the managed PHPactor install. If either step fails,
-/// it yields `None` so the planner falls back to launching PHPactor directly.
+/// `php.ini` exists next to the managed PHPactor install.
 pub struct ManagedPhpInterpreterLauncher;
 
 impl PhpInterpreterLauncher for ManagedPhpInterpreterLauncher {
-    fn resolve(&self) -> Option<PhpLauncher> {
-        let php_path = crate::tools::php_executable_path()?;
-        let ini_path = crate::managed_phpactor::ensure_managed_php_ini().ok()?;
-        let ini_scan_dir_path = crate::managed_phpactor::ensure_managed_php_ini_scan_dir().ok()?;
+    fn resolve(&self) -> Result<PhpLauncher, String> {
+        let php_path = crate::tools::php_executable_path().ok_or_else(|| {
+            "Unable to resolve a PHP interpreter for managed PHPactor launch.".to_string()
+        })?;
+        let ini_path = crate::managed_phpactor::ensure_managed_php_ini()?;
+        let ini_scan_dir_path = crate::managed_phpactor::ensure_managed_php_ini_scan_dir()?;
 
-        Some(PhpLauncher {
+        Ok(PhpLauncher {
             php_path,
             ini_path: ini_path.to_string_lossy().to_string(),
             ini_scan_dir_path: ini_scan_dir_path.to_string_lossy().to_string(),
@@ -225,11 +225,20 @@ where
     }
 
     fn ready_plan(&self, root: &Path, phpactor: &ToolLocation) -> LanguageServerPlan {
+        let command = match self.phpactor_command(root, phpactor) {
+            Ok(command) => command,
+            Err(error) => {
+                return unavailable_plan(&format!(
+                    "Managed PHP IDE engine cannot start with isolated PHP configuration: {error}"
+                ));
+            }
+        };
+
         LanguageServerPlan {
             provider: LanguageServerProvider::Phpactor,
             status: LanguageServerPlanStatus::Ready,
             message: "PHPactor LSP is ready to start.".to_string(),
-            command: Some(self.phpactor_command(root, phpactor)),
+            command: Some(command),
             initialize_request: Some(self.initialize_request_factory.create(root)),
         }
     }
@@ -237,19 +246,14 @@ where
     /// Builds the PHPactor launch command. When an isolated PHP interpreter is
     /// available we launch `php -n -c <managed.ini> <phpactor> language-server`
     /// so a broken user/global `php.ini` (imagick warning on stdout) cannot
-    /// corrupt the LSP handshake. Otherwise we fall back to invoking PHPactor
-    /// directly.
-    fn phpactor_command(&self, root: &Path, phpactor: &ToolLocation) -> LanguageServerCommand {
+    /// corrupt the LSP handshake.
+    fn phpactor_command(
+        &self,
+        root: &Path,
+        phpactor: &ToolLocation,
+    ) -> Result<LanguageServerCommand, String> {
         let working_directory = root.to_string_lossy().to_string();
-
-        let Some(launcher) = self.php_interpreter_launcher.resolve() else {
-            return LanguageServerCommand {
-                executable: phpactor.path.clone(),
-                args: vec!["language-server".to_string()],
-                working_directory,
-                env: Vec::new(),
-            };
-        };
+        let launcher = self.php_interpreter_launcher.resolve()?;
 
         // `-n -c <managed.ini>` makes the parent PHPactor process ignore every
         // user/global startup ini and load only the managed file. `PHPRC` and
@@ -264,7 +268,7 @@ where
             ),
         ];
 
-        LanguageServerCommand {
+        Ok(LanguageServerCommand {
             executable: launcher.php_path,
             args: vec![
                 "-n".to_string(),
@@ -275,7 +279,7 @@ where
             ],
             working_directory,
             env: php_env,
-        }
+        })
     }
 }
 
@@ -1045,9 +1049,11 @@ mod tests {
     #[test]
     fn trusted_php_workspace_builds_phpactor_initialize_plan() {
         let root = create_temp_dir("lsp-ready");
-        // Force the direct-launch shape so the assertion is deterministic
-        // regardless of whether a `php` interpreter exists on the test host.
-        let planner = planner_without_php();
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
         let plan = planner.plan(
             &root,
             true,
@@ -1058,8 +1064,15 @@ mod tests {
 
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
         let command = plan.command.expect("language server command");
-        assert_eq!(command.args, vec!["language-server"]);
-        assert!(command.executable.ends_with("vendor/bin/phpactor"));
+        assert_eq!(command.executable, "/usr/bin/php");
+        assert_eq!(
+            command.args.last().map(String::as_str),
+            Some("language-server")
+        );
+        assert!(command
+            .args
+            .iter()
+            .any(|arg| arg.ends_with("vendor/bin/phpactor")));
 
         let request = plan.initialize_request.expect("initialize request");
         assert_eq!(request.method, "initialize");
@@ -1199,9 +1212,11 @@ mod tests {
         fs::write(&configured_phpactor_path, "").expect("write configured phpactor");
         make_executable(&configured_phpactor_path);
         let configured_phpactor = configured_phpactor_path.to_string_lossy().to_string();
-        // Force the direct-launch shape so the configured-path assertion is
-        // independent of whether a `php` interpreter exists on the test host.
-        let planner = planner_without_php();
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
         let plan = planner.plan(
             &root,
             true,
@@ -1216,15 +1231,23 @@ mod tests {
 
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
         let command = plan.command.expect("language server command");
-        assert_eq!(command.executable, configured_phpactor);
-        assert_eq!(command.args, vec!["language-server"]);
+        assert_eq!(command.executable, "/usr/bin/php");
+        assert!(command.args.contains(&configured_phpactor));
+        assert_eq!(
+            command.args.last().map(String::as_str),
+            Some("language-server")
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
     fn missing_configured_phpactor_path_falls_back_to_detected_phpactor() {
         let root = create_temp_dir("lsp-missing-configured-phpactor");
-        let planner = planner_without_php();
+        let planner = planner_with_php(
+            "/usr/bin/php",
+            "/managed/codevo-php.ini",
+            "/managed/empty-php-conf.d",
+        );
         let plan = planner.plan(
             &root,
             true,
@@ -1244,15 +1267,59 @@ mod tests {
 
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
         let command = plan.command.expect("language server command");
+        let detected_phpactor = root
+            .join("vendor")
+            .join("bin")
+            .join("phpactor")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(command.executable, "/usr/bin/php");
+        assert!(command.args.contains(&detected_phpactor));
         assert_eq!(
-            command.executable,
-            root.join("vendor")
-                .join("bin")
-                .join("phpactor")
-                .to_string_lossy()
-                .to_string()
+            command.args.last().map(String::as_str),
+            Some("language-server")
         );
-        assert_eq!(command.args, vec!["language-server"]);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_plan_is_unavailable_when_isolated_php_launcher_is_unavailable() {
+        let root = create_temp_dir("lsp-php-launcher-unavailable");
+        let planner = planner_without_php();
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
+        assert!(plan.command.is_none());
+        assert!(plan.initialize_request.is_none());
+        assert!(plan.message.contains("isolated PHP configuration"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_plan_does_not_fall_back_to_direct_launch_without_managed_ini() {
+        let root = create_temp_dir("lsp-php-launcher-no-direct-fallback");
+        let planner = planner_without_php();
+
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
+        assert!(
+            plan.command.is_none(),
+            "must not launch vendor/bin/phpactor directly"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1707,8 +1774,10 @@ mod tests {
     }
 
     impl PhpInterpreterLauncher for StubPhpLauncher {
-        fn resolve(&self) -> Option<PhpLauncher> {
-            self.launcher.clone()
+        fn resolve(&self) -> Result<PhpLauncher, String> {
+            self.launcher
+                .clone()
+                .ok_or_else(|| "test PHP launcher unavailable".to_string())
         }
     }
 
@@ -1822,47 +1891,6 @@ mod tests {
             "managed empty PHP_INI_SCAN_DIR disables user/package conf.d fragments like imagick.ini"
         );
 
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn phpactor_direct_launch_fallback_has_no_php_env() {
-        let root = create_temp_dir("lsp-php-launcher-fallback-env");
-        let planner = planner_without_php();
-
-        let plan = planner.plan(
-            &root,
-            true,
-            &php_descriptor(&root),
-            &tools_with_phpactor(&root),
-            &PhpLanguageServerSettings::default(),
-        );
-
-        let command = plan.command.expect("language server command");
-        // The direct-launch fallback has no resolved managed ini, so it carries no
-        // PHP env override (the transport-level startup-noise resilience remains
-        // the safety net there).
-        assert!(command.env.is_empty());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn phpactor_launches_directly_when_php_interpreter_is_unavailable() {
-        let root = create_temp_dir("lsp-php-launcher-fallback");
-        let planner = planner_without_php();
-
-        let plan = planner.plan(
-            &root,
-            true,
-            &php_descriptor(&root),
-            &tools_with_phpactor(&root),
-            &PhpLanguageServerSettings::default(),
-        );
-
-        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
-        let command = plan.command.expect("language server command");
-        assert!(command.executable.ends_with("vendor/bin/phpactor"));
-        assert_eq!(command.args, vec!["language-server"]);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

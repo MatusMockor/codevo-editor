@@ -6,6 +6,8 @@ use crate::lsp_features::{
 use crate::lsp_transport::{read_message, write_message};
 #[cfg(unix)]
 use crate::managed_javascript_typescript;
+#[cfg(unix)]
+use crate::managed_phpactor;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -561,11 +563,154 @@ pub struct LanguageServerRegistry {
     supervisors: Mutex<HashMap<String, Arc<LanguageServerSupervisor>>>,
 }
 
-pub struct PhpLanguageServerRegistry(pub LanguageServerRegistry);
+struct PhpLaunchContext {
+    command: LanguageServerCommand,
+    root_path: String,
+}
+
+impl Clone for PhpLaunchContext {
+    fn clone(&self) -> Self {
+        Self {
+            command: clone_command(&self.command),
+            root_path: self.root_path.clone(),
+        }
+    }
+}
+
+pub struct PhpLanguageServerRegistry {
+    registry: LanguageServerRegistry,
+    launch_contexts: Mutex<HashMap<String, PhpLaunchContext>>,
+}
 
 impl PhpLanguageServerRegistry {
     pub fn new() -> Self {
-        Self(LanguageServerRegistry::new_with_label("PHPactor"))
+        Self {
+            registry: LanguageServerRegistry::new_with_label("PHPactor"),
+            launch_contexts: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn start(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: &dyn ServerProcessSpawner,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        let status = self.registry.start(
+            root_path,
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+        )?;
+        self.store_launch_context_if_active(root_path, command, &status);
+        Ok(status)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_auto_restart(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_controller: Arc<RestartController>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        let status = self.registry.start_with_auto_restart(
+            root_path,
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            restart_controller,
+        )?;
+        self.store_launch_context_if_active(root_path, command, &status);
+        Ok(status)
+    }
+
+    pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        let context = self.remove_launch_context(root_path);
+        let status = self.registry.stop(root_path);
+        self.cleanup_stopped_root(root_path, context);
+        status
+    }
+
+    pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
+        let contexts = self.drain_launch_contexts();
+        let status = self.registry.stop_all();
+
+        for (root_path, context) in contexts {
+            self.cleanup_stopped_root(&root_path, Some(context));
+        }
+
+        status
+    }
+
+    fn store_launch_context_if_active(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        status: &LanguageServerRuntimeStatus,
+    ) {
+        if !is_active_status(status) {
+            return;
+        }
+
+        let runtime_id = workspace_runtime_id(root_path);
+        if let Ok(mut contexts) = self.launch_contexts.lock() {
+            contexts.insert(
+                runtime_id,
+                PhpLaunchContext {
+                    command: clone_command(command),
+                    root_path: root_path.to_string(),
+                },
+            );
+        }
+    }
+
+    fn remove_launch_context(&self, root_path: &str) -> Option<PhpLaunchContext> {
+        let mut contexts = self.launch_contexts.lock().ok()?;
+
+        for runtime_id in workspace_runtime_id_candidates(root_path) {
+            if let Some(context) = contexts.remove(&runtime_id) {
+                return Some(context);
+            }
+        }
+
+        None
+    }
+
+    fn drain_launch_contexts(&self) -> Vec<(String, PhpLaunchContext)> {
+        self.launch_contexts
+            .lock()
+            .map(|mut contexts| contexts.drain().collect())
+            .unwrap_or_default()
+    }
+
+    fn cleanup_stopped_root(&self, _root_path: &str, context: Option<PhpLaunchContext>) {
+        #[cfg(not(unix))]
+        let _ = context;
+
+        #[cfg(unix)]
+        if let Some(context) = context {
+            managed_phpactor::cleanup_orphaned_managed_phpactor_processes(
+                &context.command,
+                &context.root_path,
+                &self.registry.running_roots(),
+            );
+        }
     }
 }
 
@@ -579,7 +724,7 @@ impl std::ops::Deref for PhpLanguageServerRegistry {
     type Target = LanguageServerRegistry;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.registry
     }
 }
 
@@ -3000,9 +3145,10 @@ mod tests {
         DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry, LanguageServerCapabilities,
         LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        NoopRefreshSink, NoopWorkspaceEditSink, ProcessKiller, RefreshSink, RestartController,
-        RestartDecision, RestartOutcome, RestartPolicy, SemanticTokensLegend, ServerProcessSpawner,
-        SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
+        NoopRefreshSink, NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller,
+        RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
+        SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
+        WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -3394,6 +3540,112 @@ mod tests {
             .start(
                 "/tmp/workspace-b",
                 &command(),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        assert_eq!(
+            registry
+                .launch_contexts
+                .lock()
+                .expect("launch contexts")
+                .len(),
+            2
+        );
+        assert_eq!(registry.stop_all(), LanguageServerRuntimeStatus::Stopped);
+        assert!(registry
+            .launch_contexts
+            .lock()
+            .expect("launch contexts")
+            .is_empty());
+    }
+
+    #[test]
+    fn php_registry_records_launch_context_until_stop() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let mut command = command();
+        command.executable = "/usr/bin/php".to_string();
+        command.args = vec![
+            "-n".to_string(),
+            "-c".to_string(),
+            "/managed/codevo-php.ini".to_string(),
+            "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                .to_string(),
+            "language-server".to_string(),
+        ];
+        command.env = vec![
+            ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+            (
+                "PHP_INI_SCAN_DIR".to_string(),
+                "/managed/empty-php-conf.d".to_string(),
+            ),
+        ];
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command,
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace");
+
+        let runtime_id = workspace_runtime_id("/tmp/workspace-a");
+        let context = registry
+            .launch_contexts
+            .lock()
+            .expect("launch contexts")
+            .get(&runtime_id)
+            .cloned()
+            .expect("stored launch context");
+
+        assert_eq!(context.root_path, "/tmp/workspace-a");
+        assert_eq!(context.command.executable, command.executable);
+        assert_eq!(context.command.args, command.args);
+        assert_eq!(context.command.working_directory, command.working_directory);
+        assert_eq!(context.command.env, command.env);
+
+        assert_eq!(
+            registry.stop("/tmp/workspace-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert!(registry
+            .launch_contexts
+            .lock()
+            .expect("launch contexts")
+            .is_empty());
+    }
+
+    #[test]
+    fn php_registry_stop_all_drains_launch_contexts() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+        let command = phpactor_managed_command();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command,
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command,
                 &initialize_request(),
                 &spawner_b,
                 sink_b,
@@ -6184,6 +6436,28 @@ mod tests {
             args: vec!["language-server".to_string()],
             working_directory: ".".to_string(),
             env: Vec::new(),
+        }
+    }
+
+    fn phpactor_managed_command() -> LanguageServerCommand {
+        LanguageServerCommand {
+            executable: "/usr/bin/php".to_string(),
+            args: vec![
+                "-n".to_string(),
+                "-c".to_string(),
+                "/managed/codevo-php.ini".to_string(),
+                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                    .to_string(),
+                "language-server".to_string(),
+            ],
+            working_directory: ".".to_string(),
+            env: vec![
+                ("PHPRC".to_string(), "/managed/codevo-php.ini".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "/managed/empty-php-conf.d".to_string(),
+                ),
+            ],
         }
     }
 

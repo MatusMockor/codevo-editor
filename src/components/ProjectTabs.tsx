@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { memo } from "react";
 import type { MouseEvent } from "react";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 interface ProjectTabsProps {
   activeRoot: string | null;
@@ -32,7 +33,7 @@ function ProjectTabsComponent({
   return (
     <nav aria-label="Open projects" className="project-tabs">
       {workspaceTabs.map((path) => {
-        const active = path === activeRoot;
+        const active = workspaceRootKeysEqual(path, activeRoot);
         const label = workspaceTabLabel(path);
 
         return (

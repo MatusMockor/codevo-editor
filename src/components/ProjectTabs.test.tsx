@@ -65,6 +65,26 @@ describe("ProjectTabs", () => {
     expect(activate).toHaveBeenCalledWith("/workspace/analytics-api");
   });
 
+  it("marks the active project by normalized workspace root key", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api/"
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    const activeTab = host.querySelector(".project-tab.active");
+
+    expect(activeTab?.textContent).toContain("api");
+    expect(
+      activeTab?.querySelector(".project-tab-main")?.getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
   it("closes project tabs with a middle click", async () => {
     const close = vi.fn();
 

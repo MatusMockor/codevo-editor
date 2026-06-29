@@ -5554,6 +5554,60 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).toBeNull();
   });
 
+  it("suppresses benign application errors before they become notices", async () => {
+    const { getWorkbench } = renderController();
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().reportCommandError(
+        new Error(
+          "ResizeObserver loop completed with undelivered notifications.",
+        ),
+      );
+    });
+
+    expect(getWorkbench().notices).toEqual([]);
+    expect(getWorkbench().message).toBeNull();
+  });
+
+  it("suppresses benign language server cancellations before they become notices", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 824,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    const cancellation = new Error("request superseded");
+    cancellation.name = "CanceledError";
+
+    act(() => {
+      getWorkbench().reportLanguageServerError(cancellation);
+    });
+
+    expect(getWorkbench().notices).toEqual([]);
+    expect(getWorkbench().message).toBeNull();
+  });
+
   it("still reports a legitimate language server feature error", async () => {
     // A genuine LSP failure (not UnknownDocument) reported through the Monaco
     // feature path must continue to surface a notice and status message.

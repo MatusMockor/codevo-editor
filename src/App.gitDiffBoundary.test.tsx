@@ -13,9 +13,18 @@ vi.mock("./application/useNoticeToastRenderers", () => ({
   useNoticeToastRenderers: () => (notice: unknown) => String(notice),
 }));
 
+const gitDiffBoundaryMockState = vi.hoisted(() => ({
+  closeGitDiffPreview: vi.fn(),
+  gitDiffPreviewShouldCrash: true,
+}));
+
 vi.mock("./components/GitDiffPreview", () => ({
   GitDiffPreview: () => {
-    throw new Error("Git diff preview crashed");
+    if (gitDiffBoundaryMockState.gitDiffPreviewShouldCrash) {
+      throw new Error("Git diff preview crashed");
+    }
+
+    return <div data-testid="git-diff-preview-recovered">diff recovered</div>;
   },
 }));
 
@@ -27,6 +36,8 @@ describe("App Git diff render boundary", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    gitDiffBoundaryMockState.gitDiffPreviewShouldCrash = true;
+    gitDiffBoundaryMockState.closeGitDiffPreview.mockClear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -59,6 +70,36 @@ describe("App Git diff render boundary", () => {
     );
     expect(host.textContent).toContain("Git diff preview crashed");
     expect(host.textContent).toContain("Try again");
+  });
+
+  it("retries the same Git diff render without closing the diff", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "Could not render this diff",
+    );
+
+    gitDiffBoundaryMockState.gitDiffPreviewShouldCrash = false;
+    const retry = host.querySelector<HTMLButtonElement>(
+      'button[data-action="retry"]',
+    );
+    expect(retry).not.toBeNull();
+
+    await act(async () => {
+      retry?.click();
+      await Promise.resolve();
+    });
+
+    expect(gitDiffBoundaryMockState.closeGitDiffPreview).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(
+      host.querySelector('[data-testid="git-diff-preview-recovered"]'),
+    ).not.toBeNull();
   });
 });
 
@@ -102,6 +143,7 @@ function createWorkbench() {
         isRepository: true,
         rootPath: "/workspace",
       },
+      closeGitDiffPreview: gitDiffBoundaryMockState.closeGitDiffPreview,
       includedGitChangePaths: new Set<string>(),
       indexProgress: { phase: "idle", scanned: 0, total: 0 },
       installingManagedPhpactor: false,

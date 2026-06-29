@@ -67,8 +67,9 @@ const MOCKOR_EDITOR_PHP_PATH: &str = "MOCKOR_EDITOR_PHP_PATH";
 /// Resolves an absolute path to a `php` interpreter for launching the managed
 /// PHPactor engine. Prefers an explicit `MOCKOR_EDITOR_PHP_PATH` override (so a
 /// bundled/pinned PHP can be wired in later), then falls back to the first `php`
-/// on `PATH`. Returns `None` when no interpreter can be resolved, letting callers
-/// degrade to launching PHPactor directly.
+/// on `PATH`. Returns `None` when no interpreter can be resolved so callers can
+/// report an unavailable isolated managed launch instead of invoking PHPactor
+/// directly without `codevo-php.ini`.
 pub fn php_executable_path() -> Option<String> {
     if let Some(path) = env::var_os(MOCKOR_EDITOR_PHP_PATH).map(PathBuf::from) {
         if is_executable_file(&path) {
