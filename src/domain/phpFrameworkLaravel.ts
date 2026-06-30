@@ -1030,6 +1030,36 @@ const laravelRepositoryModelReturnMethods = new Set([
   "updateorcreate",
 ]);
 
+// Base classes of Laravel API resources (`Illuminate\Http\Resources\Json\*`).
+// A class whose `extends` chain reaches one of these is treated as a resource,
+// which unlocks the resource -> JsonResponse member chain.
+const laravelApiResourceBaseClassNames = new Set([
+  "jsonresource",
+  "resource",
+  "resourcecollection",
+  "anonymousresourcecollection",
+  "illuminate\\http\\resources\\json\\jsonresource",
+  "illuminate\\http\\resources\\json\\resource",
+  "illuminate\\http\\resources\\json\\resourcecollection",
+  "illuminate\\http\\resources\\json\\anonymousresourcecollection",
+]);
+
+// `JsonResource` members that terminate the chain with a JSON HTTP response.
+const laravelApiResourceResponseMethods = new Set(["response", "toresponse"]);
+
+// `JsonResource` members that return the resource itself (fluent builder style).
+const laravelApiResourceFluentMethods = new Set([
+  "additional",
+  "withresponse",
+  "preservequerystring",
+]);
+
+const laravelApiResourceCollectionFactoryMethods = new Set(["collection"]);
+
+const laravelJsonResponseType = "Illuminate\\Http\\JsonResponse";
+const laravelAnonymousResourceCollectionType =
+  "Illuminate\\Http\\Resources\\Json\\AnonymousResourceCollection";
+
 const laravelEloquentRelationTypes = new Set([
   "belongsto",
   "belongstomany",
@@ -1416,6 +1446,16 @@ export function phpLaravelMethodCallReturnTypeFromSource(
   workspaceSources: readonly string[] = [],
 ): string | null {
   return (
+    phpLaravelResourceMethodCallReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    ) ??
+    phpLaravelResourceStaticMakeReturnTypeFromSource(
+      source,
+      methodName,
+      phpLaravelStaticCallClassNameFromExpression(callExpression),
+    ) ??
     phpLaravelRepositoryMethodModelReturnTypeFromSource(
       source,
       methodName,
@@ -1445,6 +1485,24 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       workspaceSources,
     )
   );
+}
+
+// The receiver type of a static call already carries the class, but `::make` on
+// a resource must only fire for an actual static call. We recover the class name
+// from the call expression (`Foo::make(...)`) so a member `$x->make(...)` never
+// resolves through the resource static path.
+function phpLaravelStaticCallClassNameFromExpression(
+  callExpression: string | null,
+): string | null {
+  if (!callExpression) {
+    return null;
+  }
+
+  const match = new RegExp(
+    `^${PHP_CLASS_NAME_CAPTURE_PATTERN}::make\\b`,
+  ).exec(callExpression.trim());
+
+  return match?.[1] ?? null;
 }
 
 export function phpLaravelContainerExpressionClassName(
@@ -4836,6 +4894,118 @@ function phpLaravelResolvedClassName(
 
 function isLaravelRepositoryType(className: string | null): boolean {
   return Boolean(className && /repository(?:interface)?\b/i.test(className));
+}
+
+// A class is a Laravel API resource when its `extends` chain (resolved within
+// the workspace source) reaches a known `Illuminate\Http\Resources\Json\*` base.
+// We resolve up to a small depth to keep this bounded and avoid runaway loops on
+// cyclic/self-referential source.
+function isLaravelApiResourceType(
+  source: string,
+  className: string | null,
+): boolean {
+  const startClassName = phpLaravelResolvedClassName(source, className ?? "");
+
+  if (!startClassName) {
+    return false;
+  }
+
+  const visited = new Set<string>();
+  let currentClassName: string | null = startClassName;
+
+  for (let depth = 0; currentClassName && depth < 16; depth += 1) {
+    const normalized = currentClassName.replace(/^\\+/, "").toLowerCase();
+
+    if (laravelApiResourceBaseClassNames.has(normalized)) {
+      return true;
+    }
+
+    if (visited.has(normalized)) {
+      return false;
+    }
+
+    visited.add(normalized);
+    currentClassName = phpLaravelParentClassName(source, currentClassName);
+  }
+
+  return false;
+}
+
+function phpLaravelParentClassName(
+  source: string,
+  className: string,
+): string | null {
+  const classSource = phpClassSourceForClassName(source, className);
+
+  if (!classSource) {
+    return null;
+  }
+
+  const parentClassName = phpExtendsClassName(classSource);
+
+  if (!parentClassName) {
+    return null;
+  }
+
+  return (
+    phpLaravelResolvedClassName(source, parentClassName) ?? parentClassName
+  );
+}
+
+// resource -> response chain: a resolved API resource exposes the documented
+// `JsonResource` members. `response()/toResponse()` terminate at a JSON HTTP
+// response; `additional()/withResponse()` keep the resource fluent;
+// `::collection()` produces an anonymous resource collection. Anything else is
+// left to ordinary resolution so we never invent members.
+function phpLaravelResourceMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  if (!isLaravelApiResourceType(source, receiverType)) {
+    return null;
+  }
+
+  const normalizedMethodName = methodName.toLowerCase();
+  const resourceClassName = phpLaravelResolvedClassName(
+    source,
+    receiverType ?? "",
+  );
+
+  if (laravelApiResourceResponseMethods.has(normalizedMethodName)) {
+    return laravelJsonResponseType;
+  }
+
+  if (laravelApiResourceCollectionFactoryMethods.has(normalizedMethodName)) {
+    return laravelAnonymousResourceCollectionType;
+  }
+
+  if (
+    laravelApiResourceFluentMethods.has(normalizedMethodName) &&
+    resourceClassName
+  ) {
+    return resourceClassName;
+  }
+
+  return null;
+}
+
+// `ResourceClass::make($model)` returns the resource itself. The receiver type
+// of a static call is the resource class, so we surface it directly once the
+// class is confirmed to be an API resource (guarding non-resource `make()`).
+function phpLaravelResourceStaticMakeReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  className: string | null,
+): string | null {
+  if (
+    methodName.toLowerCase() !== "make" ||
+    !isLaravelApiResourceType(source, className)
+  ) {
+    return null;
+  }
+
+  return phpLaravelResolvedClassName(source, className ?? "");
 }
 
 function isLaravelModelType(className: string): boolean {

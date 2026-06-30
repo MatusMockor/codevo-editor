@@ -72,6 +72,13 @@ export interface PhpFrameworkSourceContext {
 
 export interface PhpFrameworkProvider {
   id: string;
+  /**
+   * Plugin detection: returns true when this framework is present in the
+   * project. Detection lives on the provider so registering a new framework
+   * (Nette, Symfony, ...) never touches the dispatcher - the registry simply
+   * asks each provider whether it applies.
+   */
+  appliesTo?: (php: PhpProjectDescriptor) => boolean;
   completions?: {
     memberCompletionsFromSource?: (
       context: PhpFrameworkMemberCompletionContext,
@@ -99,6 +106,7 @@ export interface PhpFrameworkProvider {
 
 export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   id: "laravel",
+  appliesTo: (php) => isLaravelPhpProject(php),
   completions: {
     memberCompletionsFromSource: ({
       declaringClassName,
@@ -195,14 +203,25 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
 
 export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [];
 
+/**
+ * Plugin registry of every known framework provider. Adding a framework means
+ * appending its provider here (and giving it an `appliesTo`); the rest of the
+ * pipeline discovers it automatically. Laravel ships today; the seam is ready
+ * for Nette/Symfony providers without further changes.
+ */
+export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
+  phpLaravelFrameworkProvider,
+];
+
 export function phpFrameworkProvidersForProject(
   php: PhpProjectDescriptor | null,
+  registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
 ): readonly PhpFrameworkProvider[] {
   if (!php) {
     return [];
   }
 
-  return isLaravelPhpProject(php) ? [phpLaravelFrameworkProvider] : [];
+  return registry.filter((provider) => provider.appliesTo?.(php) ?? false);
 }
 
 export function phpFrameworkProviderSignature(

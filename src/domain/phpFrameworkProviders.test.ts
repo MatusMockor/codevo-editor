@@ -4,6 +4,7 @@ import {
   isKnownPhpFrameworkStaticMethod,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
+  phpFrameworkProviderRegistry,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkPropertyTypeFromSource,
@@ -375,6 +376,152 @@ class Album extends Model
     ).toBeNull();
   });
 
+  describe("API resource -> response chain", () => {
+    // Real shape from kontentino/api Http\Resources + controllers:
+    //   a JsonResource subclass returned from a controller, then chained to a
+    //   JSON response via ->response()/->toResponse()/->additional()/::collection().
+    const resourceSource = `<?php
+namespace App\\Http\\Resources;
+
+use App\\Models\\User;
+use Illuminate\\Http\\Request;
+use Illuminate\\Http\\Resources\\Json\\JsonResource;
+use Illuminate\\Http\\Resources\\Json\\ResourceCollection;
+
+class UserResource extends JsonResource
+{
+    public function toArray(Request $request): array
+    {
+        return ['id' => $this->id];
+    }
+}
+
+class UserCollection extends ResourceCollection
+{
+}
+
+class PlainService
+{
+}
+`;
+
+    it("resolves ::make() on a resource to the resource type", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "make",
+          "App\\Http\\Resources\\UserResource",
+          "UserResource",
+          [phpLaravelFrameworkProvider],
+          "UserResource::make($user)",
+        ),
+      ).toBe("App\\Http\\Resources\\UserResource");
+    });
+
+    it("resolves ::collection() on a resource to an anonymous resource collection", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "collection",
+          "App\\Http\\Resources\\UserResource",
+          "UserResource",
+          [phpLaravelFrameworkProvider],
+          "UserResource::collection($users)",
+        ),
+      ).toBe(
+        "Illuminate\\Http\\Resources\\Json\\AnonymousResourceCollection",
+      );
+    });
+
+    it("keeps the resource type across fluent additional()/withResponse()", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "additional",
+          "App\\Http\\Resources\\UserResource",
+          "$resource",
+          [phpLaravelFrameworkProvider],
+          "$resource->additional(['meta' => 1])",
+        ),
+      ).toBe("App\\Http\\Resources\\UserResource");
+    });
+
+    it("resolves ->response() on a resource to a JsonResponse", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "response",
+          "App\\Http\\Resources\\UserResource",
+          "$resource",
+          [phpLaravelFrameworkProvider],
+          "$resource->response()",
+        ),
+      ).toBe("Illuminate\\Http\\JsonResponse");
+    });
+
+    it("resolves ->toResponse($request) on a resource to a JsonResponse", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "toResponse",
+          "App\\Http\\Resources\\UserResource",
+          "$resource",
+          [phpLaravelFrameworkProvider],
+          "$resource->toResponse($request)",
+        ),
+      ).toBe("Illuminate\\Http\\JsonResponse");
+    });
+
+    it("resolves the response chain for ResourceCollection subclasses too", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "toResponse",
+          "App\\Http\\Resources\\UserCollection",
+          "$collection",
+          [phpLaravelFrameworkProvider],
+          "$collection->toResponse($request)",
+        ),
+      ).toBe("Illuminate\\Http\\JsonResponse");
+    });
+
+    it("does not invent a response type for non-resource classes (false positive guard)", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "response",
+          "App\\Http\\Resources\\PlainService",
+          "$service",
+          [phpLaravelFrameworkProvider],
+          "$service->response()",
+        ),
+      ).toBeNull();
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "toResponse",
+          "App\\Http\\Resources\\PlainService",
+          "$service",
+          [phpLaravelFrameworkProvider],
+          "$service->toResponse($request)",
+        ),
+      ).toBeNull();
+    });
+
+    it("is gated behind an active framework provider", () => {
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          resourceSource,
+          "toResponse",
+          "App\\Http\\Resources\\UserResource",
+          "$resource",
+          [],
+          "$resource->toResponse($request)",
+        ),
+      ).toBeNull();
+    });
+  });
+
   it("routes Laravel relation return types only through the Laravel provider", () => {
     const source = `<?php
 namespace App\\Models;
@@ -624,6 +771,71 @@ class Post extends Model
         }),
       ),
     ).toEqual([]);
+  });
+
+  it("activates each registered provider through its own detection", () => {
+    // Plugin registry: detection lives on the provider (`appliesTo`), so adding a
+    // framework is registering a provider - no edits to the dispatcher.
+    const symfonyProvider: PhpFrameworkProvider = {
+      id: "symfony",
+      appliesTo: (php) =>
+        php.packages.some(
+          (composerPackage) => composerPackage.name === "symfony/framework-bundle",
+        ),
+    };
+    const registry = [phpLaravelFrameworkProvider, symfonyProvider];
+
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "symfony/app",
+          packages: [{ name: "symfony/framework-bundle" }],
+        }),
+        registry,
+      ),
+    ).toEqual([symfonyProvider]);
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "laravel/laravel",
+          packages: [],
+        }),
+        registry,
+      ),
+    ).toEqual([phpLaravelFrameworkProvider]);
+    // A project that matches neither provider activates nothing.
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "vendor/plain",
+          packages: [],
+        }),
+        registry,
+      ),
+    ).toEqual([]);
+  });
+
+  it("exposes the Laravel provider through the default registry", () => {
+    expect(phpFrameworkProviderRegistry).toContain(phpLaravelFrameworkProvider);
+  });
+
+  it("carries Laravel project detection on the provider itself", () => {
+    expect(
+      phpLaravelFrameworkProvider.appliesTo?.(
+        phpProjectDescriptor({
+          packageName: "laravel/laravel",
+          packages: [],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      phpLaravelFrameworkProvider.appliesTo?.(
+        phpProjectDescriptor({
+          packageName: "symfony/app",
+          packages: [{ name: "symfony/framework-bundle" }],
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("builds stable provider signatures for member caches", () => {
