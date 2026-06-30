@@ -1238,6 +1238,45 @@ class CommentController
     ).toBe("Kontentino\\Communication\\Models\\Comment");
   });
 
+  it("resolves Laravel repository convention models from Contract-suffixed repository interfaces", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\AlbumRepositoryContract;
+
+class AlbumController
+{
+    public function __construct(private AlbumRepositoryContract $albums)
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->albums->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "$this->albums",
+        laravelOptions,
+      ),
+    ).toBe("AlbumRepositoryContract");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
   it("resolves Laravel repository creation-helper assignments from declared interface return types", () => {
     const source = `<?php
 namespace App\\Repositories;
@@ -4459,6 +4498,46 @@ class AppServiceProvider
       {
         abstractClassName: "InvoiceRepositoryInterface",
         concreteClassName: "DatabaseInvoiceRepository",
+      },
+    ]);
+  });
+
+  it("extracts Contract-suffixed and closure-factory container bindings from providers", () => {
+    expect(
+      phpLaravelContainerBindingsFromSource(`<?php
+namespace App\\Providers;
+
+use App\\Contracts\\RecordRepositoryContract;
+use App\\Repositories\\RecordRepository;
+use App\\Contracts\\PostTrashServiceContract;
+use App\\Services\\PostTrashService;
+use App\\Contracts\\FacebookApiClientInterface;
+use App\\Clients\\FacebookApiClient;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(RecordRepositoryContract::class, RecordRepository::class);
+        $this->app->bind(PostTrashServiceContract::class, PostTrashService::class);
+        $this->app->singleton(FacebookApiClientInterface::class, function ($app) {
+            return new FacebookApiClient($app->make(FacebookDriverConfig::class));
+        });
+    }
+}
+`),
+    ).toEqual([
+      {
+        abstractClassName: "RecordRepositoryContract",
+        concreteClassName: "RecordRepository",
+      },
+      {
+        abstractClassName: "PostTrashServiceContract",
+        concreteClassName: "PostTrashService",
+      },
+      {
+        abstractClassName: "FacebookApiClientInterface",
+        concreteClassName: "FacebookApiClient",
       },
     ]);
   });

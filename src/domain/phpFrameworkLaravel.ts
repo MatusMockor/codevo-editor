@@ -4837,7 +4837,7 @@ function phpLaravelRepositoryConventionModelTypeFromReceiver(
 
   const repositoryShortName = resolvedReceiverType?.split("\\").pop() ?? "";
   const modelShortName = repositoryShortName
-    .replace(/RepositoryInterface$/i, "")
+    .replace(/Repository(?:Interface|Contract)$/i, "")
     .replace(/Repository$/i, "");
 
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(modelShortName)) {
@@ -4893,7 +4893,9 @@ function phpLaravelResolvedClassName(
 }
 
 function isLaravelRepositoryType(className: string | null): boolean {
-  return Boolean(className && /repository(?:interface)?\b/i.test(className));
+  return Boolean(
+    className && /repository(?:interface|contract)?\b/i.test(className),
+  );
 }
 
 // A class is a Laravel API resource when its `extends` chain (resolved within
