@@ -87,6 +87,19 @@ describe("Monaco widget chrome (JetBrains classic)", () => {
     expect(body).toContain("var(--color-border-strong)");
   });
 
+  it("reads the code-action group headers as quiet uppercase section labels", () => {
+    // Quick Fix... / Refactor... group rows separate the action categories; give
+    // them the same quiet uppercase section-label treatment the other JetBrains
+    // chrome uses so the categories read at a glance above the prioritised rows.
+    const body = ruleBody(
+      appCss,
+      ".monaco-editor .action-widget .monaco-list-row.group-header,",
+    );
+    expect(body).toContain("var(--color-text-muted)");
+    expect(body).toContain("text-transform: uppercase");
+    expect(body).toContain("letter-spacing");
+  });
+
   it("tints the focused code-action row with accent-soft, not Monaco blue", () => {
     // Monaco focuses the row via `.monaco-list-row.action.focused` using its blue
     // --vscode-editorActionList-focusBackground; recolor it to our soft accent so
@@ -198,6 +211,15 @@ describe("Monaco suggest-widget kind icon recolor", () => {
     ["symbol-enum", "--symbol-enum"],
     ["symbol-variable", "--symbol-variable"],
     ["symbol-keyword", "--symbol-keyword"],
+    // Laravel "magic" completion categories ride distinct Monaco kinds so the
+    // suggest list reads as PhpStorm-style groups: relations use Field (already
+    // mapped to --symbol-property above), magic query scopes use Function, and
+    // dynamic where<Attribute>() magic uses Event. Recolor the Laravel value /
+    // view glyphs (Value/File kinds) and the Event glyph so every category is
+    // told apart by colour, not only by sortText order.
+    ["symbol-event", "--symbol-enum"],
+    ["symbol-value", "--symbol-const"],
+    ["symbol-file", "--symbol-interface"],
   ];
 
   it("recolors each suggest kind icon from the matching --symbol-* variable", () => {
@@ -215,6 +237,33 @@ describe("Monaco suggest-widget kind icon recolor", () => {
         `var(${symbolVar})`,
       );
     }
+  });
+
+  it("keeps the completion category qualifier readable beside each row", () => {
+    // PhpStorm-style grouping leans on the per-row category text our provider
+    // packs into `label.description` ("relation - ...", "scope - ...", "magic
+    // where - ..."). Monaco renders it as the right-aligned `.label-description`
+    // inside the suggest row; pin it to a theme-aware muted token so the category
+    // reads as a quiet qualifier on every theme instead of inheriting Monaco's
+    // baked-in detail colour.
+    const selector =
+      ".monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-description";
+    const index = appCss.indexOf(selector);
+    expect(index, "missing suggest label-description rule").toBeGreaterThan(-1);
+    const body = appCss.slice(index, appCss.indexOf("}", index));
+    expect(body).toContain("var(--color-text-muted)");
+  });
+
+  it("colours the code-action widget icons (quickfix / refactor) consistently", () => {
+    // The Cmd+. list shows a lightbulb (quickfix) / wrench (refactor) codicon per
+    // row. Tie those glyphs to a theme-aware token so they read consistently on
+    // every theme rather than inheriting Monaco's default action-list colour.
+    const selector =
+      ".monaco-editor .action-widget .monaco-list .monaco-list-row .codicon::before";
+    const index = appCss.indexOf(selector);
+    expect(index, "missing action-widget codicon rule").toBeGreaterThan(-1);
+    const body = appCss.slice(index, appCss.indexOf("}", index));
+    expect(body).toMatch(/color:\s*var\(--color-/);
   });
 
   it("declares required widget and symbol variables in every theme block", () => {
@@ -256,5 +305,50 @@ describe("Monaco suggest-widget kind icon recolor", () => {
         );
       }
     }
+  });
+});
+
+/**
+ * Final visual pass on the gutter change/rollback popover and the Git "Local
+ * Changes" panel. Both are app-owned DOM (not Monaco widgets), so the chrome is
+ * theme-aware through our --color-* / --change-* tokens. These guards lock the
+ * JetBrains-classic hover/spacing polish so it survives future edits.
+ */
+describe("Gutter rollback popover + Git Local Changes polish", () => {
+  it("fills the popover nav buttons on hover for a tactile JetBrains feel", () => {
+    // The Previous/Next/Close + Revert buttons only recolored their border on
+    // hover, which reads flat. Add a soft accent fill so hover matches the git
+    // toolbar buttons and feels clickable across every theme.
+    const body = ruleBody(
+      appCss,
+      ".editor-change-popover-icon-button:hover,",
+    );
+    expect(body).toContain("background");
+    expect(body).toMatch(/var\(--change-popover-soft\)|var\(--color-hover\)/);
+  });
+
+  it("gives the popover buttons a motion-token hover transition", () => {
+    const body = ruleBody(
+      appCss,
+      ".editor-change-popover-icon-button,\n.editor-change-popover-action {",
+    );
+    expect(body).toContain("transition");
+  });
+
+  it("tints the active Git change row icon so it stays legible on the accent fill", () => {
+    // The active row paints --color-accent-soft behind a status-tinted glyph; on
+    // some themes the warm/red glyph clashes with the fill. Pin the active row's
+    // icon + status letter to the active-text token so the selection reads clean.
+    const body = ruleBody(
+      appCss,
+      ".git-change-row-wrapper.active .git-change-row .git-change-status-icon",
+    );
+    expect(body).toContain("var(--color-active-text)");
+  });
+
+  it("keeps the Local Changes count pill tabular and theme-aware", () => {
+    const body = ruleBody(appCss, ".git-changes-summary {");
+    expect(body).toContain("font-variant-numeric: tabular-nums");
+    expect(body).toContain("var(--color-accent)");
   });
 });

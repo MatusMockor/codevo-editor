@@ -1233,6 +1233,15 @@ button {
   color: var(--color-active-text);
 }
 
+/* On the selected row the soft-accent fill sits behind the status glyph and the
+   trailing status letter; tint both to the active-text token so the selection
+   reads as one clean JetBrains-classic highlight instead of a warm/red glyph
+   fighting the accent fill. Theme-aware via --color-active-text. */
+.git-change-row-wrapper.active .git-change-row .git-change-status-icon,
+.git-change-row-wrapper.active .git-change-row [class*="tree-row-status-"] {
+  color: var(--color-active-text);
+}
+
 .git-change-row {
   box-sizing: border-box;
   grid-template-columns: 18px minmax(48px, 1fr) minmax(0, 36%) 18px;
@@ -2323,6 +2332,9 @@ button {
   background: var(--color-control);
   color: var(--color-text);
   cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
 .editor-change-popover-nav {
@@ -2443,6 +2455,11 @@ button {
 .editor-change-popover-icon-button:hover,
 .editor-change-popover-action:hover {
   border-color: var(--change-popover-accent);
+  background: color-mix(
+    in srgb,
+    var(--change-popover-soft) 60%,
+    var(--color-hover)
+  );
   color: var(--color-text-strong);
 }
 
@@ -5874,10 +5891,16 @@ kbd {
   padding: 4px;
 }
 
-/* Group headers ("Quick Fix...", "Extract...") read as subtle section labels. */
+/* Group headers ("Quick Fix...", "Extract...") read as subtle section labels:
+   a quiet uppercase qualifier above the prioritised action rows, matching the
+   change-popover section labels so the whole chrome feels like one family. */
 .monaco-editor .action-widget .monaco-list-row.group-header,
 .action-widget .monaco-list-row.group-header {
   color: var(--color-text-muted) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 /* Selected / focused action row: soft accent tint, not Monaco's default blue. */
@@ -5940,6 +5963,53 @@ kbd {
 
 .monaco-editor .suggest-widget .codicon-symbol-keyword::before {
   color: var(--symbol-keyword);
+}
+
+/*
+ * Laravel "magic" completion categories ride distinct Monaco kinds so the list
+ * reads as PhpStorm-style groups even though Monaco draws no group headers:
+ *   - magic query scopes use the Function glyph (recolored above),
+ *   - dynamic where<Attribute>() magic uses Event,
+ *   - Laravel config/env/route/translation values use Value,
+ *   - Blade views use File.
+ * Map each to a distinct --symbol-* role so the category is told apart by colour
+ * (theme-aware) and not only by sortText order.
+ */
+.monaco-editor .suggest-widget .codicon-symbol-event::before {
+  color: var(--symbol-enum);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-value::before {
+  color: var(--symbol-const);
+}
+
+.monaco-editor .suggest-widget .codicon-symbol-file::before {
+  color: var(--symbol-interface);
+}
+
+/*
+ * Per-row category qualifier ("relation - App\Models\User", "scope - ...",
+ * "magic where - ...") our provider packs into `label.description`. Monaco draws
+ * it right-aligned as `.label-description`; pin it to the muted token so the
+ * category reads as a quiet, consistent grouping hint on every theme.
+ */
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-description {
+  color: var(--color-text-muted);
+  opacity: 0.92;
+}
+
+/*
+ * Cmd+. code-action row icons: the leading lightbulb (quickfix) / wrench
+ * (refactor) / generate codicon. Tie them to a theme-aware token so the icons
+ * read consistently across every theme instead of inheriting Monaco's default
+ * action-list colour, and let the focused row promote its icon to text-strong.
+ */
+.monaco-editor .action-widget .monaco-list .monaco-list-row .codicon::before {
+  color: var(--color-text-muted);
+}
+
+.monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) .codicon::before {
+  color: var(--color-text-strong);
 }
 
 :focus-visible {
@@ -6088,6 +6158,128 @@ kbd {
 .runtime-observability-actions button:disabled {
   color: var(--color-disabled);
   cursor: not-allowed;
+}
+
+.runtime-observability-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.runtime-observability-copy-bundle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.runtime-observability-copy-bundle:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.runtime-observability-section-title {
+  margin: 8px 0 4px;
+  color: var(--color-text-subtle, #8b949e);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.runtime-observability-requests-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.runtime-observability-requests-table th,
+.runtime-observability-requests-table td {
+  padding: 2px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #30363d);
+}
+
+.runtime-observability-requests-table th {
+  color: var(--color-text-subtle, #8b949e);
+  font-weight: 600;
+}
+
+.runtime-observability-requests-table td:first-child {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-observability-request-error td:last-child {
+  color: var(--color-danger, #f85149);
+  font-weight: 600;
+}
+
+.runtime-observability-request-ok td:last-child {
+  color: var(--color-success, #3fb950);
+}
+
+.runtime-observability-stderr-tail {
+  margin: 0;
+  max-height: 140px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 6px;
+  background: var(--color-surface-strong, #0d1117);
+  color: var(--color-text, #c9d1d9);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.runtime-observability-latency {
+  margin-top: 12px;
+  border-top: 1px solid var(--color-border, #30363d);
+  padding-top: 10px;
+}
+
+.runtime-observability-latency-title {
+  margin: 0 0 6px;
+  color: var(--color-text-strong, #f0f6fc);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runtime-observability-latency-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.runtime-observability-latency-table th,
+.runtime-observability-latency-table td {
+  padding: 2px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #30363d);
+}
+
+.runtime-observability-latency-table thead th {
+  color: var(--color-text-subtle, #8b949e);
+  font-weight: 600;
+}
+
+.runtime-observability-latency-table tbody th {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: var(--color-text, #c9d1d9);
 }
 
 @media (prefers-reduced-motion: reduce) {
