@@ -32,6 +32,7 @@ export interface PhpTraitHostConstantDiagnosticContext {
 
 export interface PhpMemberMethodDiagnosticContext {
   methodName: string;
+  receiverClassName: string | null;
   receiverExpression: string;
 }
 
@@ -326,6 +327,7 @@ function isKnownPhpFrameworkMemberMethodDiagnostic(
         context.methodName,
         frameworkProviders,
         sourceContext,
+        context.receiverClassName,
       ),
   );
 }
@@ -735,12 +737,26 @@ export function phpUnresolvedMemberMethodDiagnosticContext(
     ) {
       return {
         methodName,
+        receiverClassName: phpUnresolvedMemberMethodDiagnosticReceiverClassName(
+          diagnostic.message,
+        ),
         receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
       };
     }
   }
 
   return null;
+}
+
+function phpUnresolvedMemberMethodDiagnosticReceiverClassName(
+  message: string,
+): string | null {
+  const match =
+    /\bon\s+(?:class|trait|interface)\s+["']([^"']+)["']/i.exec(message) ??
+    /\b(?:class|trait|interface)\s+["']([^"']+)["'].*\bmethod\b/i.exec(message);
+  const className = match?.[1]?.trim() ?? "";
+
+  return className || null;
 }
 
 export function phpUnresolvedMemberPropertyDiagnosticContext(

@@ -281,6 +281,7 @@ $album = Album::query()?->missingMagic()?->first();
       phpUnresolvedMemberMethodDiagnosticContext(source, confirmed),
     ).toEqual({
       methodName: "withRelations",
+      receiverClassName: null,
       receiverExpression: "Album::query()",
     });
     expect(
@@ -478,6 +479,68 @@ class AppServiceProvider extends ServiceProvider
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
     ).toEqual([staticMacro, memberMacro]);
+  });
+
+  it("downgrades Laravel Macroable provider diagnostics for collection receivers", () => {
+    const source = `<?php
+namespace App;
+
+use App\\Models\\Reports\\Report;
+use Illuminate\\Support\\Collection;
+
+final class CodevoLaravelMagicQa
+{
+    public function run(int $id, Collection $items): mixed
+    {
+        $report = Report::withRelations()
+            ->whereGeneratedFromReportId($id)
+            ->rootsOnly()
+            ->first();
+
+        $diff = collect([['id' => $id]])->diffAssocMultiple($items);
+
+        return $report?->generatedChildren()->first() ?? $diff->first();
+    }
+}
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use Illuminate\\Support\\Collection;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        Collection::macro('diffAssocMultiple', function ($anotherCollection) {
+            return $this;
+        });
+    }
+}
+`;
+    const withRelations = diagnosticAt(source, "withRelations", {
+      message:
+        'Method "withRelations" does not exist on class "App\\Models\\Reports\\Report"',
+    });
+    const collectionMacro = diagnosticAt(source, "diffAssocMultiple", {
+      message:
+        'Method "diffAssocMultiple" does not exist on class "Illuminate\\Support\\Collection<TKey,TValue>"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [withRelations, collectionMacro],
+        {
+          frameworkProviders: [phpLaravelFrameworkProvider],
+          frameworkSourceContext: { workspaceSources: [providerSource] },
+        },
+      ),
+    ).toEqual([
+      frameworkMagicHint(withRelations),
+      frameworkMagicHint(collectionMacro),
+    ]);
   });
 
   it("downgrades same-source Laravel local scope diagnostics without broadening unknown methods", () => {
@@ -711,6 +774,7 @@ $album = Album::query()->withRelations()->first();
       ),
     ).toEqual({
       methodName: "withRelations",
+      receiverClassName: null,
       receiverExpression: "Album::query()",
     });
   });
@@ -735,6 +799,7 @@ $album = Album::query()
       ),
     ).toEqual({
       methodName: "withRelations",
+      receiverClassName: null,
       receiverExpression: "Album::query()",
     });
   });
@@ -759,6 +824,7 @@ $post->localPosts()->each(function (Post $localPost): void {
       ),
     ).toEqual({
       methodName: "localPosts",
+      receiverClassName: "App\\Models\\Post",
       receiverExpression: "$post",
     });
   });
@@ -781,6 +847,7 @@ $post->localPosts()->map(fn (Post $localPost): int => $localPost->id);
       ),
     ).toEqual({
       methodName: "localPosts",
+      receiverClassName: "App\\Models\\Post",
       receiverExpression: "$post",
     });
   });

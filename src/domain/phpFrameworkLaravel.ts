@@ -303,6 +303,7 @@ const laravelEloquentStaticBuilderMethods = new Set([
   "withexists",
   "withmax",
   "withmin",
+  "withrelations",
   "withsum",
   "withwherehas",
   "withwhererelation",
@@ -614,6 +615,7 @@ const laravelEloquentBuilderFluentMethods = new Set([
   "withexists",
   "withmax",
   "withmin",
+  "withrelations",
   "withsum",
   "withwherehas",
   "withwhererelation",
@@ -1218,6 +1220,43 @@ export function isLaravelEloquentBuilderMacroFromSource(
       methodName,
       workspaceSources,
     ),
+  );
+}
+
+export function isLaravelMacroMemberMethodFromSource(
+  source: string,
+  receiverExpression: string,
+  receiverClassName: string | null,
+  methodName: string,
+  workspaceSources: readonly string[] = [],
+): boolean {
+  const lookupName = methodName.trim().toLowerCase();
+
+  if (!lookupName) {
+    return false;
+  }
+
+  const resolvedReceiverClassName =
+    receiverClassName ??
+    phpLaravelMacroReceiverClassNameFromExpression(receiverExpression);
+
+  if (!resolvedReceiverClassName) {
+    return false;
+  }
+
+  const receiverRegistrarClassNames = laravelMacroReceiverRegistrarClassNames(
+    source,
+    resolvedReceiverClassName,
+  );
+
+  if (!receiverRegistrarClassNames) {
+    return false;
+  }
+
+  return phpLaravelMacrosFromSources(source, workspaceSources).some(
+    (macro) =>
+      receiverRegistrarClassNames.has(macro.registrarClassName) &&
+      macro.name.toLowerCase() === lookupName,
   );
 }
 
@@ -4342,6 +4381,18 @@ function phpLaravelEloquentBuilderMacroFromSource(
         macro.name.toLowerCase() === lookupName,
     ) ?? null
   );
+}
+
+function phpLaravelMacroReceiverClassNameFromExpression(
+  receiverExpression: string,
+): string | null {
+  const trimmed = receiverExpression.trim();
+
+  if (/^collect\s*\(/i.test(trimmed)) {
+    return "Illuminate\\Support\\Collection";
+  }
+
+  return null;
 }
 
 function phpLaravelMacroNameFromArgument(argument: string): string | null {

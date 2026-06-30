@@ -29971,6 +29971,114 @@ class PostController
       expect(warm).toContain("withDashboardScope");
     });
 
+    it("reclassifies existing provider macro diagnostics once the per-root cache warms", async () => {
+      let diagnosticsListener:
+        | ((event: LanguageServerDiagnosticEvent) => void)
+        | null = null;
+      const root = "/workspace";
+      const collectionControllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use Illuminate\\Support\\Collection;
+
+class PostController
+{
+    public function index(Collection $items): void
+    {
+        collect([['id' => 1]])->diffAssocMultiple($items);
+    }
+}
+`;
+      const readDirectory = vi.fn(async (path: string) =>
+        path === providersDirFor(root)
+          ? [fileEntry(providerPathFor(root), providerFileName)]
+          : [],
+      );
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPathFor(root)) {
+          return collectionControllerSource;
+        }
+
+        if (path === providerPathFor(root)) {
+          return appServiceProvider(
+            `\n        \\Illuminate\\Support\\Collection::macro('diffAssocMultiple', function (Collection $items) {\n            return $this;\n        });`,
+          );
+        }
+
+        return `<?php\n// ${path}\n`;
+      });
+      const runningStatus: LanguageServerRuntimeStatus = {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 75,
+      };
+      const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          diagnosticsListener = listener;
+          return () => undefined;
+        }),
+      };
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: root,
+        },
+        languageServerDiagnosticsGateway: diagnosticsGateway,
+        readDirectory,
+        readTextFile,
+        runtimeStatus: runningStatus,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPathFor(root), "PostController.php"),
+        );
+      });
+
+      expect(diagnosticsListener).not.toBeNull();
+
+      act(() => {
+        diagnosticsListener?.({
+          diagnostics: [
+            {
+              character: 32,
+              line: 9,
+              message:
+                'Method "diffAssocMultiple" does not exist on class "Illuminate\\Support\\Collection<TKey,TValue>"',
+              severity: "error",
+              source: "phpactor",
+            },
+          ],
+          rootPath: root,
+          sessionId: runningStatus.sessionId,
+          uri: fileUriFromPath(controllerPathFor(root)),
+          version: null,
+        });
+      });
+
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(providerPathFor(root));
+      });
+      await vi.waitFor(() => {
+        expect(
+          getWorkbench().languageServerDiagnosticsByPath[controllerPathFor(root)],
+        ).toEqual([
+          {
+            character: 32,
+            line: 9,
+            message:
+              'Method "diffAssocMultiple" does not exist on class "Illuminate\\Support\\Collection<TKey,TValue>"',
+            severity: "hint",
+            source: "laravel-magic",
+          },
+        ]);
+      });
+    });
+
     it("falls back without crashing when no providers exist", async () => {
       const root = "/workspace";
       const readDirectory = vi.fn(async () => []);

@@ -4,6 +4,7 @@ import {
   isLaravelEloquentLocalScopeMemberMethod,
   isLaravelEloquentLocalScopeStaticMethod,
   isLaravelEloquentStaticBuilderReceiver,
+  isLaravelMacroMemberMethodFromSource,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
@@ -31,6 +32,7 @@ export interface PhpFrameworkStaticMethodContext {
 
 export interface PhpFrameworkMemberMethodContext {
   methodName: string;
+  receiverClassName?: string | null;
   receiverExpression: string;
   sourceContext?: PhpFrameworkSourceContext;
   source: string;
@@ -122,6 +124,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   diagnostics: {
     isKnownMemberMethod: ({
       methodName,
+      receiverClassName,
       receiverExpression,
       source,
       sourceContext,
@@ -138,6 +141,13 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
             receiverExpression,
           ),
         )) ||
+      isLaravelMacroMemberMethodFromSource(
+        source,
+        receiverExpression,
+        receiverClassName ?? null,
+        methodName,
+        sourceContext?.workspaceSources,
+      ) ||
       isLaravelEloquentLocalScopeMemberMethod(
         source,
         receiverExpression,
@@ -249,11 +259,13 @@ export function isKnownPhpFrameworkMemberMethod(
   methodName: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
   sourceContext?: PhpFrameworkSourceContext,
+  receiverClassName?: string | null,
 ): boolean {
   return providers.some(
     (provider) =>
       provider.diagnostics?.isKnownMemberMethod?.({
         methodName,
+        receiverClassName,
         receiverExpression,
         source,
         sourceContext,

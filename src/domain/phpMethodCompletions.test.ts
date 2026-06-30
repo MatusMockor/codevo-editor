@@ -109,10 +109,10 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderMethodName("restoreOrCreate")).toBe(true);
   });
 
-  it("treats local scopes as model-specific Laravel magic, not global builder methods", () => {
-    expect(isLaravelEloquentStaticBuilderMethod("withRelations")).toBe(false);
-    expect(isLaravelEloquentBuilderFluentMethod("withRelations")).toBe(false);
-    expect(isLaravelEloquentBuilderMethodName("withRelations")).toBe(false);
+  it("treats local scopes as model-specific Laravel magic while keeping framework helpers global", () => {
+    expect(isLaravelEloquentStaticBuilderMethod("withRelations")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("withRelations")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("withRelations")).toBe(true);
     expect(isLaravelEloquentStaticBuilderMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("withTrashed")).toBe(true);
@@ -998,6 +998,7 @@ class Album extends Model
       "withMax",
       "withMin",
       "withOnly",
+      "withRelations",
       "withSum",
       "withoutEagerLoad",
       "withoutEagerLoads",
@@ -1014,14 +1015,6 @@ class Album extends Model
         ),
       ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
     }
-    expect(
-      phpLaravelMethodCallReturnTypeFromSource(
-        source,
-        "withRelations",
-        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Track>",
-        null,
-      ),
-    ).toBeNull();
     for (const methodName of [
       "aggregate",
       "average",

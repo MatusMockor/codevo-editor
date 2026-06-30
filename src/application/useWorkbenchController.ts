@@ -967,6 +967,30 @@ function buildDiagnosticOverflowNotice(
   );
 }
 
+function languageServerDiagnosticsEqual(
+  left: readonly LanguageServerDiagnostic[],
+  right: readonly LanguageServerDiagnostic[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((diagnostic, index) => {
+    const comparison = right[index];
+
+    return (
+      diagnostic.message === comparison.message &&
+      diagnostic.source === comparison.source &&
+      diagnostic.severity === comparison.severity &&
+      diagnostic.line === comparison.line &&
+      diagnostic.character === comparison.character &&
+      diagnostic.endLine === comparison.endLine &&
+      diagnostic.endCharacter === comparison.endCharacter &&
+      diagnostic.code === comparison.code
+    );
+  });
+}
+
 // TODO-comment scan is conservative so it never blocks the UI on large trees:
 // it skips dependency / VCS / build directories, only reads source-like files,
 // caps the number of files read and skips files that are too large to be hand
@@ -12534,6 +12558,121 @@ export function useWorkbenchController(
     };
   }, []);
 
+  const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
+    (rootPath: string): void => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const diagnosticsByPath = languageServerDiagnosticsByRootRef.current[rootKey];
+
+      if (!diagnosticsByPath) {
+        return;
+      }
+
+      const { workspaceSources } = currentPhpLaravelSourceContext();
+
+      if (workspaceSources.length === 0) {
+        return;
+      }
+
+      const isActiveRoot = workspaceRootKeysEqual(
+        currentWorkspaceRootRef.current,
+        rootPath,
+      );
+      let nextDiagnosticsByPath = diagnosticsByPath;
+      const noticeUpdates: {
+        groupKey: string;
+        notices: WorkbenchNotice[];
+      }[] = [];
+
+      for (const [diagnosticPath, diagnostics] of Object.entries(
+        diagnosticsByPath,
+      )) {
+        const document = documentsRef.current[diagnosticPath];
+
+        if (document?.language !== "php" || diagnostics.length === 0) {
+          continue;
+        }
+
+        const nextDiagnostics = filterPhpLanguageServerDiagnostics(
+          document.content,
+          diagnostics,
+          {
+            frameworkProviders: activePhpFrameworkProviders,
+            frameworkSourceContext: { workspaceSources },
+            path: diagnosticPath,
+          },
+        );
+
+        if (languageServerDiagnosticsEqual(diagnostics, nextDiagnostics)) {
+          continue;
+        }
+
+        if (nextDiagnosticsByPath === diagnosticsByPath) {
+          nextDiagnosticsByPath = { ...diagnosticsByPath };
+        }
+
+        nextDiagnosticsByPath[diagnosticPath] = nextDiagnostics;
+
+        if (!isActiveRoot) {
+          continue;
+        }
+
+        const uri = fileUriFromPath(diagnosticPath);
+        const groupKey = languageServerDiagnosticNoticeGroup(uri);
+        const diagnosticNotices = capDiagnosticNotices(
+          nextDiagnostics.map((diagnostic) =>
+            createWorkbenchNotice(
+              languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+              diagnostic.source || "Language Server",
+              languageServerDiagnosticNoticeMessage(diagnostic, uri),
+              groupKey,
+              diagnosticNoticeNavigationTarget(uri, diagnostic),
+            ),
+          ),
+          DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+          (hiddenCount) =>
+            buildDiagnosticOverflowNotice(
+              "Language Server",
+              groupKey,
+              hiddenCount,
+            ),
+        );
+
+        noticeUpdates.push({ groupKey, notices: diagnosticNotices });
+      }
+
+      if (nextDiagnosticsByPath === diagnosticsByPath) {
+        return;
+      }
+
+      languageServerDiagnosticsByRootRef.current[rootKey] = nextDiagnosticsByPath;
+
+      if (isActiveRoot) {
+        setLanguageServerDiagnosticsByPath(nextDiagnosticsByPath);
+      }
+
+      if (noticeUpdates.length === 0) {
+        return;
+      }
+
+      setNotices((current) =>
+        capWorkbenchNotices(
+          noticeUpdates.reduce(
+            (nextNotices, update) =>
+              replaceWorkbenchNoticeGroup(
+                nextNotices,
+                update.groupKey,
+                update.notices,
+              ),
+            current,
+          ),
+          GLOBAL_NOTICE_LIMIT,
+          isCappableDiagnosticNotice,
+        ),
+      );
+    },
+    [activePhpFrameworkProviders, currentPhpLaravelSourceContext],
+  );
+
   // Loads the active project's migration sources on a background turn so the
   // first completion is served immediately (without migrations) and subsequent
   // ones pick up the DB columns once the cache is warm. Per-workspace isolation:
@@ -12568,13 +12707,18 @@ export function useWorkbenchController(
           signature: phpLaravelMigrationSourcesSignature(sources),
           sources,
         };
+        reclassifyPhpLanguageServerDiagnosticsForRoot(requestedRoot);
       } catch {
         // Graceful: migrations unavailable -> keep the $fillable/$casts fallback.
       } finally {
         phpLaravelMigrationSourcesLoadInFlightRef.current.delete(requestedRoot);
       }
     },
-    [isLaravelFrameworkActive, workspaceFiles],
+    [
+      isLaravelFrameworkActive,
+      reclassifyPhpLanguageServerDiagnosticsForRoot,
+      workspaceFiles,
+    ],
   );
 
   // Drops the cached migration sources for `root` when a file under
@@ -12628,13 +12772,18 @@ export function useWorkbenchController(
           signature: phpLaravelProviderSourcesSignature(sources),
           sources,
         };
+        reclassifyPhpLanguageServerDiagnosticsForRoot(requestedRoot);
       } catch {
         // Graceful: providers unavailable -> no provider-defined macros surface.
       } finally {
         phpLaravelProviderSourcesLoadInFlightRef.current.delete(requestedRoot);
       }
     },
-    [isLaravelFrameworkActive, workspaceFiles],
+    [
+      isLaravelFrameworkActive,
+      reclassifyPhpLanguageServerDiagnosticsForRoot,
+      workspaceFiles,
+    ],
   );
 
   // Drops the cached provider sources for `root` when a file under app/Providers
@@ -16720,6 +16869,15 @@ export function useWorkbenchController(
         }
       }
 
+      if (isLaravelFrameworkActive && currentWorkspaceRootRef.current) {
+        void ensurePhpLaravelMigrationSourcesLoaded(
+          currentWorkspaceRootRef.current,
+        );
+        void ensurePhpLaravelProviderSourcesLoaded(
+          currentWorkspaceRootRef.current,
+        );
+      }
+
       const { workspaceSources } = currentPhpLaravelSourceContext();
 
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
@@ -16740,6 +16898,8 @@ export function useWorkbenchController(
       phpClassHasLaravelDynamicWhere,
       activePhpFrameworkProviders,
       currentPhpLaravelSourceContext,
+      ensurePhpLaravelMigrationSourcesLoaded,
+      ensurePhpLaravelProviderSourcesLoaded,
       isLaravelFrameworkActive,
       phpClassHierarchyHasMethod,
       phpClassHierarchyHasStaticMethod,
