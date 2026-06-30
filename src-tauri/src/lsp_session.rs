@@ -335,6 +335,14 @@ pub struct SpawnedServer {
 
 pub trait ProcessKiller: Send {
     fn terminate(&mut self) -> io::Result<()>;
+
+    /// Operating-system process id of the spawned language server, when known.
+    /// Used by the runtime observability panel to sample per-process RAM/CPU and
+    /// to surface the live PID. Test/fake killers without a real OS process
+    /// return `None`.
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub struct ChildServerProcessSpawner;
@@ -400,6 +408,10 @@ struct ChildKiller {
 }
 
 impl ProcessKiller for ChildKiller {
+    fn pid(&self) -> Option<u32> {
+        Some(self.child.id())
+    }
+
     fn terminate(&mut self) -> io::Result<()> {
         if self.child.try_wait()?.is_some() {
             #[cfg(unix)]
@@ -543,6 +555,7 @@ enum HandshakeOutcome {
 }
 
 struct RunningSession {
+    pid: Option<u32>,
     stderr_reader: Option<JoinHandle<()>>,
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ProcessKiller>,
@@ -569,6 +582,7 @@ pub struct LanguageServerRegistry {
 
 struct PhpLaunchContext {
     command: LanguageServerCommand,
+    initialize_request: JsonRpcRequest,
     root_path: String,
 }
 
@@ -576,6 +590,7 @@ impl Clone for PhpLaunchContext {
     fn clone(&self) -> Self {
         Self {
             command: clone_command(&self.command),
+            initialize_request: clone_initialize_request(&self.initialize_request),
             root_path: self.root_path.clone(),
         }
     }
@@ -612,7 +627,7 @@ impl PhpLanguageServerRegistry {
             status_sink,
             diagnostics_sink,
         )?;
-        self.store_launch_context_if_active(root_path, command, &status);
+        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
         Ok(status)
     }
 
@@ -640,7 +655,7 @@ impl PhpLanguageServerRegistry {
             refresh_sink,
             restart_controller,
         )?;
-        self.store_launch_context_if_active(root_path, command, &status);
+        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
         Ok(status)
     }
 
@@ -666,6 +681,7 @@ impl PhpLanguageServerRegistry {
         &self,
         root_path: &str,
         command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
         status: &LanguageServerRuntimeStatus,
     ) {
         if !is_active_status(status) {
@@ -678,6 +694,7 @@ impl PhpLanguageServerRegistry {
                 runtime_id,
                 PhpLaunchContext {
                     command: clone_command(command),
+                    initialize_request: clone_initialize_request(initialize_request),
                     root_path: root_path.to_string(),
                 },
             );
@@ -694,6 +711,63 @@ impl PhpLanguageServerRegistry {
         }
 
         None
+    }
+
+    fn launch_context(&self, root_path: &str) -> Option<PhpLaunchContext> {
+        let contexts = self.launch_contexts.lock().ok()?;
+
+        for runtime_id in workspace_runtime_id_candidates(root_path) {
+            if let Some(context) = contexts.get(&runtime_id) {
+                return Some(context.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Stop the workspace's PHPactor and start it again from the same launch
+    /// command that was last used for this root. Isolation: the launch context
+    /// is keyed by the requested root, so a restart only ever re-spawns this
+    /// workspace's server - never a sibling tab's. Returns an error when no
+    /// server has been started for the root yet (nothing to restart).
+    ///
+    /// Race with workspace close: stop and start are two separately-locked
+    /// registry operations, identical to a manual `stop` + `start` pair. If a
+    /// tab close (`dispose_workspace_root` -> `stop`) interleaves, the worst case
+    /// is a freshly re-spawned server for a root that is closing; that close (or
+    /// the next one) runs `stop` again over the same per-root key and reaps it,
+    /// so no server outlives its workspace. We accept this bounded window rather
+    /// than holding a registry-wide lock across a multi-second handshake.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restart_with_auto_restart(
+        &self,
+        root_path: &str,
+        spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_controller: Arc<RestartController>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        let Some(context) = self.launch_context(root_path) else {
+            return Err(
+                "PHP language server has not been started for this workspace yet.".to_string(),
+            );
+        };
+
+        self.stop(root_path);
+
+        self.start_with_auto_restart(
+            root_path,
+            &context.command,
+            &context.initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            restart_controller,
+        )
     }
 
     fn drain_launch_contexts(&self) -> Vec<(String, PhpLaunchContext)> {
@@ -865,6 +939,62 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         None
     }
 
+    fn launch_context(&self, root_path: &str) -> Option<JavaScriptTypeScriptLaunchContext> {
+        let contexts = self.launch_contexts.lock().ok()?;
+
+        for runtime_id in workspace_runtime_id_candidates(root_path) {
+            if let Some(context) = contexts.get(&runtime_id) {
+                return Some(context.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Stop the workspace's TypeScript language server and start it again from
+    /// the same command/initialize request last used for this root. Isolation:
+    /// the launch context is keyed by the requested root, so a restart only ever
+    /// re-spawns this workspace's server - never a sibling tab's. Returns an
+    /// error when no server has been started for the root yet.
+    ///
+    /// Race with workspace close: like the PHP variant, stop and start are
+    /// separately-locked operations. A tab close interleaving the restart can at
+    /// worst re-spawn a server for a closing root; that close (or the next) runs
+    /// `stop` again over the same per-root key and reaps it, so no server
+    /// outlives its workspace.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restart_with_auto_restart(
+        &self,
+        root_path: &str,
+        spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_controller: Arc<RestartController>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        let Some(context) = self.launch_context(root_path) else {
+            return Err(
+                "TypeScript language server has not been started for this workspace yet."
+                    .to_string(),
+            );
+        };
+
+        self.stop(root_path);
+
+        self.start_with_auto_restart(
+            root_path,
+            &context.command,
+            &context.initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            restart_controller,
+        )
+    }
+
     fn drain_launch_contexts(&self) -> Vec<(String, JavaScriptTypeScriptLaunchContext)> {
         self.launch_contexts
             .lock()
@@ -924,6 +1054,11 @@ impl LanguageServerRegistry {
         self.existing_supervisor(root_path)
             .map(|supervisor| supervisor.log())
             .unwrap_or_default()
+    }
+
+    pub fn pid(&self, root_path: &str) -> Option<u32> {
+        self.existing_supervisor(root_path)
+            .and_then(|supervisor| supervisor.pid())
     }
 
     #[cfg(test)]
@@ -1216,6 +1351,13 @@ impl LanguageServerSupervisor {
             .unwrap_or(LanguageServerRuntimeStatus::Stopped)
     }
 
+    /// OS process id of the currently installed session, when one is running.
+    /// `None` once the server has stopped/crashed (its session was torn down) or
+    /// when the underlying spawner exposes no real process (tests).
+    pub fn pid(&self) -> Option<u32> {
+        self.session.lock().ok()?.as_ref().and_then(|session| session.pid)
+    }
+
     pub fn log(&self) -> String {
         self.log.lock().map(|log| log.clone()).unwrap_or_default()
     }
@@ -1369,7 +1511,9 @@ impl LanguageServerSupervisor {
         let server_configuration = Arc::new(Mutex::new(
             server_configuration_from_initialize_request(initialize_request),
         ));
+        let pid = spawned.killer.pid();
         let mut session = Some(RunningSession {
+            pid,
             stderr_reader,
             stdin: Arc::clone(&stdin),
             killer: spawned.killer,
@@ -7150,6 +7294,10 @@ mod tests {
 
     #[cfg(unix)]
     impl ProcessKiller for RealProcessKiller {
+        fn pid(&self) -> Option<u32> {
+            self.inner.pid()
+        }
+
         fn terminate(&mut self) -> io::Result<()> {
             let result = self.inner.terminate();
             // In production the dying process closes its own stdout, which gives
@@ -7361,6 +7509,207 @@ mod tests {
             started.elapsed() < Duration::from_secs(1),
             "stopping an already-stopped workspace must be fast"
         );
+    }
+
+    /// A running supervisor must surface the OS PID of its spawned process so the
+    /// runtime observability panel can show it and sample RAM/CPU. Once stopped,
+    /// the PID is gone (no stale session).
+    #[cfg(unix)]
+    #[test]
+    fn supervisor_exposes_running_process_pid_and_clears_it_on_stop() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = Arc::new(RealProcessSpawner::new());
+        let (sink, _rx) = ChannelSink::new();
+        let command = command();
+
+        registry
+            .start_with_auto_restart(
+                "/tmp/observability-pid",
+                &command,
+                &initialize_request(),
+                spawner.clone(),
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start phpactor");
+
+        let spawned_pid = spawner.pid();
+        assert_eq!(
+            registry.pid("/tmp/observability-pid"),
+            Some(spawned_pid as u32),
+            "registry must report the spawned PID for a running runtime"
+        );
+
+        assert_eq!(
+            registry.stop("/tmp/observability-pid"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert_eq!(
+            registry.pid("/tmp/observability-pid"),
+            None,
+            "stopped runtime must report no PID"
+        );
+        let _ = wait_until_process_dead(spawned_pid, Duration::from_secs(5));
+    }
+
+    /// Restarting a runtime must reap the old process, spawn a fresh one for the
+    /// SAME workspace (reusing its stored launch command), and leave a sibling
+    /// workspace untouched (per-root isolation).
+    #[cfg(unix)]
+    #[test]
+    fn restart_respawns_same_workspace_and_leaves_siblings_running() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner_a = Arc::new(RealProcessSpawner::new());
+        let spawner_b = Arc::new(RealProcessSpawner::new());
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+        let command = command();
+
+        registry
+            .start_with_auto_restart(
+                "/tmp/restart-a",
+                &command,
+                &initialize_request(),
+                spawner_a.clone(),
+                sink_a,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start workspace a");
+        registry
+            .start_with_auto_restart(
+                "/tmp/restart-b",
+                &command,
+                &initialize_request(),
+                spawner_b.clone(),
+                sink_b,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start workspace b");
+
+        let pid_a_before = spawner_a.pid();
+        let pid_b = spawner_b.pid();
+        assert!(process_is_alive(pid_a_before));
+        assert!(process_is_alive(pid_b));
+
+        let restart_spawner = Arc::new(RealProcessSpawner::new());
+        let (restart_sink, _restart_rx) = ChannelSink::new();
+        let status = registry
+            .restart_with_auto_restart(
+                "/tmp/restart-a",
+                restart_spawner.clone(),
+                restart_sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("restart workspace a");
+
+        assert!(matches!(status, LanguageServerRuntimeStatus::Running { .. }));
+        let pid_a_after = restart_spawner.pid();
+        assert_ne!(
+            pid_a_before, pid_a_after,
+            "restart must spawn a fresh process"
+        );
+        assert!(
+            wait_until_process_dead(pid_a_before, Duration::from_secs(5)),
+            "old process must be reaped on restart"
+        );
+        assert!(process_is_alive(pid_a_after), "new process must be running");
+        assert_eq!(
+            registry.pid("/tmp/restart-a"),
+            Some(pid_a_after as u32),
+            "registry must report the restarted PID"
+        );
+        assert!(
+            process_is_alive(pid_b),
+            "sibling workspace must stay running (per-root isolation)"
+        );
+
+        registry.stop_all();
+        let _ = wait_until_process_dead(pid_a_after, Duration::from_secs(5));
+        let _ = wait_until_process_dead(pid_b, Duration::from_secs(5));
+    }
+
+    /// Restarting a workspace that never started returns an error rather than
+    /// spawning anything.
+    #[test]
+    fn restart_without_prior_start_reports_error() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let (sink, _rx) = ChannelSink::new();
+
+        let result = registry.restart_with_auto_restart(
+            "/tmp/never-started",
+            spawner,
+            sink,
+            noop_diagnostics_sink(),
+            Arc::new(NoopWorkspaceEditSink),
+            Arc::new(NoopRefreshSink),
+            test_restart_controller(),
+        );
+
+        assert!(result.is_err(), "restart with no prior start must error");
+    }
+
+    /// Models the restart-vs-close race resolving "close first": once a tab close
+    /// has stopped the workspace (clearing its launch context), a restart must NOT
+    /// resurrect the server - it errors instead, so a closed workspace can never
+    /// be brought back to life.
+    #[cfg(unix)]
+    #[test]
+    fn restart_after_workspace_close_does_not_resurrect_server() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = Arc::new(RealProcessSpawner::new());
+        let (sink, _rx) = ChannelSink::new();
+        let command = command();
+
+        registry
+            .start_with_auto_restart(
+                "/tmp/restart-after-close",
+                &command,
+                &initialize_request(),
+                spawner.clone(),
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start workspace");
+
+        let pid = spawner.pid();
+
+        // The tab close wins the race: stop removes the supervisor + launch context.
+        registry.stop("/tmp/restart-after-close");
+        assert!(wait_until_process_dead(pid, Duration::from_secs(5)));
+
+        let restart_spawner = Arc::new(RealProcessSpawner::new());
+        let (restart_sink, _restart_rx) = ChannelSink::new();
+        let result = registry.restart_with_auto_restart(
+            "/tmp/restart-after-close",
+            restart_spawner,
+            restart_sink,
+            noop_diagnostics_sink(),
+            Arc::new(NoopWorkspaceEditSink),
+            Arc::new(NoopRefreshSink),
+            test_restart_controller(),
+        );
+
+        assert!(
+            result.is_err(),
+            "restart after close must not resurrect a closed workspace"
+        );
+        assert_eq!(registry.pid("/tmp/restart-after-close"), None);
     }
 
     /// Closing a JS/TS workspace tab must reap the real tsserver process too, so

@@ -512,6 +512,12 @@ export const keymapCommands = [
     id: "terminal.show",
     label: "Show Terminal",
   },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+Shift+R",
+    id: "runtime.show",
+    label: "Show Runtime Panel",
+  },
 ] as const;
 
 export type KeymapCommandId = (typeof keymapCommands)[number]["id"];

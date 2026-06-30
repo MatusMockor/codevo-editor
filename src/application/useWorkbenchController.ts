@@ -27834,6 +27834,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "runtime.show",
+      title: "Show Runtime Panel",
+      category: "Workbench",
+      shortcut: shortcut("runtime.show"),
+      isEnabled: () => true,
+      run: () => showBottomPanelView("runtime"),
+    });
+
+    registry.register({
       id: "smart.toggle",
       title: "Toggle IDE Mode",
       category: "Intelligence",
@@ -28981,6 +28990,12 @@ export function useWorkbenchController(
       if (matches("terminal.show")) {
         event.preventDefault();
         showBottomPanelView("terminal");
+        return;
+      }
+
+      if (matches("runtime.show")) {
+        event.preventDefault();
+        showBottomPanelView("runtime");
       }
     }
 

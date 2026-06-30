@@ -115,6 +115,7 @@ import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSynta
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
+import { TauriRuntimeObservabilityGateway } from "./infrastructure/tauriRuntimeObservabilityGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
@@ -190,6 +191,7 @@ const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
     JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
   );
 const terminalGateway = new TauriTerminalGateway();
+const runtimeObservabilityGateway = new TauriRuntimeObservabilityGateway();
 const workspaceRuntimeLifecycleGateway =
   new TauriWorkspaceRuntimeLifecycleGateway();
 const settingsGateway = new BrowserSettingsGateway();
@@ -1300,6 +1302,7 @@ function App() {
             onSelectView={workbench.showBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
             gitHistoryGateway={gitHistoryGateway}
+            runtimeObservabilityGateway={runtimeObservabilityGateway}
             onOpenCommitFileDiff={openGitHistoryCommitDiff}
             onTerminalSessionReady={workbench.registerActiveTerminalSession}
             onTrustWorkspace={workbench.toggleWorkspaceTrust}

@@ -23,6 +23,7 @@ pub mod php_parser;
 pub mod php_symbols;
 pub mod php_tree;
 mod project;
+mod runtime_observability;
 mod search;
 mod smart_mode;
 mod terminal;
@@ -2276,6 +2277,186 @@ fn get_javascript_typescript_language_server_status(
         &root_path,
         registry.status(&root_path),
     ))
+}
+
+struct RegistryRuntimeStateSource {
+    kind: runtime_observability::LanguageRuntimeKind,
+    label: &'static str,
+    status: LanguageServerRuntimeStatus,
+    pid: Option<u32>,
+}
+
+impl runtime_observability::RuntimeStateSource for RegistryRuntimeStateSource {
+    fn kind(&self) -> runtime_observability::LanguageRuntimeKind {
+        self.kind
+    }
+
+    fn label(&self) -> String {
+        self.label.to_string()
+    }
+
+    fn status(&self) -> LanguageServerRuntimeStatus {
+        self.status.clone()
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+}
+
+/// Per-workspace runtime observability for the managed language servers. The
+/// requested root is read once and every runtime is sampled against that same
+/// root, so the report never mixes state from another open project tab.
+#[tauri::command]
+fn get_runtime_observability(
+    root_path: String,
+    php_registry: State<'_, PhpLanguageServerRegistry>,
+    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Value, String> {
+    let php_source = RegistryRuntimeStateSource {
+        kind: runtime_observability::LanguageRuntimeKind::Phpactor,
+        label: "PHPactor",
+        status: php_registry.status(&root_path),
+        pid: php_registry.pid(&root_path),
+    };
+    let typescript_source = RegistryRuntimeStateSource {
+        kind: runtime_observability::LanguageRuntimeKind::Tsserver,
+        label: "TypeScript language server",
+        status: javascript_typescript_registry.status(&root_path),
+        pid: javascript_typescript_registry.pid(&root_path),
+    };
+
+    let report = runtime_observability::build_runtime_observability_report(
+        &root_path,
+        &[
+            &php_source as &dyn runtime_observability::RuntimeStateSource,
+            &typescript_source,
+        ],
+        &runtime_observability::PsProcessStatsProbe,
+    );
+
+    serde_json::to_value(report)
+        .map_err(|error| format!("Failed to serialize runtime observability: {error}"))
+}
+
+/// Stop a single managed runtime for the active workspace root. Isolation: only
+/// the registry keyed to `root_path` and `kind` is touched.
+#[tauri::command]
+fn stop_language_runtime(
+    root_path: String,
+    kind: String,
+    php_registry: State<'_, PhpLanguageServerRegistry>,
+    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+) -> Result<Value, String> {
+    let runtime_kind = runtime_observability::LanguageRuntimeKind::from_str(&kind)
+        .ok_or_else(|| format!("Unknown language runtime kind: {kind}"))?;
+
+    let status = match runtime_kind {
+        runtime_observability::LanguageRuntimeKind::Phpactor => php_registry.stop(&root_path),
+        runtime_observability::LanguageRuntimeKind::Tsserver => {
+            watch_registry.stop(&root_path);
+            javascript_typescript_registry.stop(&root_path)
+        }
+    };
+
+    Ok(language_server_status_payload(&root_path, status))
+}
+
+/// Restart a single managed runtime for the active workspace root, reusing the
+/// launch command last used for that root. The blocking re-spawn (handshake can
+/// take seconds) runs off the Tauri main thread via `spawn_blocking`; the owned
+/// `AppHandle` re-resolves the managed registry inside the worker so nothing
+/// borrows command state across the await. Isolation: only the registry keyed to
+/// `root_path` and `kind` is touched.
+#[tauri::command]
+async fn restart_language_runtime(
+    root_path: String,
+    kind: String,
+    app: AppHandle,
+) -> Result<Value, String> {
+    let runtime_kind = runtime_observability::LanguageRuntimeKind::from_str(&kind)
+        .ok_or_else(|| format!("Unknown language runtime kind: {kind}"))?;
+
+    match runtime_kind {
+        runtime_observability::LanguageRuntimeKind::Phpactor => {
+            restart_php_runtime_off_thread(app, root_path).await
+        }
+        runtime_observability::LanguageRuntimeKind::Tsserver => {
+            restart_typescript_runtime_off_thread(app, root_path).await
+        }
+    }
+}
+
+async fn restart_php_runtime_off_thread(
+    app: AppHandle,
+    root_path: String,
+) -> Result<Value, String> {
+    let status = tauri::async_runtime::spawn_blocking(move || {
+        let event_sink = Arc::new(AppHandleEventSink::for_workspace(
+            app.clone(),
+            root_path.clone(),
+        ));
+        let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+        let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+        let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+        let refresh_sink: Arc<dyn RefreshSink> = event_sink;
+        let registry = app.state::<PhpLanguageServerRegistry>();
+
+        registry
+            .restart_with_auto_restart(
+                &root_path,
+                Arc::new(ChildServerProcessSpawner),
+                status_sink,
+                diagnostics_sink,
+                workspace_edit_sink,
+                refresh_sink,
+                Arc::new(RestartController::default()),
+            )
+            .map(|status| language_server_status_payload(&root_path, status))
+    })
+    .await
+    .map_err(|error| format!("Restart task failed: {error}"))??;
+
+    Ok(status)
+}
+
+async fn restart_typescript_runtime_off_thread(
+    app: AppHandle,
+    root_path: String,
+) -> Result<Value, String> {
+    let status = tauri::async_runtime::spawn_blocking(move || {
+        let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
+            app.clone(),
+            root_path.clone(),
+        ));
+        let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+        let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+        let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+        let refresh_sink: Arc<dyn RefreshSink> = event_sink;
+        let registry = app.state::<JavaScriptTypeScriptLanguageServerRegistry>();
+
+        let status = registry.restart_with_auto_restart(
+            &root_path,
+            Arc::new(ChildServerProcessSpawner),
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            Arc::new(RestartController::default()),
+        )?;
+
+        if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {
+            let watch_registry = app.state::<JavaScriptTypeScriptWorkspaceWatchRegistry>();
+            let _ = watch_registry.start(&root_path, app.clone());
+        }
+
+        Ok::<Value, String>(language_server_status_payload(&root_path, status))
+    })
+    .await
+    .map_err(|error| format!("Restart task failed: {error}"))??;
+
+    Ok(status)
 }
 
 #[tauri::command]
@@ -7332,6 +7513,9 @@ pub fn run() {
             get_local_history_version_content,
             get_javascript_typescript_language_server_status,
             get_php_language_server_status,
+            get_runtime_observability,
+            restart_language_runtime,
+            stop_language_runtime,
             get_php_tree,
             get_smart_mode_state,
             get_workspace_trust,

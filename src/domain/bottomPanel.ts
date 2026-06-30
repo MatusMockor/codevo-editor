@@ -1,4 +1,9 @@
-export type BottomPanelView = "index" | "problems" | "history" | "terminal";
+export type BottomPanelView =
+  | "index"
+  | "problems"
+  | "history"
+  | "terminal"
+  | "runtime";
 
 export function bottomPanelLabel(view: BottomPanelView): string {
   if (view === "index") {
@@ -11,6 +16,10 @@ export function bottomPanelLabel(view: BottomPanelView): string {
 
   if (view === "terminal") {
     return "Terminal";
+  }
+
+  if (view === "runtime") {
+    return "Runtime";
   }
 
   return "Problems";

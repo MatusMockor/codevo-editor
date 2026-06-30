@@ -55,7 +55,8 @@ export type WorkspaceSessionBottomPanelView =
   | "index"
   | "problems"
   | "history"
-  | "terminal";
+  | "terminal"
+  | "runtime";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 export type SettingsSection =
   | "general"
@@ -1000,7 +1001,8 @@ function isWorkspaceSessionBottomPanelView(
     value === "index" ||
     value === "problems" ||
     value === "history" ||
-    value === "terminal"
+    value === "terminal" ||
+    value === "runtime"
   );
 }
 

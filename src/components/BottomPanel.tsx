@@ -15,7 +15,9 @@ import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { GitHistoryPanel } from "./GitHistoryPanel";
+import { RuntimeObservabilityPanel } from "./RuntimeObservabilityPanel";
 import type { GitHistoryGateway } from "../domain/git";
+import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 
 interface BottomPanelProps {
   activeView: BottomPanelView;
@@ -33,6 +35,7 @@ interface BottomPanelProps {
   onTerminalSessionReady?(sessionId: number | null): void;
   onTrustWorkspace(): void;
   gitHistoryGateway: GitHistoryGateway;
+  runtimeObservabilityGateway: RuntimeObservabilityGateway;
   onOpenCommitFileDiff(
     commitHash: string,
     path: string,
@@ -47,6 +50,7 @@ interface BottomPanelProps {
 const bottomPanelViews: BottomPanelView[] = [
   "problems",
   "index",
+  "runtime",
   "history",
   "terminal",
 ];
@@ -71,6 +75,7 @@ export function BottomPanel({
   onSoftReindex,
   onOpenCommitFileDiff,
   gitHistoryGateway,
+  runtimeObservabilityGateway,
   onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
@@ -143,6 +148,7 @@ export function BottomPanel({
     onPhpReindex,
     onOpenCommitFileDiff,
     gitHistoryGateway,
+    runtimeObservabilityGateway,
     onSoftReindex,
     workspaceRoot,
   });
@@ -266,6 +272,7 @@ interface RenderActivePanelOptions {
     oldPath: string | null,
   ): Promise<void> | void;
   gitHistoryGateway: GitHistoryGateway;
+  runtimeObservabilityGateway: RuntimeObservabilityGateway;
   workspaceRoot: string | null;
 }
 
@@ -280,6 +287,7 @@ function renderActivePanel({
   onOpenCommitFileDiff,
   onSoftReindex,
   gitHistoryGateway,
+  runtimeObservabilityGateway,
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "problems") {
@@ -311,6 +319,16 @@ function renderActivePanel({
         onPhpReindex={onPhpReindex}
         onSoftReindex={onSoftReindex}
         progress={indexProgress}
+        rootPath={workspaceRoot}
+      />
+    );
+  }
+
+  if (activeView === "runtime") {
+    return (
+      <RuntimeObservabilityPanel
+        gateway={runtimeObservabilityGateway}
+        isActive
         rootPath={workspaceRoot}
       />
     );

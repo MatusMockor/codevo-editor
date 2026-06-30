@@ -1191,22 +1191,26 @@ button {
   text-transform: uppercase;
 }
 
-.git-changes-summary {
-  display: grid;
-  min-height: 30px;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+.git-commit-title-row {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px 0 12px;
-  color: var(--color-text-muted);
-  font-size: 12px;
 }
 
-.git-changes-summary span,
-.git-changes-summary small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* JetBrains "Local Changes" total-count pill shown beside the Commit title. */
+.git-changes-summary {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 17px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-control));
+  color: var(--color-text-strong);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .git-change-row-wrapper {
@@ -1237,6 +1241,30 @@ button {
   padding: 0 6px 0 0;
   overflow: hidden;
   width: 100%;
+}
+
+/* Per-status file glyph (JetBrains "Local Changes" feel). The status tints the
+   icon so the kind of change reads before the trailing letter does. Colors
+   resolve from the active theme, so every theme stays in sync. */
+.git-change-status-icon {
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+}
+
+.git-change-status-icon-added,
+.git-change-status-icon-renamed {
+  color: var(--color-success);
+}
+
+.git-change-status-icon-modified {
+  color: var(--color-warning);
+}
+
+.git-change-status-icon-deleted,
+.git-change-status-icon-untracked,
+.git-change-status-icon-conflicted {
+  color: var(--color-error);
 }
 
 .git-commit-panel {
@@ -2297,6 +2325,13 @@ button {
   cursor: pointer;
 }
 
+.editor-change-popover-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .editor-change-popover-icon-button {
   display: grid;
   flex: 0 0 auto;
@@ -2305,7 +2340,6 @@ button {
   place-items: center;
   border-radius: var(--radius-sm);
   line-height: 0;
-  margin-left: auto;
 }
 
 .editor-change-popover-section-label {
@@ -2353,6 +2387,28 @@ button {
   padding: 10px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Tints the two inline-diff panes so removed (previous) and added (current)
+   content read at a glance, like JetBrains' split rollback diff. */
+.editor-change-popover-code-removed {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--change-deleted) 16%, transparent),
+      transparent 40px
+    ),
+    color-mix(in srgb, var(--change-deleted-soft) 24%, var(--color-panel-deep));
+}
+
+.editor-change-popover-code-added {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--change-added) 16%, transparent),
+      transparent 40px
+    ),
+    color-mix(in srgb, var(--change-added-soft) 24%, var(--color-panel-deep));
 }
 
 .editor-change-popover-actions {
@@ -5889,6 +5945,149 @@ kbd {
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+.runtime-observability-panel {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.runtime-observability-list {
+  display: grid;
+  gap: 8px;
+}
+
+.runtime-observability-empty {
+  margin: 4px 2px;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.runtime-observability-row {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  padding: 8px 10px;
+}
+
+.runtime-observability-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.runtime-observability-indicator {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+}
+
+.runtime-observability-indicator.ok {
+  background: var(--color-success, #3fb950);
+}
+
+.runtime-observability-indicator.warn {
+  background: var(--color-warning, #d29922);
+}
+
+.runtime-observability-indicator.error {
+  background: var(--color-danger, #f85149);
+}
+
+.runtime-observability-indicator.idle {
+  background: var(--color-text-subtle);
+}
+
+.runtime-observability-name {
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.runtime-observability-state {
+  margin-left: auto;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.runtime-observability-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.runtime-observability-metric {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 5px;
+  background: var(--color-control);
+  padding: 4px 7px;
+}
+
+.runtime-observability-metric dt {
+  color: var(--color-text-subtle);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.runtime-observability-metric dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-observability-crash {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-danger, #f85149);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-observability-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.runtime-observability-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.runtime-observability-actions button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.runtime-observability-actions button:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
 }
 
 @media (prefers-reduced-motion: reduce) {
