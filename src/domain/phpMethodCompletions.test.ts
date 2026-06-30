@@ -2077,6 +2077,226 @@ class AppServiceProvider extends ServiceProvider
     ).toEqual([]);
   });
 
+  it("routes Laravel macros to query builder, collection, and model receivers via the registry", () => {
+    const source = `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Query\\Builder as QueryBuilder;
+use Illuminate\\Support\\Collection;
+use Illuminate\\Database\\Eloquent\\Collection as EloquentCollection;
+use Illuminate\\Database\\Eloquent\\Model;
+
+Builder::macro('published', function (): Builder {
+    return $this->whereNotNull('published_at');
+});
+
+QueryBuilder::macro('whereLike', function (string $column, string $value): QueryBuilder {
+    return $this->where($column, 'like', "%{$value}%");
+});
+
+Collection::macro('toUpper', function (): Collection {
+    return $this->map(fn ($value) => strtoupper($value));
+});
+
+EloquentCollection::macro('primaryKeys', function (): array {
+    return $this->modelKeys();
+});
+
+Model::macro('isRecent', function (): bool {
+    return $this->created_at?->isToday() ?? false;
+});
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Query\\Builder",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "whereLike",
+        parameters: "string $column, string $value",
+        returnType: "QueryBuilder",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Support\\Collection",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Support\\Collection",
+        name: "toUpper",
+        parameters: "",
+        returnType: "Collection",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Collection",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Collection",
+        name: "primaryKeys",
+        parameters: "",
+        returnType: "array",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "App\\Models\\Post",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "isRecent",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+  });
+
+  it("keeps generic-carried collection receivers routed to collection macros", () => {
+    const source = `<?php
+use Illuminate\\Support\\Collection;
+
+Collection::macro('toUpper', function (): Collection {
+    return $this->map(fn ($value) => strtoupper($value));
+});
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Support\\Collection<App\\Models\\Post>",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Support\\Collection<App\\Models\\Post>",
+        name: "toUpper",
+        parameters: "",
+        returnType: "Collection",
+      },
+    ]);
+  });
+
+  it("ignores ::macro registrations on Macroable classes outside the registry", () => {
+    const source = `<?php
+use Illuminate\\Support\\Collection;
+use Illuminate\\Support\\Facades\\Response;
+
+Response::macro('caps', function (): void {
+});
+
+Collection::macro('toUpper', function (): Collection {
+    return $this->map(fn ($value) => strtoupper($value));
+});
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Support\\Collection",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Support\\Collection",
+        name: "toUpper",
+        parameters: "",
+        returnType: "Collection",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Eloquent\\Builder",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([]);
+  });
+
+  it("discovers workspace macros for non-builder receivers from provider sources", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+class ReportController
+{
+}
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use Illuminate\\Database\\Query\\Builder as QueryBuilder;
+use Illuminate\\Support\\Collection;
+use Illuminate\\Support\\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        QueryBuilder::macro('whereLike', function (string $column, string $value): QueryBuilder {
+            return $this->where($column, 'like', "%{$value}%");
+        });
+
+        Collection::macro('toUpper', function (): Collection {
+            return $this->map(fn ($value) => strtoupper($value));
+        });
+    }
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(source, "Illuminate\\Database\\Query\\Builder", {
+        ...laravelCompletionOptions,
+        frameworkSourceContext: { workspaceSources: [providerSource] },
+      }),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "whereLike",
+        parameters: "string $column, string $value",
+        returnType: "QueryBuilder",
+      },
+    ]);
+    expect(
+      phpMethodCompletionsFromSource(source, "Illuminate\\Support\\Collection", {
+        ...laravelCompletionOptions,
+        frameworkSourceContext: { workspaceSources: [providerSource] },
+      }),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Support\\Collection",
+        name: "toUpper",
+        parameters: "",
+        returnType: "Collection",
+      },
+    ]);
+  });
+
   it("maps Laravel column-like model attributes to dynamic where completions", () => {
     const source = `<?php
 use App\\Enums\\CommentType;

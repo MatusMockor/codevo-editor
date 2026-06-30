@@ -7,7 +7,7 @@ import {
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
-  phpLaravelEloquentBuilderMacroCompletionsFromSource,
+  phpLaravelMacroCompletionsFromSource,
   phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelModelPropertyClassTypeFromSource,
@@ -103,7 +103,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       source,
       sourceContext,
     }) => [
-      ...phpLaravelEloquentBuilderMacroCompletionsFromSource(
+      ...phpLaravelMacroCompletionsFromSource(
         source,
         declaringClassName,
         sourceContext?.workspaceSources,

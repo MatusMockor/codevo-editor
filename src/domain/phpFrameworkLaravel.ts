@@ -1221,24 +1221,28 @@ export function isLaravelEloquentBuilderMacroFromSource(
   );
 }
 
-export function phpLaravelEloquentBuilderMacroCompletionsFromSource(
+export function phpLaravelMacroCompletionsFromSource(
   source: string,
   declaringClassName: string,
   workspaceSources: readonly string[] = [],
 ): PhpMethodCompletion[] {
-  if (!isLaravelEloquentBuilderClassName(source, declaringClassName)) {
+  const registrarClassNames = laravelMacroReceiverRegistrarClassNames(
+    source,
+    declaringClassName,
+  );
+
+  if (!registrarClassNames) {
     return [];
   }
 
-  return phpLaravelEloquentBuilderMacrosFromSources(
-    source,
-    workspaceSources,
-  ).map((macro) => ({
-    declaringClassName,
-    name: macro.name,
-    parameters: macro.parameters,
-    returnType: macro.returnType,
-  }));
+  return phpLaravelMacrosFromSources(source, workspaceSources)
+    .filter((macro) => registrarClassNames.has(macro.registrarClassName))
+    .map((macro) => ({
+      declaringClassName,
+      name: macro.name,
+      parameters: macro.parameters,
+      returnType: macro.returnType,
+    }));
 }
 
 export function isLaravelEloquentStaticBuilderReceiver(
@@ -4154,16 +4158,99 @@ function phpLaravelEloquentBuilderExpressionCallMayBeScopeOrMacro(
   );
 }
 
-interface PhpLaravelEloquentBuilderMacro {
+const ELOQUENT_BUILDER_MACRO_REGISTRAR_CLASS_NAME =
+  "illuminate\\database\\eloquent\\builder";
+
+/**
+ * Registry of Laravel `Macroable` classes. Each entry maps the normalized FQN(s)
+ * of the class(es) whose `::macro()` registers a macro to a receiver matcher that
+ * decides which completion receiver types should be offered those macros. Adding
+ * support for another Macroable class is a single entry, never a new branch.
+ */
+interface PhpLaravelMacroableClass {
+  registrarClassNames: readonly string[];
+  matchesReceiver: (resolvedReceiverClassName: string) => boolean;
+}
+
+function laravelMacroableReceiverMatcher(
+  ...receiverClassNames: readonly string[]
+): (resolvedReceiverClassName: string) => boolean {
+  const receivers = new Set(receiverClassNames);
+
+  return (resolvedReceiverClassName) =>
+    receivers.has(normalizedLaravelClassName(resolvedReceiverClassName));
+}
+
+const laravelMacroableRegistry: readonly PhpLaravelMacroableClass[] = [
+  {
+    registrarClassNames: [ELOQUENT_BUILDER_MACRO_REGISTRAR_CLASS_NAME],
+    matchesReceiver: laravelMacroableReceiverMatcher(
+      ELOQUENT_BUILDER_MACRO_REGISTRAR_CLASS_NAME,
+    ),
+  },
+  {
+    registrarClassNames: ["illuminate\\database\\query\\builder"],
+    matchesReceiver: laravelMacroableReceiverMatcher(
+      "illuminate\\database\\query\\builder",
+    ),
+  },
+  {
+    registrarClassNames: ["illuminate\\support\\collection"],
+    matchesReceiver: laravelMacroableReceiverMatcher(
+      "illuminate\\support\\collection",
+    ),
+  },
+  {
+    registrarClassNames: ["illuminate\\database\\eloquent\\collection"],
+    matchesReceiver: laravelMacroableReceiverMatcher(
+      "illuminate\\database\\eloquent\\collection",
+    ),
+  },
+  {
+    registrarClassNames: ["illuminate\\database\\eloquent\\model"],
+    matchesReceiver: (resolvedReceiverClassName) =>
+      isLaravelModelType(resolvedReceiverClassName),
+  },
+];
+
+interface PhpLaravelMacro {
   name: string;
   parameters: string;
   returnType: string | null;
+  registrarClassName: string;
 }
 
-function phpLaravelEloquentBuilderMacrosFromSource(
+function laravelMacroRegistrarClassName(
   source: string,
-): PhpLaravelEloquentBuilderMacro[] {
-  const macros: PhpLaravelEloquentBuilderMacro[] = [];
+  className: string,
+): string | null {
+  const candidate = phpDeclaredTypeCandidate(className) ?? className;
+  const resolvedClassName = phpLaravelResolvedClassName(source, candidate);
+  const normalized = normalizedLaravelClassName(resolvedClassName ?? candidate);
+
+  return laravelMacroableRegistry.some((entry) =>
+    entry.registrarClassNames.includes(normalized),
+  )
+    ? normalized
+    : null;
+}
+
+function laravelMacroReceiverRegistrarClassNames(
+  source: string,
+  declaringClassName: string,
+): ReadonlySet<string> | null {
+  const candidate = phpDeclaredTypeCandidate(declaringClassName) ?? declaringClassName;
+  const resolvedClassName =
+    phpLaravelResolvedClassName(source, candidate) ?? candidate;
+  const registrarClassNames = laravelMacroableRegistry
+    .filter((entry) => entry.matchesReceiver(resolvedClassName))
+    .flatMap((entry) => [...entry.registrarClassNames]);
+
+  return registrarClassNames.length ? new Set(registrarClassNames) : null;
+}
+
+function phpLaravelMacrosFromSource(source: string): PhpLaravelMacro[] {
+  const macros: PhpLaravelMacro[] = [];
   const seen = new Set<string>();
   const masked = maskPhpStringsAndComments(source);
   const pattern =
@@ -4173,11 +4260,13 @@ function phpLaravelEloquentBuilderMacrosFromSource(
     const className = match[1];
     const openOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
 
-    if (
-      !className ||
-      !isLaravelEloquentBuilderClassName(source, className) ||
-      openOffset < 0
-    ) {
+    if (!className || openOffset < 0) {
+      continue;
+    }
+
+    const registrarClassName = laravelMacroRegistrarClassName(source, className);
+
+    if (!registrarClassName) {
       continue;
     }
 
@@ -4194,7 +4283,7 @@ function phpLaravelEloquentBuilderMacrosFromSource(
       continue;
     }
 
-    const key = name.toLowerCase();
+    const key = `${registrarClassName}::${name.toLowerCase()}`;
 
     if (seen.has(key)) {
       continue;
@@ -4203,6 +4292,7 @@ function phpLaravelEloquentBuilderMacrosFromSource(
     seen.add(key);
     macros.push({
       name,
+      registrarClassName,
       ...phpLaravelMacroClosureSignature(args[1] ?? ""),
     });
   }
@@ -4210,18 +4300,16 @@ function phpLaravelEloquentBuilderMacrosFromSource(
   return macros;
 }
 
-function phpLaravelEloquentBuilderMacrosFromSources(
+function phpLaravelMacrosFromSources(
   source: string,
   workspaceSources: readonly string[] = [],
-): PhpLaravelEloquentBuilderMacro[] {
-  const macros: PhpLaravelEloquentBuilderMacro[] = [];
+): PhpLaravelMacro[] {
+  const macros: PhpLaravelMacro[] = [];
   const seen = new Set<string>();
 
   for (const candidateSource of [source, ...workspaceSources]) {
-    for (const macro of phpLaravelEloquentBuilderMacrosFromSource(
-      candidateSource,
-    )) {
-      const key = macro.name.toLowerCase();
+    for (const macro of phpLaravelMacrosFromSource(candidateSource)) {
+      const key = `${macro.registrarClassName}::${macro.name.toLowerCase()}`;
 
       if (seen.has(key)) {
         continue;
@@ -4239,7 +4327,7 @@ function phpLaravelEloquentBuilderMacroFromSource(
   source: string,
   methodName: string,
   workspaceSources: readonly string[] = [],
-): PhpLaravelEloquentBuilderMacro | null {
+): PhpLaravelMacro | null {
   const lookupName = methodName.trim().toLowerCase();
 
   if (!lookupName) {
@@ -4247,8 +4335,11 @@ function phpLaravelEloquentBuilderMacroFromSource(
   }
 
   return (
-    phpLaravelEloquentBuilderMacrosFromSources(source, workspaceSources).find(
-      (macro) => macro.name.toLowerCase() === lookupName,
+    phpLaravelMacrosFromSources(source, workspaceSources).find(
+      (macro) =>
+        macro.registrarClassName ===
+          ELOQUENT_BUILDER_MACRO_REGISTRAR_CLASS_NAME &&
+        macro.name.toLowerCase() === lookupName,
     ) ?? null
   );
 }
@@ -4261,7 +4352,7 @@ function phpLaravelMacroNameFromArgument(argument: string): string | null {
 
 function phpLaravelMacroClosureSignature(
   expression: string,
-): Pick<PhpLaravelEloquentBuilderMacro, "parameters" | "returnType"> {
+): Pick<PhpLaravelMacro, "parameters" | "returnType"> {
   const functionMatch = /^\s*(?:static\s+)?function\s*\(/.exec(expression);
   const openOffset = functionMatch
     ? expression.indexOf("(", functionMatch.index)
@@ -4289,19 +4380,6 @@ function phpLaravelMacroClosureSignature(
       returnTypeAfterFunctionParameters(expression, closeOffset),
     ),
   };
-}
-
-function isLaravelEloquentBuilderClassName(
-  source: string,
-  className: string,
-): boolean {
-  const candidate = phpDeclaredTypeCandidate(className) ?? className;
-  const resolvedClassName = phpLaravelResolvedClassName(source, candidate);
-
-  return (
-    normalizedLaravelClassName(resolvedClassName ?? candidate) ===
-    "illuminate\\database\\eloquent\\builder"
-  );
 }
 
 function phpLaravelStaticCallChain(
