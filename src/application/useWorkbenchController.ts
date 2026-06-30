@@ -9304,6 +9304,9 @@ export function useWorkbenchController(
         const nextMode = state.mode;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
+          intelligenceModeRef.current = nextMode;
+          setIntelligenceMode(nextMode);
+          autoStartedLanguageServerRootRef.current = requestedRoot;
           await stopLanguageServerRuntime(requestedRoot);
         }
 
@@ -26181,6 +26184,9 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.intelephensePath;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
+          intelligenceModeRef.current = nextMode;
+          setIntelligenceMode(nextMode);
+          autoStartedLanguageServerRootRef.current = requestedRoot;
           await stopLanguageServerRuntime(requestedRoot);
 
           if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {

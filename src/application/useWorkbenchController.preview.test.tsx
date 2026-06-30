@@ -19680,6 +19680,54 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("does not autostart phpactor again while IDE mode is being disabled", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 44,
+    };
+    const stoppedStatus: LanguageServerRuntimeStatus = {
+      kind: "stopped",
+      rootPath: "/workspace",
+    };
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus),
+      stop: vi.fn(async () => stoppedStatus),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(languageServerRuntimeGateway.start).mockClear();
+
+    await act(async () => {
+      await getWorkbench().toggleSmartMode();
+      await flushAsyncTurns(24);
+    });
+
+    expect(languageServerRuntimeGateway.stop).toHaveBeenCalledWith("/workspace");
+    expect(languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(stoppedStatus);
+  });
+
   it("toggles file structure to inherited members on the second Cmd+R", async () => {
     const childPath = "/workspace/app/Child.php";
     const parentPath = "/workspace/app/ParentClass.php";
