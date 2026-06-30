@@ -221,7 +221,7 @@ interface EditorSurfaceProps {
    * the runtime latency panel. Optional: when omitted the completion provider
    * skips the timestamp delta entirely (no hot-path cost).
    */
-  onRecordCompletionLatency?(durationMs: number): void;
+  onRecordCompletionLatency?(durationMs: number, rootPath?: string): void;
   onLocalPhpDiagnosticsChange?(
     path: string,
     diagnostics: LanguageServerDiagnostic[],
@@ -793,8 +793,8 @@ function EditorSurfaceComponent({
         phpMethodSignatureRef.current(source, position),
       providePhpParameterInlayHints: (source, range) =>
         phpParameterInlayHintsRef.current(source, range),
-      recordCompletionLatency: (durationMs) =>
-        recordCompletionLatencyRef.current?.(durationMs),
+      recordCompletionLatency: (durationMs, rootPath) =>
+        recordCompletionLatencyRef.current?.(durationMs, rootPath),
       refreshGateway: languageServerRefreshGateway,
       reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,

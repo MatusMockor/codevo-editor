@@ -661,6 +661,7 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     expect(recordCompletionLatency).toHaveBeenCalledTimes(1);
     expect(recordCompletionLatency.mock.calls[0][0]).toBeGreaterThanOrEqual(0);
+    expect(recordCompletionLatency.mock.calls[0][1]).toBe("/project");
   });
 
   it("does not record a latency sample when the completion request times out", async () => {

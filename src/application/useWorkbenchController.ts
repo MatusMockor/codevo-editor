@@ -1236,12 +1236,18 @@ export function useWorkbenchController(
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpenState] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenLoading, setQuickOpenLoading] = useState(false);
   const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
     [],
   );
+  const setQuickOpenOpen = useCallback((isOpen: boolean) => {
+    setQuickOpenQuery("");
+    setQuickOpenResults([]);
+    setQuickOpenLoading(false);
+    setQuickOpenOpenState(isOpen);
+  }, []);
   // Per-workspace MRU buffer (newest first). Cached/restored alongside the rest
   // of the per-tab workbench state so one project's recent files can never leak
   // into another project's switcher.
@@ -1393,12 +1399,9 @@ export function useWorkbenchController(
   const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
   // Runtime latency instrumentation for the key interactive operations
   // (quick open, search everywhere, go-to-definition, completion, folder
-  // expand). The tracker only records a single timestamp delta per operation —
-  // no work is added to the hot path beyond `performance.now()` reads — and its
-  // recent-latency stats are surfaced in the runtime observability panel so real
-  // in-app latencies are observable instead of guessed.
-  const latencyTrackerRef = useRef<LatencyTracker>(createLatencyTracker());
-  const latencyTracker = latencyTrackerRef.current;
+  // expand). Trackers are keyed by workspace root so the runtime cockpit for
+  // one project tab never shows timings recorded in another project.
+  const latencyTrackersByRootRef = useRef<Record<string, LatencyTracker>>({});
   // Memoized bare-key shortcut set for the keydown hot path. Rebuilding it on
   // every keydown would re-parse every shortcut (~35 parseShortcut calls) on
   // each auto-repeat event; we instead recompute only when the keymap object
@@ -1948,19 +1951,57 @@ export function useWorkbenchController(
   // Records a PHP completion round-trip latency reported by the Monaco
   // completion provider (wired through EditorSurface). Stable identity so the
   // provider registration never re-runs because of it.
-  const recordCompletionLatency = useCallback(
-    (durationMs: number) => {
-      latencyTracker.record("completion", durationMs);
+  const latencyTrackerForRoot = useCallback((rootPath: string) => {
+    const rootKey = normalizedWorkspaceRootKey(rootPath);
+    let tracker = latencyTrackersByRootRef.current[rootKey];
+
+    if (!tracker) {
+      tracker = createLatencyTracker();
+      latencyTrackersByRootRef.current[rootKey] = tracker;
+    }
+
+    return tracker;
+  }, []);
+
+  const forgetLatencyTrackerForRoot = useCallback(
+    (rootPath: string | null | undefined) => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+
+      if (rootKey) {
+        delete latencyTrackersByRootRef.current[rootKey];
+      }
     },
-    [latencyTracker],
+    [],
+  );
+
+  const recordCompletionLatency = useCallback(
+    (durationMs: number, rootPath?: string) => {
+      const requestedRoot = rootPath ?? currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      latencyTrackerForRoot(requestedRoot).record("completion", durationMs);
+    },
+    [latencyTrackerForRoot],
   );
 
   // Pull a fresh snapshot of all recorded operation latencies. The runtime
   // latency panel polls this on an interval (the tracker is mutated imperatively
   // on the hot path, so there is no React state to subscribe to).
   const getLatencySnapshot = useCallback(
-    (): LatencySnapshotEntry[] => latencyTracker.snapshot(),
-    [latencyTracker],
+    (): LatencySnapshotEntry[] => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const rootKey = normalizedWorkspaceRootKey(requestedRoot);
+      return latencyTrackersByRootRef.current[rootKey]?.snapshot() ?? [];
+    },
+    [],
   );
 
   const applyAppSettings = useCallback((settings: AppSettings) => {
@@ -5793,6 +5834,7 @@ export function useWorkbenchController(
         delete workspaceStateCacheRef.current[targetRootPath];
         delete editorConfigCacheRef.current[tabPath];
         delete editorConfigCacheRef.current[targetRootPath];
+        forgetLatencyTrackerForRoot(targetRootPath);
         forgetLanguageServerRuntimeStatuses(targetRootPath);
         await Promise.allSettled([
           closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -5833,6 +5875,7 @@ export function useWorkbenchController(
       delete workspaceStateCacheRef.current[targetRootPath];
       delete editorConfigCacheRef.current[tabPath];
       delete editorConfigCacheRef.current[targetRootPath];
+      forgetLatencyTrackerForRoot(targetRootPath);
       forgetLanguageServerRuntimeStatuses(targetRootPath);
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
@@ -5865,6 +5908,7 @@ export function useWorkbenchController(
       closeSyncedLanguageServerDocumentsForRoot,
       dirtyCount,
       forgetLanguageServerRuntimeStatuses,
+      forgetLatencyTrackerForRoot,
       openWorkspacePath,
       persistAppSettings,
       prompter,
@@ -6031,11 +6075,24 @@ export function useWorkbenchController(
       // uncached directory), not for the many programmatic `loadDirectory`
       // callers (workspace-root load, session restore, reveal), so the metric
       // reflects what the user feels when clicking a folder chevron.
-      await measureLatency(latencyTracker, "folderExpand", () =>
-        loadDirectory(path),
+      if (!workspaceRoot) {
+        await loadDirectory(path);
+        return;
+      }
+
+      await measureLatency(
+        latencyTrackerForRoot(workspaceRoot),
+        "folderExpand",
+        () => loadDirectory(path),
       );
     },
-    [entriesByDirectory, expandedDirectories, latencyTracker, loadDirectory],
+    [
+      entriesByDirectory,
+      expandedDirectories,
+      latencyTrackerForRoot,
+      loadDirectory,
+      workspaceRoot,
+    ],
   );
 
   useEffect(() => {
@@ -24013,14 +24070,17 @@ export function useWorkbenchController(
       // headline Cmd+B operation, so they stay untimed to keep the metric clean.
       const locations =
         feature === "definition"
-          ? await measureLatency(latencyTracker, "definition", () =>
-              languageServerFeaturesGateway[feature](
-                requestedRoot,
-                toLanguageServerTextDocumentPosition(
-                  requestedPath,
-                  editorPosition,
+          ? await measureLatency(
+              latencyTrackerForRoot(requestedRoot),
+              "definition",
+              () =>
+                languageServerFeaturesGateway[feature](
+                  requestedRoot,
+                  toLanguageServerTextDocumentPosition(
+                    requestedPath,
+                    editorPosition,
+                  ),
                 ),
-              ),
             )
           : await languageServerFeaturesGateway[feature](
               requestedRoot,
@@ -24123,7 +24183,7 @@ export function useWorkbenchController(
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
-    latencyTracker,
+    latencyTrackerForRoot,
     openImplementationTarget,
     openPathForNavigation,
     currentNavigationLocation,
@@ -29225,7 +29285,7 @@ export function useWorkbenchController(
     setQuickOpenLoading(true);
 
     const timeout = window.setTimeout(() => {
-      measureLatency(latencyTracker, "quickOpen", () =>
+      measureLatency(latencyTrackerForRoot(workspaceRoot), "quickOpen", () =>
         fileSearch.searchFiles(workspaceRoot, quickOpenQuery, 80),
       )
         .then((results) => {
@@ -29259,7 +29319,7 @@ export function useWorkbenchController(
     };
   }, [
     fileSearch,
-    latencyTracker,
+    latencyTrackerForRoot,
     quickOpenOpen,
     quickOpenQuery,
     reportError,
@@ -29546,7 +29606,7 @@ export function useWorkbenchController(
 
     const timeout = window.setTimeout(() => {
       const fileSearchPromise = measureLatency(
-        latencyTracker,
+        latencyTrackerForRoot(requestedRoot),
         "searchEverywhere",
         () => fileSearch.searchFiles(requestedRoot, searchEverywhereQuery, 40),
       )
@@ -29605,7 +29665,7 @@ export function useWorkbenchController(
   }, [
     canSearchClassOpenSymbols,
     fileSearch,
-    latencyTracker,
+    latencyTrackerForRoot,
     reportError,
     searchClassOpenSymbols,
     searchEverywhereOpen,

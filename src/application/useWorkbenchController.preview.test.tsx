@@ -1707,6 +1707,61 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("keeps runtime operation latencies scoped to the active project tab", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    act(() => {
+      getWorkbench().recordCompletionLatency(12, "/workspace-a");
+    });
+
+    expect(getWorkbench().getLatencySnapshot()).toEqual([
+      expect.objectContaining({
+        kind: "completion",
+        stats: expect.objectContaining({ count: 1, last: 12 }),
+      }),
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().getLatencySnapshot()).toEqual([]);
+
+    act(() => {
+      getWorkbench().recordCompletionLatency(30, "/workspace-b");
+    });
+
+    expect(getWorkbench().getLatencySnapshot()).toEqual([
+      expect.objectContaining({
+        kind: "completion",
+        stats: expect.objectContaining({ count: 1, last: 30 }),
+      }),
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().getLatencySnapshot()).toEqual([
+      expect.objectContaining({
+        kind: "completion",
+        stats: expect.objectContaining({ count: 1, last: 12 }),
+      }),
+    ]);
+  });
+
   it("does not restore synthetic Git diff tabs from the workspace cache", async () => {
     const change: GitChangedFile = {
       isStaged: false,
@@ -3111,6 +3166,60 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activePath).not.toBe(stalePath);
     expect(getWorkbench().quickOpenOpen).toBe(true);
     expect(readTextFile).not.toHaveBeenCalledWith(stalePath);
+  });
+
+  it("resets Quick Open input and stale results every time it opens", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      searchFiles: vi.fn(async (_root: string, query: string) =>
+        query === "package.json"
+          ? [
+              {
+                name: "package.json",
+                path: "/workspace/package.json",
+                relativePath: "package.json",
+              },
+            ]
+          : [],
+      ),
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+      getWorkbench().setQuickOpenQuery("package.json");
+    });
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 140);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().quickOpenQuery).toBe("package.json");
+    expect(getWorkbench().quickOpenResults).toEqual([
+      expect.objectContaining({ name: "package.json" }),
+    ]);
+
+    act(() => {
+      getWorkbench().setQuickOpenOpen(false);
+      getWorkbench().setQuickOpenOpen(true);
+    });
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 140);
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().quickOpenOpen).toBe(true);
+    expect(getWorkbench().quickOpenQuery).toBe("");
+    expect(getWorkbench().quickOpenLoading).toBe(false);
+    expect(getWorkbench().quickOpenResults).toEqual([]);
   });
 
   it("aggregates files, symbols and actions into one Search Everywhere model", async () => {

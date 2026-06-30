@@ -397,7 +397,7 @@ export interface LanguageServerMonacoProviderContext {
    * gateway. Omitted when the host wires no latency instrumentation; the
    * provider then skips the timestamp delta entirely (no hot-path cost).
    */
-  recordCompletionLatency?(durationMs: number): void;
+  recordCompletionLatency?(durationMs: number, rootPath?: string): void;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -4123,7 +4123,10 @@ async function requestPhpLanguageServerCompletion(
     // callback, the `performance.now()` read above was skipped entirely (zero
     // hot-path cost).
     if (recordCompletionLatency) {
-      recordCompletionLatency(performance.now() - completionStart);
+      recordCompletionLatency(
+        performance.now() - completionStart,
+        request.rootPath,
+      );
     }
 
     if (!isFeatureRequestActive(context, request)) {
