@@ -279,7 +279,12 @@ fn language_record_batches(
 ) -> Vec<(Vec<WorkspaceFileRecord>, String)> {
     ["php", "javascript", "typescript"]
         .into_iter()
-        .map(|language| (records_for_language(records, language), language.to_string()))
+        .map(|language| {
+            (
+                records_for_language(records, language),
+                language.to_string(),
+            )
+        })
         .collect()
 }
 
@@ -1056,11 +1061,12 @@ mod tests {
         assert_eq!(report.parsed_files, file_count);
         // Throttled to batches: fewer events than files, but more than one (multi-batch run).
         assert!(events.len() >= 2, "expected multiple batch-boundary events");
-        assert!(events.len() < file_count, "must not emit one event per file");
+        assert!(
+            events.len() < file_count,
+            "must not emit one event per file"
+        );
         // Every event is tagged with the requested root (per-workspace isolation on the frontend).
-        assert!(events
-            .iter()
-            .all(|event| event.root_path == root_string));
+        assert!(events.iter().all(|event| event.root_path == root_string));
         // Total is known for this run and matches the parsed file count; progress is monotonic and
         // never overshoots the total.
         assert!(events

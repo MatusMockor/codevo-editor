@@ -2358,10 +2358,12 @@ fn stop_language_runtime(
         .ok_or_else(|| format!("Unknown language runtime kind: {kind}"))?;
 
     let status = match runtime_kind {
-        runtime_observability::LanguageRuntimeKind::Phpactor => php_registry.stop(&root_path),
+        runtime_observability::LanguageRuntimeKind::Phpactor => {
+            php_registry.stop_preserving_launch_context(&root_path)
+        }
         runtime_observability::LanguageRuntimeKind::Tsserver => {
             watch_registry.stop(&root_path);
-            javascript_typescript_registry.stop(&root_path)
+            javascript_typescript_registry.stop_preserving_launch_context(&root_path)
         }
     };
 

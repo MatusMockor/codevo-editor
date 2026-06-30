@@ -23,6 +23,15 @@ function gatewayReturning(report: RuntimeObservabilityReport) {
   };
 }
 
+function deferredReport() {
+  let resolve: (report: RuntimeObservabilityReport) => void = () => undefined;
+  const promise = new Promise<RuntimeObservabilityReport>((settle) => {
+    resolve = settle;
+  });
+
+  return { promise, resolve };
+}
+
 const sampleReport: RuntimeObservabilityReport = {
   rootPath: "/workspace",
   runtimes: [
@@ -144,5 +153,58 @@ describe("RuntimeObservabilityPanel", () => {
     expect(host.textContent).toContain(
       "Open a project to inspect its language runtimes.",
     );
+  });
+
+  it("drops stale runtime reports after switching project roots", async () => {
+    const first = deferredReport();
+    const second = deferredReport();
+    const gateway = {
+      getObservability: vi
+        .fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise),
+      restart: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      openLog: vi.fn(async () => null),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    } satisfies RuntimeObservabilityGateway as RuntimeObservabilityGateway & {
+      getObservability: ReturnType<typeof vi.fn>;
+    };
+
+    renderPanel(gateway, "/workspace-a");
+    renderPanel(gateway, "/workspace-b");
+
+    second.resolve({
+      rootPath: "/workspace-b",
+      runtimes: [
+        {
+          kind: "phpactor",
+          label: "PHPactor B",
+          lifecycle: "running",
+          pid: 200,
+        },
+      ],
+    });
+    await flush();
+
+    expect(host.textContent).toContain("PHPactor B");
+    expect(host.textContent).toContain("200");
+
+    first.resolve({
+      rootPath: "/workspace-a",
+      runtimes: [
+        {
+          kind: "phpactor",
+          label: "PHPactor A",
+          lifecycle: "running",
+          pid: 100,
+        },
+      ],
+    });
+    await flush();
+
+    expect(host.textContent).toContain("PHPactor B");
+    expect(host.textContent).not.toContain("PHPactor A");
+    expect(host.textContent).not.toContain("100");
   });
 });

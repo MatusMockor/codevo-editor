@@ -169,7 +169,10 @@ fn sample_stats_when_alive(
     pid: Option<u32>,
     probe: &dyn ProcessStatsProbe,
 ) -> Option<ProcessStats> {
-    if !matches!(lifecycle, RuntimeLifecycle::Running | RuntimeLifecycle::Starting) {
+    if !matches!(
+        lifecycle,
+        RuntimeLifecycle::Running | RuntimeLifecycle::Starting
+    ) {
         return None;
     }
 

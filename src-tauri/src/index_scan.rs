@@ -510,32 +510,58 @@ fn run_background_scan(
     lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
     event_sink: Arc<dyn MetadataScanEventSink>,
 ) {
-    let event =
-        match scan_background_workspace(&root_path, &database_path, lifecycle_token.as_ref()) {
-            Ok(report) => {
-                if !lifecycle_token_is_current(lifecycle_token.as_ref()) {
-                    return;
-                }
-
-                MetadataScanCompletionEvent::completed(&root_path, &database_path, report)
+    let progress_sink = Arc::clone(&event_sink);
+    let mut on_progress = |event: IndexProgressEvent| {
+        progress_sink.emit_progress(event);
+    };
+    let event = match scan_background_workspace_with_progress(
+        &root_path,
+        &database_path,
+        lifecycle_token.as_ref(),
+        &mut on_progress,
+    ) {
+        Ok(report) => {
+            if !lifecycle_token_is_current(lifecycle_token.as_ref()) {
+                return;
             }
-            Err(MetadataScanError::Cancelled) => return,
-            Err(error) => MetadataScanCompletionEvent::failed(&root_path, &database_path, error),
-        };
+
+            MetadataScanCompletionEvent::completed(&root_path, &database_path, report)
+        }
+        Err(MetadataScanError::Cancelled) => return,
+        Err(error) => MetadataScanCompletionEvent::failed(&root_path, &database_path, error),
+    };
 
     event_sink.emit_completion(event);
 }
 
+#[cfg(test)]
 fn scan_background_workspace(
     root_path: &Path,
     database_path: &Path,
     lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+) -> Result<MetadataScanReport, MetadataScanError> {
+    scan_background_workspace_with_progress(
+        root_path,
+        database_path,
+        lifecycle_token,
+        &mut |_event| {},
+    )
+}
+
+fn scan_background_workspace_with_progress(
+    root_path: &Path,
+    database_path: &Path,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    on_progress: &mut dyn FnMut(IndexProgressEvent),
 ) -> Result<MetadataScanReport, MetadataScanError> {
     ensure_scan_current(lifecycle_token)?;
     let index = SqliteWorkspaceIndex::open(database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
     let collection = scanner.collect_path(root_path, root_path)?;
     ensure_scan_current(lifecycle_token)?;
+
+    let total_files = collection.records.len();
+    let mut processed_files = 0;
 
     for batch in collection.records.chunks(SCAN_WRITE_BATCH_SIZE) {
         // Re-check the lifecycle token BEFORE each batch (not just at the end) so a workspace
@@ -548,6 +574,13 @@ fn scan_background_workspace(
             }
             Ok(())
         })?;
+        processed_files += batch.len();
+        on_progress(IndexProgressEvent::new(
+            root_path,
+            "scanning",
+            processed_files,
+            Some(total_files),
+        ));
     }
 
     Ok(collection.report)
@@ -856,6 +889,43 @@ mod tests {
             index.summary().expect("summary").file_count as usize,
             file_count
         );
+    }
+
+    #[test]
+    fn background_scan_emits_incremental_progress_on_batch_boundaries() {
+        // Cold initial indexing must not look hung on a large workspace: emit
+        // progress after each committed metadata batch, with the total known.
+        let file_count = super::SCAN_WRITE_BATCH_SIZE + 25;
+        let root = temp_workspace("scan-progress-batches");
+        let database_path = temp_database_path("scan-progress-batches");
+        for index in 0..file_count {
+            fs::write(root.join(format!("File{index}.php")), "<?php").expect("source file");
+        }
+        let mut events = Vec::new();
+
+        let report = super::scan_background_workspace_with_progress(
+            &root,
+            &database_path,
+            None,
+            &mut |event| events.push(event),
+        )
+        .expect("background scan");
+
+        assert_eq!(report.indexed_files, file_count);
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.processed_files)
+                .collect::<Vec<_>>(),
+            vec![super::SCAN_WRITE_BATCH_SIZE, file_count]
+        );
+        assert!(events
+            .iter()
+            .all(|event| event.root_path == root.to_string_lossy()));
+        assert!(events
+            .iter()
+            .all(|event| event.phase == "scanning" && event.total_files == Some(file_count)));
     }
 
     #[test]

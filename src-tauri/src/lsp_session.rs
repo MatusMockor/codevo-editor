@@ -666,6 +666,13 @@ impl PhpLanguageServerRegistry {
         status
     }
 
+    pub fn stop_preserving_launch_context(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        let context = self.launch_context(root_path);
+        let status = self.registry.stop(root_path);
+        self.cleanup_stopped_root(root_path, context);
+        status
+    }
+
     pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
         let contexts = self.drain_launch_contexts();
         let status = self.registry.stop_all();
@@ -887,6 +894,13 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
         let context = self.remove_launch_context(root_path);
+        let status = self.registry.stop(root_path);
+        self.cleanup_stopped_root(root_path, context);
+        status
+    }
+
+    pub fn stop_preserving_launch_context(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        let context = self.launch_context(root_path);
         let status = self.registry.stop(root_path);
         self.cleanup_stopped_root(root_path, context);
         status
@@ -1355,7 +1369,11 @@ impl LanguageServerSupervisor {
     /// `None` once the server has stopped/crashed (its session was torn down) or
     /// when the underlying spawner exposes no real process (tests).
     pub fn pid(&self) -> Option<u32> {
-        self.session.lock().ok()?.as_ref().and_then(|session| session.pid)
+        self.session
+            .lock()
+            .ok()?
+            .as_ref()
+            .and_then(|session| session.pid)
     }
 
     pub fn log(&self) -> String {
@@ -3319,6 +3337,8 @@ fn is_capability_enabled(value: Option<&Value>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::ChildKiller;
     use super::{
         cancellable_backoff, parse_capabilities, workspace_runtime_id, ChildServerProcessSpawner,
         DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry, LanguageServerCapabilities,
@@ -3329,8 +3349,6 @@ mod tests {
         SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
         WorkspaceEditSink,
     };
-    #[cfg(unix)]
-    use super::ChildKiller;
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
     use crate::lsp_features::LanguageServerWorkspaceEdit;
@@ -3700,6 +3718,59 @@ mod tests {
     }
 
     #[test]
+    fn javascript_typescript_runtime_panel_stop_keeps_runtime_restartable() {
+        let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace");
+
+        assert_eq!(
+            registry.stop_preserving_launch_context("/tmp/workspace-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert_eq!(registry.pid("/tmp/workspace-a"), None);
+        assert_eq!(
+            registry
+                .launch_contexts
+                .lock()
+                .expect("launch contexts")
+                .len(),
+            1,
+            "runtime-panel Stop must keep the last launch command for Restart"
+        );
+
+        let restart_spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let (restart_sink, _restart_rx) = ChannelSink::new();
+        let status = registry
+            .restart_with_auto_restart(
+                "/tmp/workspace-a",
+                restart_spawner,
+                restart_sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("restart after runtime-panel stop");
+
+        assert!(matches!(
+            status,
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+        registry.stop_all();
+    }
+
+    #[test]
     fn javascript_typescript_registry_stop_all_drains_launch_contexts() {
         let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
         let spawner_a = FakeSpawner::new(ready_script(), true);
@@ -3802,6 +3873,60 @@ mod tests {
             .lock()
             .expect("launch contexts")
             .is_empty());
+    }
+
+    #[test]
+    fn php_runtime_panel_stop_keeps_runtime_restartable() {
+        let registry = PhpLanguageServerRegistry::new();
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let command = phpactor_managed_command();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command,
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace");
+
+        assert_eq!(
+            registry.stop_preserving_launch_context("/tmp/workspace-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert_eq!(registry.pid("/tmp/workspace-a"), None);
+        assert_eq!(
+            registry
+                .launch_contexts
+                .lock()
+                .expect("launch contexts")
+                .len(),
+            1,
+            "runtime-panel Stop must keep the last launch command for Restart"
+        );
+
+        let restart_spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let (restart_sink, _restart_rx) = ChannelSink::new();
+        let status = registry
+            .restart_with_auto_restart(
+                "/tmp/workspace-a",
+                restart_spawner,
+                restart_sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("restart after runtime-panel stop");
+
+        assert!(matches!(
+            status,
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+        registry.stop_all();
     }
 
     #[test]
@@ -7614,7 +7739,10 @@ mod tests {
             )
             .expect("restart workspace a");
 
-        assert!(matches!(status, LanguageServerRuntimeStatus::Running { .. }));
+        assert!(matches!(
+            status,
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
         let pid_a_after = restart_spawner.pid();
         assert_ne!(
             pid_a_before, pid_a_after,
