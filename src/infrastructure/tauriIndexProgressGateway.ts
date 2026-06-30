@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  IndexProgressEvent,
   IndexProgressGateway,
   InitialMetadataScanStart,
   MetadataScanCompletionEvent,
@@ -10,6 +11,7 @@ import type {
 } from "../domain/indexProgress";
 
 const METADATA_SCAN_COMPLETED_EVENT = "index://metadata-scan-completed";
+const INDEX_PROGRESS_EVENT = "index://progress";
 const DESKTOP_RUNTIME_REQUIRED = "Indexing requires the Tauri desktop runtime.";
 
 type InvokeIndexCommand = (
@@ -24,6 +26,10 @@ type ListenToIndexEvent = (
   event: string,
   handler: (event: { payload: MetadataScanCompletionEvent }) => void,
 ) => Promise<UnsubscribeFn>;
+type ListenToProgressEvent = (
+  event: string,
+  handler: (event: { payload: IndexProgressEvent }) => void,
+) => Promise<UnsubscribeFn>;
 type RuntimeDetector = () => boolean;
 
 const invokeIndexCommand: InvokeIndexCommand = (command, args) =>
@@ -32,6 +38,8 @@ const invokeClearIndexCommand: InvokeClearIndexCommand = (command, args) =>
   invoke<WorkspaceIndexClearResult>(command, args);
 const listenToIndexEvent: ListenToIndexEvent = (event, handler) =>
   listen<MetadataScanCompletionEvent>(event, handler);
+const listenToProgressEvent: ListenToProgressEvent = (event, handler) =>
+  listen<IndexProgressEvent>(event, handler);
 
 export class TauriIndexProgressGateway implements IndexProgressGateway {
   constructor(
@@ -39,6 +47,7 @@ export class TauriIndexProgressGateway implements IndexProgressGateway {
     private readonly listenToEvent: ListenToIndexEvent = listenToIndexEvent,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
     private readonly invokeClearCommand: InvokeClearIndexCommand = invokeClearIndexCommand,
+    private readonly listenToProgress: ListenToProgressEvent = listenToProgressEvent,
   ) {}
 
   clearWorkspaceIndex(rootPath: string): Promise<WorkspaceIndexClearResult> {
@@ -74,6 +83,18 @@ export class TauriIndexProgressGateway implements IndexProgressGateway {
       language,
       mode,
       rootPath,
+    });
+  }
+
+  subscribeIndexProgress(
+    listener: (event: IndexProgressEvent) => void,
+  ): Promise<UnsubscribeFn> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve(() => undefined);
+    }
+
+    return this.listenToProgress(INDEX_PROGRESS_EVENT, (event) => {
+      listener(event.payload);
     });
   }
 

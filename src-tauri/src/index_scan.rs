@@ -12,6 +12,7 @@ use std::{
 };
 
 pub const METADATA_SCAN_COMPLETED_EVENT: &str = "index://metadata-scan-completed";
+pub const INDEX_PROGRESS_EVENT: &str = "index://progress";
 const MAX_SCAN_HEALTH_DETAILS: usize = 100;
 /// Number of file metadata rows written per batched SQLite transaction during the initial scan.
 /// One commit (one WAL fsync) per batch instead of per file is the main indexing speedup; the
@@ -378,8 +379,41 @@ pub enum MetadataScanCompletionStatus {
     Failed,
 }
 
+/// Incremental progress emitted on batch boundaries during a workspace reindex so the UI can show
+/// "X of N files" instead of an indeterminate spinner that looks like a hang. `total_files` is the
+/// number of source files queued to parse for `phase`; it is `None` when unknown so the UI degrades
+/// to an indeterminate count. Tagged with `root_path` so the frontend drops cross-workspace events.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexProgressEvent {
+    pub phase: String,
+    pub processed_files: usize,
+    pub root_path: String,
+    pub total_files: Option<usize>,
+}
+
+impl IndexProgressEvent {
+    pub(crate) fn new(
+        root_path: &Path,
+        phase: impl Into<String>,
+        processed_files: usize,
+        total_files: Option<usize>,
+    ) -> Self {
+        Self {
+            phase: phase.into(),
+            processed_files,
+            root_path: root_path.to_string_lossy().to_string(),
+            total_files,
+        }
+    }
+}
+
 pub trait MetadataScanEventSink: Send + Sync {
     fn emit_completion(&self, event: MetadataScanCompletionEvent);
+
+    /// Incremental progress during indexing. Defaulted to a no-op so non-progress sinks (initial
+    /// scan, tests) opt in only when they care; progress is best-effort and never blocks the index.
+    fn emit_progress(&self, _event: IndexProgressEvent) {}
 }
 
 pub trait WorkspaceMetadataScanStarter {

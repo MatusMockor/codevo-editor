@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { TauriIndexProgressGateway } from "./tauriIndexProgressGateway";
 import type {
+  IndexProgressEvent,
   InitialMetadataScanStart,
   MetadataScanCompletionEvent,
   WorkspaceIndexClearResult,
@@ -12,6 +13,7 @@ type IndexGatewayConstructor = ConstructorParameters<
 type InvokeCommand = NonNullable<IndexGatewayConstructor[0]>;
 type ListenToEvent = NonNullable<IndexGatewayConstructor[1]>;
 type InvokeClearCommand = NonNullable<IndexGatewayConstructor[3]>;
+type ListenToProgressEvent = NonNullable<IndexGatewayConstructor[4]>;
 
 describe("TauriIndexProgressGateway", () => {
   it("keeps browser development runtime quiet outside Tauri", async () => {
@@ -112,5 +114,53 @@ describe("TauriIndexProgressGateway", () => {
       expect.any(Function),
     );
     expect(listener).toHaveBeenCalledWith(completion);
+  });
+
+  it("delegates incremental progress events inside Tauri", async () => {
+    const progress: IndexProgressEvent = {
+      phase: "parsing",
+      processedFiles: 500,
+      rootPath: "/workspace",
+      totalFiles: 1200,
+    };
+    const invokeCommand = vi.fn<InvokeCommand>();
+    const listenToProgressEvent = vi.fn<ListenToProgressEvent>(
+      async (_event, handler) => {
+        handler({ payload: progress });
+        return () => undefined;
+      },
+    );
+    const listener = vi.fn();
+    const gateway = new TauriIndexProgressGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+      vi.fn<InvokeClearCommand>(),
+      listenToProgressEvent,
+    );
+
+    await gateway.subscribeIndexProgress(listener);
+
+    expect(listenToProgressEvent).toHaveBeenCalledWith(
+      "index://progress",
+      expect.any(Function),
+    );
+    expect(listener).toHaveBeenCalledWith(progress);
+  });
+
+  it("keeps progress subscription quiet outside Tauri", async () => {
+    const listenToProgressEvent = vi.fn<ListenToProgressEvent>();
+    const gateway = new TauriIndexProgressGateway(
+      vi.fn<InvokeCommand>(),
+      vi.fn<ListenToEvent>(),
+      () => false,
+      vi.fn<InvokeClearCommand>(),
+      listenToProgressEvent,
+    );
+
+    const unsubscribe = await gateway.subscribeIndexProgress(vi.fn());
+    unsubscribe();
+
+    expect(listenToProgressEvent).not.toHaveBeenCalled();
   });
 });

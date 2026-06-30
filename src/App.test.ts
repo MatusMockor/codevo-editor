@@ -10,12 +10,20 @@ vi.mock("./infrastructure/shikiHighlighter", () => ({
   createAppHighlighter: appBootMocks.createAppHighlighter,
 }));
 
-import { ideActivityState, preloadSyntaxHighlighter } from "./App";
+import {
+  ideActivityState,
+  ideActivityStatus,
+  preloadSyntaxHighlighter,
+} from "./App";
 import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
-import { initialIndexProgress } from "./domain/indexProgress";
+import {
+  applyIndexProgress,
+  initialIndexProgress,
+  startIndexProgress,
+} from "./domain/indexProgress";
 
 describe("preloadSyntaxHighlighter", () => {
   afterEach(() => {
@@ -75,5 +83,48 @@ describe("ideActivityState", () => {
         initialIndexProgress(),
       ),
     ).toBe("active");
+  });
+});
+
+describe("ideActivityStatus index progress", () => {
+  it("shows an incremental 'X of N (P%)' label while indexing with a known total", () => {
+    const progress = applyIndexProgress(
+      startIndexProgress({
+        databasePath: "/config/index.sqlite3",
+        rootPath: "/workspace",
+        status: "started",
+      }),
+      {
+        phase: "parsing",
+        processedFiles: 500,
+        rootPath: "/workspace",
+        totalFiles: 1000,
+      },
+    );
+
+    const activity = ideActivityStatus("/workspace", null, null, progress, null);
+
+    expect(activity.state).toBe("scanning");
+    expect(activity.label).toBe("IDE: Indexing 500 of 1000 (50%)");
+  });
+
+  it("falls back to an indeterminate count when the total is unknown", () => {
+    const progress = applyIndexProgress(
+      startIndexProgress({
+        databasePath: "/config/index.sqlite3",
+        rootPath: "/workspace",
+        status: "started",
+      }),
+      {
+        phase: "parsing",
+        processedFiles: 320,
+        rootPath: "/workspace",
+        totalFiles: null,
+      },
+    );
+
+    const activity = ideActivityStatus("/workspace", null, null, progress, null);
+
+    expect(activity.label).toBe("IDE: Indexing 320 files");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyIndexProgress,
   applyMetadataScanCompletion,
   createIndexHealthCompletionLog,
   createIndexHealthLogEntry,
@@ -9,6 +10,7 @@ import {
   initialIndexProgress,
   prependIndexHealthLog,
   startIndexProgress,
+  type IndexProgressEvent,
   type MetadataScanCompletionEvent,
 } from "./indexProgress";
 
@@ -26,12 +28,72 @@ describe("indexProgress", () => {
       erroredEntries: 0,
       indexedFiles: 0,
       message: null,
+      processedFiles: 0,
       rootPath: "/workspace",
       skippedDetails: [],
       skippedEntries: 0,
       status: "scanning",
+      totalFiles: null,
     });
     expect(indexProgressLabel(progress)).toBe("Index: scanning");
+  });
+
+  it("applies incremental progress with a known total as 'X of N'", () => {
+    const progress = applyIndexProgress(
+      startIndexProgress({
+        databasePath: "/config/index.sqlite3",
+        rootPath: "/workspace",
+        status: "started",
+      }),
+      progressEvent({
+        phase: "parsing",
+        processedFiles: 500,
+        rootPath: "/workspace",
+        totalFiles: 1200,
+      }),
+    );
+
+    expect(progress.status).toBe("scanning");
+    expect(progress.processedFiles).toBe(500);
+    expect(progress.totalFiles).toBe(1200);
+    expect(indexProgressLabel(progress)).toBe("Index: 500 of 1200 files (42%)");
+  });
+
+  it("falls back to an indeterminate count when the total is unknown", () => {
+    const progress = applyIndexProgress(
+      startIndexProgress({
+        databasePath: "/config/index.sqlite3",
+        rootPath: "/workspace",
+        status: "started",
+      }),
+      progressEvent({
+        phase: "parsing",
+        processedFiles: 240,
+        rootPath: "/workspace",
+        totalFiles: null,
+      }),
+    );
+
+    expect(progress.processedFiles).toBe(240);
+    expect(progress.totalFiles).toBeNull();
+    expect(indexProgressLabel(progress)).toBe("Index: 240 files scanned");
+  });
+
+  it("does not regress to a smaller processed count on out-of-order events", () => {
+    const advanced = applyIndexProgress(
+      startIndexProgress({
+        databasePath: "/config/index.sqlite3",
+        rootPath: "/workspace",
+        status: "started",
+      }),
+      progressEvent({ processedFiles: 1000, rootPath: "/workspace", totalFiles: 1200 }),
+    );
+    const stale = applyIndexProgress(
+      advanced,
+      progressEvent({ processedFiles: 500, rootPath: "/workspace", totalFiles: 1200 }),
+    );
+
+    expect(stale.processedFiles).toBe(1000);
   });
 
   it("applies completed scan counts", () => {
@@ -151,6 +213,18 @@ function scanReport(
     skippedDetails: [],
     skippedEntries: 0,
     symbolsIndexed: 0,
+    ...overrides,
+  };
+}
+
+function progressEvent(
+  overrides: Partial<IndexProgressEvent>,
+): IndexProgressEvent {
+  return {
+    phase: "parsing",
+    processedFiles: 0,
+    rootPath: "/workspace",
+    totalFiles: null,
     ...overrides,
   };
 }

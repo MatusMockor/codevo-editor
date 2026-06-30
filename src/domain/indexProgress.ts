@@ -52,16 +52,28 @@ export interface MetadataScanCompletionEvent {
 
 export type IndexProgressStatus = "idle" | "scanning" | "completed" | "failed";
 
+/// Incremental progress emitted on batch boundaries during a reindex (mirrors the Rust
+/// `IndexProgressEvent`). `totalFiles` is `null` when the total is unknown so the UI degrades to an
+/// indeterminate count. Tagged with `rootPath` so cross-workspace events are dropped.
+export interface IndexProgressEvent {
+  phase: string;
+  processedFiles: number;
+  rootPath: string;
+  totalFiles: number | null;
+}
+
 export interface IndexProgressState {
   databasePath: string | null;
   errorDetails: IndexHealthDetail[];
   erroredEntries: number;
   indexedFiles: number;
   message: string | null;
+  processedFiles: number;
   rootPath: string | null;
   skippedDetails: IndexHealthDetail[];
   skippedEntries: number;
   status: IndexProgressStatus;
+  totalFiles: number | null;
 }
 
 export interface IndexProgressGateway {
@@ -74,6 +86,9 @@ export interface IndexProgressGateway {
     mode: WorkspaceReindexMode,
     language?: string,
   ): Promise<InitialMetadataScanStart>;
+  subscribeIndexProgress(
+    listener: (event: IndexProgressEvent) => void,
+  ): Promise<UnsubscribeFn>;
   subscribeMetadataScanCompletion(
     listener: (event: MetadataScanCompletionEvent) => void,
   ): Promise<UnsubscribeFn>;
@@ -86,10 +101,12 @@ export function initialIndexProgress(): IndexProgressState {
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
+    processedFiles: 0,
     rootPath: null,
     skippedDetails: [],
     skippedEntries: 0,
     status: "idle",
+    totalFiles: null,
   };
 }
 
@@ -102,10 +119,29 @@ export function startIndexProgress(
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
+    processedFiles: 0,
     rootPath: start.rootPath,
     skippedDetails: [],
     skippedEntries: 0,
     status: "scanning",
+    totalFiles: null,
+  };
+}
+
+/// Folds an incremental progress event into the scanning state. Processed count is clamped to be
+/// monotonic so out-of-order events never make the bar jump backwards; the latest known total wins.
+/// Completion / failure are owned by `applyMetadataScanCompletion`, so this only updates counts.
+export function applyIndexProgress(
+  current: IndexProgressState,
+  event: IndexProgressEvent,
+): IndexProgressState {
+  return {
+    ...current,
+    processedFiles: Math.max(current.processedFiles, event.processedFiles),
+    status: "scanning",
+    // The emitter keeps totalFiles constant for the lifetime of one run, so taking the latest value
+    // is safe; if that contract ever loosens, prefer the last known non-null total here.
+    totalFiles: event.totalFiles,
   };
 }
 
@@ -124,10 +160,12 @@ export function applyMetadataScanCompletion(
         : [],
       erroredEntries: event.message ? 1 : 0,
       message: event.message || "Index scan failed.",
+      processedFiles: 0,
       rootPath: event.rootPath,
       skippedDetails: [],
       skippedEntries: 0,
       status: "failed",
+      totalFiles: null,
     };
   }
 
@@ -137,10 +175,12 @@ export function applyMetadataScanCompletion(
     erroredEntries: report?.erroredEntries ?? 0,
     indexedFiles: report?.indexedFiles ?? 0,
     message: indexProgressCompletionMessage(event),
+    processedFiles: 0,
     rootPath: event.rootPath,
     skippedDetails: report?.skippedDetails ?? [],
     skippedEntries: report?.skippedEntries ?? 0,
     status: "completed",
+    totalFiles: null,
   };
 }
 
@@ -152,7 +192,7 @@ export function indexProgressLabel(
   }
 
   if (progress.status === "scanning") {
-    return "Index: scanning";
+    return indexScanningLabel(progress);
   }
 
   if (progress.status === "failed") {
@@ -164,6 +204,33 @@ export function indexProgressLabel(
   }
 
   return `Index: ${progress.indexedFiles} files`;
+}
+
+/// Status-bar text for an in-flight scan. Three graceful tiers: a known total renders a determinate
+/// "X of N files (P%)"; a positive processed count with no total renders an indeterminate
+/// "X files scanned"; before any batch lands it stays the plain "scanning" spinner label.
+function indexScanningLabel(progress: IndexProgressState): string {
+  if (progress.totalFiles !== null && progress.totalFiles > 0) {
+    const percent = indexProgressPercent(progress);
+    return `Index: ${progress.processedFiles} of ${progress.totalFiles} files (${percent}%)`;
+  }
+
+  if (progress.processedFiles > 0) {
+    return `Index: ${progress.processedFiles} files scanned`;
+  }
+
+  return "Index: scanning";
+}
+
+/// Clamped 0..100 completion percentage for a scan with a known total; `0` when the total is
+/// unknown or empty so callers never divide by zero.
+export function indexProgressPercent(progress: IndexProgressState): number {
+  if (progress.totalFiles === null || progress.totalFiles <= 0) {
+    return 0;
+  }
+
+  const ratio = progress.processedFiles / progress.totalFiles;
+  return Math.min(100, Math.max(0, Math.round(ratio * 100)));
 }
 
 export function indexProgressCompletionMessage(

@@ -11716,6 +11716,7 @@ describe("useWorkbenchController preview tabs", () => {
         rootPath,
         status: "started" as const,
       })),
+      subscribeIndexProgress: vi.fn(async () => () => undefined),
       subscribeMetadataScanCompletion: vi.fn(async (listener) => {
         publishMetadataScanCompletion = listener;
         return () => undefined;
@@ -13471,6 +13472,87 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Soft reindex started.");
   });
 
+  it("applies incremental index progress for the active workspace and drops cross-root events", async () => {
+    let publishIndexProgress:
+      | ((event: import("../domain/indexProgress").IndexProgressEvent) => void)
+      | null = null;
+    const indexProgressGateway: IndexProgressGateway = {
+      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      startReindex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      subscribeIndexProgress: vi.fn(async (listener) => {
+        publishIndexProgress = listener;
+        return () => undefined;
+      }),
+      subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      indexProgressGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({ rootPath: "/workspace", status: "scanning" }),
+    );
+
+    act(() => {
+      publishIndexProgress?.({
+        phase: "parsing",
+        processedFiles: 500,
+        rootPath: "/workspace",
+        totalFiles: 1200,
+      });
+    });
+
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        processedFiles: 500,
+        rootPath: "/workspace",
+        status: "scanning",
+        totalFiles: 1200,
+      }),
+    );
+
+    // A progress event for a different workspace root must never touch the active workspace's state.
+    act(() => {
+      publishIndexProgress?.({
+        phase: "parsing",
+        processedFiles: 9999,
+        rootPath: "/other-workspace",
+        totalFiles: 9999,
+      });
+    });
+
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        processedFiles: 500,
+        rootPath: "/workspace",
+        totalFiles: 1200,
+      }),
+    );
+  });
+
   it("ignores stale smart mode completions after switching project tabs", async () => {
     const smartModeUpdate =
       createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
@@ -13754,6 +13836,7 @@ describe("useWorkbenchController preview tabs", () => {
         rootPath,
         status: "started" as const,
       })),
+      subscribeIndexProgress: vi.fn(async () => () => undefined),
       subscribeMetadataScanCompletion: vi.fn(async (listener) => {
         publishMetadataScanCompletion = listener;
         return () => undefined;
@@ -13824,6 +13907,7 @@ describe("useWorkbenchController preview tabs", () => {
         rootPath,
         status: "started" as const,
       })),
+      subscribeIndexProgress: vi.fn(async () => () => undefined),
       subscribeMetadataScanCompletion: vi
         .fn()
         .mockImplementationOnce(async () => subscription.promise)
@@ -63783,6 +63867,7 @@ function createControllerDependencies({
           rootPath,
           status: "started" as const,
         })),
+        subscribeIndexProgress: vi.fn(async () => () => undefined),
         subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
       },
     languageServerDiagnosticsGateway:

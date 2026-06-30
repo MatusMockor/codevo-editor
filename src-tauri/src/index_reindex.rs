@@ -4,9 +4,9 @@ use crate::index::{
     WorkspaceSymbolRecord, WorkspaceSymbolStore,
 };
 use crate::index_scan::{
-    InitialMetadataScanStart, InitialMetadataScanStartStatus, LocalWorkspaceMetadataScanner,
-    MetadataScanCompletionEvent, MetadataScanError, MetadataScanEventSink, MetadataScanReport,
-    WorkspaceMetadataScanner, WorkspaceReindexMode,
+    IndexProgressEvent, InitialMetadataScanStart, InitialMetadataScanStartStatus,
+    LocalWorkspaceMetadataScanner, MetadataScanCompletionEvent, MetadataScanError,
+    MetadataScanEventSink, MetadataScanReport, WorkspaceMetadataScanner, WorkspaceReindexMode,
 };
 use crate::job_scheduler::WorkspaceIndexLifecycleToken;
 use crate::js_ts_symbols::{
@@ -30,6 +30,49 @@ use std::{
 /// Batching turns one commit (one WAL fsync) per file into one per batch — the dominant indexing
 /// speedup — while staying small enough to re-check the lifecycle token between batches.
 const REINDEX_WRITE_BATCH_SIZE: usize = 500;
+
+/// The progress phase reported while source files are parsed and their symbols are written. Kept as
+/// a stable string so the frontend can label the activity ("Indexing X of N") without coupling to
+/// the per-language batching below.
+const REINDEX_PARSE_PHASE: &str = "parsing";
+
+/// Reports incremental reindex progress to a callback, throttled to parse batch boundaries (never
+/// per file, which would swamp the event bus on large workspaces). It owns the running `processed`
+/// count and the known `total` for the whole reindex so the emitted "X of N" is monotonic across
+/// every language batch. The callback is best-effort: it must not fail or block the index.
+struct ReindexProgressReporter<'a> {
+    on_progress: &'a mut dyn FnMut(IndexProgressEvent),
+    processed: usize,
+    root_path: PathBuf,
+    total: Option<usize>,
+}
+
+impl<'a> ReindexProgressReporter<'a> {
+    fn new(
+        root_path: PathBuf,
+        total: Option<usize>,
+        on_progress: &'a mut dyn FnMut(IndexProgressEvent),
+    ) -> Self {
+        Self {
+            on_progress,
+            processed: 0,
+            root_path,
+            total,
+        }
+    }
+
+    /// Advances the processed count by one batch and emits a single tagged progress event. Called
+    /// once per parse batch boundary so the emit rate is bounded by batch count, not file count.
+    fn advance_batch(&mut self, batch_len: usize) {
+        self.processed += batch_len;
+        (self.on_progress)(IndexProgressEvent::new(
+            &self.root_path,
+            REINDEX_PARSE_PHASE,
+            self.processed,
+            self.total,
+        ));
+    }
+}
 
 pub trait WorkspaceReindexStarter {
     fn start(
@@ -135,8 +178,22 @@ impl From<MetadataScanError> for WorkspaceReindexError {
     }
 }
 
+/// Pure reindex entry point that discards incremental progress. Used by tests (the production path
+/// reports progress through [`run_workspace_reindex_with_progress`]).
+#[cfg(test)]
 pub(crate) fn run_workspace_reindex(
     request: &WorkspaceReindexRequest,
+) -> Result<MetadataScanReport, WorkspaceReindexError> {
+    run_workspace_reindex_with_progress(request, &mut |_event| {})
+}
+
+/// Same as [`run_workspace_reindex`] but reports incremental progress on parse batch boundaries via
+/// `on_progress`. Progress is best-effort UI feedback layered on top of the existing flow; it never
+/// changes what gets indexed nor the returned report, and the completion event is emitted by the
+/// caller exactly as before.
+pub(crate) fn run_workspace_reindex_with_progress(
+    request: &WorkspaceReindexRequest,
+    on_progress: &mut dyn FnMut(IndexProgressEvent),
 ) -> Result<MetadataScanReport, WorkspaceReindexError> {
     let lifecycle_token = request.lifecycle_token.as_ref();
     ensure_reindex_current(lifecycle_token)?;
@@ -152,74 +209,97 @@ pub(crate) fn run_workspace_reindex(
         remove_missing_files(&index, lifecycle_token, &existing_records, &scanned_records)?;
     report.removed_files += removed_files;
 
-    match request.mode {
-        WorkspaceReindexMode::Hard => {
-            guarded_reindex_write(lifecycle_token, || index.clear_workspace_files())?;
-            upsert_records(&index, lifecycle_token, &scanned_records)?;
-            report.changed_files += scanned_records.len();
-            let php_records = records_for_language(&scanned_records, "php");
-            let javascript_records = records_for_language(&scanned_records, "javascript");
-            let typescript_records = records_for_language(&scanned_records, "typescript");
-            parse_records(&index, lifecycle_token, &php_records, "php", &mut report)?;
-            parse_records(
-                &index,
-                lifecycle_token,
-                &javascript_records,
-                "javascript",
-                &mut report,
-            )?;
-            parse_records(
-                &index,
-                lifecycle_token,
-                &typescript_records,
-                "typescript",
-                &mut report,
-            )?;
-        }
-        WorkspaceReindexMode::Language => {
-            let language = normalized_reindex_language(request.language.as_deref())?;
-            upsert_records(&index, lifecycle_token, &scanned_records)?;
-            guarded_reindex_write(lifecycle_token, || {
-                index.clear_symbols_for_language(&language)
-            })?;
-            let records = records_for_language(&scanned_records, &language);
-            report.changed_files += records.len();
-            parse_records(&index, lifecycle_token, &records, &language, &mut report)?;
-        }
-        WorkspaceReindexMode::Soft => {
-            let changed_records = changed_records(&existing_records, &scanned_records);
-            let records_to_parse = soft_parse_records(&index, &changed_records, &scanned_records)?;
-            upsert_records(&index, lifecycle_token, &scanned_records)?;
-            report.changed_files += changed_records.len();
-            let php_records = records_for_language(&records_to_parse, "php");
-            let javascript_records = records_for_language(&records_to_parse, "javascript");
-            let typescript_records = records_for_language(&records_to_parse, "typescript");
-            parse_records(&index, lifecycle_token, &php_records, "php", &mut report)?;
-            parse_records(
-                &index,
-                lifecycle_token,
-                &javascript_records,
-                "javascript",
-                &mut report,
-            )?;
-            parse_records(
-                &index,
-                lifecycle_token,
-                &typescript_records,
-                "typescript",
-                &mut report,
-            )?;
-        }
+    let language_batches = reindex_language_batches(
+        &index,
+        request,
+        lifecycle_token,
+        &existing_records,
+        &scanned_records,
+        &mut report,
+    )?;
+    let total_files: usize = language_batches
+        .iter()
+        .map(|(records, _)| records.len())
+        .sum();
+    let mut reporter =
+        ReindexProgressReporter::new(request.root_path.clone(), Some(total_files), on_progress);
+
+    for (records, language) in &language_batches {
+        parse_records(
+            &index,
+            lifecycle_token,
+            records,
+            language,
+            &mut report,
+            &mut reporter,
+        )?;
     }
 
     Ok(report)
+}
+
+/// Resolves the per-language record lists to parse for the requested mode (and applies the
+/// mode-specific upserts / clears), so the parse loop is a single uniform pass that the progress
+/// reporter can total up front. Returns the records paired with their language tag in parse order.
+fn reindex_language_batches(
+    index: &SqliteWorkspaceIndex,
+    request: &WorkspaceReindexRequest,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    existing_records: &[WorkspaceFileRecord],
+    scanned_records: &[WorkspaceFileRecord],
+    report: &mut MetadataScanReport,
+) -> Result<Vec<(Vec<WorkspaceFileRecord>, String)>, WorkspaceReindexError> {
+    if let WorkspaceReindexMode::Language = request.mode {
+        let language = normalized_reindex_language(request.language.as_deref())?;
+        upsert_records(index, lifecycle_token, scanned_records)?;
+        guarded_reindex_write(lifecycle_token, || {
+            index.clear_symbols_for_language(&language)
+        })?;
+        let records = records_for_language(scanned_records, &language);
+        report.changed_files += records.len();
+        return Ok(vec![(records, language)]);
+    }
+
+    if let WorkspaceReindexMode::Hard = request.mode {
+        guarded_reindex_write(lifecycle_token, || index.clear_workspace_files())?;
+        upsert_records(index, lifecycle_token, scanned_records)?;
+        report.changed_files += scanned_records.len();
+        return Ok(language_record_batches(scanned_records));
+    }
+
+    let changed_records = changed_records(existing_records, scanned_records);
+    let records_to_parse = soft_parse_records(index, &changed_records, scanned_records)?;
+    upsert_records(index, lifecycle_token, scanned_records)?;
+    report.changed_files += changed_records.len();
+    Ok(language_record_batches(&records_to_parse))
+}
+
+fn language_record_batches(
+    records: &[WorkspaceFileRecord],
+) -> Vec<(Vec<WorkspaceFileRecord>, String)> {
+    ["php", "javascript", "typescript"]
+        .into_iter()
+        .map(|language| (records_for_language(records, language), language.to_string()))
+        .collect()
 }
 
 fn run_background_reindex(
     request: WorkspaceReindexRequest,
     event_sink: Arc<dyn MetadataScanEventSink>,
 ) {
-    let event = match run_workspace_reindex(&request) {
+    let progress_sink = Arc::clone(&event_sink);
+    let progress_token = request.lifecycle_token.clone();
+    // Drop progress emitted after a workspace switch so a stale background run never paints the
+    // newly-active workspace's status bar; the completion event is already lifecycle-guarded below.
+    let mut on_progress = move |event: IndexProgressEvent| {
+        if !lifecycle_token_is_current(progress_token.as_ref()) {
+            return;
+        }
+
+        progress_sink.emit_progress(event);
+    };
+
+    let event = match run_workspace_reindex_with_progress(&request, &mut on_progress) {
         Ok(report) => {
             if !lifecycle_token_is_current(request.lifecycle_token.as_ref()) {
                 return;
@@ -424,6 +504,7 @@ fn parse_records(
     records: &[WorkspaceFileRecord],
     language: &str,
     report: &mut MetadataScanReport,
+    reporter: &mut ReindexProgressReporter<'_>,
 ) -> Result<(), WorkspaceReindexError> {
     if language == "javascript" || language == "typescript" {
         let extractor = TextJsTsSymbolExtractor;
@@ -437,6 +518,8 @@ fn parse_records(
                 .filter_map(|record| parse_js_ts_record(record, &extractor, report))
                 .collect();
             write_parsed_batch(index, lifecycle_token, parsed, report)?;
+            // Emit AFTER the batch commits so progress only ever reflects persisted work.
+            reporter.advance_batch(batch.len());
         }
 
         return Ok(());
@@ -459,6 +542,7 @@ fn parse_records(
             .filter_map(|record| parse_record(record, &mut parser, &extractor, report))
             .collect();
         write_parsed_batch(index, lifecycle_token, parsed, report)?;
+        reporter.advance_batch(batch.len());
     }
 
     Ok(())
@@ -929,6 +1013,65 @@ mod tests {
         let _ = index.summary().expect("summary after cancel");
 
         assert!(matches!(error, WorkspaceReindexError::Cancelled));
+    }
+
+    #[test]
+    fn reindex_emits_incremental_progress_on_batch_boundaries() {
+        // A reindex larger than one parse batch must emit incremental progress so the UI can show
+        // "X of N" rather than a hang-like spinner. Progress is throttled to batch boundaries (not
+        // per file) and tagged with the requested root so the frontend can drop cross-root events.
+        use super::run_workspace_reindex_with_progress;
+        use crate::index_scan::IndexProgressEvent;
+        use std::sync::{Arc, Mutex};
+
+        let file_count = super::REINDEX_WRITE_BATCH_SIZE + 25;
+        let root = temp_workspace("progress-batches");
+        let database_path = temp_database_path("progress-batches");
+        for index in 0..file_count {
+            let class_name = format!("Model{index}");
+            fs::write(
+                root.join(format!("{class_name}.php")),
+                php_fixture(&class_name),
+            )
+            .expect("php file");
+        }
+
+        let events: Arc<Mutex<Vec<IndexProgressEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected = Arc::clone(&events);
+        let report = run_workspace_reindex_with_progress(
+            &WorkspaceReindexRequest {
+                database_path,
+                language: None,
+                lifecycle_token: None,
+                mode: WorkspaceReindexMode::Hard,
+                root_path: root.clone(),
+            },
+            &mut |event: IndexProgressEvent| collected.lock().expect("lock").push(event),
+        )
+        .expect("hard reindex");
+
+        let events = events.lock().expect("lock");
+        let root_string = path_string(root);
+
+        assert_eq!(report.parsed_files, file_count);
+        // Throttled to batches: fewer events than files, but more than one (multi-batch run).
+        assert!(events.len() >= 2, "expected multiple batch-boundary events");
+        assert!(events.len() < file_count, "must not emit one event per file");
+        // Every event is tagged with the requested root (per-workspace isolation on the frontend).
+        assert!(events
+            .iter()
+            .all(|event| event.root_path == root_string));
+        // Total is known for this run and matches the parsed file count; progress is monotonic and
+        // never overshoots the total.
+        assert!(events
+            .iter()
+            .all(|event| event.total_files == Some(file_count)));
+        assert!(events
+            .iter()
+            .all(|event| event.processed_files <= file_count));
+        let processed: Vec<usize> = events.iter().map(|event| event.processed_files).collect();
+        assert!(processed.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(processed.last().copied(), Some(file_count));
     }
 
     #[test]

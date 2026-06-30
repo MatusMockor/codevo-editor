@@ -58,6 +58,7 @@ import type { EditorPosition } from "./domain/languageServerFeatures";
 import type { LanguageServerPlan } from "./domain/languageServer";
 import {
   indexProgressLabel,
+  indexProgressPercent,
   type IndexProgressState,
 } from "./domain/indexProgress";
 import { ideProgressIndicator } from "./domain/ideProgress";
@@ -1682,7 +1683,7 @@ function compactIndexActivityLabel(progress: IndexProgressState): string | null 
   }
 
   if (progress.status === "scanning") {
-    return "Index scanning";
+    return compactIndexScanningLabel(progress);
   }
 
   if (progress.status === "failed") {
@@ -1693,6 +1694,22 @@ function compactIndexActivityLabel(progress: IndexProgressState): string | null 
     progress.erroredEntries > 0 ? ` · ${progress.erroredEntries} errors` : "";
 
   return `Index ${progress.indexedFiles} files${suffix}`;
+}
+
+// Compact status-bar text for an in-flight index, mirroring indexScanningLabel's graceful tiers but
+// without the "Index:" prefix (the IDE activity chip already namespaces it). A known total shows the
+// determinate "X of N (P%)"; an unknown total degrades to an indeterminate count; before the first
+// batch lands it stays the plain "scanning" spinner so the chip never looks stuck on "0 of N".
+function compactIndexScanningLabel(progress: IndexProgressState): string {
+  if (progress.totalFiles !== null && progress.totalFiles > 0) {
+    return `Indexing ${progress.processedFiles} of ${progress.totalFiles} (${indexProgressPercent(progress)}%)`;
+  }
+
+  if (progress.processedFiles > 0) {
+    return `Indexing ${progress.processedFiles} files`;
+  }
+
+  return "Index scanning";
 }
 
 export function ideActivityState(

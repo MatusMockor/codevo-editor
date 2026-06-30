@@ -50,8 +50,9 @@ use index_reindex::{
     LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
 };
 use index_scan::{
-    InitialMetadataScanStart, MetadataScanCompletionEvent, MetadataScanEventSink,
-    WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
+    IndexProgressEvent, InitialMetadataScanStart, MetadataScanCompletionEvent,
+    MetadataScanEventSink, WorkspaceReindexMode, INDEX_PROGRESS_EVENT,
+    METADATA_SCAN_COMPLETED_EVENT,
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
@@ -570,6 +571,10 @@ impl AppHandleMetadataScanEventSink {
 impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
     fn emit_completion(&self, event: MetadataScanCompletionEvent) {
         let _ = self.app.emit(METADATA_SCAN_COMPLETED_EVENT, event);
+    }
+
+    fn emit_progress(&self, event: IndexProgressEvent) {
+        let _ = self.app.emit(INDEX_PROGRESS_EVENT, event);
     }
 }
 

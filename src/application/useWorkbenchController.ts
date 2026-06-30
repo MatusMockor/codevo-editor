@@ -57,6 +57,7 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import { extractTodoComments } from "../domain/todoComments";
 import type { WorkspaceTodo } from "../domain/workspaceTodo";
 import {
+  applyIndexProgress,
   applyMetadataScanCompletion,
   createIndexHealthCompletionLog,
   createIndexHealthLogEntry,
@@ -66,6 +67,7 @@ import {
   prependIndexHealthLog,
   startIndexProgress,
   type IndexHealthLogEntry,
+  type IndexProgressEvent,
   type IndexProgressGateway,
   type IndexProgressState,
   type MetadataScanCompletionEvent,
@@ -3379,6 +3381,35 @@ export function useWorkbenchController(
     },
     [indexProgressGateway, reportError],
   );
+
+  const handleIndexProgress = useCallback((event: IndexProgressEvent) => {
+    // Per-workspace isolation: drop progress for any root that is not the active workspace and the
+    // root the in-flight index was actually started for, so a stale background run can never paint
+    // the newly-active workspace's status bar. Progress is purely advisory - completion/failure are
+    // still owned by handleMetadataScanCompletion.
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
+      return;
+    }
+
+    const indexRoot = pendingIndexScanRef.current
+      ? pendingIndexRootRef.current
+      : activeIndexRootRef.current;
+
+    if (!workspaceRootKeysEqual(indexRoot, event.rootPath)) {
+      return;
+    }
+
+    setIndexProgress((current) => {
+      if (
+        current.rootPath &&
+        !workspaceRootKeysEqual(current.rootPath, event.rootPath)
+      ) {
+        return current;
+      }
+
+      return applyIndexProgress(current, event);
+    });
+  }, []);
 
   const startInitialIndexScan = useCallback(
     async (rootPath: string) => {
@@ -29752,6 +29783,19 @@ export function useWorkbenchController(
     let active = true;
     const subscriptionRoot = workspaceRoot;
     let unsubscribe: IndexProgressUnsubscribeFn | null = null;
+    let unsubscribeProgress: IndexProgressUnsubscribeFn | null = null;
+
+    const reportSubscriptionError = (error: unknown) => {
+      if (
+        !active ||
+        !subscriptionRoot ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot)
+      ) {
+        return;
+      }
+
+      reportError("Index", error);
+    };
 
     indexProgressGateway
       .subscribeMetadataScanCompletion((event) => {
@@ -29769,23 +29813,38 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => {
-        if (
-          !active ||
-          !subscriptionRoot ||
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot)
-        ) {
+      .catch(reportSubscriptionError);
+
+    indexProgressGateway
+      .subscribeIndexProgress((event) => {
+        if (!active) {
           return;
         }
 
-        reportError("Index", error);
-      });
+        handleIndexProgress(event);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribeProgress = dispose;
+      })
+      .catch(reportSubscriptionError);
 
     return () => {
       active = false;
       unsubscribe?.();
+      unsubscribeProgress?.();
     };
-  }, [handleMetadataScanCompletion, indexProgressGateway, reportError, workspaceRoot]);
+  }, [
+    handleIndexProgress,
+    handleMetadataScanCompletion,
+    indexProgressGateway,
+    reportError,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     let active = true;
