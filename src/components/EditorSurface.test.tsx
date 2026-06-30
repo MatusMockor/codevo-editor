@@ -8308,11 +8308,18 @@ class Foo
     });
 
     expect(host.textContent).toContain("Modified lines");
+    // A modified hunk shows both sides of the change inline (previous + current)
+    // for a clearer JetBrains-style rollback diff.
+    expect(host.textContent).toContain("Previous content");
     expect(host.textContent).toContain("$comment = 'old';");
+    expect(host.textContent).toContain("Current content");
+    expect(host.textContent).toContain("$comment = 'new';");
     const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
     expect(popover.classList.contains("editor-change-popover-modified")).toBe(
       true,
     );
+    expect(popover.querySelector(".editor-change-popover-code-removed")).not.toBeNull();
+    expect(popover.querySelector(".editor-change-popover-code-added")).not.toBeNull();
     expect(popover.style.left).toBe("92px");
     expect(popover.style.top).toBe("56px");
 
@@ -8324,6 +8331,123 @@ class Foo
     });
 
     expect(onRevertChangeHunk).toHaveBeenCalledWith(changeHunks[0]);
+  });
+
+  it("navigates to the next and previous change from the gutter rollback popover", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$a = 'new';\n$keep = 1;\n$b = 'new';\n",
+      language: "php",
+      name: "Multi.php",
+      path: "/workspace/src/Multi.php",
+      savedContent: "<?php\n$a = 'old';\n$keep = 1;\n$b = 'old';\n",
+    };
+    const changeHunks = editorChangeHunks(
+      activeDocument.savedContent,
+      activeDocument.content,
+    );
+    expect(changeHunks.length).toBeGreaterThanOrEqual(2);
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={changeHunks}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // Open the rollback popover on the first hunk by clicking its gutter glyph.
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
+          },
+          position: {
+            column: 1,
+            lineNumber: changeHunks[0].startLineNumber,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    const nextButton = queryRequired<HTMLButtonElement>(
+      host,
+      ".editor-change-popover-action-next",
+    );
+    const previousButton = queryRequired<HTMLButtonElement>(
+      host,
+      ".editor-change-popover-action-previous",
+    );
+
+    // The popover starts on the first hunk ($a).
+    expect(host.textContent).toContain("$a = 'old';");
+    expect(host.textContent).not.toContain("$b = 'old';");
+
+    // Navigating next moves the editor caret to the second hunk AND the popover
+    // follows onto it (it no longer shows the first hunk's content).
+    editor.setPosition.mockClear();
+    act(() => {
+      nextButton.click();
+    });
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: changeHunks[1].startLineNumber }),
+    );
+    expect(host.textContent).toContain("$b = 'old';");
+    expect(host.textContent).not.toContain("$a = 'old';");
+
+    // Navigating previous walks the editor and the popover back to the first
+    // hunk - anchored on the popover's hunk, not a stale caret snapshot.
+    editor.setPosition.mockClear();
+    act(() => {
+      previousButton.click();
+    });
+    expect(editor.setPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ lineNumber: changeHunks[0].startLineNumber }),
+    );
+    expect(host.textContent).toContain("$a = 'old';");
+    expect(host.textContent).not.toContain("$b = 'old';");
   });
 
   it("renders added and deleted change gutter markers with preview and revert actions", async () => {
@@ -8468,7 +8592,12 @@ class Foo
     });
 
     expect(host.textContent).toContain("Added lines");
-    expect(host.textContent).toContain("No previous lines.");
+    // A pure-add hunk has no previous content, so the popover omits the
+    // "Previous content" section entirely instead of showing a placeholder,
+    // and instead surfaces the inserted ("Current content") lines.
+    expect(host.textContent).not.toContain("Previous content");
+    expect(host.textContent).toContain("Current content");
+    expect(host.textContent).toContain("inserted");
     act(() => {
       queryRequired<HTMLButtonElement>(
         host,

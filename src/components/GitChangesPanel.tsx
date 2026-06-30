@@ -3,12 +3,19 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  FileEdit,
+  FileMinus,
+  FilePlus,
+  FileQuestion,
+  FileSymlink,
+  FileWarning,
   GitBranch,
   Plus,
   RefreshCw,
   RotateCcw,
   Undo2,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   gitChangeKey,
   groupGitChanges,
@@ -16,10 +23,10 @@ import {
   gitStatusTitle,
   type GitChangedFile,
   type GitChangeGroup,
+  type GitChangeStatus,
   type GitStatus,
 } from "../domain/git";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
-import { TreeEntryIcon } from "./TreeEntryIcon";
 
 interface GitChangesPanelProps {
   activeChange: GitChangedFile | null;
@@ -120,6 +127,7 @@ function GitChangesPanelComponent({
       <section aria-label="Commit" className="git-commit-panel">
         <GitCommitHeader
           branch={status.branch}
+          changeCount={0}
           disabled={gitOperationLoading}
           onRefresh={onRefresh}
           onRevertChanges={() => undefined}
@@ -143,6 +151,7 @@ function GitChangesPanelComponent({
     <section aria-label="Commit" className="git-commit-panel">
       <GitCommitHeader
         branch={status.branch}
+        changeCount={changes.length}
         disabled={gitOperationLoading}
         onRefresh={onRefresh}
         onRevertChanges={onRevertChanges}
@@ -204,6 +213,7 @@ export const GitChangesPanel = memo(GitChangesPanelComponent);
 
 interface GitCommitHeaderProps {
   branch: string | null;
+  changeCount: number;
   disabled: boolean;
   selectedChanges: GitChangedFile[];
   onRefresh(): void;
@@ -214,6 +224,7 @@ interface GitCommitHeaderProps {
 
 function GitCommitHeader({
   branch,
+  changeCount,
   disabled,
   onRefresh,
   onRevertChanges,
@@ -226,7 +237,17 @@ function GitCommitHeader({
   return (
     <header className="git-commit-header">
       <div className="git-commit-title">
-        <span>Commit</span>
+        <span className="git-commit-title-row">
+          <span>Commit</span>
+          {changeCount > 0 ? (
+            <span
+              aria-label={changeCountLabel(changeCount)}
+              className="git-changes-summary"
+            >
+              {changeCount}
+            </span>
+          ) : null}
+        </span>
         <small>
           <GitBranch aria-hidden="true" size={13} />
           {branch || "detached"}
@@ -425,7 +446,7 @@ function GitChangeRowComponent({
         title={statusTitle}
         type="button"
       >
-        <TreeEntryIcon kind="file" />
+        <GitChangeStatusIcon status={change.status} />
         <span className="git-change-name">{fileName(change.relativePath)}</span>
         <small className="git-change-directory">
           {directoryName(change.relativePath)}
@@ -479,6 +500,56 @@ function ThemedCheckbox({
       </span>
     </label>
   );
+}
+
+interface GitChangeStatusIconProps {
+  status: GitChangeStatus;
+}
+
+// JetBrains "Local Changes" renders a status-tinted file glyph per row so the
+// kind of change reads at a glance without parsing the trailing letter. Each
+// status maps to a distinct lucide icon and a status class the themes tint. The
+// glyph is decorative (aria-hidden): the row button's title and the trailing
+// status span (aria-label) already carry the status for assistive tech.
+function GitChangeStatusIcon({ status }: GitChangeStatusIconProps) {
+  const Icon = gitChangeStatusIcon(status);
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`tree-entry-icon git-change-status-icon git-change-status-icon-${status}`}
+    >
+      <Icon size={16} />
+    </span>
+  );
+}
+
+function gitChangeStatusIcon(status: GitChangeStatus): LucideIcon {
+  if (status === "added") {
+    return FilePlus;
+  }
+
+  if (status === "deleted") {
+    return FileMinus;
+  }
+
+  if (status === "renamed") {
+    return FileSymlink;
+  }
+
+  if (status === "untracked") {
+    return FileQuestion;
+  }
+
+  if (status === "conflicted") {
+    return FileWarning;
+  }
+
+  return FileEdit;
+}
+
+function changeCountLabel(count: number): string {
+  return `${count} changed file${count === 1 ? "" : "s"}`;
 }
 
 function fileName(path: string): string {

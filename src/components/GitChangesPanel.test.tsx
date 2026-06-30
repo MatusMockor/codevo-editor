@@ -39,10 +39,48 @@ describe("GitChangesPanel", () => {
     expect(host.textContent).toContain("notes.txt");
     expect(host.querySelector(".git-change-name")?.textContent).toBe("User.php");
     expect(host.querySelector(".git-change-directory")?.textContent).toBe("src");
-    expect(host.querySelector(".git-change-row .tree-entry-icon-file")).not.toBeNull();
+    expect(
+      host.querySelector(".git-change-row .git-change-status-icon-modified"),
+    ).not.toBeNull();
     expect(
       host.querySelector<HTMLButtonElement>(".git-commit-button")?.disabled,
     ).toBe(false);
+  });
+
+  it("renders a distinct status icon per file status, not a generic file icon", async () => {
+    await renderPanel({
+      status: gitStatus([
+        gitChange("added", "src/Added.php", true),
+        gitChange("modified", "src/Modified.php", true),
+        gitChange("deleted", "src/Deleted.php", true),
+        gitChange("untracked", "notes.txt", false),
+      ]),
+    });
+
+    // Each row's status icon carries a status-specific class so themes can tint
+    // it (JetBrains "Local Changes" feel), instead of every file sharing the
+    // generic FileCode2 tree icon.
+    expect(host.querySelector(".git-change-status-icon-added")).not.toBeNull();
+    expect(host.querySelector(".git-change-status-icon-modified")).not.toBeNull();
+    expect(host.querySelector(".git-change-status-icon-deleted")).not.toBeNull();
+    expect(host.querySelector(".git-change-status-icon-untracked")).not.toBeNull();
+
+    const icons = host.querySelectorAll(".git-change-status-icon svg");
+    expect(icons).toHaveLength(4);
+  });
+
+  it("summarizes the total changed file count in the commit header", async () => {
+    await renderPanel({
+      status: gitStatus([
+        gitChange("modified", "src/User.php", true),
+        gitChange("added", "src/Post.php", true),
+        gitChange("untracked", "notes.txt", false),
+      ]),
+    });
+
+    const summary = host.querySelector(".git-changes-summary");
+    expect(summary).not.toBeNull();
+    expect(summary?.textContent).toContain("3");
   });
 
   it("enables commit for included unstaged files when a message is present", async () => {

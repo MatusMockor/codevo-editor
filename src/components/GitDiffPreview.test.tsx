@@ -113,6 +113,142 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 1);
   });
 
+  it("stages the first of several worktree hunks", async () => {
+    const loadFileHunks = vi.fn(async () => threeHunks(false));
+    const onStageHunk = vi.fn();
+
+    await renderPreview(diff(), {
+      loadFileHunks,
+      onStageHunk,
+      onUnstageHunk: vi.fn(),
+    });
+
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(3);
+
+    await act(async () => {
+      checkboxes[0].click();
+    });
+
+    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+  });
+
+  it("stages the last of several worktree hunks", async () => {
+    const loadFileHunks = vi.fn(async () => threeHunks(false));
+    const onStageHunk = vi.fn();
+
+    await renderPreview(diff(), {
+      loadFileHunks,
+      onStageHunk,
+      onUnstageHunk: vi.fn(),
+    });
+
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(3);
+
+    await act(async () => {
+      checkboxes[2].click();
+    });
+
+    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 2);
+  });
+
+  it("unstages the middle of several staged hunks", async () => {
+    const loadFileHunks = vi.fn(async () => threeHunks(true));
+    const onUnstageHunk = vi.fn();
+
+    await renderPreview(
+      { ...diff(), change: { ...diff().change, isStaged: true } },
+      {
+        loadFileHunks,
+        onStageHunk: vi.fn(),
+        onUnstageHunk,
+      },
+    );
+
+    const checkboxes = hunkCheckboxes();
+    expect(checkboxes).toHaveLength(3);
+
+    await act(async () => {
+      checkboxes[1].click();
+    });
+
+    expect(onUnstageHunk).toHaveBeenCalledWith("src/example.ts", 1);
+  });
+
+  it("renders only additions for a pure-add hunk and stages it", async () => {
+    const loadFileHunks = vi.fn(async () => [
+      {
+        header: "@@ -3,0 +4,2 @@",
+        index: 0,
+        lines: ["+added one", "+added two"],
+        isStaged: false,
+      },
+    ]);
+    const onStageHunk = vi.fn();
+
+    await renderPreview(diff(), {
+      loadFileHunks,
+      onStageHunk,
+      onUnstageHunk: vi.fn(),
+    });
+
+    const hunk = document.querySelector(".git-diff-hunk");
+    expect(hunk?.textContent).toContain("+2");
+    expect(hunk?.querySelector(".git-diff-hunk-removed")).toBeNull();
+
+    await act(async () => {
+      hunkCheckboxes()[0].click();
+    });
+
+    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+  });
+
+  it("renders only deletions for a pure-delete hunk and stages it", async () => {
+    const loadFileHunks = vi.fn(async () => [
+      {
+        header: "@@ -4,2 +3,0 @@",
+        index: 0,
+        lines: ["-gone one", "-gone two"],
+        isStaged: false,
+      },
+    ]);
+    const onStageHunk = vi.fn();
+
+    await renderPreview(diff(), {
+      loadFileHunks,
+      onStageHunk,
+      onUnstageHunk: vi.fn(),
+    });
+
+    const hunk = document.querySelector(".git-diff-hunk");
+    expect(hunk?.textContent).toContain("-2");
+    expect(hunk?.querySelector(".git-diff-hunk-added")).toBeNull();
+
+    await act(async () => {
+      hunkCheckboxes()[0].click();
+    });
+
+    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+  });
+
+  it("does not render the hunk list for a deleted (binary-like absent diff) change", async () => {
+    const loadFileHunks = vi.fn(async () => []);
+
+    await renderPreview(
+      { ...diff(), change: { ...diff().change, status: "deleted" } },
+      {
+        loadFileHunks,
+        onStageHunk: vi.fn(),
+        onUnstageHunk: vi.fn(),
+      },
+    );
+
+    // A deleted file with no parseable text hunks must keep the hunk list empty
+    // rather than rendering a phantom toggle that cannot map to a hunk index.
+    expect(hunkCheckboxes()).toHaveLength(0);
+  });
+
   it("clears loaded hunks and diff rows when rerendered without a diff", async () => {
     const loadFileHunks = vi.fn(async () => [
       { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
@@ -298,6 +434,14 @@ function queryButtonByTitle(title: string): HTMLButtonElement | null {
     document.querySelectorAll<HTMLButtonElement>("button"),
   );
   return buttons.find((button) => button.title === title) ?? null;
+}
+
+function threeHunks(isStaged: boolean): GitDiffHunk[] {
+  return [
+    { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged },
+    { header: "@@ -5 +5 @@", index: 1, lines: ["-e", "+E"], isStaged },
+    { header: "@@ -9 +9 @@", index: 2, lines: ["-i", "+I"], isStaged },
+  ];
 }
 
 function diff(): GitFileDiff {

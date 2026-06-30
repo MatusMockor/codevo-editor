@@ -1,6 +1,6 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
-import { RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -2711,6 +2711,47 @@ function EditorSurfaceComponent({
         )
       : undefined;
 
+  // The gutter rollback popover mirrors JetBrains' change marker menu: Revert,
+  // Show diff (the inline previous/current content already shown), and
+  // Next/Previous change. Navigation is anchored on the hunk the popover is
+  // currently showing (not the caret), then BOTH the editor caret and the
+  // popover move to the target hunk so the popover follows the change instead of
+  // being left stale on the originally-clicked hunk. The popover stays open so
+  // repeated presses walk every change.
+  const onPopoverGoToChange = useCallback(
+    (direction: "next" | "previous") => {
+      if (!editorApi) {
+        return;
+      }
+
+      // Anchor on the hunk the popover is showing (read via the functional
+      // updater so there is no stale-closure dependency on changePreview), find
+      // the target, then move BOTH the editor and the popover onto it.
+      setChangePreview((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const target = navigateChangeHunkFromPopover(
+          editorApi,
+          changeHunksRef.current,
+          current.hunk.startLineNumber,
+          direction,
+        );
+
+        if (!target) {
+          return current;
+        }
+
+        return {
+          anchorLineNumber: target.startLineNumber,
+          hunk: target,
+        };
+      });
+    },
+    [editorApi],
+  );
+
   // The Monaco editor stays mounted at all times so switching files only swaps
   // the model (path/value) instead of unmounting/remounting Monaco — which would
   // re-run its initialization and flash a blank surface (VS Code never does
@@ -2849,24 +2890,62 @@ function EditorSurfaceComponent({
             >
               {editorChangeKindLabel(changePreview.hunk.kind)}
             </span>
-            <button
-              aria-label="Close local change preview"
-              className="editor-change-popover-icon-button"
-              onClick={() => setChangePreview(null)}
-              type="button"
+            <div
+              aria-label="Change navigation"
+              className="editor-change-popover-nav"
             >
-              <X aria-hidden="true" size={14} />
-            </button>
+              <button
+                aria-label="Go to previous change"
+                className="editor-change-popover-icon-button editor-change-popover-action-previous"
+                onClick={() => onPopoverGoToChange("previous")}
+                title="Previous change"
+                type="button"
+              >
+                <ChevronUp aria-hidden="true" size={14} />
+              </button>
+              <button
+                aria-label="Go to next change"
+                className="editor-change-popover-icon-button editor-change-popover-action-next"
+                onClick={() => onPopoverGoToChange("next")}
+                title="Next change"
+                type="button"
+              >
+                <ChevronDown aria-hidden="true" size={14} />
+              </button>
+              <button
+                aria-label="Close local change preview"
+                className="editor-change-popover-icon-button"
+                onClick={() => setChangePreview(null)}
+                title="Close"
+                type="button"
+              >
+                <X aria-hidden="true" size={14} />
+              </button>
+            </div>
           </div>
-          <div className="editor-change-popover-section-label">
-            Previous content
-          </div>
-          <pre className="editor-change-popover-code">
-            {changePreviewText(changePreview.hunk)}
-          </pre>
+          {changePreview.hunk.originalLines.length > 0 ? (
+            <>
+              <div className="editor-change-popover-section-label">
+                Previous content
+              </div>
+              <pre className="editor-change-popover-code editor-change-popover-code-removed">
+                {changePreviewText(changePreview.hunk)}
+              </pre>
+            </>
+          ) : null}
+          {changePreview.hunk.currentLines.length > 0 ? (
+            <>
+              <div className="editor-change-popover-section-label">
+                Current content
+              </div>
+              <pre className="editor-change-popover-code editor-change-popover-code-added">
+                {changePreview.hunk.currentLines.join("\n")}
+              </pre>
+            </>
+          ) : null}
           <div className="editor-change-popover-actions">
             <button
-              className="editor-change-popover-action"
+              className="editor-change-popover-action editor-change-popover-action-revert"
               onClick={() => {
                 onRevertChangeHunk(changePreview.hunk);
                 setChangePreview(null);
@@ -3868,6 +3947,38 @@ function jumpToChangeHunk(
   editor.setPosition(position);
   editor.revealPositionInCenter(position);
   editor.focus();
+}
+
+// Popover-driven navigation. Like jumpToChangeHunk it moves the caret to the
+// next/previous hunk, but it is anchored on the hunk the popover is currently
+// showing (`fromLine`, not the caret) and it RETURNS the landed hunk so the
+// caller can move the gutter rollback popover onto it too - keeping the popover
+// and the editor in sync, the JetBrains behavior. The list wraps around so
+// repeated presses cycle every change without dead-ending.
+function navigateChangeHunkFromPopover(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  hunks: EditorChangeHunk[],
+  fromLine: number,
+  direction: "next" | "previous",
+): EditorChangeHunk | null {
+  if (!hunks.length || !editor.getModel()) {
+    return null;
+  }
+
+  const ordered = [...hunks].sort(
+    (left, right) => left.startLineNumber - right.startLineNumber,
+  );
+  const target = nextChangeHunk(ordered, fromLine, direction);
+
+  if (!target) {
+    return null;
+  }
+
+  const position = { column: 1, lineNumber: target.startLineNumber };
+  editor.setPosition(position);
+  editor.revealPositionInCenter(position);
+  editor.focus();
+  return target;
 }
 
 function nextChangeHunk(
