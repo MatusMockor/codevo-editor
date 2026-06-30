@@ -626,6 +626,12 @@ import {
   type Bookmark,
 } from "../domain/bookmarks";
 import {
+  createLatencyTracker,
+  measureLatency,
+  type LatencySnapshotEntry,
+  type LatencyTracker,
+} from "../domain/latencyTracker";
+import {
   detectLanguage,
   getFileName,
   getParentPath,
@@ -1385,6 +1391,14 @@ export function useWorkbenchController(
   ] = useState(0);
   const hasRestoredRef = useRef(false);
   const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
+  // Runtime latency instrumentation for the key interactive operations
+  // (quick open, search everywhere, go-to-definition, completion, folder
+  // expand). The tracker only records a single timestamp delta per operation —
+  // no work is added to the hot path beyond `performance.now()` reads — and its
+  // recent-latency stats are surfaced in the runtime observability panel so real
+  // in-app latencies are observable instead of guessed.
+  const latencyTrackerRef = useRef<LatencyTracker>(createLatencyTracker());
+  const latencyTracker = latencyTrackerRef.current;
   // Memoized bare-key shortcut set for the keydown hot path. Rebuilding it on
   // every keydown would re-parse every shortcut (~35 parseShortcut calls) on
   // each auto-repeat event; we instead recompute only when the keymap object
@@ -1929,6 +1943,24 @@ export function useWorkbenchController(
       reportLanguageServerError(error);
     },
     [isUnknownDocumentForUnsyncedPath, reportLanguageServerError],
+  );
+
+  // Records a PHP completion round-trip latency reported by the Monaco
+  // completion provider (wired through EditorSurface). Stable identity so the
+  // provider registration never re-runs because of it.
+  const recordCompletionLatency = useCallback(
+    (durationMs: number) => {
+      latencyTracker.record("completion", durationMs);
+    },
+    [latencyTracker],
+  );
+
+  // Pull a fresh snapshot of all recorded operation latencies. The runtime
+  // latency panel polls this on an interval (the tracker is mutated imperatively
+  // on the hot path, so there is no React state to subscribe to).
+  const getLatencySnapshot = useCallback(
+    (): LatencySnapshotEntry[] => latencyTracker.snapshot(),
+    [latencyTracker],
   );
 
   const applyAppSettings = useCallback((settings: AppSettings) => {
@@ -5995,9 +6027,15 @@ export function useWorkbenchController(
         return;
       }
 
-      await loadDirectory(path);
+      // Folder-expand latency: only timed here (the interactive expand of an
+      // uncached directory), not for the many programmatic `loadDirectory`
+      // callers (workspace-root load, session restore, reveal), so the metric
+      // reflects what the user feels when clicking a folder chevron.
+      await measureLatency(latencyTracker, "folderExpand", () =>
+        loadDirectory(path),
+      );
     },
-    [entriesByDirectory, expandedDirectories, loadDirectory],
+    [entriesByDirectory, expandedDirectories, latencyTracker, loadDirectory],
   );
 
   useEffect(() => {
@@ -23968,10 +24006,29 @@ export function useWorkbenchController(
         return false;
       }
 
-      const locations = await languageServerFeaturesGateway[feature](
-        requestedRoot,
-        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-      );
+      // Cmd+B / Cmd+click resolution latency: time the language-server
+      // round-trip for the definition feature so the actual navigation cost is
+      // observable in the runtime panel. Other nav features (declaration /
+      // implementation / typeDefinition) share this path but are not the
+      // headline Cmd+B operation, so they stay untimed to keep the metric clean.
+      const locations =
+        feature === "definition"
+          ? await measureLatency(latencyTracker, "definition", () =>
+              languageServerFeaturesGateway[feature](
+                requestedRoot,
+                toLanguageServerTextDocumentPosition(
+                  requestedPath,
+                  editorPosition,
+                ),
+              ),
+            )
+          : await languageServerFeaturesGateway[feature](
+              requestedRoot,
+              toLanguageServerTextDocumentPosition(
+                requestedPath,
+                editorPosition,
+              ),
+            );
 
       if (!isRequestedSessionActive()) {
         return false;
@@ -24066,6 +24123,7 @@ export function useWorkbenchController(
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
+    latencyTracker,
     openImplementationTarget,
     openPathForNavigation,
     currentNavigationLocation,
@@ -29167,8 +29225,9 @@ export function useWorkbenchController(
     setQuickOpenLoading(true);
 
     const timeout = window.setTimeout(() => {
-      fileSearch
-        .searchFiles(workspaceRoot, quickOpenQuery, 80)
+      measureLatency(latencyTracker, "quickOpen", () =>
+        fileSearch.searchFiles(workspaceRoot, quickOpenQuery, 80),
+      )
         .then((results) => {
           if (!active) {
             return;
@@ -29198,7 +29257,14 @@ export function useWorkbenchController(
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
+  }, [
+    fileSearch,
+    latencyTracker,
+    quickOpenOpen,
+    quickOpenQuery,
+    reportError,
+    workspaceRoot,
+  ]);
 
   const searchClassOpenSymbols = useCallback(
     async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
@@ -29479,8 +29545,11 @@ export function useWorkbenchController(
     setSearchEverywhereLoading(true);
 
     const timeout = window.setTimeout(() => {
-      const fileSearchPromise = fileSearch
-        .searchFiles(requestedRoot, searchEverywhereQuery, 40)
+      const fileSearchPromise = measureLatency(
+        latencyTracker,
+        "searchEverywhere",
+        () => fileSearch.searchFiles(requestedRoot, searchEverywhereQuery, 40),
+      )
         .then((results) => {
           if (!active) {
             return;
@@ -29536,6 +29605,7 @@ export function useWorkbenchController(
   }, [
     canSearchClassOpenSymbols,
     fileSearch,
+    latencyTracker,
     reportError,
     searchClassOpenSymbols,
     searchEverywhereOpen,
@@ -30661,6 +30731,8 @@ export function useWorkbenchController(
     navigateBackward,
     navigateForwardInHistory,
     navigationHistory,
+    getLatencySnapshot,
+    recordCompletionLatency,
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
     previewGitChange,

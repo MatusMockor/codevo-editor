@@ -1270,6 +1270,7 @@ function App() {
             onOpenFileStructure={workbench.openFileStructure}
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}
+            onRecordCompletionLatency={workbench.recordCompletionLatency}
             onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
@@ -1304,6 +1305,8 @@ function App() {
             onSoftReindex={workbench.startIndexScan}
             gitHistoryGateway={gitHistoryGateway}
             runtimeObservabilityGateway={runtimeObservabilityGateway}
+            runtimeMode={workbench.intelligenceMode}
+            getLatencySnapshot={workbench.getLatencySnapshot}
             onOpenCommitFileDiff={openGitHistoryCommitDiff}
             onTerminalSessionReady={workbench.registerActiveTerminalSession}
             onTrustWorkspace={workbench.toggleWorkspaceTrust}

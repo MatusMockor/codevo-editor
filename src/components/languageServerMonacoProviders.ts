@@ -390,6 +390,14 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     range: { endLine: number; startLine: number },
   ): Promise<PhpParameterNameInlayHint[]>;
+  /**
+   * Records the wall-clock latency (in milliseconds) of a PHP language-server
+   * completion round-trip so it can surface in the runtime latency panel. The
+   * provider calls this once per completion request it actually issues to the
+   * gateway. Omitted when the host wires no latency instrumentation; the
+   * provider then skips the timestamp delta entirely (no hot-path cost).
+   */
+  recordCompletionLatency?(durationMs: number): void;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -4099,12 +4107,23 @@ async function requestPhpLanguageServerCompletion(
       return { kind: "inactive" };
     }
 
+    const recordCompletionLatency = context.recordCompletionLatency;
+    const completionStart = recordCompletionLatency ? performance.now() : 0;
     const completion = await raceInteractiveFeatureRequest(
       context.featuresGateway.completion(request.rootPath, request.position),
     );
 
     if (completion === FEATURE_REQUEST_TIMED_OUT) {
       return { kind: "timedOut" };
+    }
+
+    // Record only genuine round-trips: the timeout sentinel resolves at the
+    // fixed interactive-request deadline (not the real gateway latency) and
+    // would otherwise skew the completion median/p95. When no host wired the
+    // callback, the `performance.now()` read above was skipped entirely (zero
+    // hot-path cost).
+    if (recordCompletionLatency) {
+      recordCompletionLatency(performance.now() - completionStart);
     }
 
     if (!isFeatureRequestActive(context, request)) {

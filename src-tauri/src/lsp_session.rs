@@ -10,7 +10,7 @@ use crate::managed_javascript_typescript;
 use crate::managed_phpactor;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -43,6 +43,156 @@ type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
 type RuntimeLog = Arc<Mutex<String>>;
 const RUNTIME_LOG_MAX_BYTES: usize = 128 * 1024;
+
+/// Number of most-recent LSP requests retained per runtime for the diagnostic
+/// cockpit. Bounded so the ring buffer can never leak memory under a long-lived
+/// session that issues thousands of completion/hover requests.
+const RECENT_REQUESTS_CAPACITY: usize = 20;
+
+/// Number of trailing stderr lines retained per runtime. Bounded independently
+/// from the full runtime log so the panel can show a crash/stderr tail inline
+/// without copying the whole (128 KiB) log on every refresh.
+const STDERR_TAIL_CAPACITY: usize = 30;
+
+/// Hard cap on a single stderr line. A runtime that emits a huge line without a
+/// newline (or never terminates the line) must not grow the pending buffer
+/// without bound: once a line crosses this it is truncated. Keeps the tail
+/// buffer's worst-case memory at `STDERR_TAIL_CAPACITY * STDERR_LINE_MAX_BYTES`.
+const STDERR_LINE_MAX_BYTES: usize = 4 * 1024;
+
+/// One recorded LSP request with its measured round-trip latency and outcome,
+/// surfaced in the diagnostic cockpit's "recent requests" table. Newest first
+/// is the panel's concern; the ring buffer stores oldest-to-newest.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentLspRequest {
+    /// LSP method, e.g. `textDocument/completion`, `textDocument/hover`.
+    pub method: String,
+    /// Measured round-trip latency in milliseconds (send -> response/timeout).
+    pub latency_ms: u64,
+    /// Whether the server returned a result (`true`) or an error/timeout (`false`).
+    pub success: bool,
+}
+
+/// Bounded, newest-evicting-oldest ring buffer of recent LSP requests. One per
+/// supervisor (per workspace root), so request telemetry never leaks between
+/// open project tabs. `VecDeque` with a hard cap keeps memory bounded.
+type RecentRequests = Arc<Mutex<VecDeque<RecentLspRequest>>>;
+
+/// Bounded ring buffer of the most recent stderr lines for a runtime. Shared
+/// with the stderr reader thread; capped at `STDERR_TAIL_CAPACITY` complete
+/// lines. A line split across two reads is coalesced via `pending`.
+type StderrTail = Arc<Mutex<StderrTailBuffer>>;
+
+/// Holds the trailing complete stderr lines plus the in-progress partial line.
+/// Bounded: `completed` never exceeds `STDERR_TAIL_CAPACITY`, so a chatty runtime
+/// can never grow this without limit.
+#[derive(Default)]
+struct StderrTailBuffer {
+    completed: VecDeque<String>,
+    pending: String,
+}
+
+impl StderrTailBuffer {
+    fn clear(&mut self) {
+        self.completed.clear();
+        self.pending.clear();
+    }
+}
+
+/// Push a request record into the bounded ring buffer, evicting the oldest entry
+/// once the capacity is exceeded. Lock poisoning is swallowed (best-effort
+/// telemetry must never break a live request path).
+fn record_recent_request(buffer: &RecentRequests, record: RecentLspRequest) {
+    let Ok(mut requests) = buffer.lock() else {
+        return;
+    };
+
+    requests.push_back(record);
+
+    while requests.len() > RECENT_REQUESTS_CAPACITY {
+        requests.pop_front();
+    }
+}
+
+/// Snapshot the recent requests newest-first for the panel.
+fn snapshot_recent_requests(buffer: &RecentRequests) -> Vec<RecentLspRequest> {
+    let Ok(requests) = buffer.lock() else {
+        return Vec::new();
+    };
+
+    requests.iter().rev().cloned().collect()
+}
+
+/// Append a chunk of stderr text to the bounded tail buffer. Newlines split the
+/// chunk into complete lines; any trailing fragment without a newline is kept in
+/// `pending` and coalesced with the next read so a line split across reads stays
+/// whole. Complete lines past the cap evict the oldest.
+fn append_stderr_tail(tail: &StderrTail, chunk: &str) {
+    let Ok(mut buffer) = tail.lock() else {
+        return;
+    };
+
+    let mut segments = chunk.split('\n').peekable();
+
+    while let Some(segment) = segments.next() {
+        push_bounded_pending(&mut buffer.pending, segment);
+
+        // The last segment has no trailing newline in this chunk; keep it pending.
+        if segments.peek().is_none() {
+            break;
+        }
+
+        let line = std::mem::take(&mut buffer.pending);
+        buffer.completed.push_back(line);
+
+        while buffer.completed.len() > STDERR_TAIL_CAPACITY {
+            buffer.completed.pop_front();
+        }
+    }
+}
+
+/// Append a segment to the in-progress line, capping the line length so a
+/// runtime that never emits a newline cannot grow `pending` without bound. Once
+/// the cap is reached the line stops growing (further bytes for this line are
+/// dropped) until the next newline starts a fresh line.
+fn push_bounded_pending(pending: &mut String, segment: &str) {
+    if pending.len() >= STDERR_LINE_MAX_BYTES {
+        return;
+    }
+
+    let remaining = STDERR_LINE_MAX_BYTES - pending.len();
+
+    if segment.len() <= remaining {
+        pending.push_str(segment);
+        return;
+    }
+
+    let mut take_to = remaining;
+
+    while take_to > 0 && !segment.is_char_boundary(take_to) {
+        take_to -= 1;
+    }
+
+    pending.push_str(&segment[..take_to]);
+}
+
+/// Snapshot the stderr tail (oldest-to-newest): the completed lines plus any
+/// non-empty pending fragment, dropping blank lines so the panel shows real
+/// content only.
+fn snapshot_stderr_tail(tail: &StderrTail) -> Vec<String> {
+    let Ok(buffer) = tail.lock() else {
+        return Vec::new();
+    };
+
+    buffer
+        .completed
+        .iter()
+        .cloned()
+        .chain(std::iter::once(buffer.pending.clone()))
+        .filter(|line| !line.is_empty())
+        .collect()
+}
 
 struct ServerWindowMessage {
     chunk: String,
@@ -568,6 +718,8 @@ struct RunningSession {
 
 pub struct LanguageServerSupervisor {
     log: RuntimeLog,
+    recent_requests: RecentRequests,
+    stderr_tail: StderrTail,
     next_request_id: AtomicU64,
     next_session_id: AtomicU64,
     server_label: &'static str,
@@ -1075,6 +1227,22 @@ impl LanguageServerRegistry {
             .and_then(|supervisor| supervisor.pid())
     }
 
+    /// Recent LSP requests (newest first) for the runtime keyed to `root_path`.
+    /// Empty when no supervisor exists for the root, so telemetry stays scoped to
+    /// the requested workspace.
+    pub fn recent_requests(&self, root_path: &str) -> Vec<RecentLspRequest> {
+        self.existing_supervisor(root_path)
+            .map(|supervisor| supervisor.recent_requests())
+            .unwrap_or_default()
+    }
+
+    /// Trailing stderr lines for the runtime keyed to `root_path`.
+    pub fn stderr_tail(&self, root_path: &str) -> Vec<String> {
+        self.existing_supervisor(root_path)
+            .map(|supervisor| supervisor.stderr_tail())
+            .unwrap_or_default()
+    }
+
     #[cfg(test)]
     pub fn start(
         &self,
@@ -1350,12 +1518,26 @@ impl LanguageServerSupervisor {
     pub fn new_with_label(server_label: &'static str) -> Self {
         Self {
             log: Arc::new(Mutex::new(String::new())),
+            recent_requests: Arc::new(Mutex::new(VecDeque::new())),
+            stderr_tail: Arc::new(Mutex::new(StderrTailBuffer::default())),
             next_request_id: AtomicU64::new(2),
             next_session_id: AtomicU64::new(1),
             server_label,
             session: Mutex::new(None),
             status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
         }
+    }
+
+    /// Snapshot of the most recent LSP requests (newest first) for this runtime's
+    /// diagnostic cockpit view. Bounded ring buffer scoped to this supervisor, so
+    /// telemetry never leaks across workspace tabs.
+    pub fn recent_requests(&self) -> Vec<RecentLspRequest> {
+        snapshot_recent_requests(&self.recent_requests)
+    }
+
+    /// Snapshot of the trailing stderr lines for this runtime (oldest-to-newest).
+    pub fn stderr_tail(&self) -> Vec<String> {
+        snapshot_stderr_tail(&self.stderr_tail)
     }
 
     pub fn status(&self) -> LanguageServerRuntimeStatus {
@@ -1509,6 +1691,7 @@ impl LanguageServerSupervisor {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         self.terminate_stale_session();
         reset_runtime_log(&self.log, self.server_label, session_id, command);
+        reset_request_telemetry(&self.recent_requests, &self.stderr_tail);
         self.begin_start(status_sink.as_ref(), session_id, start_kind)?;
 
         let spawned = match spawner.spawn(command) {
@@ -1523,9 +1706,9 @@ impl LanguageServerSupervisor {
         let stdin = Arc::new(Mutex::new(spawned.stdin));
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let stop_requested = Arc::new(AtomicBool::new(false));
-        let stderr_reader = spawned
-            .stderr
-            .map(|stderr| spawn_stderr_reader(stderr, Arc::clone(&self.log)));
+        let stderr_reader = spawned.stderr.map(|stderr| {
+            spawn_stderr_reader(stderr, Arc::clone(&self.log), Arc::clone(&self.stderr_tail))
+        });
         let server_configuration = Arc::new(Mutex::new(
             server_configuration_from_initialize_request(initialize_request),
         ));
@@ -1740,22 +1923,49 @@ impl LanguageServerSupervisor {
             pending.insert(id, tx);
         }
 
+        // Capture the send instant so every outcome below (result, error,
+        // timeout, cancellation) records a measured round-trip latency into the
+        // bounded ring buffer. Recording is best-effort and never blocks the
+        // request path.
+        let started_at = Instant::now();
+
         if let Err(error) = write_with_session_stdin(&stdin, &bytes) {
             remove_pending_request(&pending_requests, id);
+            self.record_request_outcome(method, started_at, false);
             return Err(format!("Failed to send LSP request `{method}`: {error}"));
         }
 
         match rx.recv_timeout(timeout) {
-            Ok(Ok(result)) => Ok(Some(result)),
-            Ok(Err(message)) => Err(message),
+            Ok(Ok(result)) => {
+                self.record_request_outcome(method, started_at, true);
+                Ok(Some(result))
+            }
+            Ok(Err(message)) => {
+                self.record_request_outcome(method, started_at, false);
+                Err(message)
+            }
             Err(RecvTimeoutError::Timeout) => {
                 remove_pending_request(&pending_requests, id);
+                self.record_request_outcome(method, started_at, false);
                 Err(format!("Language server request `{method}` timed out."))
             }
             Err(RecvTimeoutError::Disconnected) => {
+                self.record_request_outcome(method, started_at, false);
                 Err(format!("Language server request `{method}` was cancelled."))
             }
         }
+    }
+
+    /// Record one completed request into the bounded recent-requests ring buffer.
+    fn record_request_outcome(&self, method: &str, started_at: Instant, success: bool) {
+        record_recent_request(
+            &self.recent_requests,
+            RecentLspRequest {
+                method: method.to_string(),
+                latency_ms: started_at.elapsed().as_millis() as u64,
+                success,
+            },
+        );
     }
 
     fn begin_start(
@@ -2029,7 +2239,11 @@ fn reset_runtime_log(
     }
 }
 
-fn spawn_stderr_reader(stderr: Box<dyn Read + Send>, log: RuntimeLog) -> JoinHandle<()> {
+fn spawn_stderr_reader(
+    stderr: Box<dyn Read + Send>,
+    log: RuntimeLog,
+    stderr_tail: StderrTail,
+) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
         let mut buffer = [0_u8; 4096];
@@ -2038,11 +2252,26 @@ fn spawn_stderr_reader(stderr: Box<dyn Read + Send>, log: RuntimeLog) -> JoinHan
             match reader.read(&mut buffer) {
                 Ok(0) | Err(_) => return,
                 Ok(count) => {
-                    append_runtime_log(&log, &String::from_utf8_lossy(&buffer[..count]));
+                    let chunk = String::from_utf8_lossy(&buffer[..count]);
+                    append_runtime_log(&log, &chunk);
+                    append_stderr_tail(&stderr_tail, &chunk);
                 }
             }
         }
     })
+}
+
+/// Clear the per-runtime request telemetry (recent requests + stderr tail) when
+/// a new session starts, mirroring `reset_runtime_log`. Keeps a restart from
+/// showing the previous session's latencies/stderr.
+fn reset_request_telemetry(recent_requests: &RecentRequests, stderr_tail: &StderrTail) {
+    if let Ok(mut requests) = recent_requests.lock() {
+        requests.clear();
+    }
+
+    if let Ok(mut tail) = stderr_tail.lock() {
+        tail.clear();
+    }
 }
 
 fn append_runtime_log(log: &RuntimeLog, chunk: &str) {
@@ -3447,6 +3676,246 @@ mod tests {
 
         assert!(log.contains("TypeScript language server session 1 started"));
         assert!(log.contains("tsserver warning"));
+    }
+
+    #[test]
+    fn captures_stderr_tail_as_bounded_recent_lines() {
+        let stderr = b"first warning\nsecond warning\nthird warning\n".to_vec();
+        let spawner = FakeSpawner::new(ready_script(), true).with_stderr(stderr);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("TypeScript language server");
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for_log(&supervisor, "third warning");
+
+        let tail = supervisor.stderr_tail();
+
+        assert_eq!(
+            tail,
+            vec![
+                "first warning".to_string(),
+                "second warning".to_string(),
+                "third warning".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn stderr_tail_is_bounded_to_capacity() {
+        let mut script = Vec::new();
+        for line in 0..(super::STDERR_TAIL_CAPACITY + 10) {
+            script.extend_from_slice(format!("line {line}\n").as_bytes());
+        }
+        let last_line = format!("line {}", super::STDERR_TAIL_CAPACITY + 9);
+        let spawner = FakeSpawner::new(ready_script(), true).with_stderr(script);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("TypeScript language server");
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for_log(&supervisor, &last_line);
+
+        let tail = supervisor.stderr_tail();
+
+        assert_eq!(tail.len(), super::STDERR_TAIL_CAPACITY);
+        assert_eq!(tail.last(), Some(&last_line));
+        assert_eq!(tail.first(), Some(&"line 10".to_string()));
+    }
+
+    #[test]
+    fn records_recent_request_latency_and_success() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new_with_label("Test server"));
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let request_supervisor = Arc::clone(&supervisor);
+        let request = std::thread::spawn(move || {
+            request_supervisor
+                .send_request("textDocument/completion", json!({ "marker": "x" }))
+                .expect("send completion")
+        });
+        let request_id = wait_for_captured_request_id(&capture, "textDocument/completion");
+        write_held_message(
+            &held,
+            json!({ "jsonrpc": "2.0", "id": request_id, "result": { "items": [] } }),
+        );
+        request.join().expect("request thread");
+
+        let recent = supervisor.recent_requests();
+
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].method, "textDocument/completion");
+        assert!(recent[0].success);
+    }
+
+    #[test]
+    fn records_failed_request_as_unsuccessful() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new_with_label("Test server"));
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let request_supervisor = Arc::clone(&supervisor);
+        let request = std::thread::spawn(move || {
+            request_supervisor.send_request("textDocument/hover", json!({}))
+        });
+        let request_id = wait_for_captured_request_id(&capture, "textDocument/hover");
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": { "code": -32603, "message": "boom" },
+            }),
+        );
+        let _ = request.join().expect("request thread");
+
+        let recent = supervisor.recent_requests();
+
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].method, "textDocument/hover");
+        assert!(!recent[0].success);
+    }
+
+    #[test]
+    fn recent_requests_are_newest_first_and_bounded() {
+        let buffer: super::RecentRequests = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        for index in 0..(super::RECENT_REQUESTS_CAPACITY + 5) {
+            super::record_recent_request(
+                &buffer,
+                super::RecentLspRequest {
+                    method: format!("method/{index}"),
+                    latency_ms: index as u64,
+                    success: true,
+                },
+            );
+        }
+
+        let recent = super::snapshot_recent_requests(&buffer);
+
+        assert_eq!(recent.len(), super::RECENT_REQUESTS_CAPACITY);
+        assert_eq!(
+            recent[0].method,
+            format!("method/{}", super::RECENT_REQUESTS_CAPACITY + 4)
+        );
+        assert_eq!(recent[0].latency_ms, (super::RECENT_REQUESTS_CAPACITY + 4) as u64);
+    }
+
+    #[test]
+    fn stderr_tail_coalesces_line_split_across_reads() {
+        let tail: super::StderrTail =
+            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+
+        // A single logical line arriving in two read() chunks must stay one line.
+        super::append_stderr_tail(&tail, "PHP Fatal err");
+        super::append_stderr_tail(&tail, "or: boom\n");
+
+        assert_eq!(
+            super::snapshot_stderr_tail(&tail),
+            vec!["PHP Fatal error: boom".to_string()]
+        );
+    }
+
+    #[test]
+    fn stderr_tail_trailing_newline_does_not_add_phantom_line() {
+        let tail: super::StderrTail =
+            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+
+        super::append_stderr_tail(&tail, "one\ntwo\n");
+
+        assert_eq!(
+            super::snapshot_stderr_tail(&tail),
+            vec!["one".to_string(), "two".to_string()]
+        );
+    }
+
+    #[test]
+    fn stderr_tail_caps_unterminated_line_to_bound() {
+        let tail: super::StderrTail =
+            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+
+        // A runtime that never emits a newline must not grow pending without
+        // bound: the line is truncated at STDERR_LINE_MAX_BYTES.
+        let huge = "x".repeat(super::STDERR_LINE_MAX_BYTES * 4);
+        super::append_stderr_tail(&tail, &huge);
+
+        let snapshot = super::snapshot_stderr_tail(&tail);
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].len(), super::STDERR_LINE_MAX_BYTES);
+    }
+
+    #[test]
+    fn stderr_tail_surfaces_pending_partial_line() {
+        let tail: super::StderrTail =
+            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+
+        // A crash banner without a trailing newline must still be visible.
+        super::append_stderr_tail(&tail, "Segmentation fault");
+
+        assert_eq!(
+            super::snapshot_stderr_tail(&tail),
+            vec!["Segmentation fault".to_string()]
+        );
+    }
+
+    #[test]
+    fn restart_clears_request_telemetry_per_root() {
+        let recent: super::RecentRequests =
+            Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let tail: super::StderrTail =
+            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        super::record_recent_request(
+            &recent,
+            super::RecentLspRequest {
+                method: "textDocument/hover".to_string(),
+                latency_ms: 5,
+                success: true,
+            },
+        );
+        super::append_stderr_tail(&tail, "stale warning\n");
+
+        super::reset_request_telemetry(&recent, &tail);
+
+        assert!(super::snapshot_recent_requests(&recent).is_empty());
+        assert!(super::snapshot_stderr_tail(&tail).is_empty());
     }
 
     #[test]

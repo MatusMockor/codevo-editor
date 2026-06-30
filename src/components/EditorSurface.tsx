@@ -216,6 +216,12 @@ interface EditorSurfaceProps {
   onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
+  /**
+   * Records the latency (ms) of a PHP language-server completion round-trip for
+   * the runtime latency panel. Optional: when omitted the completion provider
+   * skips the timestamp delta entirely (no hot-path cost).
+   */
+  onRecordCompletionLatency?(durationMs: number): void;
   onLocalPhpDiagnosticsChange?(
     path: string,
     diagnostics: LanguageServerDiagnostic[],
@@ -311,6 +317,7 @@ function EditorSurfaceComponent({
   onOpenFileStructure,
   onChange,
   onLanguageServerError,
+  onRecordCompletionLatency,
   onLocalPhpDiagnosticsChange = noopLocalPhpDiagnosticsChange,
   onRevealTargetHandled,
   onRevertChangeHunk,
@@ -353,6 +360,7 @@ function EditorSurfaceComponent({
   );
   const applyPhpWorkspaceEditRef = useRef(applyPhpLanguageServerWorkspaceEdit);
   const errorReporterRef = useRef(onLanguageServerError);
+  const recordCompletionLatencyRef = useRef(onRecordCompletionLatency);
   // Holds the latest parent onChange so the Editor can receive a single stable
   // handler (see handleEditorChange) without the closure ever going stale.
   const onChangeRef = useRef(onChange);
@@ -605,6 +613,10 @@ function EditorSurfaceComponent({
   }, [onLanguageServerError]);
 
   useEffect(() => {
+    recordCompletionLatencyRef.current = onRecordCompletionLatency;
+  }, [onRecordCompletionLatency]);
+
+  useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
@@ -781,6 +793,8 @@ function EditorSurfaceComponent({
         phpMethodSignatureRef.current(source, position),
       providePhpParameterInlayHints: (source, range) =>
         phpParameterInlayHintsRef.current(source, range),
+      recordCompletionLatency: (durationMs) =>
+        recordCompletionLatencyRef.current?.(durationMs),
       refreshGateway: languageServerRefreshGateway,
       reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,

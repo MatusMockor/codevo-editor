@@ -110,4 +110,12 @@ export class TauriRuntimeObservabilityGateway
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }
+
+  copyToClipboard(text: string): Promise<void> {
+    if (!navigator.clipboard) {
+      return Promise.reject(new Error("Clipboard is unavailable."));
+    }
+
+    return navigator.clipboard.writeText(text);
+  }
 }

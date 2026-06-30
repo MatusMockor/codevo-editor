@@ -10,7 +10,7 @@
 //! the active root up front and re-checks it after any await before mutating
 //! shared UI state, so metrics never leak between open project tabs.
 
-use crate::lsp_session::LanguageServerRuntimeStatus;
+use crate::lsp_session::{LanguageServerRuntimeStatus, RecentLspRequest};
 use serde::Serialize;
 
 /// The managed language runtimes a workspace can host. Kept as a small closed
@@ -87,6 +87,12 @@ pub struct RuntimeObservability {
     pub crash_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stats: Option<ProcessStats>,
+    /// Most-recent LSP requests with latencies (newest first) for the diagnostic
+    /// cockpit. Always present (possibly empty) so the panel can render a stable
+    /// "recent requests" section.
+    pub recent_requests: Vec<RecentLspRequest>,
+    /// Trailing stderr lines for inline crash/stderr context (oldest-to-newest).
+    pub stderr_tail: Vec<String>,
 }
 
 /// Whole-workspace observability report: one entry per managed runtime, scoped
@@ -106,6 +112,15 @@ pub trait RuntimeStateSource {
     fn label(&self) -> String;
     fn status(&self) -> LanguageServerRuntimeStatus;
     fn pid(&self) -> Option<u32>;
+    /// Recent LSP requests (newest first) for this runtime. Defaulted to empty so
+    /// existing sources/tests that do not surface telemetry keep compiling.
+    fn recent_requests(&self) -> Vec<RecentLspRequest> {
+        Vec::new()
+    }
+    /// Trailing stderr lines (oldest-to-newest) for this runtime.
+    fn stderr_tail(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Samples OS process statistics for a PID. Abstracted so tests can inject a
@@ -150,6 +165,8 @@ fn build_runtime_observability(
         pid,
         crash_reason,
         stats,
+        recent_requests: source.recent_requests(),
+        stderr_tail: source.stderr_tail(),
     }
 }
 
@@ -250,6 +267,26 @@ mod tests {
         label: String,
         status: LanguageServerRuntimeStatus,
         pid: Option<u32>,
+        recent_requests: Vec<RecentLspRequest>,
+        stderr_tail: Vec<String>,
+    }
+
+    impl FakeSource {
+        fn new(
+            kind: LanguageRuntimeKind,
+            label: &str,
+            status: LanguageServerRuntimeStatus,
+            pid: Option<u32>,
+        ) -> Self {
+            Self {
+                kind,
+                label: label.to_string(),
+                status,
+                pid,
+                recent_requests: Vec::new(),
+                stderr_tail: Vec::new(),
+            }
+        }
     }
 
     impl RuntimeStateSource for FakeSource {
@@ -267,6 +304,14 @@ mod tests {
 
         fn pid(&self) -> Option<u32> {
             self.pid
+        }
+
+        fn recent_requests(&self) -> Vec<RecentLspRequest> {
+            self.recent_requests.clone()
+        }
+
+        fn stderr_tail(&self) -> Vec<String> {
+            self.stderr_tail.clone()
         }
     }
 
@@ -289,18 +334,18 @@ mod tests {
 
     #[test]
     fn report_collects_pid_status_and_stats_per_runtime() {
-        let php = FakeSource {
-            kind: LanguageRuntimeKind::Phpactor,
-            label: "PHPactor".to_string(),
-            status: running_status(),
-            pid: Some(4242),
-        };
-        let ts = FakeSource {
-            kind: LanguageRuntimeKind::Tsserver,
-            label: "TypeScript language server".to_string(),
-            status: LanguageServerRuntimeStatus::Stopped,
-            pid: None,
-        };
+        let php = FakeSource::new(
+            LanguageRuntimeKind::Phpactor,
+            "PHPactor",
+            running_status(),
+            Some(4242),
+        );
+        let ts = FakeSource::new(
+            LanguageRuntimeKind::Tsserver,
+            "TypeScript language server",
+            LanguageServerRuntimeStatus::Stopped,
+            None,
+        );
         let mut samples = HashMap::new();
         samples.insert(
             4242,
@@ -342,14 +387,14 @@ mod tests {
 
     #[test]
     fn crashed_runtime_surfaces_reason_and_skips_stats() {
-        let php = FakeSource {
-            kind: LanguageRuntimeKind::Phpactor,
-            label: "PHPactor".to_string(),
-            status: LanguageServerRuntimeStatus::Crashed {
+        let php = FakeSource::new(
+            LanguageRuntimeKind::Phpactor,
+            "PHPactor",
+            LanguageServerRuntimeStatus::Crashed {
                 message: "phpactor exited unexpectedly.".to_string(),
             },
-            pid: Some(999),
-        };
+            Some(999),
+        );
         let probe = MapProbe {
             samples: HashMap::new(),
         };
@@ -368,12 +413,7 @@ mod tests {
 
     #[test]
     fn running_runtime_without_probe_value_reports_no_stats() {
-        let php = FakeSource {
-            kind: LanguageRuntimeKind::Phpactor,
-            label: "PHPactor".to_string(),
-            status: running_status(),
-            pid: Some(7),
-        };
+        let php = FakeSource::new(LanguageRuntimeKind::Phpactor, "PHPactor", running_status(), Some(7));
         let probe = MapProbe {
             samples: HashMap::new(),
         };
@@ -383,6 +423,52 @@ mod tests {
 
         assert_eq!(report.runtimes[0].pid, Some(7));
         assert_eq!(report.runtimes[0].stats, None);
+    }
+
+    #[test]
+    fn report_surfaces_recent_requests_and_stderr_tail_per_runtime() {
+        let mut php = FakeSource::new(
+            LanguageRuntimeKind::Phpactor,
+            "PHPactor",
+            LanguageServerRuntimeStatus::Crashed {
+                message: "phpactor exited unexpectedly.".to_string(),
+            },
+            Some(4242),
+        );
+        php.recent_requests = vec![
+            RecentLspRequest {
+                method: "textDocument/completion".to_string(),
+                latency_ms: 42,
+                success: true,
+            },
+            RecentLspRequest {
+                method: "textDocument/hover".to_string(),
+                latency_ms: 5000,
+                success: false,
+            },
+        ];
+        php.stderr_tail = vec![
+            "PHP Fatal error: ...".to_string(),
+            "Stack trace:".to_string(),
+        ];
+        let probe = MapProbe {
+            samples: HashMap::new(),
+        };
+
+        let report =
+            build_runtime_observability_report("/ws", &[&php as &dyn RuntimeStateSource], &probe);
+
+        let runtime = &report.runtimes[0];
+        assert_eq!(runtime.recent_requests.len(), 2);
+        assert_eq!(runtime.recent_requests[0].method, "textDocument/completion");
+        assert_eq!(runtime.recent_requests[0].latency_ms, 42);
+        assert!(runtime.recent_requests[0].success);
+        assert_eq!(runtime.recent_requests[1].latency_ms, 5000);
+        assert!(!runtime.recent_requests[1].success);
+        assert_eq!(
+            runtime.stderr_tail,
+            vec!["PHP Fatal error: ...".to_string(), "Stack trace:".to_string()]
+        );
     }
 
     #[test]

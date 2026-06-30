@@ -2289,6 +2289,8 @@ struct RegistryRuntimeStateSource {
     label: &'static str,
     status: LanguageServerRuntimeStatus,
     pid: Option<u32>,
+    recent_requests: Vec<lsp_session::RecentLspRequest>,
+    stderr_tail: Vec<String>,
 }
 
 impl runtime_observability::RuntimeStateSource for RegistryRuntimeStateSource {
@@ -2307,6 +2309,14 @@ impl runtime_observability::RuntimeStateSource for RegistryRuntimeStateSource {
     fn pid(&self) -> Option<u32> {
         self.pid
     }
+
+    fn recent_requests(&self) -> Vec<lsp_session::RecentLspRequest> {
+        self.recent_requests.clone()
+    }
+
+    fn stderr_tail(&self) -> Vec<String> {
+        self.stderr_tail.clone()
+    }
 }
 
 /// Per-workspace runtime observability for the managed language servers. The
@@ -2323,12 +2333,16 @@ fn get_runtime_observability(
         label: "PHPactor",
         status: php_registry.status(&root_path),
         pid: php_registry.pid(&root_path),
+        recent_requests: php_registry.recent_requests(&root_path),
+        stderr_tail: php_registry.stderr_tail(&root_path),
     };
     let typescript_source = RegistryRuntimeStateSource {
         kind: runtime_observability::LanguageRuntimeKind::Tsserver,
         label: "TypeScript language server",
         status: javascript_typescript_registry.status(&root_path),
         pid: javascript_typescript_registry.pid(&root_path),
+        recent_requests: javascript_typescript_registry.recent_requests(&root_path),
+        stderr_tail: javascript_typescript_registry.stderr_tail(&root_path),
     };
 
     let report = runtime_observability::build_runtime_observability_report(

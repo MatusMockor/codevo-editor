@@ -641,6 +641,63 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(result.incomplete).toBe(true);
   });
 
+  it("records the completion round-trip latency when the language server responds", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const recordCompletionLatency = vi.fn();
+    const context = {
+      ...providerContext({ featuresGateway: gateway }),
+      recordCompletionLatency,
+    };
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+
+    expect(recordCompletionLatency).toHaveBeenCalledTimes(1);
+    expect(recordCompletionLatency.mock.calls[0][0]).toBeGreaterThanOrEqual(0);
+  });
+
+  it("does not record a latency sample when the completion request times out", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const source = phpCompletionFixtureSource();
+      const completion = createDeferred<LanguageServerCompletionList>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.completion).mockImplementationOnce(
+        async () => completion.promise,
+      );
+      const recordCompletionLatency = vi.fn();
+      const context = {
+        ...providerContext({ featuresGateway: gateway }),
+        recordCompletionLatency,
+      };
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const completionPromise =
+        registered.completionProvider.provideCompletionItems(
+          model({ content: source }),
+          position(),
+        );
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await completionPromise;
+
+      // The timeout sentinel must not pollute the completion latency metric with
+      // a synthetic ~timeout-budget sample.
+      expect(recordCompletionLatency).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns locally-computed PHP suggestions when the language server does not respond before the timeout", async () => {
     vi.useFakeTimers();
 

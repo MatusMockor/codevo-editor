@@ -18,6 +18,7 @@ import { GitHistoryPanel } from "./GitHistoryPanel";
 import { RuntimeObservabilityPanel } from "./RuntimeObservabilityPanel";
 import type { GitHistoryGateway } from "../domain/git";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
+import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 
 interface BottomPanelProps {
   activeView: BottomPanelView;
@@ -36,6 +37,8 @@ interface BottomPanelProps {
   onTrustWorkspace(): void;
   gitHistoryGateway: GitHistoryGateway;
   runtimeObservabilityGateway: RuntimeObservabilityGateway;
+  runtimeMode?: string;
+  getLatencySnapshot?(): LatencySnapshotEntry[];
   onOpenCommitFileDiff(
     commitHash: string,
     path: string,
@@ -76,6 +79,8 @@ export function BottomPanel({
   onOpenCommitFileDiff,
   gitHistoryGateway,
   runtimeObservabilityGateway,
+  runtimeMode,
+  getLatencySnapshot,
   onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
@@ -149,6 +154,8 @@ export function BottomPanel({
     onOpenCommitFileDiff,
     gitHistoryGateway,
     runtimeObservabilityGateway,
+    runtimeMode,
+    getLatencySnapshot,
     onSoftReindex,
     workspaceRoot,
   });
@@ -273,6 +280,8 @@ interface RenderActivePanelOptions {
   ): Promise<void> | void;
   gitHistoryGateway: GitHistoryGateway;
   runtimeObservabilityGateway: RuntimeObservabilityGateway;
+  runtimeMode?: string;
+  getLatencySnapshot?(): LatencySnapshotEntry[];
   workspaceRoot: string | null;
 }
 
@@ -288,6 +297,8 @@ function renderActivePanel({
   onSoftReindex,
   gitHistoryGateway,
   runtimeObservabilityGateway,
+  runtimeMode,
+  getLatencySnapshot,
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "problems") {
@@ -328,7 +339,9 @@ function renderActivePanel({
     return (
       <RuntimeObservabilityPanel
         gateway={runtimeObservabilityGateway}
+        getLatencySnapshot={getLatencySnapshot}
         isActive
+        mode={runtimeMode}
         rootPath={workspaceRoot}
       />
     );
