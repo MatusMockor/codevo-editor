@@ -1499,6 +1499,26 @@ export function useWorkbenchController(
   const languageServerDiagnosticsByRootRef = useRef<
     Record<string, Record<string, LanguageServerDiagnostic[]>>
   >({});
+  const externallyRemovedDocumentRootByPathRef = useRef<Record<string, string>>(
+    {},
+  );
+  const isExternallyRemovedDocumentPath = useCallback(
+    (path: string) =>
+      Object.prototype.hasOwnProperty.call(
+        externallyRemovedDocumentRootByPathRef.current,
+        path,
+      ),
+    [],
+  );
+  const markExternallyRemovedDocumentPath = useCallback(
+    (rootPath: string, path: string) => {
+      externallyRemovedDocumentRootByPathRef.current[path] = rootPath;
+    },
+    [],
+  );
+  const forgetExternallyRemovedDocumentPath = useCallback((path: string) => {
+    delete externallyRemovedDocumentRootByPathRef.current[path];
+  }, []);
   // Coalescers buffer incoming publishDiagnostics events (per root/uri) and
   // replay them through the apply* sinks once per scheduled frame, collapsing an
   // indexing burst of N un-batched events into a single batched application.
@@ -2547,6 +2567,14 @@ export function useWorkbenchController(
       // reopened projects can hand the editor a canonicalized model path while
       // the persisted workspace root is still the user-selected alias, and that
       // would drop visible local markers from Problems/status.
+      if (isExternallyRemovedDocumentPath(diagnosticPath)) {
+        clearLanguageServerDiagnosticsForPath(
+          currentWorkspaceRootRef.current,
+          diagnosticPath,
+        );
+        return;
+      }
+
       setPhpLocalDiagnosticsByPath((current) => {
         const hasCurrent = diagnosticPath in current;
 
@@ -2591,7 +2619,7 @@ export function useWorkbenchController(
         ),
       );
     },
-    [],
+    [clearLanguageServerDiagnosticsForPath, isExternallyRemovedDocumentPath],
   );
 
   useEffect(() => {
@@ -2842,6 +2870,11 @@ export function useWorkbenchController(
         diagnosticsRootPath,
       );
 
+      if (diagnosticPath && isExternallyRemovedDocumentPath(diagnosticPath)) {
+        clearLanguageServerDiagnosticsForPath(diagnosticsRootPath, diagnosticPath);
+        return;
+      }
+
       void (async () => {
         const diagnostics =
           diagnosticPath && isActiveRoot
@@ -2874,6 +2907,14 @@ export function useWorkbenchController(
             workspaceRootKeysEqual(tabPath, diagnosticsRootPath),
           )
         ) {
+          return;
+        }
+
+        if (diagnosticPath && isExternallyRemovedDocumentPath(diagnosticPath)) {
+          clearLanguageServerDiagnosticsForPath(
+            diagnosticsRootPath,
+            diagnosticPath,
+          );
           return;
         }
 
@@ -2940,7 +2981,9 @@ export function useWorkbenchController(
       });
     },
     [
+      clearLanguageServerDiagnosticsForPath,
       isLanguageServerSessionCurrentForRoot,
+      isExternallyRemovedDocumentPath,
       reportLanguageServerErrorForActiveWorkspaceRoot,
       updateLanguageServerDiagnosticsForRoot,
     ],
@@ -5277,6 +5320,28 @@ export function useWorkbenchController(
           return;
         }
 
+        const message =
+          error instanceof Error
+            ? error.message.toLowerCase()
+            : String(error).toLowerCase();
+        const isMissingDirectory =
+          message.includes("enoent") ||
+          message.includes("no such file") ||
+          message.includes("not a directory");
+
+        if (isMissingDirectory) {
+          setEntriesByDirectory((current) => {
+            if (!(path in current)) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[path];
+            return next;
+          });
+          return;
+        }
+
         reportError("Workspace", error);
       } finally {
         setLoadingDirectories((current) => {
@@ -6191,6 +6256,7 @@ export function useWorkbenchController(
     async (entry: FileEntry, options: OpenFileOptions = {}) => {
       const requestToken = openFileRequestTokenRef.current + 1;
       openFileRequestTokenRef.current = requestToken;
+      forgetExternallyRemovedDocumentPath(entry.path);
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
@@ -6593,6 +6659,7 @@ export function useWorkbenchController(
     [
       activePath,
       documents,
+      forgetExternallyRemovedDocumentPath,
       openPaths,
       recordCurrentNavigationLocation,
       recordRecentFile,
@@ -9519,6 +9586,8 @@ export function useWorkbenchController(
   const closeDocument = useCallback(
     (path: string) => {
       const document = documents[path];
+      const externallyRemovedRoot =
+        externallyRemovedDocumentRootByPathRef.current[path];
 
       if (
         document &&
@@ -9531,6 +9600,10 @@ export function useWorkbenchController(
       if (document) {
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
+      }
+
+      if (externallyRemovedRoot) {
+        clearLanguageServerDiagnosticsForPath(externallyRemovedRoot, path);
       }
 
       if (isGitDiffDocumentPath(path)) {
@@ -9568,6 +9641,7 @@ export function useWorkbenchController(
     },
     [
       activePath,
+      clearLanguageServerDiagnosticsForPath,
       documents,
       gitStatus.changes,
       loadGitDiffDocument,
@@ -26071,6 +26145,7 @@ export function useWorkbenchController(
 
   const handleExternalRemovedPath = useCallback(
     (requestedRoot: string, removedPath: string) => {
+      markExternallyRemovedDocumentPath(requestedRoot, removedPath);
       closeDocument(removedPath);
       clearLanguageServerDiagnosticsForPath(requestedRoot, removedPath);
       filePrefetchCacheRef.current.invalidate(removedPath);
@@ -26079,6 +26154,7 @@ export function useWorkbenchController(
     [
       clearLanguageServerDiagnosticsForPath,
       closeDocument,
+      markExternallyRemovedDocumentPath,
       queueWorkspaceDirectoryRefresh,
     ],
   );
@@ -26190,11 +26266,13 @@ export function useWorkbenchController(
           handleExternalRemovedPath(requestedRoot, event.previousPath);
         }
 
+        forgetExternallyRemovedDocumentPath(event.path);
         queueWorkspaceDirectoryRefresh(getParentPath(event.path));
         return;
       }
 
       if (event.kind === "created" || event.kind === "modified") {
+        forgetExternallyRemovedDocumentPath(event.path);
         queueWorkspaceDirectoryRefresh(getParentPath(event.path));
       }
 
@@ -26204,6 +26282,7 @@ export function useWorkbenchController(
     },
     [
       handleExternalRemovedPath,
+      forgetExternallyRemovedDocumentPath,
       invalidatePhpLaravelMigrationSourcesForPath,
       invalidatePhpLaravelProviderSourcesForPath,
       queueWorkspaceGitStatusRefresh,
@@ -30517,6 +30596,10 @@ export function useWorkbenchController(
       return {};
     }
 
+    if (isExternallyRemovedDocumentPath(activeDocument.path)) {
+      return {};
+    }
+
     const diagnostics = localPhpDiagnosticsFromSource(activeDocument.content, []);
 
     if (diagnostics.length === 0) {
@@ -30526,7 +30609,12 @@ export function useWorkbenchController(
     return {
       [activeDocument.path]: diagnostics,
     };
-  }, [activeDocument?.content, activeDocument?.language, activeDocument?.path]);
+  }, [
+    activeDocument?.content,
+    activeDocument?.language,
+    activeDocument?.path,
+    isExternallyRemovedDocumentPath,
+  ]);
   const effectivePhpLocalDiagnosticsByPath = useMemo(() => {
     if (!activeDocument || activeDocument.language !== "php") {
       return phpLocalDiagnosticsByPath;

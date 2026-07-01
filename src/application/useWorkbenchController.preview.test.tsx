@@ -60597,6 +60597,238 @@ interface GreeterContract
     expect(readDirectory).toHaveBeenCalledWith("/workspace/src");
   });
 
+  it("clears stale diagnostics when a dirty externally deleted PHP tab is closed later", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const filePath = "/workspace/src/CodevoQaController.php";
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      readDirectory,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(filePath, "CodevoQaController.php"),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument(
+        "<?php\nfinal class CodevoQaController {\n",
+      );
+    });
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 1,
+            message: "PHPactor warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 71,
+        uri: fileUriFromPath(filePath),
+        version: null,
+      });
+      getWorkbench().updateLocalPhpDiagnostics(filePath, [
+        {
+          character: 12,
+          line: 1,
+          message: "syntax error, unexpected end of file",
+          severity: "error",
+          source: "PHP Syntax",
+        },
+      ]);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 1,
+    });
+
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: filePath,
+        relativePath: "src/CodevoQaController.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 1,
+            message: "late PHPactor warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 71,
+        uri: fileUriFromPath(filePath),
+        version: null,
+      });
+      getWorkbench().updateLocalPhpDiagnostics(filePath, [
+        {
+          character: 12,
+          line: 1,
+          message: "late syntax error",
+          severity: "error",
+          source: "PHP Syntax",
+        },
+      ]);
+    });
+    await flushAsyncTurns();
+
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(true);
+    act(() => {
+      getWorkbench().closeDocument(filePath);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(getWorkbench().languageServerDiagnosticsByPath[filePath]).toBe(
+      undefined,
+    );
+    expect(
+      getWorkbench().notices.some((notice) => notice.groupKey?.includes(filePath)),
+    ).toBe(false);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 1,
+            message: "post-close PHPactor warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 71,
+        uri: fileUriFromPath(filePath),
+        version: null,
+      });
+      getWorkbench().updateLocalPhpDiagnostics(filePath, [
+        {
+          character: 12,
+          line: 1,
+          message: "post-close syntax error",
+          severity: "error",
+          source: "PHP Syntax",
+        },
+      ]);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some((notice) => notice.groupKey?.includes(filePath)),
+    ).toBe(false);
+  });
+
+  it("does not report a workspace error when refreshing a directory deleted with a file", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace/src/Deleted") {
+        throw new Error("Path is not a directory");
+      }
+
+      return [];
+    });
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/workspace/src/Deleted/User.php",
+        relativePath: "src/Deleted/User.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace" &&
+          notice.message.includes("Path is not a directory"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores external file changes from a workspace that is not active", async () => {
     let publishFileChange:
       | ((event: WorkspaceFileChangeEvent) => void)
