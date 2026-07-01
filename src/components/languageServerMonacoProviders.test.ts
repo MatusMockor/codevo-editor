@@ -6211,6 +6211,130 @@ function store($request): void
     expect(titles).toContain("Add missing properties");
   });
 
+  it("hides phpactor create method variants when a safe local Create method action exists", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateMemberAction('Create method "doWork"'),
+        phpactorCreateMemberAction("Create method App\\Service::doWork"),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 6,
+              startColumn: 1,
+              startLineNumber: 6,
+            },
+            text: "\n    private function doWork(): void\n    {\n    }\n",
+          },
+        ],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'doWork'",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Service\n{\n    public function run(): void\n    {\n        $this->doWork();\n    }\n}\n" }),
+      new registered.monaco.Range(6, 16, 6, 22),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create method 'doWork'");
+    expect(titles).not.toContain('Create method "doWork"');
+    expect(titles).not.toContain("Create method App\\Service::doWork");
+    expect(titles).toContain("Add missing properties");
+  });
+
+  it("hides phpactor create property variants when a safe local Create property action exists", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        phpactorCreateMemberAction("Create property $status"),
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.add_missing_properties",
+            title: "Add missing properties",
+          },
+          data: { id: "add-missing-properties" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Add missing properties",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 5,
+              startColumn: 1,
+              startLineNumber: 5,
+            },
+            text: "\n    private string $status;\n",
+          },
+        ],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create property 'status'",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Service\n{\n    public function run(): string\n    {\n        return $this->status;\n    }\n}\n" }),
+      new registered.monaco.Range(6, 23, 6, 29),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const titles = actions.actions.map(
+      (action: { title: string }) => action.title,
+    );
+
+    expect(titles[0]).toBe("Create property 'status'");
+    expect(titles).not.toContain("Create property $status");
+    expect(titles).toContain("Add missing properties");
+  });
+
   it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -11150,6 +11274,23 @@ function phpactorCreateTypeAction(title: string): LanguageServerCodeAction {
       fileOperations: [
         { kind: "create", uri: "file:///project/src/MailDispatcher.php" },
       ],
+    },
+    isPreferred: false,
+    kind: "quickfix",
+    title,
+  };
+}
+
+function phpactorCreateMemberAction(title: string): LanguageServerCodeAction {
+  return {
+    command: {
+      arguments: [],
+      command: "phpactor.create_member",
+      title,
+    },
+    data: { id: title },
+    edit: {
+      changes: {},
     },
     isPreferred: false,
     kind: "quickfix",

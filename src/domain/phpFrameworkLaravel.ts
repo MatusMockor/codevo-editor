@@ -1405,6 +1405,7 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   source: string,
   methodName: string,
   receiverType: string | null,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   if (
     !laravelRepositoryModelReturnMethods.has(methodName.toLowerCase()) ||
@@ -1413,22 +1414,16 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
     return null;
   }
 
-  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
-  const returnTypes = [
-    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-  ];
+  const returnTypes = phpLaravelRepositoryMethodReturnTypesFromSources(
+    [source, ...workspaceSources],
+    methodName,
+    receiverType,
+  );
 
   return returnTypes
-    .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
+    .map(({ returnType, source }) =>
+      phpLaravelModelTypeFromReturnType(source, returnType),
+    )
     .find((returnType): returnType is string => Boolean(returnType)) ??
     phpLaravelRepositoryGenericInheritanceModelTypeFromReceiver(
       source,
@@ -1460,16 +1455,19 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       source,
       methodName,
       receiverType,
+      workspaceSources,
     ) ??
     phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
       source,
       methodName,
       receiverType,
+      workspaceSources,
     ) ??
     phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
       source,
       methodName,
       receiverType,
+      workspaceSources,
     ) ??
     phpLaravelCollectionMethodCallReturnTypeFromSource(
       source,
@@ -3013,26 +3011,19 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
   source: string,
   methodName: string,
   receiverType: string | null,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   if (!isLaravelRepositoryType(receiverType)) {
     return null;
   }
 
-  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
-  const returnTypes = [
-    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-  ];
+  const returnTypes = phpLaravelRepositoryMethodReturnTypesFromSources(
+    [source, ...workspaceSources],
+    methodName,
+    receiverType,
+  );
   const genericModelType = returnTypes
-    .map((returnType) =>
+    .map(({ returnType, source }) =>
       phpLaravelResolvedModelTypeCandidate(
         source,
         phpLaravelEloquentBuilderModelTypeCandidate(source, returnType),
@@ -3044,12 +3035,15 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
     return phpLaravelEloquentBuilderType(genericModelType);
   }
 
-  const expressionModelType = phpLaravelRepositoryMethodReturnExpressions(
-    source,
-    methodName,
-    receiverClassName,
-  )
-    .map((expression) =>
+  const expressionModelType = [source, ...workspaceSources]
+    .flatMap((repositorySource) =>
+      phpLaravelRepositoryMethodReturnExpressions(
+        repositorySource,
+        methodName,
+        phpLaravelResolvedClassName(repositorySource, receiverType ?? ""),
+      ).map((expression) => ({ expression, source: repositorySource })),
+    )
+    .map(({ expression, source }) =>
       phpLaravelEloquentBuilderModelTypeFromExpression(source, expression),
     )
     .find((modelType): modelType is string => Boolean(modelType));
@@ -3058,7 +3052,7 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
     return phpLaravelEloquentBuilderType(expressionModelType);
   }
 
-  const conventionModelType = returnTypes.some((returnType) =>
+  const conventionModelType = returnTypes.some(({ returnType, source }) =>
     phpLaravelGenericCarrierMatches(source, returnType, [
       "builder",
       "illuminate\\database\\eloquent\\builder",
@@ -3080,26 +3074,19 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
   source: string,
   methodName: string,
   receiverType: string | null,
+  workspaceSources: readonly string[] = [],
 ): string | null {
   if (!isLaravelRepositoryType(receiverType)) {
     return null;
   }
 
-  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
-  const returnTypes = [
-    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
-      source,
-      methodName,
-      receiverClassName,
-    ),
-  ];
+  const returnTypes = phpLaravelRepositoryMethodReturnTypesFromSources(
+    [source, ...workspaceSources],
+    methodName,
+    receiverType,
+  );
   const genericModelType = returnTypes
-    .map((returnType) =>
+    .map(({ returnType, source }) =>
       phpLaravelResolvedModelTypeCandidate(
         source,
         phpLaravelCollectionModelTypeCandidate(source, returnType),
@@ -3111,12 +3098,15 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
     return phpLaravelEloquentBuilderCollectionType(genericModelType, "get");
   }
 
-  const expressionCollectionType = phpLaravelRepositoryMethodReturnExpressions(
-    source,
-    methodName,
-    receiverClassName,
-  )
-    .map((expression) =>
+  const expressionCollectionType = [source, ...workspaceSources]
+    .flatMap((repositorySource) =>
+      phpLaravelRepositoryMethodReturnExpressions(
+        repositorySource,
+        methodName,
+        phpLaravelResolvedClassName(repositorySource, receiverType ?? ""),
+      ).map((expression) => ({ expression, source: repositorySource })),
+    )
+    .map(({ expression, source }) =>
       phpLaravelEloquentBuilderCollectionTypeFromExpression(source, expression),
     )
     .find(
@@ -3133,7 +3123,7 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
     );
   }
 
-  const conventionModelType = returnTypes.some((returnType) =>
+  const conventionModelType = returnTypes.some(({ returnType, source }) =>
     phpLaravelGenericCarrierMatches(source, returnType, [
       "collection",
       "illuminate\\database\\eloquent\\collection",
@@ -3151,6 +3141,33 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
   return conventionModelType
     ? phpLaravelEloquentBuilderCollectionType(conventionModelType, "get")
     : null;
+}
+
+function phpLaravelRepositoryMethodReturnTypesFromSources(
+  sources: readonly string[],
+  methodName: string,
+  receiverType: string | null,
+): Array<{ returnType: string; source: string }> {
+  return sources.flatMap((source) => {
+    const receiverClassName = phpLaravelResolvedClassName(
+      source,
+      receiverType ?? "",
+    );
+    const returnTypes = [
+      ...phpLaravelRepositoryDeclaredMethodReturnTypes(
+        source,
+        methodName,
+        receiverClassName,
+      ),
+      ...phpLaravelRepositoryPhpDocMethodReturnTypes(
+        source,
+        methodName,
+        receiverClassName,
+      ),
+    ];
+
+    return returnTypes.map((returnType) => ({ returnType, source }));
+  });
 }
 
 function phpLaravelRepositoryMethodReturnExpressions(

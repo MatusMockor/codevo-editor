@@ -20,6 +20,14 @@ describe("javascriptTypeScriptWatchedFiles", () => {
     expect(isJavaScriptTypeScriptWatchedPath("/workspace/jsconfig.json")).toBe(
       true,
     );
+    expect(isJavaScriptTypeScriptWatchedPath("/workspace/package-lock.json")).toBe(
+      true,
+    );
+    expect(isJavaScriptTypeScriptWatchedPath("/workspace/pnpm-lock.yaml")).toBe(
+      true,
+    );
+    expect(isJavaScriptTypeScriptWatchedPath("/workspace/yarn.lock")).toBe(true);
+    expect(isJavaScriptTypeScriptWatchedPath("/workspace/bun.lockb")).toBe(true);
   });
 
   it("rejects files that do not affect the TypeScript project graph", () => {

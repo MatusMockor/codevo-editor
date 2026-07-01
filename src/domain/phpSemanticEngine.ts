@@ -17,7 +17,7 @@ import {
   phpDeclaredTypeCandidate,
 } from "./phpTypeAnalysis";
 import {
-  phpFrameworkContainerExpressionClassName,
+  phpFrameworkContainerConcreteClassNameFromSource,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkPropertyTypeFromSource,
   type PhpFrameworkProvider,
@@ -191,9 +191,11 @@ export function phpReceiverExpressionTypeInSource(
   // `app()->make(X::class)->method()` resolve the receiver type and stop emitting
   // false "undefined method" diagnostics. Gated by an active framework provider,
   // and the resolver only fires when the container call is the outer operation.
-  const containerClassName = phpFrameworkContainerExpressionClassName(
+  const containerClassName = phpFrameworkContainerConcreteClassNameFromSource(
+    source,
     normalizedExpression,
     options.frameworkProviders,
+    options.frameworkSourceContext,
   );
 
   if (containerClassName) {
@@ -296,9 +298,11 @@ export function phpVariableTypeInSource(
     phpParameterTypeForVariable(source, position, variableName) ??
     phpDocTypeForVariableBefore(source, position, variableName) ??
     phpNewExpressionClassName(assignmentExpression) ??
-    phpFrameworkContainerExpressionClassName(
+    phpFrameworkContainerConcreteClassNameFromSource(
+      source,
       assignmentExpression,
       options.frameworkProviders,
+      options.frameworkSourceContext,
     ) ??
     phpFrameworkPropertyAccessAssignmentReturnType(
       source,

@@ -190,6 +190,52 @@ describe("RuntimeObservabilityPanel", () => {
     expect(host.textContent).not.toContain("4242");
   });
 
+  it("copies the optimistic stopped state after a stop request completes", async () => {
+    const stop = deferred<void>();
+    const gateway = {
+      ...gatewayReturning(sampleReport),
+      stop: vi.fn(async () => stop.promise),
+    } satisfies RuntimeObservabilityGateway as RuntimeObservabilityGateway & {
+      copyToClipboard: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    };
+
+    renderPanel(gateway, "/workspace");
+    await flush();
+
+    const stopButton = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop PHPactor"]',
+    );
+
+    await act(async () => {
+      stopButton?.click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      stop.resolve(undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const copyButton = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Copy debug bundle"]',
+    );
+
+    await act(async () => {
+      copyButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(gateway.copyToClipboard).toHaveBeenCalledTimes(1);
+    const bundle = gateway.copyToClipboard.mock.calls[0][0] as string;
+    expect(bundle).toContain("### PHPactor (phpactor)");
+    expect(bundle).toContain("- State: Stopped");
+    expect(bundle).toContain("- PID: -");
+    expect(bundle).not.toContain("- State: Running");
+    expect(bundle).not.toContain("- PID: 4242");
+  });
+
   it("does not query the gateway without an active root", () => {
     const gateway = gatewayReturning(sampleReport);
 

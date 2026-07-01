@@ -367,6 +367,32 @@ export function phpFrameworkContainerExpressionClassName(
   return null;
 }
 
+export function phpFrameworkContainerConcreteClassNameFromSource(
+  source: string,
+  expression: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
+): string | null {
+  const abstractClassName = phpFrameworkContainerExpressionClassName(
+    expression,
+    providers,
+  );
+
+  if (!abstractClassName) {
+    return null;
+  }
+
+  return (
+    phpFrameworkConcreteClassNameFromBindings(
+      abstractClassName,
+      phpFrameworkContainerBindingsFromSources(
+        [source, ...(sourceContext?.workspaceSources ?? [])],
+        providers,
+      ),
+    ) ?? abstractClassName
+  );
+}
+
 export function phpFrameworkContainerBindingsFromSource(
   source: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
@@ -375,6 +401,59 @@ export function phpFrameworkContainerBindingsFromSource(
     (provider) =>
       provider.semantics?.containerBindingsFromSource?.({ source }) ?? [],
   );
+}
+
+function phpFrameworkContainerBindingsFromSources(
+  sources: readonly string[],
+  providers: readonly PhpFrameworkProvider[],
+): PhpFrameworkContainerBinding[] {
+  const bindings: PhpFrameworkContainerBinding[] = [];
+
+  for (const source of sources) {
+    for (const binding of phpFrameworkContainerBindingsFromSource(
+      source,
+      providers,
+    )) {
+      if (bindings.some((seen) => phpFrameworkBindingsEqual(seen, binding))) {
+        continue;
+      }
+
+      bindings.push(binding);
+    }
+  }
+
+  return bindings;
+}
+
+function phpFrameworkConcreteClassNameFromBindings(
+  abstractClassName: string,
+  bindings: readonly PhpFrameworkContainerBinding[],
+): string | null {
+  const normalizedAbstract = phpFrameworkNormalizedClassName(abstractClassName);
+
+  return (
+    bindings.find(
+      (binding) =>
+        phpFrameworkNormalizedClassName(binding.abstractClassName) ===
+        normalizedAbstract,
+    )?.concreteClassName ?? null
+  );
+}
+
+function phpFrameworkBindingsEqual(
+  left: PhpFrameworkContainerBinding,
+  right: PhpFrameworkContainerBinding,
+): boolean {
+  return (
+    phpFrameworkNormalizedClassName(left.abstractClassName) ===
+      phpFrameworkNormalizedClassName(right.abstractClassName) &&
+    phpFrameworkNormalizedClassName(left.concreteClassName) ===
+      phpFrameworkNormalizedClassName(right.concreteClassName)
+  );
+}
+
+function phpFrameworkNormalizedClassName(className: string): string {
+  return className.trim().replace(/^\\+/, "").toLowerCase();
 }
 
 function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {

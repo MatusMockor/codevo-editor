@@ -2831,6 +2831,12 @@ function orderCodeActions({
       return name ? [name] : [];
     }),
   );
+  const safeCreateMemberKeys = new Set(
+    phpActions.flatMap((action) => {
+      const key = phpCreateMemberActionKey(action.title);
+      return key ? [key] : [];
+    }),
+  );
   const seenLanguageServerActions = new Set<string>();
   const filteredLanguageServerActions = languageServerActions.filter(
     (action) => {
@@ -2838,6 +2844,14 @@ function orderCodeActions({
       if (
         phpactorCreateTypeName &&
         safeCreateTypeNames.has(phpactorCreateTypeName)
+      ) {
+        return false;
+      }
+
+      const phpactorCreateMemberKey = phpactorCreateMemberVariantKey(action);
+      if (
+        phpactorCreateMemberKey &&
+        safeCreateMemberKeys.has(phpactorCreateMemberKey)
       ) {
         return false;
       }
@@ -2876,6 +2890,66 @@ function phpactorCreateTypeVariantName(
   return (
     phpactorCreateFileActionName(action.title) ??
     phpCreateTypeActionName(action.title)
+  );
+}
+
+function phpCreateMemberActionKey(title: string): string | null {
+  const match = /^Create (method|property|constant) '([^']+)'(?: in '[^']+')?$/i.exec(
+    title,
+  );
+
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  return phpCreateMemberKey(match[1], match[2]);
+}
+
+function phpactorCreateMemberVariantKey(
+  action: Monaco.languages.CodeAction,
+): string | null {
+  const backedAction = action as LanguageServerBackedCodeAction;
+
+  if (!backedAction.__languageServerAction) {
+    return null;
+  }
+
+  return phpactorCreateMemberActionKey(action.title);
+}
+
+function phpactorCreateMemberActionKey(title: string): string | null {
+  const match = /^Create (method|property|constant)\b\s*(?:"([^"]+)"|'([^']+)'|(.+))$/i.exec(
+    title.trim(),
+  );
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const memberName = match[2] ?? match[3] ?? match[4];
+
+  return memberName ? phpCreateMemberKey(match[1], memberName) : null;
+}
+
+function phpCreateMemberKey(kind: string, name: string): string {
+  return `${kind.toLowerCase()}:${phpMemberShortName(name)}`;
+}
+
+function phpMemberShortName(name: string): string {
+  const normalized = name
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/^\$+/, "")
+    .trim();
+  const classMember = /::\s*([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(normalized);
+  if (classMember?.[1]) {
+    return classMember[1].replace(/^\$+/, "");
+  }
+
+  const namespaceParts = normalized.split("\\").filter(Boolean);
+
+  return (namespaceParts[namespaceParts.length - 1] ?? normalized).replace(
+    /^\$+/,
+    "",
   );
 }
 

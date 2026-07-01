@@ -4085,6 +4085,117 @@ class CommentController
     ).toBeNull();
   });
 
+  it("uses Laravel container bindings from workspace sources for repository return inference", () => {
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\AuditRepositoryInterface;
+
+class CommentController
+{
+    public function show(): void
+    {
+        $comment = app()->make(AuditRepositoryInterface::class)->findOrFail(1);
+        $repo = app()->make(AuditRepositoryInterface::class);
+        $secondComment = $repo->findOrFail(2);
+
+        $comment->tit
+        $secondComment->tit
+    }
+}
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use App\\Contracts\\AuditRepositoryInterface;
+use App\\Repositories\\EloquentCommentRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(AuditRepositoryInterface::class, EloquentCommentRepository::class);
+    }
+}
+`;
+    const repositorySource = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class EloquentCommentRepository
+{
+    public function findOrFail(int $id): Comment
+    {
+        return Comment::query()->findOrFail($id);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = ['title'];
+}
+`;
+    const options = {
+      ...laravelOptions,
+      frameworkSourceContext: {
+        workspaceSources: [providerSource, repositorySource, modelSource],
+      },
+    };
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        controllerSource,
+        positionAfter(
+          controllerSource,
+          "app()->make(AuditRepositoryInterface::class)",
+        ),
+        "app()->make(AuditRepositoryInterface::class)",
+        options,
+      ),
+    ).toBe("EloquentCommentRepository");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        controllerSource,
+        positionAfter(
+          controllerSource,
+          "app()->make(AuditRepositoryInterface::class)",
+        ),
+        "app()->make(AuditRepositoryInterface::class)",
+        laravelOptions,
+      ),
+    ).toBe("AuditRepositoryInterface");
+    expect(
+      phpVariableTypeInSource(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->tit"),
+        "comment",
+        options,
+      ),
+    ).toBe("App\\Models\\Comment");
+    expect(
+      phpVariableTypeInSource(
+        controllerSource,
+        positionAfter(controllerSource, "$secondComment->tit"),
+        "secondComment",
+        options,
+      ),
+    ).toBe("App\\Models\\Comment");
+    expect(
+      phpVariableTypeInSource(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->tit"),
+        "comment",
+        laravelOptions,
+      ),
+    ).not.toBe("App\\Models\\Comment");
+  });
+
   it("resolves parenthesized new Laravel resource chains to JsonResponse", () => {
     const source = `<?php
 namespace App\\Http\\Resources;

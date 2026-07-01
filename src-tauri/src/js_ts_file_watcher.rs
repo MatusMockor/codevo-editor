@@ -237,6 +237,10 @@ fn is_path_inside_root(root_path: &str, path: &str) -> bool {
 }
 
 fn is_javascript_typescript_watched_path(path: &str) -> bool {
+    if is_javascript_typescript_project_graph_file_name(path) {
+        return true;
+    }
+
     let Some(extension) = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -248,6 +252,17 @@ fn is_javascript_typescript_watched_path(path: &str) -> bool {
     matches!(
         extension.as_str(),
         "cjs" | "cts" | "js" | "json" | "jsx" | "mjs" | "mts" | "ts" | "tsx"
+    )
+}
+
+fn is_javascript_typescript_project_graph_file_name(path: &str) -> bool {
+    let Some(file_name) = Path::new(path).file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+
+    matches!(
+        file_name,
+        "bun.lock" | "bun.lockb" | "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
     )
 }
 
@@ -387,6 +402,32 @@ mod tests {
         assert_eq!(changes[2].path, "/workspace/src/old.js");
         assert_eq!(changes[2].change_type, WorkspaceFileChangeType::Deleted);
         assert_eq!(changes[3].path, "/workspace/package.json");
+        assert_eq!(changes[3].change_type, WorkspaceFileChangeType::Changed);
+    }
+
+    #[test]
+    fn maps_package_lockfile_events_to_lsp_changes() {
+        let changes = watched_file_changes_for_events(
+            WORKSPACE_ROOT,
+            &[
+                event(
+                    WorkspaceWatchEventKind::Modified,
+                    "/workspace/package-lock.json",
+                ),
+                event(WorkspaceWatchEventKind::Modified, "/workspace/pnpm-lock.yaml"),
+                event(WorkspaceWatchEventKind::Modified, "/workspace/yarn.lock"),
+                event(WorkspaceWatchEventKind::Modified, "/workspace/bun.lockb"),
+            ],
+        );
+
+        assert_eq!(changes.len(), 4);
+        assert_eq!(changes[0].path, "/workspace/package-lock.json");
+        assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Changed);
+        assert_eq!(changes[1].path, "/workspace/pnpm-lock.yaml");
+        assert_eq!(changes[1].change_type, WorkspaceFileChangeType::Changed);
+        assert_eq!(changes[2].path, "/workspace/yarn.lock");
+        assert_eq!(changes[2].change_type, WorkspaceFileChangeType::Changed);
+        assert_eq!(changes[3].path, "/workspace/bun.lockb");
         assert_eq!(changes[3].change_type, WorkspaceFileChangeType::Changed);
     }
 
