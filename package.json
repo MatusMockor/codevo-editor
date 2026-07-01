@@ -11,8 +11,14 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",
+    "debug:smoke": "node ./scripts/debug-tauri.mjs --smoke",
     "debug:tauri": "tauri dev",
     "debug:build": "tauri build --debug",
+    "smoke": "node ./scripts/qa-smoke.mjs",
+    "smoke:fast": "node ./scripts/qa-smoke.mjs fast",
+    "smoke:extended": "node ./scripts/qa-smoke.mjs extended",
+    "smoke:full": "node ./scripts/qa-smoke.mjs full",
+    "smoke:desktop": "node ./scripts/qa-smoke.mjs desktop",
     "test": "vitest run"
   },
   "dependencies": {
