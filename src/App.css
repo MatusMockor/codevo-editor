@@ -4834,6 +4834,7 @@ button.problem-row:focus-visible {
 .palette-search {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 8px;
   align-items: center;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-subtle);
@@ -4847,6 +4848,10 @@ button.problem-row:focus-visible {
   outline: 0;
   background: transparent;
   color: var(--color-text-strong);
+}
+
+.palette-search input:focus::placeholder {
+  color: transparent;
 }
 
 .recent-files-heading {

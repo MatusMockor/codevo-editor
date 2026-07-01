@@ -2468,6 +2468,23 @@ export function useWorkbenchController(
     [clearJavaScriptTypeScriptLanguageServerDiagnostics],
   );
 
+  const clearPhpLocalDiagnosticsForPath = useCallback((diagnosticPath: string) => {
+    setPhpLocalDiagnosticsByPath((current) => {
+      if (!(diagnosticPath in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[diagnosticPath];
+      return next;
+    });
+
+    const phpLocalGroupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
+    setNotices((current) =>
+      current.filter((notice) => notice.groupKey !== phpLocalGroupKey),
+    );
+  }, []);
+
   const clearLanguageServerDiagnosticsForPath = useCallback(
     (rootPath: string | null | undefined, diagnosticPath: string) => {
       const rootKey = normalizedWorkspaceRootKey(rootPath);
@@ -2532,32 +2549,22 @@ export function useWorkbenchController(
         });
       }
 
-      setPhpLocalDiagnosticsByPath((current) => {
-        if (!(diagnosticPath in current)) {
-          return current;
-        }
-
-        const next = { ...current };
-        delete next[diagnosticPath];
-        return next;
-      });
+      clearPhpLocalDiagnosticsForPath(diagnosticPath);
 
       const uri = fileUriFromPath(diagnosticPath);
       const phpGroupKey = languageServerDiagnosticNoticeGroup(uri);
       const javaScriptTypeScriptGroupKey =
         javaScriptTypeScriptDiagnosticNoticeGroup(uri);
-      const phpLocalGroupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
 
       setNotices((current) =>
         current.filter(
           (notice) =>
             notice.groupKey !== phpGroupKey &&
-            notice.groupKey !== javaScriptTypeScriptGroupKey &&
-            notice.groupKey !== phpLocalGroupKey,
+            notice.groupKey !== javaScriptTypeScriptGroupKey,
         ),
       );
     },
-    [],
+    [clearPhpLocalDiagnosticsForPath],
   );
 
   const updateLocalPhpDiagnostics = useCallback(
@@ -9600,6 +9607,7 @@ export function useWorkbenchController(
       if (document) {
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
+        clearPhpLocalDiagnosticsForPath(path);
       }
 
       if (externallyRemovedRoot) {
@@ -9642,6 +9650,7 @@ export function useWorkbenchController(
     [
       activePath,
       clearLanguageServerDiagnosticsForPath,
+      clearPhpLocalDiagnosticsForPath,
       documents,
       gitStatus.changes,
       loadGitDiffDocument,
@@ -26272,7 +26281,6 @@ export function useWorkbenchController(
       }
 
       if (event.kind === "created" || event.kind === "modified") {
-        forgetExternallyRemovedDocumentPath(event.path);
         queueWorkspaceDirectoryRefresh(getParentPath(event.path));
       }
 

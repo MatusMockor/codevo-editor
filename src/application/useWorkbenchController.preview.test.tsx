@@ -60696,6 +60696,16 @@ interface GreeterContract
 
     expect(getWorkbench().openDocuments).toHaveLength(1);
 
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: filePath,
+        relativePath: "src/CodevoQaController.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
     act(() => {
       publishDiagnostics?.({
         diagnostics: [
@@ -60770,6 +60780,57 @@ interface GreeterContract
     });
     await flushAsyncTurns();
 
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some((notice) => notice.groupKey?.includes(filePath)),
+    ).toBe(false);
+  });
+
+  it("clears local PHP diagnostics when a PHP tab is closed", async () => {
+    const filePath = "/workspace/src/TransientSyntax.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\nfinal class TransientSyntax {\n"),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(filePath, "TransientSyntax.php"),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateLocalPhpDiagnostics(filePath, [
+        {
+          character: 12,
+          line: 1,
+          message: "syntax error, unexpected end of file",
+          severity: "error",
+          source: "PHP Syntax",
+        },
+      ]);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    act(() => {
+      getWorkbench().closeDocument(filePath);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
     expect(getWorkbench().diagnosticsSummary).toEqual({
       errors: 0,
       warnings: 0,
