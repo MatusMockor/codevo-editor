@@ -665,6 +665,119 @@ export function shortcutForCommand(
   return keymap[commandId] ?? defaultKeymapSettings(platform)[commandId];
 }
 
+export interface KeymapConflict {
+  id: KeymapCommandId;
+  label: string;
+}
+
+/**
+ * Other commands whose *current* (possibly rebound) shortcut collides with
+ * `commandId`'s. Rebinding to a colliding shortcut is still allowed (PhpStorm
+ * and VS Code both allow it - the last-bound command simply wins at dispatch
+ * time), so this is surfaced as a warning for the settings UI rather than a
+ * blocker. An unbound ("") shortcut never conflicts with anything.
+ */
+export function findKeymapConflicts(
+  keymap: KeymapSettings,
+  commandId: KeymapCommandId,
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): KeymapConflict[] {
+  const shortcut = normalizeShortcutInput(
+    shortcutForCommand(keymap, commandId, platform),
+  );
+
+  if (!shortcut) {
+    return [];
+  }
+
+  return keymapCommands
+    .filter((command) => command.id !== commandId)
+    .filter(
+      (command) =>
+        normalizeShortcutInput(
+          shortcutForCommand(keymap, command.id, platform),
+        ) === shortcut,
+    )
+    .map((command) => ({ id: command.id, label: command.label }));
+}
+
+interface KeymapCaptureEvent {
+  altKey: boolean;
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+  shiftKey: boolean;
+}
+
+const CAPTURE_MODIFIER_ONLY_KEYS = new Set([
+  "Alt",
+  "AltGraph",
+  "Control",
+  "Meta",
+  "OS",
+  "Shift",
+]);
+
+/**
+ * Builds a normalized shortcut string directly from a keydown event so the
+ * keymap settings input can be driven by "press the keys" instead of typing
+ * their names out (PhpStorm/VS Code keybinding editor convention). Returns
+ * null when the event cannot stand alone as a shortcut:
+ *
+ * - a bare modifier tap (still waiting for the real key);
+ * - a plain key with no modifier held (falls through to normal text typing);
+ * - a Shift-only chord on a printable key or Tab - Shift is also how text is
+ *   typed ("+", capital letters, "!") and how focus walks backwards
+ *   (Shift+Tab), so Shift alone only captures non-printable keys such as
+ *   Shift+F12;
+ * - a chord whose key is "+" itself: it is the persisted format's delimiter
+ *   and cannot be represented (normalization would degrade it to a
+ *   modifier-only string).
+ */
+export function shortcutFromKeyboardEvent(
+  event: KeymapCaptureEvent,
+): string | null {
+  const hasStrongModifier = event.ctrlKey || event.altKey || event.metaKey;
+
+  if (!hasStrongModifier && !event.shiftKey) {
+    return null;
+  }
+
+  if (CAPTURE_MODIFIER_ONLY_KEYS.has(event.key)) {
+    return null;
+  }
+
+  if (event.key === "+") {
+    return null;
+  }
+
+  if (!hasStrongModifier && (event.key.length === 1 || event.key === "Tab")) {
+    return null;
+  }
+
+  const parts: string[] = [];
+
+  if (event.metaKey) {
+    parts.push("Cmd");
+  }
+
+  if (event.ctrlKey) {
+    parts.push("Ctrl");
+  }
+
+  if (event.shiftKey) {
+    parts.push("Shift");
+  }
+
+  if (event.altKey) {
+    parts.push("Alt");
+  }
+
+  parts.push(event.key);
+
+  return normalizeShortcutInput(parts.join("+"));
+}
+
 export function matchesShortcut(
   event: KeyboardEvent,
   shortcut: string,

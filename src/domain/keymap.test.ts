@@ -6,11 +6,13 @@ import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
   eventCanMatchKeymapShortcut,
+  findKeymapConflicts,
   keymapCommands,
   matchesShortcut,
   normalizeKeymapSettings,
   normalizeShortcutInput,
   parseShortcut,
+  shortcutFromKeyboardEvent,
 } from "./keymap";
 
 describe("keymap", () => {
@@ -968,6 +970,128 @@ describe("keymap", () => {
           bareKeys,
         ),
       ).toBe(true);
+    });
+  });
+
+  describe("findKeymapConflicts", () => {
+    it("returns no conflicts when a shortcut is unique", () => {
+      const keymap = defaultKeymapSettings("mac");
+
+      expect(findKeymapConflicts(keymap, "editor.save")).toEqual([]);
+    });
+
+    it("reports the other command when two commands share a rebound shortcut", () => {
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "editor.save": "Cmd+W",
+      };
+
+      expect(findKeymapConflicts(keymap, "editor.save")).toEqual([
+        { id: "editor.closeTab", label: "Close Tab or Window" },
+      ]);
+      expect(findKeymapConflicts(keymap, "editor.closeTab")).toEqual([
+        { id: "editor.save", label: "Save File" },
+      ]);
+    });
+
+    it("never reports a conflict for an unbound (empty) shortcut", () => {
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "php.goToTest": "",
+        "php.runTest": "",
+      };
+
+      expect(findKeymapConflicts(keymap, "php.goToTest")).toEqual([]);
+    });
+
+    it("reports every other command sharing the same shortcut, not just the first", () => {
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "editor.closeTab": "Cmd+S",
+        "editor.goToDefinition": "Cmd+S",
+      };
+
+      const conflicts = findKeymapConflicts(keymap, "editor.save").map(
+        (conflict) => conflict.id,
+      );
+
+      expect(conflicts).toEqual(
+        expect.arrayContaining(["editor.closeTab", "editor.goToDefinition"]),
+      );
+      expect(conflicts).toHaveLength(2);
+    });
+  });
+
+  describe("shortcutFromKeyboardEvent", () => {
+    it("captures a modifier chord as a normalized shortcut string", () => {
+      expect(
+        shortcutFromKeyboardEvent(
+          keyEvent({ key: "s", metaKey: true }),
+        ),
+      ).toBe("Cmd+S");
+    });
+
+    it("orders multiple modifiers consistently (Cmd, Ctrl, Shift, Alt)", () => {
+      expect(
+        shortcutFromKeyboardEvent(
+          keyEvent({ altKey: true, key: "s", metaKey: true, shiftKey: true }),
+        ),
+      ).toBe("Cmd+Shift+Alt+S");
+    });
+
+    it("captures a Shift-only chord", () => {
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "F12", shiftKey: true })),
+      ).toBe("Shift+F12");
+    });
+
+    it("returns null while only a modifier key itself is held", () => {
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "Meta", metaKey: true })),
+      ).toBeNull();
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "Shift", shiftKey: true })),
+      ).toBeNull();
+    });
+
+    it("returns null for a bare key with no modifier held", () => {
+      expect(shortcutFromKeyboardEvent(keyEvent({ key: "s" }))).toBeNull();
+    });
+
+    it("does not capture Shift+Tab so reverse focus navigation keeps working", () => {
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "Tab", shiftKey: true })),
+      ).toBeNull();
+    });
+
+    it("does not capture Shift-typed printable characters (free typing)", () => {
+      // On a standard layout "+", "A" and "!" are all produced with Shift held,
+      // so capturing them would hijack normal text entry in the shortcut field.
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "+", shiftKey: true })),
+      ).toBeNull();
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "A", shiftKey: true })),
+      ).toBeNull();
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ key: "!", shiftKey: true })),
+      ).toBeNull();
+    });
+
+    it("returns null for a chord whose key is the '+' delimiter itself", () => {
+      // "+" cannot be represented in the "Cmd+Shift+X" string format (it IS the
+      // delimiter); capturing it would degenerate to a modifier-only string.
+      expect(
+        shortcutFromKeyboardEvent(
+          keyEvent({ key: "+", metaKey: true, shiftKey: true }),
+        ),
+      ).toBeNull();
+    });
+
+    it("still captures strong-modifier chords with a printable key", () => {
+      expect(
+        shortcutFromKeyboardEvent(keyEvent({ altKey: true, key: "/" })),
+      ).toBe("Alt+/");
     });
   });
 });

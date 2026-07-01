@@ -1,9 +1,11 @@
-import { Search, Settings2, X } from "lucide-react";
+import { Search, Settings2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultShortcutForCommand,
+  findKeymapConflicts,
   keymapCommands,
   normalizeShortcutInput,
+  shortcutFromKeyboardEvent,
   type KeymapCommandId,
 } from "../domain/keymap";
 import {
@@ -1134,25 +1136,52 @@ function KeymapSettingsPanel({
         <div className="keymap-empty">No matching shortcuts</div>
       ) : null}
 
-      {visibleCommands.map((command) => (
-        <label className="settings-field keymap-field" key={command.id}>
-          <span>
-            <strong>{command.label}</strong>
-            <small>{command.category}</small>
-          </span>
-          <input
-            onBlur={(event) =>
-              onChangeShortcut(command.id, event.currentTarget.value)
-            }
-            onChange={(event) =>
-              onChangeShortcut(command.id, event.currentTarget.value)
-            }
-            placeholder={defaultShortcutForCommand(command.id)}
-            spellCheck={false}
-            value={appSettings.keymap[command.id]}
-          />
-        </label>
-      ))}
+      {visibleCommands.map((command) => {
+        const conflicts = findKeymapConflicts(appSettings.keymap, command.id);
+
+        return (
+          <label className="settings-field keymap-field" key={command.id}>
+            <span>
+              <strong>{command.label}</strong>
+              <small>{command.category}</small>
+            </span>
+            <input
+              onBlur={(event) =>
+                onChangeShortcut(command.id, event.currentTarget.value)
+              }
+              onChange={(event) =>
+                onChangeShortcut(command.id, event.currentTarget.value)
+              }
+              onKeyDown={(event) => {
+                // "Press the keys" capture (PhpStorm/VS Code keybinding editor
+                // convention): a real chord is bound immediately instead of
+                // requiring the user to type its name out. Everything that is
+                // not a standalone chord falls through (bare taps, Shift-typed
+                // characters like "+" or capitals, Shift+Tab), so Tab/Escape/
+                // Backspace keep their normal behaviour and typing free-form
+                // text into the field still works.
+                const captured = shortcutFromKeyboardEvent(event);
+
+                if (!captured) {
+                  return;
+                }
+
+                event.preventDefault();
+                onChangeShortcut(command.id, captured);
+              }}
+              placeholder={defaultShortcutForCommand(command.id)}
+              spellCheck={false}
+              value={appSettings.keymap[command.id]}
+            />
+            {conflicts.length > 0 ? (
+              <small className="keymap-conflict" role="alert">
+                <TriangleAlert aria-hidden="true" size={12} />
+                Also used by {conflicts.map((conflict) => conflict.label).join(", ")}
+              </small>
+            ) : null}
+          </label>
+        );
+      })}
     </div>
   );
 }

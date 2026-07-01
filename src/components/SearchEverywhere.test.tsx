@@ -341,4 +341,26 @@ describe("SearchEverywhere", () => {
       "No results",
     );
   });
+
+  it("highlights the matched substring in result labels", () => {
+    const model = buildSearchEverywhereModel({
+      query: "user",
+      files: [fileResult("User.ts")],
+      symbols: [symbolResult("User")],
+      commands: [command("editor.save", "Save File")],
+      context,
+    });
+    render({ query: "user", model });
+
+    const marks = Array.from(
+      host.querySelectorAll(".search-everywhere-result strong mark"),
+    ).map((node) => node.textContent);
+
+    expect(marks).toEqual(["User", "User"]);
+  });
+
+  it("renders result labels without a mark element when the query is empty", () => {
+    render({ query: "" });
+    expect(host.querySelector(".search-everywhere-result mark")).toBeNull();
+  });
 });

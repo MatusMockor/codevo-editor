@@ -6,6 +6,7 @@ import {
   type SearchEverywhereItem,
   type SearchEverywhereModel,
 } from "../domain/searchEverywhere";
+import { HighlightedText } from "./HighlightedText";
 import { PaletteFooter } from "./PaletteFooter";
 import { SymbolKindIcon } from "./SymbolKindIcon";
 
@@ -157,8 +158,12 @@ export function SearchEverywhere({
                   >
                     {itemIcon(item)}
                     <span>
-                      <strong>{item.label}</strong>
-                      <small>{item.detail}</small>
+                      <strong>
+                        <HighlightedText query={query} text={item.label} />
+                      </strong>
+                      <small>
+                        <HighlightedText query={query} text={item.detail} />
+                      </small>
                     </span>
                     {item.kind === "action" && item.shortcut ? (
                       <kbd>{item.shortcut}</kbd>

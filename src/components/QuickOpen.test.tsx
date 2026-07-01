@@ -157,4 +157,30 @@ describe("QuickOpen", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("highlights the matched substring in the file name", () => {
+    render({
+      query: "user",
+      results: [fileResult("User.ts"), fileResult("Post.ts")],
+    });
+
+    const marks = host.querySelectorAll(".quick-open-result strong mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.textContent).toBe("User");
+  });
+
+  it("highlights the matched substring in the relative path when it falls outside the name", () => {
+    render({
+      query: "src",
+      results: [fileResult("User.ts")],
+    });
+
+    const mark = host.querySelector(".quick-open-result small mark");
+    expect(mark?.textContent).toBe("src");
+  });
+
+  it("renders result names without a mark element when the query is empty", () => {
+    render({ query: "" });
+    expect(host.querySelector(".quick-open-result mark")).toBeNull();
+  });
 });

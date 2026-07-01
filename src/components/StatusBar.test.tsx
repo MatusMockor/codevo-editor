@@ -483,6 +483,106 @@ describe("StatusBar", () => {
     expect(onChangeVisibility).toHaveBeenLastCalledWith("dirtyCount", false);
   });
 
+  function renderStatusBar(message: string | null) {
+    root.render(
+      <StatusBar
+        activeLanguage={null}
+        activePath={null}
+        dirtyCount={0}
+        ideActivityLabel={null}
+        ideActivityState={null}
+        intelligenceMode="basic"
+        message={message}
+        onChangeVisibility={vi.fn()}
+        statusBar={defaultStatusBarItemVisibility()}
+        workspaceInfoLabel={null}
+        workspaceRoot="/workspace"
+        workspaceTrustLabel={null}
+      />,
+    );
+  }
+
+  it("shows a transient status message immediately", async () => {
+    await act(async () => {
+      renderStatusBar("Saved User.php");
+    });
+
+    expect(host.querySelector(".status-message")?.textContent).toBe(
+      "Saved User.php",
+    );
+  });
+
+  it("auto-dismisses a transient status message so it does not linger forever", async () => {
+    vi.useFakeTimers();
+
+    try {
+      await act(async () => {
+        renderStatusBar("Saved User.php");
+      });
+
+      expect(host.querySelector(".status-message")?.textContent).toBe(
+        "Saved User.php",
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(6000);
+      });
+
+      expect(host.querySelector(".status-message")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restarts the auto-dismiss timer when a new message replaces the previous one", async () => {
+    vi.useFakeTimers();
+
+    try {
+      await act(async () => {
+        renderStatusBar("Saved User.php");
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      await act(async () => {
+        renderStatusBar("Stashed working tree changes");
+      });
+
+      // Only 2s have passed since the newer message replaced the old one (the
+      // 4s elapsed before the swap must not count toward its timer), so it
+      // should still be visible well past the first message's own deadline.
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(host.querySelector(".status-message")?.textContent).toBe(
+        "Stashed working tree changes",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides the message immediately when the controller clears it", async () => {
+    vi.useFakeTimers();
+
+    try {
+      await act(async () => {
+        renderStatusBar("Saved User.php");
+      });
+
+      await act(async () => {
+        renderStatusBar(null);
+      });
+
+      expect(host.querySelector(".status-message")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   function checkboxInStatusMenu(labelText: string): HTMLInputElement {
     const labels = Array.from(
       host.querySelectorAll<HTMLLabelElement>(".status-bar-menu-item"),

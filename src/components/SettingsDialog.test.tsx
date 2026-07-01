@@ -633,6 +633,244 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("warns when a rebound shortcut collides with another command", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(keymapConflictWarning("Save File")).toBeNull();
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Save File"), "Cmd+W");
+      await Promise.resolve();
+    });
+
+    expect(keymapConflictWarning("Save File")?.textContent).toContain(
+      "Close Tab or Window",
+    );
+    expect(keymapConflictWarning("Close Tab or Window")?.textContent).toContain(
+      "Save File",
+    );
+  });
+
+  it("does not warn once a rebound shortcut no longer collides", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings(),
+              "editor.save": "Cmd+W",
+            },
+          }}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(keymapConflictWarning("Save File")).not.toBeNull();
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Save File"), "Cmd+Alt+Shift+Z");
+      await Promise.resolve();
+    });
+
+    expect(keymapConflictWarning("Save File")).toBeNull();
+    expect(keymapConflictWarning("Close Tab or Window")).toBeNull();
+  });
+
+  it("captures a shortcut from a real key press instead of typed text", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const field = inputWithLabel("Close Tab or Window");
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "w",
+          metaKey: true,
+          shiftKey: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultKeymapSettings(),
+          "editor.closeTab": "Cmd+Shift+W",
+        },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
+  it("does not hijack Shift+Tab or Shift-typed characters in a keymap field", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const field = inputWithLabel("Save File");
+
+    // Shift+Tab must stay reverse focus navigation, not become a binding.
+    const shiftTab = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Tab",
+      shiftKey: true,
+    });
+
+    await act(async () => {
+      field.dispatchEvent(shiftTab);
+      await Promise.resolve();
+    });
+
+    expect(shiftTab.defaultPrevented).toBe(false);
+    expect(onSave).not.toHaveBeenCalled();
+
+    // Shift+= produces "+" - the delimiter users need to TYPE shortcuts like
+    // "Cmd+Alt+T" by hand; it must fall through to normal text input.
+    const plusKey = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "+",
+      shiftKey: true,
+    });
+
+    await act(async () => {
+      field.dispatchEvent(plusKey);
+      await Promise.resolve();
+    });
+
+    expect(plusKey.defaultPrevented).toBe(false);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("ignores a bare modifier tap and lets Escape close the dialog from a keymap field", async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={onClose}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const field = inputWithLabel("Save File");
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Meta",
+          metaKey: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("restores every keymap command when the search box is cleared", async () => {
     await act(async () => {
       root.render(
@@ -1867,6 +2105,15 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function keymapConflictWarning(commandLabel: string): Element | null {
+    const fields = Array.from(host.querySelectorAll(".keymap-field"));
+    const field = fields.find((item) =>
+      item.querySelector("strong")?.textContent === commandLabel,
+    );
+
+    return field?.querySelector(".keymap-conflict") ?? null;
   }
 
   function changeInputValue(

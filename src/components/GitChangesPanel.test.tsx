@@ -532,6 +532,102 @@ describe("GitChangesPanel", () => {
     titleSpy.mockRestore();
   });
 
+  it("renders and toggles efficiently with a large number of changed files (300+)", async () => {
+    // Verifies the memoization pattern (React.memo per row/group + useMemo
+    // grouping) that keeps the panel fast still holds at the scale a large
+    // feature-branch diff or a big vendor bump would produce, without adding
+    // list virtualization: the file tree virtualizes because it can render
+    // thousands of nodes across a whole project, but a changed-file list this
+    // size stays a few hundred DOM rows at most, where per-row memoization is
+    // enough to keep toggling one row cheap.
+    const statuses: GitChangedFile["status"][] = [
+      "modified",
+      "added",
+      "deleted",
+      "untracked",
+    ];
+    const changes: GitChangedFile[] = Array.from({ length: 320 }, (_, index) =>
+      gitChange(
+        statuses[index % statuses.length],
+        `src/Module${index % 20}/File${index}.php`,
+        index % 3 !== 0,
+      ),
+    );
+    const status = gitStatus(changes);
+    const titleSpy = vi.spyOn(gitDomain, "gitStatusTitle");
+    const target = changes[0];
+    const bystander = changes[changes.length - 1];
+
+    const handlers = {
+      onCommit: vi.fn(),
+      onCommitAndPush: vi.fn(),
+      onCommitMessageChange: vi.fn(),
+      onOpenChange: vi.fn(),
+      onPreviewChange: vi.fn(),
+      onRefresh: vi.fn(),
+      onRevertChanges: vi.fn(),
+      onStageChanges: vi.fn(),
+      onToggleChangeIncluded: vi.fn(),
+      onUnstageChanges: vi.fn(),
+    };
+
+    let toggleTarget: () => void = () => undefined;
+
+    function Parent() {
+      const [included, setIncluded] = useState<Set<string>>(new Set());
+      toggleTarget = () =>
+        setIncluded((current) => {
+          const next = new Set(current);
+          const key = gitChangeKey(target);
+          next.has(key) ? next.delete(key) : next.add(key);
+          return next;
+        });
+
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          commitMessage="feat: update"
+          gitOperationLoading={false}
+          includedChangePaths={included}
+          isLoading={false}
+          rootPath="/workspace"
+          status={status}
+          {...handlers}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelectorAll(".git-change-row-wrapper")).toHaveLength(
+      changes.length,
+    );
+
+    const bystanderCallsBefore = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === bystander.status,
+    ).length;
+    expect(bystanderCallsBefore).toBeGreaterThan(0);
+
+    await act(async () => {
+      toggleTarget();
+      await Promise.resolve();
+    });
+
+    const bystanderCallsAfter = titleSpy.mock.calls.filter(
+      ([rowStatus]) => rowStatus === bystander.status,
+    ).length;
+
+    // Toggling one row out of 320 must not recompute every other row's status
+    // title: each GitChangeRow is memoized on its own props, so only the
+    // toggled row's memo bails out.
+    expect(bystanderCallsAfter).toBe(bystanderCallsBefore);
+
+    titleSpy.mockRestore();
+  });
+
   async function renderPanel(
     props: Partial<React.ComponentProps<typeof GitChangesPanel>> = {},
   ) {

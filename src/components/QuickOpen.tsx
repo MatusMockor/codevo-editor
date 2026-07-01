@@ -1,6 +1,7 @@
 import { FileCode2, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { FileSearchResult } from "../domain/workspace";
+import { HighlightedText } from "./HighlightedText";
 import { PaletteFooter } from "./PaletteFooter";
 
 interface QuickOpenProps {
@@ -112,8 +113,12 @@ export function QuickOpen({
             >
               <FileCode2 aria-hidden="true" size={16} />
               <span>
-                <strong>{result.name}</strong>
-                <small>{result.relativePath}</small>
+                <strong>
+                  <HighlightedText query={query} text={result.name} />
+                </strong>
+                <small>
+                  <HighlightedText query={query} text={result.relativePath} />
+                </small>
               </span>
             </button>
           ))}

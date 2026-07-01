@@ -48,6 +48,15 @@ const statusButtonStyle: CSSProperties = {
   padding: "0 12px",
 };
 
+// Transient status-bar text ("Saved User.php", "Stashed working tree changes",
+// ...) comes from ~140 one-shot action call sites in the workbench controller
+// with no self-clearing timer of their own, so without this it lingers until
+// some *unrelated* later action happens to overwrite or clear it - stale,
+// misleading chrome (e.g. a diff-preview message still showing minutes later).
+// Auto-hiding here, the sole consumer of the `message` prop, keeps every call
+// site simple: set the text, forget it.
+const STATUS_MESSAGE_AUTO_HIDE_MS = 5000;
+
 const statusBarItems: Array<{
   key: keyof StatusBarItemVisibility;
   label: string;
@@ -90,10 +99,25 @@ function StatusBarComponent({
     x: number;
     y: number;
   } | null>(null);
+  const [visibleMessage, setVisibleMessage] = useState(message);
   const activePathLabel = useMemo(
     () => activePathStatusLabel(workspaceRoot, activePath),
     [activePath, workspaceRoot],
   );
+
+  useEffect(() => {
+    setVisibleMessage(message);
+
+    if (!message) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setVisibleMessage(null);
+    }, STATUS_MESSAGE_AUTO_HIDE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [message]);
 
   useEffect(() => {
     if (!menuPosition) {
@@ -197,8 +221,8 @@ function StatusBarComponent({
       {statusBar.dirtyCount && dirtyCount > 0 ? (
         <span>{dirtyCount} unsaved</span>
       ) : null}
-      {statusBar.message && message ? (
-        <span className="status-message">{message}</span>
+      {statusBar.message && visibleMessage ? (
+        <span className="status-message">{visibleMessage}</span>
       ) : null}
 
       {menuPosition ? (

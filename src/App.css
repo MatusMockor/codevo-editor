@@ -3930,6 +3930,15 @@ button.problem-row:focus-visible {
   border-radius: 2px;
 }
 
+/* Quick Open / Search Everywhere matched-substring highlight (same treatment
+   as .text-search-match so every search surface reads consistently). */
+.match-highlight {
+  background: var(--color-accent-soft, rgba(255, 213, 0, 0.28));
+  color: inherit;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
 .text-search-replace {
   grid-template-columns: 22px minmax(0, 1fr) auto;
   gap: 8px;
@@ -5580,6 +5589,20 @@ button.problem-row:focus-visible {
 .keymap-field small {
   color: var(--color-text-subtle);
   font-size: 11px;
+}
+
+/* Rebind conflict warning: a rebound shortcut may still collide with another
+   command (allowed, not blocked - the settings input already persists it), so
+   this surfaces which other command(s) share it. Spans both grid columns on
+   its own row underneath the label/input pair. */
+.keymap-conflict {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  font-size: 11px;
+  white-space: normal;
 }
 
 /* Compact, settings-appropriate variant of the palette search row: a bordered
