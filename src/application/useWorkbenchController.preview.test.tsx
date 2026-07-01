@@ -60789,6 +60789,124 @@ interface GreeterContract
     ).toBe(false);
   });
 
+  it("clears diagnostics and suppresses a stale UnknownDocument reply after an external rename", async () => {
+    // A file can be renamed on disk (outside the editor) while its tab is
+    // still open in the SAME workspace. The old path's diagnostics must be
+    // cleared immediately, and a late phpactor reply that still targets the
+    // renamed-away path (a benign close race) must not resurrect an
+    // UnknownDocument toast.
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const oldPath = "/workspace/src/Invoice.php";
+    const newPath = "/workspace/src/Receipt.php";
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 91,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      readDirectory,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "Invoice.php"));
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 1,
+            message: "PHPactor warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 91,
+        uri: fileUriFromPath(oldPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toHaveLength(
+      1,
+    );
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 1,
+    });
+
+    readDirectory.mockClear();
+    await act(async () => {
+      publishFileChange?.({
+        kind: "renamed",
+        path: newPath,
+        previousPath: oldPath,
+        previousRelativePath: "src/Invoice.php",
+        relativePath: "src/Receipt.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[oldPath],
+    ).toBe(undefined);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+
+    const staleError = `UnknownDocument: Unknown text document "${fileUriFromPath(
+      oldPath,
+    )}"`;
+    act(() => {
+      getWorkbench().reportLanguageServerError(staleError);
+    });
+
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("UnknownDocument"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().message).toBeNull();
+  });
+
   it("clears local PHP diagnostics when a PHP tab is closed", async () => {
     const filePath = "/workspace/src/TransientSyntax.php";
     const { getWorkbench } = renderController({
