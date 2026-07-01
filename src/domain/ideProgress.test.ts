@@ -43,6 +43,17 @@ function scanningIndex(indexedFiles = 0): IndexProgressState {
   };
 }
 
+function scanningIndexProgress(
+  processedFiles: number,
+  totalFiles: number | null,
+): IndexProgressState {
+  return {
+    ...scanningIndex(),
+    processedFiles,
+    totalFiles,
+  };
+}
+
 function completedIndex(indexedFiles = 100): IndexProgressState {
   return {
     ...initialIndexProgress(),
@@ -99,12 +110,20 @@ describe("ideProgressIndicator", () => {
     expect(result.text).toBe("Indexing workspace…");
   });
 
-  it("includes the indexed file count once files have been scanned", () => {
+  it("includes the processed file count when the total is not known yet", () => {
     const result = ideProgressIndicator(
-      input({ indexProgress: scanningIndex(245) }),
+      input({ indexProgress: scanningIndexProgress(245, null) }),
     );
 
-    expect(result.text).toBe("Indexing workspace… 245 files");
+    expect(result.text).toBe("Indexing 245 files");
+  });
+
+  it("shows determinate cold index progress when the total is known", () => {
+    const result = ideProgressIndicator(
+      input({ indexProgress: scanningIndexProgress(500, 1200) }),
+    );
+
+    expect(result.text).toBe("Indexing 500 of 1200 (42%)");
   });
 
   it("reports the PHP engine starting while the language server boots", () => {
@@ -121,11 +140,11 @@ describe("ideProgressIndicator", () => {
     const result = ideProgressIndicator(
       input({
         phpRuntimeStatus: startingPhp(),
-        indexProgress: scanningIndex(12),
+        indexProgress: scanningIndexProgress(12, 24),
       }),
     );
 
-    expect(result.text).toBe("Indexing workspace… 12 files");
+    expect(result.text).toBe("Indexing 12 of 24 (50%)");
     expect(result.state).toBe("scanning");
   });
 

@@ -1,4 +1,7 @@
-import type { IndexProgressState } from "./indexProgress";
+import {
+  indexProgressPercent,
+  type IndexProgressState,
+} from "./indexProgress";
 import type { LanguageServerRuntimeStatus } from "./languageServerRuntime";
 import { workspaceRootKeysEqual } from "./workspaceRootKey";
 
@@ -99,8 +102,12 @@ export function ideProgressIndicator(
 }
 
 function indexingLabel(index: IndexProgressState): string {
-  if (index.indexedFiles > 0) {
-    return `Indexing workspace… ${index.indexedFiles} files`;
+  if (index.totalFiles !== null && index.totalFiles > 0) {
+    return `Indexing ${index.processedFiles} of ${index.totalFiles} (${indexProgressPercent(index)}%)`;
+  }
+
+  if (index.processedFiles > 0) {
+    return `Indexing ${index.processedFiles} files`;
   }
 
   return "Indexing workspace…";
