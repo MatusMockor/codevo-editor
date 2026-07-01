@@ -7,7 +7,12 @@ import {
   defaultEditorFontSize,
   type MonacoAppTheme,
 } from "../domain/settings";
-import type { GitChangedFile, GitDiffHunk, GitFileDiff } from "../domain/git";
+import type {
+  GitChangedFile,
+  GitChangeStatus,
+  GitDiffHunk,
+  GitFileDiff,
+} from "../domain/git";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -59,8 +64,13 @@ export function GitDiffPreview({
   const diffOriginalContent = diff?.originalContent ?? "";
   const diffModifiedContent = diff?.modifiedContent ?? "";
   const diffRows = useMemo(
-    () => buildPlainDiffRows(diffOriginalContent, diffModifiedContent),
-    [diffOriginalContent, diffModifiedContent],
+    () =>
+      buildPlainDiffRows(
+        diffOriginalContent,
+        diffModifiedContent,
+        diff?.change,
+      ),
+    [diff?.change, diffOriginalContent, diffModifiedContent],
   );
   const changeRowCount = diffRows.reduce(
     (count, row) => count + (isChangedPlainDiffRow(row) ? 1 : 0),
@@ -360,6 +370,17 @@ function PlainGitDiff({
                 );
               }
 
+              if (row.kind === "metadata") {
+                return (
+                  <tr className="git-plain-diff-row metadata" key={index}>
+                    <td className="git-plain-diff-line" />
+                    <td className="git-plain-diff-line" />
+                    <td className="git-plain-diff-marker" />
+                    <td className="git-plain-diff-code">{row.text}</td>
+                  </tr>
+                );
+              }
+
               const changed = isChangedPlainDiffRow(row);
               if (changed) {
                 changeIndex += 1;
@@ -470,6 +491,7 @@ type DiffNavigationTarget = "next" | "previous";
 
 type PlainDiffRow =
   | { kind: "header"; text: string }
+  | { kind: "metadata"; text: string }
   | {
       kind: "context" | "added" | "removed";
       marker: " " | "+" | "-";
@@ -485,11 +507,17 @@ function isChangedPlainDiffRow(row: PlainDiffRow): boolean {
 function buildPlainDiffRows(
   originalContent: string,
   modifiedContent: string,
+  change?: GitChangedFile,
 ): PlainDiffRow[] {
   const originalLines = splitDiffLines(originalContent ?? "");
   const modifiedLines = splitDiffLines(modifiedContent ?? "");
 
   if (linesEqual(originalLines, modifiedLines)) {
+    const metadataRows = buildMetadataOnlyDiffRows(change);
+    if (metadataRows.length > 0) {
+      return metadataRows;
+    }
+
     return [];
   }
 
@@ -581,6 +609,50 @@ function buildPlainDiffRows(
   }
 
   return rows;
+}
+
+function buildMetadataOnlyDiffRows(change?: GitChangedFile): PlainDiffRow[] {
+  if (!change || !shouldRenderMetadataOnlyDiff(change)) {
+    return [];
+  }
+
+  return [
+    { kind: "header", text: "@@ Git file metadata @@" },
+    { kind: "metadata", text: metadataOnlyDiffText(change) },
+  ];
+}
+
+function shouldRenderMetadataOnlyDiff(change: GitChangedFile): boolean {
+  return change.status !== "modified" || Boolean(change.oldRelativePath);
+}
+
+function metadataOnlyDiffText(change: GitChangedFile): string {
+  if (change.status === "renamed") {
+    const from = change.oldRelativePath ?? change.oldPath ?? "previous path";
+    return `Renamed: ${from} -> ${change.relativePath}`;
+  }
+
+  return `${metadataOnlyDiffStatusLabel(change.status)}: ${change.relativePath}`;
+}
+
+function metadataOnlyDiffStatusLabel(status: GitChangeStatus): string {
+  if (status === "added") {
+    return "Added";
+  }
+
+  if (status === "deleted") {
+    return "Deleted";
+  }
+
+  if (status === "untracked") {
+    return "Untracked";
+  }
+
+  if (status === "conflicted") {
+    return "Conflicted";
+  }
+
+  return "Changed";
 }
 
 function splitDiffLines(content: string): string[] {

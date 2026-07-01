@@ -3968,6 +3968,12 @@ class Controller
     expect(phpNewExpressionClassName("new CommentService()")).toBe(
       "CommentService",
     );
+    expect(phpNewExpressionClassName("(new CommentService())")).toBe(
+      "CommentService",
+    );
+    expect(phpNewExpressionClassName("new CommentService")).toBe(
+      "CommentService",
+    );
     expect(
       phpNewExpressionClassName("new UserAccountModel()->getConnection()"),
     ).toBeNull();
@@ -4079,6 +4085,54 @@ class CommentController
     ).toBeNull();
   });
 
+  it("resolves parenthesized new Laravel resource chains to JsonResponse", () => {
+    const source = `<?php
+namespace App\\Http\\Resources;
+
+use Illuminate\\Http\\Resources\\Json\\JsonResource;
+
+class UserResource extends JsonResource
+{
+}
+
+class UserController
+{
+    public function show($user): void
+    {
+        $response = (new UserResource($user))
+            ->additional(['meta' => true])
+            ->response();
+
+        $response->setStatusCode(200);
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$response->setStatusCode"),
+        "(new UserResource($user))",
+        laravelOptions,
+      ),
+    ).toBe("UserResource");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$response->setStatusCode"),
+        "response",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Http\\JsonResponse");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$response->setStatusCode"),
+        "response",
+      ),
+    ).toBeNull();
+  });
+
   it("detects method and static call expressions", () => {
     expect(phpMethodCallExpression("$this->commentService->create()")).toEqual({
       methodName: "create",
@@ -4096,6 +4150,12 @@ class CommentController
         receiverExpression: "new UserAccountModel()",
       },
     );
+    expect(
+      phpMethodCallExpression("(new UserAccountModel())->getConnection()"),
+    ).toEqual({
+      methodName: "getConnection",
+      receiverExpression: "(new UserAccountModel())",
+    });
     expect(
       phpMethodCallExpression("Album::query()->whereNull('parent_id')->first()"),
     ).toEqual({

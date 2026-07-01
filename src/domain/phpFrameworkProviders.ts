@@ -1,10 +1,13 @@
 import {
+  isLaravelApiResourceMemberMethod,
+  isLaravelApiResourceStaticMethod,
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderMacroFromSource,
   isLaravelEloquentLocalScopeMemberMethod,
   isLaravelEloquentLocalScopeStaticMethod,
   isLaravelEloquentStaticBuilderReceiver,
   isLaravelMacroMemberMethodFromSource,
+  phpLaravelApiResourceCompletionsFromSource,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
@@ -127,6 +130,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         source,
         declaringClassName,
       ),
+      ...phpLaravelApiResourceCompletionsFromSource(source, declaringClassName),
     ],
   },
   diagnostics: {
@@ -160,6 +164,11 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         source,
         receiverExpression,
         methodName,
+      ) ||
+      isLaravelApiResourceMemberMethod(
+        source,
+        receiverClassName ?? receiverExpression,
+        methodName,
       ),
     isKnownStaticMethod: ({ className, methodName, source, sourceContext }) =>
       ((isLaravelEloquentBuilderMethodName(methodName) ||
@@ -169,7 +178,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
           sourceContext?.workspaceSources,
         )) &&
         isLaravelEloquentStaticBuilderReceiver(source, className)) ||
-      isLaravelEloquentLocalScopeStaticMethod(source, className, methodName),
+      isLaravelEloquentLocalScopeStaticMethod(source, className, methodName) ||
+      isLaravelApiResourceStaticMethod(source, className, methodName),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>

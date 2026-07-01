@@ -16,24 +16,29 @@ pub(crate) fn cleanup_orphaned_javascript_typescript_processes(
     root_path: &str,
     active_root_paths: &[String],
 ) {
-    if !should_cleanup_orphaned_javascript_typescript_processes(
+    if !is_javascript_typescript_language_server_command(command, root_path) {
+        return;
+    }
+
+    if should_cleanup_orphaned_javascript_typescript_processes(
         command,
         root_path,
         active_root_paths,
     ) {
-        return;
+        let Some(server_path) = typescript_language_server_path_in_command(command, root_path)
+        else {
+            return;
+        };
+
+        let server_pattern = regex_escape_literal(server_path);
+        let _ = Command::new("pkill")
+            .args(["-f", &format!("{server_pattern} .*--stdio( |$)")])
+            .status();
     }
 
-    let Some(server_path) = typescript_language_server_path_in_command(command, root_path) else {
-        return;
-    };
-
-    let server_pattern = regex_escape_literal(server_path);
-    let _ = Command::new("pkill")
-        .args(["-f", &format!("{server_pattern} .*--stdio( |$)")])
-        .status();
-
-    for tsserver_path in tsserver_paths_for_cleanup(command, initialize_request, root_path) {
+    for tsserver_path in
+        tsserver_paths_for_active_cleanup(command, initialize_request, root_path, active_root_paths)
+    {
         let tsserver_pattern = regex_escape_literal(&tsserver_path);
         let _ = Command::new("pkill")
             .args([
@@ -120,6 +125,27 @@ fn tsserver_paths_for_cleanup(
 }
 
 #[cfg(unix)]
+fn tsserver_paths_for_active_cleanup(
+    command: &LanguageServerCommand,
+    initialize_request: &JsonRpcRequest,
+    root_path: &str,
+    active_root_paths: &[String],
+) -> Vec<String> {
+    let can_cleanup_shared_processes = should_cleanup_orphaned_javascript_typescript_processes(
+        command,
+        root_path,
+        active_root_paths,
+    );
+
+    tsserver_paths_for_cleanup(command, initialize_request, root_path)
+        .into_iter()
+        .filter(|path| {
+            can_cleanup_shared_processes || is_workspace_typescript_server_path(path, root_path)
+        })
+        .collect()
+}
+
+#[cfg(unix)]
 fn tsserver_path_from_initialize_request(request: &JsonRpcRequest) -> Option<&str> {
     request
         .params
@@ -195,6 +221,18 @@ fn should_cleanup_tsserver_path(
     }
 
     false
+}
+
+#[cfg(unix)]
+fn is_workspace_typescript_server_path(path: &str, root_path: &str) -> bool {
+    if !path.ends_with("/tsserver.js") && !path.ends_with("\\tsserver.js") {
+        return false;
+    }
+
+    let normalized = normalize_path(path);
+    let root = normalized_workspace_root_key(root_path);
+
+    normalized.starts_with(&format!("{root}/node_modules/typescript/lib/"))
 }
 
 #[cfg(unix)]
@@ -391,6 +429,70 @@ mod tests {
         assert_eq!(
             tsserver_paths_for_cleanup(&command, &request, "/workspace-a"),
             vec!["/workspace-a/node_modules/typescript/lib/tsserver.js".to_string()],
+        );
+    }
+
+    #[test]
+    fn active_sibling_workspace_still_allows_workspace_local_tsserver_cleanup() {
+        let command = workspace_command("/workspace-a");
+        let request = initialize_request_with_tsserver_path(
+            "/workspace-a/node_modules/typescript/lib/tsserver.js",
+        );
+
+        assert_eq!(
+            tsserver_paths_for_active_cleanup(
+                &command,
+                &request,
+                "/workspace-a",
+                &["/workspace-b".to_string()],
+            ),
+            vec!["/workspace-a/node_modules/typescript/lib/tsserver.js".to_string()],
+        );
+    }
+
+    #[test]
+    fn active_sibling_workspace_blocks_shared_managed_tsserver_cleanup() {
+        let command = LanguageServerCommand {
+            executable: "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            working_directory: "/workspace-a".to_string(),
+            env: Vec::new(),
+        };
+        let request = initialize_request_with_tsserver_path(
+            "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
+        );
+
+        assert_eq!(
+            tsserver_paths_for_active_cleanup(
+                &command,
+                &request,
+                "/workspace-a",
+                &["/workspace-b".to_string()],
+            ),
+            vec!["/workspace-a/node_modules/typescript/lib/tsserver.js".to_string()],
+        );
+    }
+
+    #[test]
+    fn shared_managed_tsserver_cleanup_is_allowed_without_active_sibling_workspaces() {
+        let command = LanguageServerCommand {
+            executable: "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            working_directory: "/workspace-a".to_string(),
+            env: Vec::new(),
+        };
+        let request = initialize_request_with_tsserver_path(
+            "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
+        );
+
+        assert_eq!(
+            tsserver_paths_for_active_cleanup(&command, &request, "/workspace-a", &[]),
+            vec![
+                "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js"
+                    .to_string(),
+                "/workspace-a/node_modules/typescript/lib/tsserver.js"
+                    .to_string()
+            ],
         );
     }
 

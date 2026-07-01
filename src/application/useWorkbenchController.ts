@@ -1457,6 +1457,9 @@ export function useWorkbenchController(
   const phpLanguageServerAutostartAttemptsByRootRef = useRef<
     Record<string, number>
   >({});
+  const manuallyStoppedPhpLanguageServerRootsRef = useRef<Set<string>>(
+    new Set(),
+  );
   const installingManagedPhpactorRootRef = useRef<string | null>(null);
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
@@ -3205,7 +3208,28 @@ export function useWorkbenchController(
     [],
   );
 
+  const clearManualPhpLanguageServerStop = useCallback((rootPath: string) => {
+    manuallyStoppedPhpLanguageServerRootsRef.current.delete(
+      normalizedWorkspaceRootKey(rootPath),
+    );
+  }, []);
+
+  const markManualPhpLanguageServerStop = useCallback((rootPath: string) => {
+    manuallyStoppedPhpLanguageServerRootsRef.current.add(
+      normalizedWorkspaceRootKey(rootPath),
+    );
+  }, []);
+
+  const isPhpLanguageServerManuallyStopped = useCallback(
+    (rootPath: string) =>
+      manuallyStoppedPhpLanguageServerRootsRef.current.has(
+        normalizedWorkspaceRootKey(rootPath),
+      ),
+    [],
+  );
+
   const forgetLanguageServerRuntimeStatuses = useCallback((rootPath: string) => {
+    clearManualPhpLanguageServerStop(rootPath);
     removeCachedLanguageServerRuntimeStatus(
       languageServerRuntimeStatusByRootRef.current,
       rootPath,
@@ -3214,7 +3238,7 @@ export function useWorkbenchController(
       javaScriptTypeScriptRuntimeStatusByRootRef.current,
       rootPath,
     );
-  }, []);
+  }, [clearManualPhpLanguageServerStop]);
 
   const isOpenWorkspaceRuntimeRoot = useCallback(
     (rootPath: string) => {
@@ -3295,6 +3319,10 @@ export function useWorkbenchController(
       );
       const crash = languageServerCrashMessage(status);
 
+      if (status.kind === "starting" || status.kind === "running") {
+        clearManualPhpLanguageServerStop(statusRootPath);
+      }
+
       if (!workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)) {
         if (status.kind !== "running") {
           clearLanguageServerDiagnosticsForRoot(statusRootPath);
@@ -3330,6 +3358,7 @@ export function useWorkbenchController(
     },
     [
       cachePhpLanguageServerRuntimeStatus,
+      clearManualPhpLanguageServerStop,
       clearLanguageServerDiagnosticsForRoot,
       isOpenWorkspaceRuntimeRoot,
       reportLanguageServerError,
@@ -26549,6 +26578,7 @@ export function useWorkbenchController(
     }
 
     const requestedRoot = workspaceRoot;
+    clearManualPhpLanguageServerStop(requestedRoot);
 
     try {
       const status = await languageServerRuntimeGateway.start(
@@ -26566,6 +26596,7 @@ export function useWorkbenchController(
       }
     }
   }, [
+    clearManualPhpLanguageServerStop,
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
     languageServerRuntimeGateway,
@@ -26574,8 +26605,20 @@ export function useWorkbenchController(
   ]);
 
   const stopLanguageServer = useCallback(async () => {
-    await stopLanguageServerRuntime();
-  }, [stopLanguageServerRuntime]);
+    const targetRootPath = currentWorkspaceRootRef.current;
+
+    if (!targetRootPath) {
+      return;
+    }
+
+    const status = await stopLanguageServerRuntime(targetRootPath);
+
+    if (status?.kind !== "stopped") {
+      return;
+    }
+
+    markManualPhpLanguageServerStop(targetRootPath);
+  }, [markManualPhpLanguageServerStop, stopLanguageServerRuntime]);
 
   const restartJavaScriptTypeScriptService = useCallback(async () => {
     if (!workspaceRoot) {
@@ -28238,6 +28281,16 @@ export function useWorkbenchController(
     }
 
     if (!shouldStartLanguageServer(intelligenceMode)) {
+      clearManualPhpLanguageServerStop(workspaceRoot);
+    }
+  }, [clearManualPhpLanguageServerStop, intelligenceMode, workspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (!shouldStartLanguageServer(intelligenceMode)) {
       return;
     }
 
@@ -28283,6 +28336,10 @@ export function useWorkbenchController(
     }
 
     if (autostartAttempts >= PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS) {
+      return;
+    }
+
+    if (isPhpLanguageServerManuallyStopped(workspaceRoot)) {
       return;
     }
 
@@ -28367,6 +28424,7 @@ export function useWorkbenchController(
   }, [
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
+    isPhpLanguageServerManuallyStopped,
     languageServerPlan,
     languageServerRuntimeGateway,
     languageServerRuntimeStatus,

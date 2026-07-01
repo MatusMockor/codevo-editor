@@ -418,6 +418,105 @@ class PlainService
       ).toBe("App\\Http\\Resources\\UserResource");
     });
 
+    it("adds resource member and static completions only for API resources", () => {
+      expect(
+        phpFrameworkMemberCompletionsFromSource(
+          resourceSource,
+          "App\\Http\\Resources\\UserResource",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          {
+            declaringClassName: "App\\Http\\Resources\\UserResource",
+            kind: "resource",
+            name: "response",
+            parameters: "$request = null",
+            returnType: "Illuminate\\Http\\JsonResponse",
+          },
+          {
+            declaringClassName: "App\\Http\\Resources\\UserResource",
+            kind: "resource",
+            name: "additional",
+            parameters: "array $data",
+            returnType: "App\\Http\\Resources\\UserResource",
+          },
+          {
+            declaringClassName: "App\\Http\\Resources\\UserResource",
+            isStatic: true,
+            kind: "resource",
+            name: "make",
+            parameters: "$resource",
+            returnType: "App\\Http\\Resources\\UserResource",
+          },
+        ]),
+      );
+      expect(
+        phpFrameworkMemberCompletionsFromSource(
+          resourceSource,
+          "App\\Http\\Resources\\PlainService",
+          [phpLaravelFrameworkProvider],
+        ).filter((completion) => completion.kind === "resource"),
+      ).toEqual([]);
+    });
+
+    it("recognizes resource magic methods for diagnostics without broadening plain classes", () => {
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          resourceSource,
+          "(new UserResource($user))",
+          "response",
+          [phpLaravelFrameworkProvider],
+          undefined,
+          "App\\Http\\Resources\\UserResource",
+        ),
+      ).toBe(true);
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          resourceSource,
+          "(new UserResource($user))->additional(['meta' => true])",
+          "response",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe(true);
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          resourceSource,
+          "$resource",
+          "additional",
+          [phpLaravelFrameworkProvider],
+          undefined,
+          "App\\Http\\Resources\\UserResource",
+        ),
+      ).toBe(true);
+      expect(
+        isKnownPhpFrameworkStaticMethod(
+          resourceSource,
+          "App\\Http\\Resources\\UserResource",
+          "collection",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe(true);
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          resourceSource,
+          "$service",
+          "response",
+          [phpLaravelFrameworkProvider],
+          undefined,
+          "App\\Http\\Resources\\PlainService",
+        ),
+      ).toBe(false);
+      expect(
+        isKnownPhpFrameworkStaticMethod(
+          resourceSource,
+          "App\\Http\\Resources\\PlainService",
+          "make",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe(false);
+    });
+
     it("resolves ::collection() on a resource to an anonymous resource collection", () => {
       expect(
         phpFrameworkMethodCallReturnTypeFromSource(

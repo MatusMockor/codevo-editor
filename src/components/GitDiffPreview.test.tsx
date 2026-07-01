@@ -59,6 +59,17 @@ describe("GitDiffPreview", () => {
     expect(host.textContent).toContain("No differences.");
   });
 
+  it("renders a nonblank metadata diff for a rename with unchanged content", async () => {
+    await renderPreview(renamedWithoutTextChangesDiff());
+
+    expect(host.querySelector('[data-testid="plain-git-diff"]')).not.toBeNull();
+    expect(host.textContent).toContain("@@ Git file metadata @@");
+    expect(host.textContent).toContain(
+      "Renamed: src/OldName.ts -> src/NewName.ts",
+    );
+    expect(host.textContent).not.toContain("No differences.");
+  });
+
   it("renders next/previous change and revert toolbar buttons", async () => {
     const onRevertFile = vi.fn();
     const current = diff();
@@ -475,5 +486,22 @@ function readmeDiff(): GitFileDiff {
     language: "markdown",
     modifiedContent: "# Project\n\nUpdated docs\n",
     originalContent: "# Project\n",
+  };
+}
+
+function renamedWithoutTextChangesDiff(): GitFileDiff {
+  return {
+    change: {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: "/workspace/src/OldName.ts",
+      oldRelativePath: "src/OldName.ts",
+      path: "/workspace/src/NewName.ts",
+      relativePath: "src/NewName.ts",
+      status: "renamed",
+    },
+    language: "typescript",
+    modifiedContent: "export const value = 1;\n",
+    originalContent: "export const value = 1;\n",
   };
 }

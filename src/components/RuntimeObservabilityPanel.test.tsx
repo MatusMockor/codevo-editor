@@ -26,13 +26,17 @@ function gatewayReturning(report: RuntimeObservabilityReport) {
   };
 }
 
-function deferredReport() {
-  let resolve: (report: RuntimeObservabilityReport) => void = () => undefined;
-  const promise = new Promise<RuntimeObservabilityReport>((settle) => {
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((settle) => {
     resolve = settle;
   });
 
   return { promise, resolve };
+}
+
+function deferredReport() {
+  return deferred<RuntimeObservabilityReport>();
 }
 
 const sampleReport: RuntimeObservabilityReport = {
@@ -150,6 +154,40 @@ describe("RuntimeObservabilityPanel", () => {
 
     expect(gateway.restart).toHaveBeenCalledWith("/workspace", "phpactor");
     expect(gateway.stop).toHaveBeenCalledWith("/workspace", "phpactor");
+  });
+
+  it("shows optimistic stopping and stopped states during a stop request", async () => {
+    const stop = deferred<void>();
+    const gateway = {
+      ...gatewayReturning(sampleReport),
+      stop: vi.fn(async () => stop.promise),
+    } satisfies RuntimeObservabilityGateway as RuntimeObservabilityGateway & {
+      stop: ReturnType<typeof vi.fn>;
+    };
+
+    renderPanel(gateway, "/workspace");
+    await flush();
+
+    const stopButton = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Stop PHPactor"]',
+    );
+
+    await act(async () => {
+      stopButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("Stopping");
+    expect(host.textContent).toContain("4242");
+
+    await act(async () => {
+      stop.resolve(undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("Stopped");
+    expect(host.textContent).not.toContain("4242");
   });
 
   it("does not query the gateway without an active root", () => {

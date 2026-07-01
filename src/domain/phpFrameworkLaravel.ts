@@ -5010,6 +5010,131 @@ function phpLaravelResourceStaticMakeReturnTypeFromSource(
   return phpLaravelResolvedClassName(source, className ?? "");
 }
 
+export function isLaravelApiResourceMemberMethod(
+  source: string,
+  receiverTypeOrExpression: string | null,
+  methodName: string,
+): boolean {
+  const receiverType = phpLaravelApiResourceReceiverTypeCandidate(
+    receiverTypeOrExpression,
+  );
+
+  if (!isLaravelApiResourceType(source, receiverType)) {
+    return false;
+  }
+
+  const normalizedMethodName = methodName.toLowerCase();
+
+  return (
+    laravelApiResourceResponseMethods.has(normalizedMethodName) ||
+    laravelApiResourceFluentMethods.has(normalizedMethodName)
+  );
+}
+
+export function isLaravelApiResourceStaticMethod(
+  source: string,
+  className: string | null,
+  methodName: string,
+): boolean {
+  if (!isLaravelApiResourceType(source, className)) {
+    return false;
+  }
+
+  const normalizedMethodName = methodName.toLowerCase();
+
+  return (
+    normalizedMethodName === "make" ||
+    laravelApiResourceCollectionFactoryMethods.has(normalizedMethodName)
+  );
+}
+
+export function phpLaravelApiResourceCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const resourceClassName = phpLaravelResolvedClassName(
+    source,
+    declaringClassName,
+  );
+
+  if (!resourceClassName || !isLaravelApiResourceType(source, resourceClassName)) {
+    return [];
+  }
+
+  return [
+    {
+      declaringClassName,
+      kind: "resource",
+      name: "response",
+      parameters: "$request = null",
+      returnType: laravelJsonResponseType,
+    },
+    {
+      declaringClassName,
+      kind: "resource",
+      name: "toResponse",
+      parameters: "$request",
+      returnType: laravelJsonResponseType,
+    },
+    {
+      declaringClassName,
+      kind: "resource",
+      name: "additional",
+      parameters: "array $data",
+      returnType: resourceClassName,
+    },
+    {
+      declaringClassName,
+      kind: "resource",
+      name: "withResponse",
+      parameters: "$request, $response",
+      returnType: resourceClassName,
+    },
+    {
+      declaringClassName,
+      isStatic: true,
+      kind: "resource",
+      name: "make",
+      parameters: "$resource",
+      returnType: resourceClassName,
+    },
+    {
+      declaringClassName,
+      isStatic: true,
+      kind: "resource",
+      name: "collection",
+      parameters: "$resource",
+      returnType: laravelAnonymousResourceCollectionType,
+    },
+  ];
+}
+
+function phpLaravelApiResourceReceiverTypeCandidate(
+  receiverTypeOrExpression: string | null,
+): string | null {
+  const value = stripOuterParentheses(
+    receiverTypeOrExpression?.trim().replace(/^\\+/, "") ?? "",
+  );
+
+  if (!value) {
+    return null;
+  }
+
+  const newExpressionMatch = new RegExp(
+    `^new\\s+${PHP_CLASS_NAME_CAPTURE_PATTERN}\\b`,
+  ).exec(value);
+
+  if (newExpressionMatch?.[1]) {
+    return newExpressionMatch[1].replace(/^\\+/, "");
+  }
+
+  const parenthesizedNewExpressionMatch = new RegExp(
+    `^\\(\\s*new\\s+${PHP_CLASS_NAME_CAPTURE_PATTERN}\\b`,
+  ).exec(value);
+
+  return parenthesizedNewExpressionMatch?.[1]?.replace(/^\\+/, "") ?? value;
+}
+
 function isLaravelModelType(className: string): boolean {
   const normalized = className.trim().replace(/^\\+/, "");
   const shortName = normalized.split("\\").pop() ?? normalized;

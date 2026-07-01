@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  canRestartRuntime,
+  canStopRuntime,
   formatRuntimeDebugBundle,
   formatRuntimeLatency,
+  runtimeLifecycleLabel,
+  runtimeLifecycleTone,
   type RuntimeObservabilityReport,
 } from "./runtimeObservability";
 
@@ -12,6 +16,15 @@ describe("formatRuntimeLatency", () => {
 
   it("renders second-scale latency in seconds", () => {
     expect(formatRuntimeLatency(5000)).toBe("5.00 s");
+  });
+});
+
+describe("runtime lifecycle view helpers", () => {
+  it("treats stopping as an in-flight non-actionable lifecycle", () => {
+    expect(runtimeLifecycleLabel("stopping")).toBe("Stopping");
+    expect(runtimeLifecycleTone("stopping")).toBe("warn");
+    expect(canRestartRuntime("stopping")).toBe(false);
+    expect(canStopRuntime("stopping")).toBe(false);
   });
 });
 

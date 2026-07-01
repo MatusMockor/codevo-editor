@@ -22,7 +22,9 @@ describe("languageServerStatusLabel", () => {
     expect(languageServerStatusLabel(crashed("boom"))).toBe(
       "PHPactor: crashed",
     );
-    expect(languageServerStatusLabel(status("stopped"))).toBeNull();
+    expect(languageServerStatusLabel(status("stopped"))).toBe(
+      "PHPactor: stopped",
+    );
   });
 
   it("labels rooted TypeScript server states as project-local", () => {
@@ -34,6 +36,9 @@ describe("languageServerStatusLabel", () => {
     );
     expect(languageServerStatusLabel(crashed("boom", "/workspace"), "TS Server")).toBe(
       "TS Server: crashed for this project",
+    );
+    expect(languageServerStatusLabel(status("stopped", "/workspace"), "TS Server")).toBe(
+      "TS Server: stopped for this project",
     );
   });
 

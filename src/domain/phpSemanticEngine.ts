@@ -200,6 +200,12 @@ export function phpReceiverExpressionTypeInSource(
     return containerClassName;
   }
 
+  const newExpressionClassName = phpNewExpressionClassName(normalizedExpression);
+
+  if (newExpressionClassName) {
+    return newExpressionClassName;
+  }
+
   const propertyAccess = phpPropertyAccessExpression(normalizedExpression);
 
   if (propertyAccess) {
@@ -471,12 +477,29 @@ function phpAssignmentExpressionAfterEquals(
 }
 
 export function phpNewExpressionClassName(expression: string): string | null {
+  const value = phpStripOuterParentheses(expression.trim());
   const match =
     /^new\s+((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\b(?:\s*\([^)]*\))?\s*$/.exec(
-      expression.trim(),
+      value,
     );
 
   return match?.[1]?.replace(/^\\+/, "") ?? null;
+}
+
+function phpStripOuterParentheses(expression: string): string {
+  let value = expression.trim();
+
+  while (value.startsWith("(")) {
+    const closeOffset = matchingPairOffset(value, 0, "(", ")");
+
+    if (closeOffset !== value.length - 1) {
+      break;
+    }
+
+    value = value.slice(1, -1).trim();
+  }
+
+  return value;
 }
 
 function phpFrameworkMethodCallAssignmentReturnType(

@@ -13,8 +13,8 @@ import type {
  * Design constraints:
  *  - Pure string rendering — no side-effects, no I/O.
  *  - We generate a CONCRETE implementation, so the `abstract` / `final`
- *    modifiers are never emitted and the visibility is always `public`
- *    (interface members are implicitly public).
+ *    modifiers are never emitted. Visibility is preserved from the missing
+ *    abstract/interface member; interface members are already modeled as public.
  *  - The default body is a safe `throw` (it type-checks against every return
  *    type); `void` / `never` returns get a TODO-only body since they must not
  *    return a value. We never emit a `return` that could mismatch the type.
@@ -120,7 +120,7 @@ function renderSignature(member: PhpMethodMember): string {
   const params = member.parameters.map(renderParameter).join(", ");
   const returnSuffix = member.returnType ? `: ${member.returnType}` : "";
 
-  return `public ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
+  return `${member.visibility} ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
 }
 
 function renderOverrideSignature(member: PhpMethodMember): string {

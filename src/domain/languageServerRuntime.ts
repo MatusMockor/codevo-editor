@@ -129,7 +129,7 @@ export function languageServerStatusLabel(
     return `${serverName}: crashed${projectSuffix}`;
   }
 
-  return null;
+  return `${serverName}: stopped${projectSuffix}`;
 }
 
 export function languageServerStatusBelongsToWorkspace(

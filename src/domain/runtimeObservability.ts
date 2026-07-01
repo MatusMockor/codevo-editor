@@ -4,6 +4,7 @@ export type LanguageRuntimeKind = "phpactor" | "tsserver";
 
 export type RuntimeLifecycle =
   | "starting"
+  | "stopping"
   | "running"
   | "stopped"
   | "crashed";
@@ -64,6 +65,10 @@ export function runtimeLifecycleLabel(lifecycle: RuntimeLifecycle): string {
     return "Starting";
   }
 
+  if (lifecycle === "stopping") {
+    return "Stopping";
+  }
+
   if (lifecycle === "running") {
     return "Running";
   }
@@ -76,7 +81,7 @@ export function runtimeLifecycleLabel(lifecycle: RuntimeLifecycle): string {
 }
 
 /// Indicator color token for the lifecycle dot. Green for live, red for
-/// crashed, amber while starting, grey when stopped.
+/// crashed, amber while starting/stopping, grey when stopped.
 export function runtimeLifecycleTone(
   lifecycle: RuntimeLifecycle,
 ): "ok" | "warn" | "error" | "idle" {
@@ -84,7 +89,7 @@ export function runtimeLifecycleTone(
     return "ok";
   }
 
-  if (lifecycle === "starting") {
+  if (lifecycle === "starting" || lifecycle === "stopping") {
     return "warn";
   }
 
@@ -120,7 +125,7 @@ export function formatRuntimeCpu(cpuPercent: number | undefined): string {
 }
 
 export function canRestartRuntime(lifecycle: RuntimeLifecycle): boolean {
-  return lifecycle !== "starting";
+  return lifecycle !== "starting" && lifecycle !== "stopping";
 }
 
 export function canStopRuntime(lifecycle: RuntimeLifecycle): boolean {

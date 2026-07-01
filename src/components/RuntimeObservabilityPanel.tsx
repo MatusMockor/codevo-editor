@@ -22,6 +22,10 @@ import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 const REFRESH_INTERVAL_MS = 2000;
+type PendingRuntimeAction = "restarting" | "stopping" | "stopped";
+type PendingRuntimeActions = Partial<
+  Record<LanguageRuntimeKind, PendingRuntimeAction>
+>;
 
 interface RuntimeObservabilityPanelProps {
   gateway: RuntimeObservabilityGateway;
@@ -45,21 +49,32 @@ export function RuntimeObservabilityPanel({
   getLatencySnapshot,
 }: RuntimeObservabilityPanelProps) {
   const [runtimes, setRuntimes] = useState<RuntimeObservability[]>([]);
+  const [pendingRuntimeActions, setPendingRuntimeActions] =
+    useState<PendingRuntimeActions>({});
   const [latencyRows, setLatencyRows] = useState<LatencyMetricRow[]>([]);
   const requestedRootRef = useRef<string | null>(rootPath);
+  const pendingRuntimeActionsRef = useRef<PendingRuntimeActions>({});
 
   // Keep the synchronous "current active root" mirror in sync. Read inside the
   // async `.then` callbacks below to drop a stale report once the active project
   // tab changed mid-request (per-project isolation).
   useEffect(() => {
     requestedRootRef.current = rootPath;
+    pendingRuntimeActionsRef.current = {};
+    setPendingRuntimeActions({});
   }, [rootPath]);
+
+  useEffect(() => {
+    pendingRuntimeActionsRef.current = pendingRuntimeActions;
+  }, [pendingRuntimeActions]);
 
   const refresh = useCallback(() => {
     const requestedRoot = rootPath;
 
     if (!requestedRoot) {
       setRuntimes([]);
+      pendingRuntimeActionsRef.current = {};
+      setPendingRuntimeActions({});
       return;
     }
 
@@ -75,7 +90,14 @@ export function RuntimeObservabilityPanel({
           return;
         }
 
-        setRuntimes(report.runtimes);
+        setRuntimes(
+          report.runtimes.map((runtime) =>
+            runtimeWithPendingAction(
+              runtime,
+              pendingRuntimeActionsRef.current[runtime.kind],
+            ),
+          ),
+        );
       })
       .catch(() => {
         if (
@@ -91,6 +113,8 @@ export function RuntimeObservabilityPanel({
   useEffect(() => {
     if (!isActive || !rootPath) {
       setRuntimes([]);
+      pendingRuntimeActionsRef.current = {};
+      setPendingRuntimeActions({});
       return;
     }
 
@@ -141,10 +165,35 @@ export function RuntimeObservabilityPanel({
         return;
       }
 
+      const pendingActions = {
+        ...pendingRuntimeActionsRef.current,
+        [kind]: "restarting" as const,
+      };
+      pendingRuntimeActionsRef.current = pendingActions;
+      setPendingRuntimeActions(pendingActions);
+      setRuntimes((current) =>
+        current.map((runtime) =>
+          runtime.kind === kind
+            ? runtimeWithPendingAction(runtime, "restarting")
+            : runtime,
+        ),
+      );
       gateway
         .restart(requestedRoot, kind)
-        .then(refresh)
-        .catch(() => undefined);
+        .then(() => refresh())
+        .catch(() => refresh())
+        .finally(() => {
+          if (!workspaceRootKeysEqual(requestedRootRef.current, requestedRoot)) {
+            return;
+          }
+
+          const nextActions = withoutPendingRuntimeAction(
+            pendingRuntimeActionsRef.current,
+            kind,
+          );
+          pendingRuntimeActionsRef.current = nextActions;
+          setPendingRuntimeActions(nextActions);
+        });
     },
     [gateway, refresh, rootPath],
   );
@@ -157,10 +206,48 @@ export function RuntimeObservabilityPanel({
         return;
       }
 
+      const pendingActions = {
+        ...pendingRuntimeActionsRef.current,
+        [kind]: "stopping" as const,
+      };
+      pendingRuntimeActionsRef.current = pendingActions;
+      setPendingRuntimeActions(pendingActions);
+      setRuntimes((current) =>
+        current.map((runtime) =>
+          runtime.kind === kind
+            ? runtimeWithPendingAction(runtime, "stopping")
+            : runtime,
+        ),
+      );
       gateway
         .stop(requestedRoot, kind)
-        .then(refresh)
-        .catch(() => undefined);
+        .then(() => {
+          const nextActions = {
+            ...pendingRuntimeActionsRef.current,
+            [kind]: "stopped" as const,
+          };
+          pendingRuntimeActionsRef.current = nextActions;
+          setPendingRuntimeActions(nextActions);
+          setRuntimes((current) =>
+            current.map((runtime) =>
+              runtime.kind === kind ? stoppedRuntime(runtime) : runtime,
+            ),
+          );
+          refresh();
+        })
+        .catch(() => {
+          if (!workspaceRootKeysEqual(requestedRootRef.current, requestedRoot)) {
+            return;
+          }
+
+          const nextActions = withoutPendingRuntimeAction(
+            pendingRuntimeActionsRef.current,
+            kind,
+          );
+          pendingRuntimeActionsRef.current = nextActions;
+          setPendingRuntimeActions(nextActions);
+          refresh();
+        });
     },
     [gateway, refresh, rootPath],
   );
@@ -277,6 +364,43 @@ export function RuntimeObservabilityPanel({
       ) : null}
     </div>
   );
+}
+
+function runtimeWithPendingAction(
+  runtime: RuntimeObservability,
+  pendingAction: PendingRuntimeAction | undefined,
+): RuntimeObservability {
+  if (pendingAction === "restarting") {
+    return { ...runtime, lifecycle: "starting" };
+  }
+
+  if (pendingAction === "stopping") {
+    return { ...runtime, lifecycle: "stopping" };
+  }
+
+  if (pendingAction === "stopped") {
+    return stoppedRuntime(runtime);
+  }
+
+  return runtime;
+}
+
+function stoppedRuntime(runtime: RuntimeObservability): RuntimeObservability {
+  return {
+    ...runtime,
+    lifecycle: "stopped",
+    pid: undefined,
+    stats: undefined,
+  };
+}
+
+function withoutPendingRuntimeAction(
+  actions: PendingRuntimeActions,
+  kind: LanguageRuntimeKind,
+): PendingRuntimeActions {
+  const { [kind]: _removed, ...remaining } = actions;
+
+  return remaining;
 }
 
 interface LatencyRowProps {

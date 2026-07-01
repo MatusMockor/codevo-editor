@@ -1012,6 +1012,65 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
     ).toEqual([]);
   });
 
+  it("downgrades Laravel resource chain diagnostics without broadening plain classes", () => {
+    const source = `<?php
+namespace App\\Http\\Resources;
+
+use Illuminate\\Http\\Resources\\Json\\JsonResource;
+
+class CommentResource extends JsonResource
+{
+}
+
+class PlainResponder
+{
+}
+
+return (new CommentResource($comment))->response()->setStatusCode(200);
+(new PlainResponder())->response();
+CommentResource::collection($comments)->response();
+PlainResponder::collection($comments);
+`;
+    const resourceResponse = diagnosticAt(source, "response()->setStatusCode", {
+      message:
+        'Method "response" does not exist on class "App\\Http\\Resources\\CommentResource"',
+    });
+    const plainResponse = diagnosticAt(source, "PlainResponder())->response", {
+      message:
+        'Method "response" does not exist on class "App\\Http\\Resources\\PlainResponder"',
+    });
+    const resourceCollection = diagnosticAt(
+      source,
+      "collection($comments)->response",
+      {
+        message:
+          'Method "collection" does not exist on class "App\\Http\\Resources\\CommentResource"',
+      },
+    );
+    const plainCollection = diagnosticAt(source, "collection($comments);", {
+      message:
+        'Method "collection" does not exist on class "App\\Http\\Resources\\PlainResponder"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          resourceResponse,
+          plainResponse,
+          resourceCollection,
+          plainCollection,
+        ],
+        { frameworkProviders: [phpLaravelFrameworkProvider] },
+      ),
+    ).toEqual([
+      frameworkMagicHint(resourceResponse),
+      plainResponse,
+      frameworkMagicHint(resourceCollection),
+      plainCollection,
+    ]);
+  });
+
   it("keeps unknown method diagnostics away from return statements", () => {
     const source = `<?php
 

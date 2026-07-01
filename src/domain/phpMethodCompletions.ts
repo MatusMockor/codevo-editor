@@ -38,6 +38,7 @@ export interface PhpMethodCompletion {
     | "magic-where"
     | "property"
     | "relation"
+    | "resource"
     | "route"
     | "scope"
     | "translation"
@@ -228,6 +229,7 @@ const phpMemberCompletionCategoryRanks: Record<
   relation: 1,
   config: 2,
   env: 2,
+  resource: 2,
   route: 2,
   translation: 2,
   view: 2,

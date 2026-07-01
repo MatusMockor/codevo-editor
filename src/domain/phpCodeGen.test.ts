@@ -198,13 +198,21 @@ describe("renderMethodStub", () => {
     expect(stub).toContain("public static function make(): static");
   });
 
-  it("forces public visibility for the generated implementation", () => {
+  it("preserves protected visibility for abstract method implementations", () => {
     const stub = renderMethodStub(
       method({ name: "go", visibility: "protected", returnType: "void" }),
     );
 
+    expect(stub).toContain("protected function go(): void");
+    expect(stub).not.toContain("public function go");
+  });
+
+  it("keeps interface-style implementations public", () => {
+    const stub = renderMethodStub(
+      method({ name: "go", visibility: "public", returnType: "void" }),
+    );
+
     expect(stub).toContain("public function go(): void");
-    expect(stub).not.toContain("protected");
   });
 
   it("does not emit abstract or final keywords on the concrete stub", () => {
