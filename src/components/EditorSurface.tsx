@@ -336,6 +336,9 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  const previousActiveDocumentPathRef = useRef<string | null>(
+    activeDocument?.path ?? null,
+  );
   // Warms TextMate tokens for the active model on idle, off the synchronous
   // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
   // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
@@ -2161,6 +2164,22 @@ function EditorSurfaceComponent({
       return;
     }
 
+    const currentPath = activeDocument?.path ?? null;
+    const previousPath = previousActiveDocumentPathRef.current;
+    previousActiveDocumentPathRef.current = currentPath;
+
+    if (previousPath === currentPath) {
+      return;
+    }
+
+    dismissTransientEditorWidgets(editorApi, "document-switch");
+  }, [activeDocument?.path, editorApi]);
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
     const position = editorApi.getPosition();
 
     if (!position) {
@@ -2193,7 +2212,7 @@ function EditorSurfaceComponent({
     // jump fired (e.g. the 700ms "Loading…" placeholder over a method) would stay
     // pinned to the old spot and never update - looking permanently stuck. Hide it
     // before the jump so navigation always lands on a clean surface.
-    editorApi.trigger("navigation", "editor.action.hideHover", {});
+    dismissTransientEditorWidgets(editorApi, "navigation");
     editorApi.setPosition(editorRevealTarget.position);
     editorApi.revealPositionInCenter(editorRevealTarget.position);
     editorApi.focus();
@@ -3532,6 +3551,18 @@ function triggerEditorAction(
   }
 
   editor.trigger("keyboard", actionId, {});
+}
+
+function dismissTransientEditorWidgets(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  source: string,
+): void {
+  if (!editor.getModel()) {
+    return;
+  }
+
+  editor.trigger(source, "editor.action.hideHover", {});
+  editor.trigger(source, "closeFindWidget", {});
 }
 
 function expandEditorSelection(

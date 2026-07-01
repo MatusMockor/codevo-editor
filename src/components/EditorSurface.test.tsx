@@ -9547,6 +9547,56 @@ class Foo
     });
   });
 
+  it("dismisses transient Monaco widgets when the active document changes", async () => {
+    const firstDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "first.ts",
+      path: "/workspace/src/first.ts",
+      savedContent: "",
+    };
+    const secondDocument: EditorDocument = {
+      content: "const other = 2;\n",
+      language: "typescript",
+      name: "second.ts",
+      path: "/workspace/src/second.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(firstDocument));
+      await Promise.resolve();
+    });
+
+    editor.trigger.mockClear();
+
+    await act(async () => {
+      root.render(memoGuardSurface(secondDocument));
+      await Promise.resolve();
+    });
+
+    expect(
+      editor.trigger.mock.calls.some(
+        (call) =>
+          call[0] === "document-switch" &&
+          call[1] === "editor.action.hideHover",
+      ),
+    ).toBe(true);
+    expect(
+      editor.trigger.mock.calls.some(
+        (call) =>
+          call[0] === "document-switch" && call[1] === "closeFindWidget",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\nconst other = 2;\n",
