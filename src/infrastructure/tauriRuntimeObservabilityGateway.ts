@@ -17,7 +17,7 @@ const COMMANDS = {
   getObservability: "get_runtime_observability",
   restart: "restart_language_runtime",
   stop: "stop_language_runtime",
-  openLog: "open_javascript_typescript_language_server_log",
+  openLog: "open_language_runtime_log",
 };
 
 type InvokeCommand = (
@@ -89,11 +89,11 @@ export class TauriRuntimeObservabilityGateway
     rootPath: string,
     kind: LanguageRuntimeKind,
   ): Promise<string | null> {
-    if (!this.isRuntimeAvailable() || kind !== "tsserver") {
+    if (!this.isRuntimeAvailable()) {
       return Promise.resolve(null);
     }
 
-    return this.invoke(COMMANDS.openLog, { rootPath }) as Promise<string>;
+    return this.invoke(COMMANDS.openLog, { kind, rootPath }) as Promise<string>;
   }
 
   async subscribeStatus(listener: () => void): Promise<UnsubscribeFn> {

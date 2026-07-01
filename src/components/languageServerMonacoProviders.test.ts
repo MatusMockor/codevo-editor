@@ -2460,6 +2460,26 @@ function store($request): void
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "App\\Models\\Comment",
+        kind: "property" as const,
+        name: "title",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "relation" as const,
+        name: "post",
+        parameters: "",
+        returnType: "App\\Models\\Post",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "publish",
+        parameters: "",
+        returnType: "void",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
         isStatic: true,
         kind: "magic-where" as const,
         name: "whereTitle",
@@ -2521,13 +2541,17 @@ function store($request): void
       }),
     );
 
-    // Static access shares the member category ordering: method (2) -> scope
-    // (Function 3) -> magic-where (Event 23), all on the `0_` bucket so our
-    // Laravel/OOP suggestions sit above the phpactor LSP `query` (`1_`) noise.
+    // Static access shares the member category ordering: property (10) ->
+    // relation/Field (5) -> methods (2) -> scope/Function (3) ->
+    // magic-where/Event (23), all on the `0_` bucket so our Laravel/OOP
+    // suggestions sit above the phpactor LSP `query` (`1_`) noise.
     expect(rows).toEqual([
-      { kind: 2, name: "create", sortText: "0_0000" },
-      { kind: 3, name: "active", sortText: "0_0001" },
-      { kind: 23, name: "whereTitle", sortText: "0_0002" },
+      { kind: 10, name: "title", sortText: "0_0000" },
+      { kind: 5, name: "post", sortText: "0_0001" },
+      { kind: 2, name: "publish", sortText: "0_0002" },
+      { kind: 2, name: "create", sortText: "0_0003" },
+      { kind: 3, name: "active", sortText: "0_0004" },
+      { kind: 23, name: "whereTitle", sortText: "0_0005" },
       { kind: 2, name: "query", sortText: "1_0000" },
     ]);
   });

@@ -156,6 +156,37 @@ describe("RuntimeObservabilityPanel", () => {
     expect(gateway.stop).toHaveBeenCalledWith("/workspace", "phpactor");
   });
 
+  it("opens logs for PHPactor and TypeScript runtimes", async () => {
+    const gateway = {
+      ...gatewayReturning(sampleReport),
+      openLog: vi.fn(async () => "/tmp/runtime.log"),
+    } satisfies RuntimeObservabilityGateway as RuntimeObservabilityGateway & {
+      openLog: ReturnType<typeof vi.fn>;
+    };
+
+    renderPanel(gateway, "/workspace");
+    await flush();
+
+    const phpLogButton = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Open PHPactor log"]',
+    );
+    const tsLogButton = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Open TypeScript language server log"]',
+    );
+
+    expect(phpLogButton).not.toBeNull();
+    expect(tsLogButton).not.toBeNull();
+
+    await act(async () => {
+      phpLogButton?.click();
+      tsLogButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(gateway.openLog).toHaveBeenCalledWith("/workspace", "phpactor");
+    expect(gateway.openLog).toHaveBeenCalledWith("/workspace", "tsserver");
+  });
+
   it("shows optimistic stopping and stopped states during a stop request", async () => {
     const stop = deferred<void>();
     const gateway = {

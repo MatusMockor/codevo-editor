@@ -489,16 +489,14 @@ function RuntimeRow({ onOpenLog, onRestart, onStop, runtime }: RuntimeRowProps) 
           <Square aria-hidden="true" size={14} />
           Stop
         </button>
-        {runtime.kind === "tsserver" ? (
-          <button
-            aria-label={`Open ${runtime.label} log`}
-            onClick={() => onOpenLog(runtime.kind)}
-            type="button"
-          >
-            <FileText aria-hidden="true" size={14} />
-            Log
-          </button>
-        ) : null}
+        <button
+          aria-label={`Open ${runtime.label} log`}
+          onClick={() => onOpenLog(runtime.kind)}
+          type="button"
+        >
+          <FileText aria-hidden="true" size={14} />
+          Log
+        </button>
       </div>
     </article>
   );

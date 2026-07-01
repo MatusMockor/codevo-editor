@@ -31,6 +31,9 @@ describe("TauriRuntimeObservabilityGateway", () => {
     await expect(
       gateway.openLog("/workspace", "tsserver"),
     ).resolves.toBeNull();
+    await expect(
+      gateway.openLog("/workspace", "phpactor"),
+    ).resolves.toBeNull();
 
     const unsubscribe = await gateway.subscribeStatus(vi.fn());
     unsubscribe();
@@ -78,6 +81,35 @@ describe("TauriRuntimeObservabilityGateway", () => {
       kind: "phpactor",
     });
     expect(invokeCommand).toHaveBeenCalledWith("stop_language_runtime", {
+      rootPath: "/workspace",
+      kind: "tsserver",
+    });
+  });
+
+  it("opens runtime logs for both PHPactor and tsserver", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async (_command, args) => {
+      const kind = String(args?.kind);
+
+      return `/logs/${kind}.log`;
+    });
+    const gateway = new TauriRuntimeObservabilityGateway(
+      invokeCommand,
+      vi.fn(),
+      () => true,
+    );
+
+    await expect(gateway.openLog("/workspace", "phpactor")).resolves.toBe(
+      "/logs/phpactor.log",
+    );
+    await expect(gateway.openLog("/workspace", "tsserver")).resolves.toBe(
+      "/logs/tsserver.log",
+    );
+
+    expect(invokeCommand).toHaveBeenCalledWith("open_language_runtime_log", {
+      rootPath: "/workspace",
+      kind: "phpactor",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("open_language_runtime_log", {
       rootPath: "/workspace",
       kind: "tsserver",
     });

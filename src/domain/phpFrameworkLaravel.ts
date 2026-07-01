@@ -2083,6 +2083,22 @@ export function phpLaravelStaticLocalScopeCompletionsFromMethods(
   }));
 }
 
+export function phpLaravelStaticModelMemberCompletionsFromMethods(
+  methods: PhpMethodCompletion[],
+): PhpMethodCompletion[] {
+  return methods.filter((method) => {
+    if (method.isStatic) {
+      return true;
+    }
+
+    if (method.kind === "property" || method.kind === "relation") {
+      return true;
+    }
+
+    return false;
+  });
+}
+
 export function phpLaravelDynamicWhereCompletionsFromSource(
   source: string,
   declaringClassName: string,

@@ -26,6 +26,7 @@ import {
   phpLaravelModelAttributeTargetFromSource,
   phpLaravelModelPropertyClassTypeFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
+  phpLaravelStaticModelMemberCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
 import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
@@ -1940,6 +1941,85 @@ class ReportRun
       { kind: undefined, name: "getStatus" },
       { kind: "scope", name: "inFlight" },
       { kind: "scope", name: "failed" },
+    ]);
+  });
+
+  it("keeps Laravel model static completions aligned with meaningful model member categories", () => {
+    const migrationSource = `<?php
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+Schema::table('comments', function (Blueprint $table) {
+    $table->uuid('external_id');
+});
+`;
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Comment
+{
+    protected $fillable = ['title'];
+    protected array $casts = ['published' => 'bool'];
+
+    public function post(): BelongsTo {}
+    public function publish(): void {}
+    protected function internalAudit(): void {}
+    public static function factory(): mixed {}
+    public function scopeVisible(Builder $query): Builder {}
+    #[Scope]
+    protected function archived(Builder $query): void {}
+}
+`,
+      "App\\Models\\Comment",
+      {
+        ...laravelCompletionOptions,
+        frameworkSourceContext: { workspaceSources: [migrationSource] },
+      },
+    );
+
+    expect(
+      phpLaravelStaticModelMemberCompletionsFromMethods(methods).map(
+        (member) => ({
+          isStatic: member.isStatic,
+          kind: member.kind,
+          name: member.name,
+          visibility: member.visibility,
+        }),
+      ),
+    ).toEqual([
+      {
+        isStatic: true,
+        kind: undefined,
+        name: "factory",
+        visibility: "public",
+      },
+      {
+        isStatic: undefined,
+        kind: "property",
+        name: "title",
+        visibility: undefined,
+      },
+      {
+        isStatic: undefined,
+        kind: "property",
+        name: "external_id",
+        visibility: undefined,
+      },
+      {
+        isStatic: undefined,
+        kind: "property",
+        name: "published",
+        visibility: undefined,
+      },
+      {
+        isStatic: undefined,
+        kind: "property",
+        name: "post",
+        visibility: undefined,
+      },
     ]);
   });
 

@@ -2481,15 +2481,32 @@ async fn restart_typescript_runtime_off_thread(
 }
 
 #[tauri::command]
-fn open_javascript_typescript_language_server_log(
+fn open_language_runtime_log(
     root_path: String,
+    kind: String,
     app: AppHandle,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    php_registry: State<'_, PhpLanguageServerRegistry>,
+    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<String, String> {
-    let mut log = registry.log(&root_path);
+    let runtime_kind = runtime_observability::LanguageRuntimeKind::from_str(&kind)
+        .ok_or_else(|| format!("Unknown language runtime kind: {kind}"))?;
+    let (runtime_label, log_file_prefix, mut log) = match runtime_kind {
+        runtime_observability::LanguageRuntimeKind::Phpactor => (
+            "PHP language server",
+            "php-language-server",
+            php_registry.log(&root_path),
+        ),
+        runtime_observability::LanguageRuntimeKind::Tsserver => (
+            "JavaScript/TypeScript language server",
+            "javascript-typescript-language-server",
+            javascript_typescript_registry.log(&root_path),
+        ),
+    };
 
     if log.trim().is_empty() {
-        log = "No JavaScript/TypeScript language-server log has been captured for this workspace yet.\n".to_string();
+        log = format!(
+            "No {runtime_label} log has been captured for this workspace yet.\n"
+        );
     }
 
     let log_dir = app
@@ -2499,15 +2516,16 @@ fn open_javascript_typescript_language_server_log(
     fs::create_dir_all(&log_dir)
         .map_err(|error| format!("Failed to create app log directory: {error}"))?;
     let log_path = log_dir.join(format!(
-        "javascript-typescript-language-server-{}.log",
+        "{}-{}.log",
+        log_file_prefix,
         sanitized_log_file_stem(&root_path)
     ));
 
     fs::write(&log_path, log)
-        .map_err(|error| format!("Failed to write JavaScript/TypeScript service log: {error}"))?;
+        .map_err(|error| format!("Failed to write {runtime_label} log: {error}"))?;
     app.opener()
         .open_path(log_path.to_string_lossy().to_string(), None::<String>)
-        .map_err(|error| format!("Failed to open JavaScript/TypeScript service log: {error}"))?;
+        .map_err(|error| format!("Failed to open {runtime_label} log: {error}"))?;
 
     Ok(log_path.to_string_lossy().to_string())
 }
@@ -7544,7 +7562,7 @@ pub fn run() {
             list_monospace_font_families,
             start_workspace_file_watch,
             list_terminal_profiles,
-            open_javascript_typescript_language_server_log,
+            open_language_runtime_log,
             parse_php_file_outline,
             parse_php_syntax,
             plan_javascript_typescript_language_server,

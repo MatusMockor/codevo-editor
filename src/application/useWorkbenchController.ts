@@ -293,6 +293,7 @@ import {
   phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelResolvedModelTypeCandidate,
   phpLaravelScopeMethodName,
+  phpLaravelStaticModelMemberCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
 import { detectLaravelStringLiteralHelper } from "../domain/laravelStringLiteralHelpers";
@@ -19286,9 +19287,15 @@ export function useWorkbenchController(
         await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
           isStatic: true,
         });
+      const isLaravelModelStaticAccess =
+        isLaravelFrameworkActive &&
+        phpLaravelResolvedModelTypeCandidate(source, resolvedClassName);
+      const baseMethods = isLaravelModelStaticAccess
+        ? phpLaravelStaticModelMemberCompletionsFromMethods(methods)
+        : methods.filter((method) => method.isStatic);
 
       return mergePhpMethodCompletions(
-        methods.filter((method) => method.isStatic),
+        baseMethods,
         isLaravelFrameworkActive
           ? phpLaravelStaticLocalScopeCompletionsFromMethods(methods)
           : [],
