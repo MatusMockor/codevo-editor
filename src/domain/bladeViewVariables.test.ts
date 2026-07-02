@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bladeForeachLoopBindingsAt,
   bladeViewDataEntryFromSource,
   bladeViewVariableSightingsForView,
   bladeViewVariablesForViewFromEntries,
@@ -157,6 +158,69 @@ describe("bladeViewVariableSightingsForView", () => {
     expect(
       bladeViewVariableSightingsForView(entries, "invoices.show", "$other"),
     ).toEqual([]);
+  });
+});
+
+describe("bladeForeachLoopBindingsAt", () => {
+  it("returns the loop variable of the enclosing @foreach", () => {
+    const source = "@foreach ($invoices as $invoice)\n  {{ $inv\n@endforeach\n";
+    const offset = source.indexOf("$inv\n") + "$inv".length;
+
+    const bindings = bladeForeachLoopBindingsAt(source, offset);
+
+    expect(bindings).toEqual([
+      { collectionExpression: "$invoices", loopVariableName: "invoice" },
+    ]);
+  });
+
+  it("supports @forelse and the `key => value` form (value is the loop var)", () => {
+    const source =
+      "@forelse ($items as $key => $value)\n  {{ $va\n@empty\n@endforelse\n";
+    const offset = source.indexOf("$va\n") + "$va".length;
+
+    const bindings = bladeForeachLoopBindingsAt(source, offset);
+
+    expect(bindings).toEqual([
+      { collectionExpression: "$items", loopVariableName: "value" },
+    ]);
+  });
+
+  it("returns nested enclosing loops outermost-first", () => {
+    const source =
+      "@foreach ($invoices as $invoice)\n" +
+      "@foreach ($invoice->lines as $line)\n" +
+      "{{ $l\n" +
+      "@endforeach\n@endforeach\n";
+    const offset = source.indexOf("$l\n") + "$l".length;
+
+    const bindings = bladeForeachLoopBindingsAt(source, offset);
+
+    expect(bindings).toEqual([
+      { collectionExpression: "$invoices", loopVariableName: "invoice" },
+      { collectionExpression: "$invoice->lines", loopVariableName: "line" },
+    ]);
+  });
+
+  it("drops a loop whose body was already closed before the offset", () => {
+    const source =
+      "@foreach ($invoices as $invoice)\n@endforeach\n{{ $x\n";
+    const offset = source.indexOf("$x\n") + "$x".length;
+
+    expect(bladeForeachLoopBindingsAt(source, offset)).toEqual([]);
+  });
+
+  it("returns nothing when the offset is not inside any loop", () => {
+    const source = "{{ $x\n";
+    const offset = source.indexOf("$x") + "$x".length;
+
+    expect(bladeForeachLoopBindingsAt(source, offset)).toEqual([]);
+  });
+
+  it("returns nothing while the cursor is still inside an unfinished @foreach header, even though the header completes later in the source", () => {
+    const source = "@foreach ($invoices as $invoice)\n@endforeach\n";
+    const offset = source.indexOf("$invoices") + "$invoices".length;
+
+    expect(bladeForeachLoopBindingsAt(source, offset)).toEqual([]);
   });
 });
 

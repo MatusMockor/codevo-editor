@@ -925,7 +925,11 @@ export function registerLanguageServerMonacoProviders(
   const bladeCompletion = monaco.languages.registerCompletionItemProvider(
     "blade",
     {
-      triggerCharacters: ["@", "'", "\"", "-", "."],
+      // `$` opens the view-variable list the moment the sigil is typed and `>`
+      // completes the `->` member access without needing Ctrl+Space, so
+      // `$invoice->` completes during natural typing (the `-` covers the case
+      // where `>` was already present when `-` is typed).
+      triggerCharacters: ["@", "'", "\"", "-", ".", "$", ">"],
       provideCompletionItems: (model, position) =>
         provideBladeCompletionItems(monaco, context, model, position),
     },

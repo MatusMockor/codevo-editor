@@ -10101,6 +10101,8 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
       "\"",
       "-",
       ".",
+      "$",
+      ">",
     ]);
 
     disposable.dispose();

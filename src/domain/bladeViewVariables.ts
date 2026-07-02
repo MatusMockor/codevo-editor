@@ -36,6 +36,96 @@ export interface BladeViewVariableSighting {
   variable: PhpLaravelViewVariable;
 }
 
+/**
+ * A loop variable declared by an enclosing `@foreach`/`@forelse` directive, with
+ * the collection expression it iterates. The application layer resolves the
+ * collection's element type from this so `$item->` completes inside the body,
+ * and offers `loopVariableName` in the `$` variable list so the user immediately
+ * sees which locals are in scope.
+ */
+export interface BladeForeachLoopBinding {
+  collectionExpression: string;
+  loopVariableName: string;
+}
+
+const BLADE_FOREACH_OPEN =
+  /@(?:foreach|forelse)\s*\(\s*(.+?)\s+as\s+(?:\$[A-Za-z_][A-Za-z0-9_]*\s*=>\s*)?\$([A-Za-z_][A-Za-z0-9_]*)\s*\)/giy;
+const BLADE_FOREACH_CLOSE = /@(?:endforeach|endforelse)\b/giy;
+// Global (not sticky) so `exec` scans forward to the NEXT loop directive; the
+// open/close patterns above stay sticky to match only AT that directive.
+const BLADE_DIRECTIVE_SCAN = /@(?:foreach|forelse|endforeach|endforelse)/gi;
+
+/**
+ * Returns the loop bindings of every `@foreach`/`@forelse` directive whose body
+ * still encloses `offset`, outermost first. Directives closed by
+ * `@endforeach`/`@endforelse` before the offset are popped off the scope stack,
+ * so only genuinely-enclosing loops remain. A directive whose header is still
+ * being typed - its open match starts before `offset` but its closing `)` lies
+ * at or past it - does not yet declare a loop variable, so scanning stops there
+ * instead of treating it as complete. Pure and scope-aware; the `@empty`
+ * separator of `@forelse` does not close the loop (its body still binds the
+ * loop variable up to `@endforelse`), so it is intentionally not treated as a
+ * close.
+ */
+export function bladeForeachLoopBindingsAt(
+  source: string,
+  offset: number,
+): BladeForeachLoopBinding[] {
+  const stack: BladeForeachLoopBinding[] = [];
+  const limit = Math.max(0, Math.min(offset, source.length));
+  let index = 0;
+
+  while (index < limit) {
+    BLADE_DIRECTIVE_SCAN.lastIndex = index;
+    const directive = BLADE_DIRECTIVE_SCAN.exec(source);
+
+    if (!directive || directive.index >= limit) {
+      break;
+    }
+
+    const open = matchStickyAt(BLADE_FOREACH_OPEN, source, directive.index);
+
+    if (open && directive.index + open[0].length > limit) {
+      // The header's closing `)` lies past the offset: it is still being
+      // typed, so it does not yet declare a loop variable in scope.
+      break;
+    }
+
+    if (open) {
+      stack.push({
+        collectionExpression: open[1].trim(),
+        loopVariableName: open[2],
+      });
+      index = directive.index + open[0].length;
+      continue;
+    }
+
+    const close = matchStickyAt(BLADE_FOREACH_CLOSE, source, directive.index);
+
+    if (close) {
+      stack.pop();
+      index = directive.index + close[0].length;
+      continue;
+    }
+
+    index = directive.index + directive[0].length;
+  }
+
+  return stack;
+}
+
+function matchStickyAt(
+  pattern: RegExp,
+  source: string,
+  at: number,
+): RegExpExecArray | null {
+  pattern.lastIndex = at;
+
+  const match = pattern.exec(source);
+
+  return match && match.index === at ? match : null;
+}
+
 export function bladeViewDataEntryFromSource(source: string): BladeViewDataEntry {
   return { bindings: phpLaravelViewDataBindings(source), source };
 }
