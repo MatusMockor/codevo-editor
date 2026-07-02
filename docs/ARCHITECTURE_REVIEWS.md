@@ -1903,3 +1903,51 @@ Scope reviewed:
 - `cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc`: failed because the Windows Rust target is not installed
 - `cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu`: failed because the Linux Rust target is not installed
 - `src/domain/languageServerFeatures.ts`: `pathFromLanguageServerUri` currently returns decoded `URL.pathname`
+
+## 2026-06-16: macOS Release CI
+
+Scope reviewed:
+
+- Mac-only GitHub Actions workflow
+- unsigned debug DMG smoke mode
+- signed and notarized release DMG mode
+- temporary keychain import and cleanup
+- release artifact verification commands
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The workflow owns macOS CI/release orchestration only and does not mix Windows/Linux packaging.
+- Open/Closed: acceptable. Release upload, packaged smoke, and updater artifacts can extend the workflow through new jobs without changing smoke or signing steps.
+- Liskov Substitution: not materially affected. Runtime service implementations did not change.
+- Interface Segregation: acceptable. CI concerns remain outside app, LSP, terminal, index, sidecar, and updater contracts.
+- Dependency Inversion: acceptable. Signing material is injected through GitHub secrets instead of committed config.
+
+### Pattern Review
+
+- Secret-boundary pattern: certificate and App Store Connect key material are written only to `$RUNNER_TEMP`.
+- Verification gate: signed release mode verifies `codesign`, `spctl`, `stapler`, and DMG metadata before uploading artifacts.
+- Manual promotion pattern: smoke mode is credential-free; signed release mode is an explicit manual choice.
+- Platform boundary: the workflow pins macOS release work to `macos-15` and excludes Windows/Linux paths.
+
+### Residual Risk
+
+- Signed release mode cannot pass until Apple secrets are configured.
+- The workflow uploads artifacts but does not create a GitHub Release yet.
+- Packaged GUI smoke still needs automation.
+
+### Verification
+
+- Official Tauri GitHub pipeline and macOS signing docs checked on 2026-06-16.
+- GitHub hosted runner, checkout, setup-node, and upload-artifact docs checked on 2026-06-16.
+- `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/macos-release.yml")'`
+
+### Follow-Up Completion: 2026-07-02
+
+The workflow and docs were untracked/uncommitted work in progress. This pass closed it out:
+
+- Fixed a real bug: the `checks` job ran `cargo fmt --check`, which fails against current `main` (unrelated pre-existing formatting drift never gated by `pr-checks.yml`, which only runs `cargo test`). Left ungated, this would have failed `checks` on every run, blocking `smoke` and `signed-release` alike, including the credential-free path. Removed the step so the new workflow's gate matches the project's actual existing gate.
+- Bumped `actions/checkout` and `actions/upload-artifact` from `v5`/`v6` to the current `v7` majors (`actions/setup-node@v6` was already current).
+- Confirmed via the official Tauri macOS signing docs that Tauri reads `APPLE_API_KEY_PATH` (a file path) for the App Store Connect notarization key, not raw key content from an env var. The workflow already handles this correctly: it derives `APPLE_API_KEY_PATH` from the `APPLE_API_KEY_CONTENT` secret in the "Prepare App Store Connect API key" step and exports it via `GITHUB_ENV`, which GitHub Actions carries into all later steps in the same job automatically, so the later "Build signed release DMG" step sees it without needing to repeat it in its own `env:` block.
+- Ran `actionlint` (installed via Homebrew, brings in `shellcheck` for embedded script linting) against `.github/workflows/macos-release.yml` and `.github/workflows/pr-checks.yml`: 0 findings on both.
+- Ran a real, full local build proving the packaging path works end to end: `npm run build` then `npm run tauri build -- --debug`, producing a freshly-timestamped `Mockor Editor.app` and `Mockor Editor_0.1.0_aarch64.dmg` under `src-tauri/target/debug/bundle/`, verified with `codesign -dv` (ad-hoc signature, as expected unsigned) and `hdiutil imageinfo` (valid UDIF image). This is the same command sequence the `smoke-dmg` job runs.
+- Corrected `docs/PROGRESS.md`, which still referenced `coderabbit review` as the next verification step; this project bans CodeRabbit (see `CLAUDE.md`), so the line was replaced with the actual review method used (independent subagent review plus `actionlint`).

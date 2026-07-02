@@ -21,6 +21,7 @@ This document records what the packaged desktop app can rely on today, what it d
 | DMG packaging | Ready for debug desktop bundles | Default debug build produces `.app` and `.dmg`. |
 | Signing/notarization | Planned, credentials missing | See `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`; no Developer ID identity is installed locally today. |
 | Update channel | Manual first release | See `docs/UPDATE_CHANNEL_PLAN.md`; updater plugin and keys are not configured. |
+| macOS release CI | Workflow ready, credentials missing | `.github/workflows/macos-release.yml` has smoke and signed-release modes. |
 | Windows/Linux packaging | Not ready | See `docs/WINDOWS_LINUX_FEASIBILITY.md`; local macOS host cannot produce those artifacts today. |
 
 ## Product And Bundle
@@ -50,6 +51,7 @@ Release metadata still missing:
 - configured release signing identity
 - notarization credentials or profile
 - configured update channel
+- protected release CI environment and Apple secrets
 - Windows/Linux runner and signing policy
 - sidecar bundle metadata
 
@@ -81,6 +83,14 @@ Update channel plan:
 - `plugins.updater` is not configured.
 - `bundle.createUpdaterArtifacts` uses the default disabled state.
 - First release policy is manual DMG download; Tauri updater is deferred until signing keys, endpoints, CI, and UI are in place.
+
+macOS release CI:
+
+- `.github/workflows/macos-release.yml`
+- `docs/MACOS_RELEASE_CI.md`
+- `smoke` mode builds an unsigned debug DMG and uploads it as a workflow artifact.
+- `signed-release` mode imports Apple credentials, builds a release DMG, runs signing/notarization verification, and uploads the release DMG.
+- `signed-release` mode still requires repository secrets before it can pass.
 
 Windows/Linux feasibility:
 
@@ -337,9 +347,9 @@ Release follow-up:
 15. For release artifacts, verify code signing, notarization, stapling, and Gatekeeper checks from `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`.
 16. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell, matching `docs/SIDECAR_RUNTIME_PACKAGING_PLAN.md`.
 17. Confirm release notes state the manual update policy from `docs/UPDATE_CHANNEL_PLAN.md`.
-18. Do not publish Windows or Linux artifacts until `docs/WINDOWS_LINUX_FEASIBILITY.md` smoke checklists pass on real platform runners.
+18. Run `.github/workflows/macos-release.yml` in `smoke` mode before trying `signed-release`.
+19. Do not publish Windows or Linux artifacts until explicitly reprioritized.
 
 ## Phase 8 Follow-Ups
 
-- Release CI plan.
 - Packaged smoke automation.

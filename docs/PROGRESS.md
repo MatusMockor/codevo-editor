@@ -82,6 +82,7 @@ Completed:
 - Documented first-release sidecar/runtime packaging policy for PHP, PHPactor, Intelephense, Watchman, ripgrep, terminal shells, and SQLite index storage.
 - Documented first-release manual update policy and future Tauri updater/static JSON signing path.
 - Documented Windows/Linux packaging feasibility, local cross-target blockers, required CI runners, and platform smoke checklists.
+- Added Mac-only release CI workflow with unsigned smoke and signed DMG release modes.
 
 Current verification:
 
@@ -93,7 +94,8 @@ Current verification:
 - `npm run tauri build -- --debug --bundles app`: passing
 - `npm run tauri build -- --debug`: passing, producing `.app` and `.dmg` bundles
 - Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Windows/Linux feasibility slice.
+- `actionlint .github/workflows/macos-release.yml`: passing, 0 findings.
+- Independent subagent review of the macOS release CI slice: passing after fixing a `cargo fmt --check` gate that failed against current `main` formatting (removed; `pr-checks.yml` does not gate on it either) and bumping `actions/checkout`/`actions/upload-artifact` to `v7`.
 
 Known issues:
 
@@ -105,5 +107,5 @@ Known issues:
 
 Next implementation slice:
 
-1. Draft release CI plan.
-2. Add packaged smoke scripts.
+1. Add macOS packaged smoke scripts.
+2. Run signed release dry run after Apple secrets are configured.

@@ -135,6 +135,14 @@ Scale:
 | P8-04 | Update channel research | M | Done | Signing/update mechanism decided. |
 | P8-05 | Windows/Linux feasibility | L | Done | Builds attempted and blockers documented. |
 
+## Phase 9: macOS Release
+
+| ID | Task | Size | Status | Acceptance |
+| --- | --- | --- | --- | --- |
+| P9-00 | macOS release CI | M | Done | Manual macOS smoke and signed-release workflow is available. |
+| P9-01 | Packaged smoke scripts | L | Pending | macOS packaged smoke can be repeated with fixtures. |
+| P9-02 | Signed release dry run | L | Pending | Signing credentials run through CI and produce a verified DMG. |
+
 ## Quality Gates
 
 Before finishing an implementation slice:

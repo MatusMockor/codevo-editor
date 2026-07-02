@@ -1,0 +1,226 @@
+name: macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Build mode"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - signed-release
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+  smoke-dmg:
+    name: Debug DMG Smoke
+    runs-on: macos-15
+    needs: checks
+    if: ${{ inputs.mode == 'smoke' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build debug DMG
+        run: npm run tauri build -- --debug
+
+      - name: Inspect debug DMG
+        run: |
+          dmg_path="$(find src-tauri/target/debug/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$dmg_path"
+          hdiutil imageinfo "$dmg_path"
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mockor-editor-macos-debug
+          path: |
+            src-tauri/target/debug/bundle/dmg/*.dmg
+            src-tauri/target/debug/bundle/macos/*.app
+
+  signed-release-dmg:
+    name: Signed Release DMG
+    runs-on: macos-15
+    needs: checks
+    if: ${{ inputs.mode == 'signed-release' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate signing secrets
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          missing=0
+          for name in APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_CONTENT APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required for signed-release mode"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Import Apple signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/mockor-editor-certificate.p12"
+          keychain_path="$RUNNER_TEMP/mockor-editor-signing.keychain-db"
+          export APPLE_CERTIFICATE CERTIFICATE_PATH="$certificate_path"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
+              base64.b64decode(os.environ["APPLE_CERTIFICATE"])
+          )
+          PY
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+
+          existing_keychains=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%\"}"
+            line="${line#\"}"
+            existing_keychains+=("$line")
+          done < <(security list-keychain -d user)
+          security list-keychain -d user -s "$keychain_path" "${existing_keychains[@]}"
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+
+          echo "CERTIFICATE_PATH=$certificate_path" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s\n' "$APPLE_API_KEY_CONTENT" > "$api_key_path"
+          chmod 600 "$api_key_path"
+          echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
+
+      - name: Build signed release DMG
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: npm run tauri build -- --bundles dmg
+
+      - name: Verify signed release artifacts
+        run: |
+          app_path="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          dmg_path="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$app_path"
+          test -n "$dmg_path"
+
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -dv --verbose=4 "$app_path"
+          codesign -d --entitlements :- "$app_path"
+          spctl -a -vvv -t exec "$app_path"
+          xcrun stapler validate "$dmg_path"
+          spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
+          spctl -a -vvv -t install "$dmg_path"
+          hdiutil imageinfo "$dmg_path"
+
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mockor-editor-macos-signed-release
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+
+      - name: Clean up signing materials
+        if: ${{ always() }}
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f "${CERTIFICATE_PATH:-}" "${APPLE_API_KEY_PATH:-}"
