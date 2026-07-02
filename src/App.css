@@ -3728,6 +3728,10 @@ button.problem-row:focus-visible {
   font-weight: 600;
 }
 
+.status-ide-activity:hover {
+  background: var(--color-border);
+}
+
 .status-ide-activity::after {
   position: absolute;
   right: 8px;
@@ -3756,6 +3760,34 @@ button.problem-row:focus-visible {
 
 .status-ide-activity.idle::after {
   opacity: 0.25;
+}
+
+/* Runtime tone dot on the IDE activity chip: green/amber/red/grey mirror the
+   Runtime panel's own lifecycle tones (running/starting/crashed/stopped), so
+   a crashed engine is visible at a glance without opening the panel. */
+.status-ide-activity-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-disabled);
+}
+
+.status-ide-activity-dot.active {
+  background: var(--color-success);
+}
+
+.status-ide-activity-dot.scanning {
+  background: var(--color-warning);
+}
+
+.status-ide-activity-dot.problem {
+  background: var(--color-error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+
+.status-ide-activity-dot.idle {
+  background: var(--color-disabled);
 }
 
 @keyframes status-activity-sweep {

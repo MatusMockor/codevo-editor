@@ -54538,6 +54538,482 @@ class CommentController
       }),
     ]);
   });
+
+  it("completes $var-> after $ and > trigger characters across Blade contexts", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const modelPath = "/workspace/app/Models/Comment.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    // `$comment->` typed inside each Blade context the natural-typing triggers
+    // reach: `{{ }}`, `{!! !!}`, an `@if(...)` expression, and an `@php` block.
+    const bladeSource =
+      "{{ $comment-> }}\n" +
+      "{!! $comment-> !!}\n" +
+      "@if($comment->)\n@endif\n" +
+      "@php\n$comment->\n@endphp\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = ['body'];
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === modelPath) {
+        return modelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    const lines = bladeSource.split("\n");
+    const memberContexts = [
+      { column: lines[0].indexOf("$comment->") + "$comment->".length + 1, lineNumber: 1 },
+      { column: lines[1].indexOf("$comment->") + "$comment->".length + 1, lineNumber: 2 },
+      { column: lines[2].indexOf("$comment->") + "$comment->".length + 1, lineNumber: 3 },
+      { column: lines[5].indexOf("$comment->") + "$comment->".length + 1, lineNumber: 6 },
+    ];
+
+    for (const position of memberContexts) {
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(
+          bladeSource,
+          position,
+        );
+      });
+
+      expect(completions.map((completion) => completion.label)).toContain("body");
+    }
+  });
+
+  it("lists view variables with their types the moment $ is typed", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/InvoiceController.php";
+    const bladePath = "/workspace/resources/views/invoices/show.blade.php";
+    const bladeSource = "{{ $ }}\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Invoice;
+
+class InvoiceController
+{
+    public function show(Invoice $invoice): mixed
+    {
+        return view('invoices.show', ['invoice' => $invoice]);
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 9,
+              lineText: "return view('invoices.show', ['invoice' => $invoice]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/InvoiceController.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$") + "$".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "view data · Invoice",
+          insertText: "$invoice",
+          kind: "variable",
+          label: "$invoice",
+        }),
+      ]),
+    );
+  });
+
+  it("offers the @foreach loop variable in the $ list and completes its element members", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/InvoiceController.php";
+    const modelPath = "/workspace/app/Models/Invoice.php";
+    const bladePath = "/workspace/resources/views/invoices/index.blade.php";
+    const bladeSource =
+      "@foreach ($invoices as $invoice)\n  {{ $ }}\n  {{ $invoice-> }}\n@endforeach\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Invoice;
+
+class InvoiceController
+{
+    public function index(): mixed
+    {
+        $invoices = Invoice::all();
+
+        return view('invoices.index', ['invoices' => $invoices]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Invoice extends Model
+{
+    protected $fillable = ['total'];
+
+    public function label(): string
+    {
+        return '';
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 12,
+              lineText: "return view('invoices.index', ['invoices' => $invoices]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/InvoiceController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === modelPath) {
+        return modelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let variableCompletions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      variableCompletions = await getWorkbench().provideBladeCompletions(
+        bladeSource,
+        {
+          column: "  {{ $".length + 1,
+          lineNumber: 2,
+        },
+      );
+    });
+
+    expect(variableCompletions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          insertText: "$invoice",
+          kind: "variable",
+          label: "$invoice",
+        }),
+      ]),
+    );
+
+    let memberCompletions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      memberCompletions = await getWorkbench().provideBladeCompletions(
+        bladeSource,
+        {
+          column: "  {{ $invoice->".length + 1,
+          lineNumber: 3,
+        },
+      );
+    });
+
+    const memberLabels = memberCompletions.map((completion) => completion.label);
+    expect(memberLabels).toContain("total");
+    expect(memberLabels).toContain("label");
+  });
+
+  it("stays conservative for a @foreach over an unknown-typed collection", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ReportController.php";
+    const bladePath = "/workspace/resources/views/reports/index.blade.php";
+    // The collection value is a plain PHP array of unknown element type, so the
+    // loop variable must still surface (visibility) but with NO type and NO
+    // invented members.
+    const bladeSource =
+      "@foreach ($rows as $row)\n  {{ $ }}\n  {{ $row-> }}\n@endforeach\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+class ReportController
+{
+    public function index(): mixed
+    {
+        $rows = compute_rows();
+
+        return view('reports.index', ['rows' => $rows]);
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 11,
+              lineText: "return view('reports.index', ['rows' => $rows]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/ReportController.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let variableCompletions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      variableCompletions = await getWorkbench().provideBladeCompletions(
+        bladeSource,
+        {
+          column: "  {{ $".length + 1,
+          lineNumber: 2,
+        },
+      );
+    });
+
+    const rowVariable = variableCompletions.find(
+      (completion) => completion.label === "$row",
+    );
+    expect(rowVariable).toBeDefined();
+    expect(rowVariable?.detail).toBe("foreach item");
+
+    let memberCompletions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      memberCompletions = await getWorkbench().provideBladeCompletions(
+        bladeSource,
+        {
+          column: "  {{ $row->".length + 1,
+          lineNumber: 3,
+        },
+      );
+    });
+
+    expect(memberCompletions).toEqual([]);
+  });
+
+  it("drops stale @foreach element member completions after switching tabs", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/InvoiceController.php";
+    const bladePath =
+      "/workspace-a/resources/views/invoices/index.blade.php";
+    const bladeSource =
+      "@foreach ($invoices as $invoice)\n  {{ $invoice-> }}\n@endforeach\n";
+    const staleSearch = createDeferred<
+      { column: number; lineNumber: number; lineText: string; path: string; relativePath: string }[]
+    >();
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view(" ? staleSearch.promise : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let completionsPromise: Promise<
+      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+    > = Promise.resolve([]);
+    await act(async () => {
+      completionsPromise = getWorkbench().provideBladeCompletions(bladeSource, {
+        column: "  {{ $invoice->".length + 1,
+        lineNumber: 2,
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleSearch.resolve([
+      {
+        column: 16,
+        lineNumber: 12,
+        lineText: "return view('invoices.index', ['invoices' => $invoices]);",
+        path: controllerPath,
+        relativePath: "app/Http/Controllers/InvoiceController.php",
+      },
+    ]);
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await completionsPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(completions).toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
   });
 
   it("suggests Laravel Blade views inside view helper strings", async () => {
@@ -65705,6 +66181,80 @@ class PostRepository
       await flushAsyncTurns();
 
       expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(4);
+    });
+  });
+
+  describe("turning IDE mode off", () => {
+    it("tells the user PHPactor and the index are stopping before the runtime finishes stopping", async () => {
+      const runtimeStop =
+        createDeferred<Awaited<ReturnType<LanguageServerRuntimeGateway["stop"]>>>();
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace/laravel-app",
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          intelligenceMode: "fullSmart",
+        },
+      });
+      await flushAsyncTurns();
+      vi.mocked(
+        dependencies.languageServerRuntimeGateway.stop,
+      ).mockImplementationOnce(async () => runtimeStop.promise);
+
+      let modePromise: Promise<void> = Promise.resolve();
+      await act(async () => {
+        modePromise = getWorkbench().setSmartMode("basic");
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+          "/workspace/laravel-app",
+        );
+      });
+
+      // The PHPactor stop is still in flight (deferred), so the "what's being
+      // killed" message must already be visible - the user should not have to
+      // wait for the stop to complete to learn IDE mode is shutting things down.
+      expect(getWorkbench().message).toBe(
+        "Stopping PHPactor + index for laravel-app",
+      );
+
+      await act(async () => {
+        runtimeStop.resolve({
+          kind: "stopped",
+          rootPath: "/workspace/laravel-app",
+        });
+        await modePromise;
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().intelligenceMode).toBe("basic");
+    });
+
+    it("does not show a stopping message when IDE mode was already off", async () => {
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace/laravel-app",
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          intelligenceMode: "basic",
+        },
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().setSmartMode("basic");
+      });
+
+      expect(getWorkbench().message).not.toBe(
+        "Stopping PHPactor + index for laravel-app",
+      );
     });
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { WorkbenchNotice } from "./workbenchNotice";
 import type { IntelligenceMode } from "../domain/workspace";
+import { languageServerCrashNoticeToastRenderer } from "../components/LanguageServerCrashNotice";
 import { managedPhpactorSetupNoticeToastRenderer } from "../components/ManagedPhpactorSetupNotice";
 import type { NoticeToastRenderer } from "../components/NoticeToastHost";
 
@@ -9,6 +10,7 @@ export interface NoticeToastRendererContext {
   onInstallManagedPhpactor: () => Promise<void> | void;
   isInstallingManagedPhpactor: boolean;
   onOpenLanguageServerSetup: () => void;
+  onOpenRuntimePanel: () => void;
   workspaceRoot: string | null;
   workspaceTrusted: boolean;
 }
@@ -21,6 +23,11 @@ export type NoticeToastRendererFactory = (
 
 const noticeToastRendererFactories: NoticeToastRendererFactory[] = [
   managedPhpactorSetupNoticeToastRenderer,
+  (context) =>
+    languageServerCrashNoticeToastRenderer({
+      onOpenRuntimePanel: context.onOpenRuntimePanel,
+      workspaceRoot: context.workspaceRoot,
+    }),
 ];
 
 export function useNoticeToastRenderers({
@@ -28,6 +35,7 @@ export function useNoticeToastRenderers({
   onInstallManagedPhpactor,
   isInstallingManagedPhpactor,
   onOpenLanguageServerSetup,
+  onOpenRuntimePanel,
   workspaceRoot,
   workspaceTrusted,
 }: NoticeToastRendererContext): NoticeToastRenderer {
@@ -37,6 +45,7 @@ export function useNoticeToastRenderers({
       onInstallManagedPhpactor,
       isInstallingManagedPhpactor,
       onOpenLanguageServerSetup,
+      onOpenRuntimePanel,
       workspaceRoot,
       workspaceTrusted,
     };
@@ -60,6 +69,7 @@ export function useNoticeToastRenderers({
     onInstallManagedPhpactor,
     isInstallingManagedPhpactor,
     onOpenLanguageServerSetup,
+    onOpenRuntimePanel,
     workspaceRoot,
     workspaceTrusted,
   ]);

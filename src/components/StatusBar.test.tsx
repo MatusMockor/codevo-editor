@@ -120,6 +120,74 @@ describe("StatusBar", () => {
     expect(problems?.getAttribute("title")).toBe("No problems");
   });
 
+  it("renders the IDE activity chip as a button with a runtime tone dot and opens the runtime panel on click", async () => {
+    const onOpenRuntimePanel = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Http/Controllers/CommentController.php"
+          dirtyCount={0}
+          ideActivityDetail={"PHPactor: running\nTS Server: stopped\nIndex: idle"}
+          ideActivityLabel="IDE: PHPactor running"
+          ideActivityState="active"
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onOpenRuntimePanel={onOpenRuntimePanel}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel="laravel/laravel · PHP ^8.4"
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const activity = host.querySelector<HTMLButtonElement>(".status-ide-activity");
+
+    expect(activity?.tagName).toBe("BUTTON");
+    expect(
+      activity?.querySelector(".status-ide-activity-dot")?.classList.contains(
+        "active",
+      ),
+    ).toBe(true);
+    expect(activity?.getAttribute("title")).toBe(
+      "IDE: PHPactor running\n\nPHPactor: running\nTS Server: stopped\nIndex: idle",
+    );
+
+    await act(async () => {
+      activity?.click();
+    });
+
+    expect(onOpenRuntimePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a crashed tone on the IDE activity chip dot when a runtime crashes", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/app/Service.php"
+          dirtyCount={0}
+          ideActivityLabel="IDE: PHPactor crashed"
+          ideActivityState="problem"
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const dot = host.querySelector(".status-ide-activity-dot");
+
+    expect(dot?.classList.contains("problem")).toBe(true);
+  });
+
   it("shows JS/TS project scope alongside per-project server activity", async () => {
     await act(async () => {
       root.render(

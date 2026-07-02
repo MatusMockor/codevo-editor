@@ -22,6 +22,16 @@ export function workspaceRootKeysEqual(
   return normalizedWorkspaceRootKey(left) === normalizedWorkspaceRootKey(right);
 }
 
+/// Human-readable project name for status/toast copy (e.g. "Stopping
+/// PHPactor + index for my-project"): the last path segment, tolerant of a
+/// trailing slash and Windows-style backslashes. Falls back to the raw path
+/// when no segment can be extracted (e.g. a bare "/").
+export function workspaceDisplayName(root: string): string {
+  const normalized = root.split("\\").join("/").replace(/\/+$/, "");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || root;
+}
+
 function minimumWorkspaceRootKeyLength(root: string): number {
   if (/^[A-Za-z]:[\\/]/.test(root)) {
     return 3;

@@ -22,6 +22,7 @@ import {
   capDiagnosticNotices,
   capWorkbenchNotices,
   createWorkbenchNotice,
+  languageServerCrashNoticeGroupKey,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
   type WorkbenchNoticeNavigationTarget,
@@ -227,6 +228,7 @@ import {
 } from "../domain/workspaceFileChange";
 import {
   normalizedWorkspaceRootKey,
+  workspaceDisplayName,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
@@ -453,10 +455,12 @@ import {
 } from "../domain/phpLaravelViews";
 import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import {
+  bladeForeachLoopBindingsAt,
   bladeViewDataEntryFromSource,
   bladeViewVariableSightingsForView,
   bladeViewVariablesForViewFromEntries,
   mergeBladeViewVariableResolvedTypes,
+  type BladeForeachLoopBinding,
   type BladeViewDataEntry,
   type BladeViewVariableSighting,
 } from "../domain/bladeViewVariables";
@@ -1999,7 +2003,13 @@ export function useWorkbenchController(
 
       lastLanguageServerCrashRef.current = nextMessage;
       setNotices((current) => [
-        createWorkbenchNotice("error", "Language Server", nextMessage),
+        createWorkbenchNotice(
+          "error",
+          "Language Server",
+          nextMessage,
+          languageServerCrashNoticeGroupKey(currentWorkspaceRootRef.current) ??
+            undefined,
+        ),
         ...current,
       ]);
     },
@@ -9604,6 +9614,15 @@ export function useWorkbenchController(
           intelligenceModeRef.current = nextMode;
           setIntelligenceMode(nextMode);
           autoStartedLanguageServerRootRef.current = requestedRoot;
+          // "What's being killed" visibility: turning IDE mode off stops the
+          // PHP language server runtime and clears the workspace index, so say
+          // so up front rather than leaving the status bar silent until the
+          // stop completes. The final `state.message` from the gateway (set
+          // below via clearWorkspaceIndex) supersedes this once the stop
+          // finishes.
+          setMessage(
+            `Stopping PHPactor + index for ${workspaceDisplayName(requestedRoot)}`,
+          );
           await stopLanguageServerRuntime(requestedRoot);
         }
 
@@ -21815,6 +21834,69 @@ export function useWorkbenchController(
     ],
   );
 
+  // Resolves the type of a `@foreach (<collection> as $item)` collection
+  // expression. CONSERVATIVE: only a bare view variable (`$invoices`) is
+  // resolved (reusing the reverse view -> controllers mapping); any richer
+  // expression (member chains, method calls) yields `null` rather than a guess.
+  const resolveBladeForeachCollectionType = useCallback(
+    async (
+      viewName: string,
+      binding: BladeForeachLoopBinding,
+    ): Promise<string | null> => {
+      const bareVariable = /^\$[A-Za-z_][A-Za-z0-9_]*$/.exec(
+        binding.collectionExpression.trim(),
+      );
+
+      if (!bareVariable) {
+        return null;
+      }
+
+      return resolveBladeViewVariableTypeForView(viewName, bareVariable[0]);
+    },
+    [resolveBladeViewVariableTypeForView],
+  );
+
+  // CONSERVATIVE element type behind a `@foreach ($collection as $item)` loop
+  // variable: the enclosing loop's collection expression is resolved as a view
+  // variable and, when it is a Laravel collection generic
+  // (`Collection<int, Model>`), the element `Model` is returned so `$item->`
+  // completes against it. Returns `null` when the offset is not inside a loop
+  // binding `variableName`, or the collection type is unknown / not a supported
+  // collection - never a guessed element type.
+  const resolveBladeForeachElementTypeForVariable = useCallback(
+    async (
+      viewName: string,
+      source: string,
+      offset: number,
+      variableName: string,
+    ): Promise<string | null> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const normalizedName = variableName.replace(/^\$/, "").toLowerCase();
+      const binding = bladeForeachLoopBindingsAt(source, offset).find(
+        (candidate) =>
+          candidate.loopVariableName.toLowerCase() === normalizedName,
+      );
+
+      if (!binding) {
+        return null;
+      }
+
+      const collectionType = await resolveBladeForeachCollectionType(
+        viewName,
+        binding,
+      );
+
+      if (!collectionType || !isRequestedRootActive()) {
+        return null;
+      }
+
+      return phpLaravelCollectionModelTypeCandidate(source, collectionType);
+    },
+    [resolveBladeForeachCollectionType, workspaceRoot],
+  );
+
   // Returns the workspace's Blade component tag names for `<x-` completion:
   // anonymous blade views under resources/views/components (dotted names
   // without the `.blade.php` / `/index.blade.php` suffix) merged with
@@ -21956,6 +22038,111 @@ export function useWorkbenchController(
     [ensureBladeViewDataEntriesLoaded, workspaceRoot],
   );
 
+  // The loop variables of every `@foreach`/`@forelse` still enclosing `offset`,
+  // each shaped as a view variable so the `$` list renders it uniformly. The
+  // display type is the enclosing loop's element type when it resolves
+  // (CONSERVATIVE: unknown collection type -> no type hint, never a guess).
+  // `alreadyListed` view variables are skipped so a name shadowing a view
+  // variable is not duplicated.
+  const collectBladeForeachLoopVariables = useCallback(
+    async (
+      viewName: string,
+      source: string,
+      offset: number,
+      alreadyListed: readonly PhpLaravelViewVariable[],
+    ): Promise<PhpLaravelViewVariable[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const bindings = bladeForeachLoopBindingsAt(source, offset);
+      const listedNames = new Set(
+        alreadyListed.map((variable) => variable.name.toLowerCase()),
+      );
+      const loopVariables: PhpLaravelViewVariable[] = [];
+      const seenNames = new Set<string>();
+
+      for (const binding of bindings) {
+        const name = `$${binding.loopVariableName}`;
+        const key = name.toLowerCase();
+
+        if (listedNames.has(key) || seenNames.has(key)) {
+          continue;
+        }
+
+        seenNames.add(key);
+
+        const elementType = await resolveBladeForeachElementTypeForVariable(
+          viewName,
+          source,
+          offset,
+          binding.loopVariableName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        loopVariables.push({
+          detail: "foreach item",
+          name,
+          typeHint: bladeShortTypeName(elementType),
+          valueExpression: null,
+          valueOffset: null,
+        });
+      }
+
+      return loopVariables;
+    },
+    [resolveBladeForeachElementTypeForVariable, workspaceRoot],
+  );
+
+  // Fills a view variable's display type from the full reverse-mapping resolver
+  // when the cheap declared hint is absent (e.g. a route-model-bound parameter
+  // typed only in the controller signature), so `$` shows the concrete type.
+  // CONSERVATIVE: an unresolved type leaves the hint untouched.
+  const collectBladeViewVariablesWithDisplayTypes = useCallback(
+    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const variables = await collectBladeViewVariables(viewName);
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      const enriched: PhpLaravelViewVariable[] = [];
+
+      for (const variable of variables) {
+        if (variable.typeHint) {
+          enriched.push(variable);
+          continue;
+        }
+
+        const resolvedType = await resolveBladeViewVariableTypeForView(
+          viewName,
+          variable.name,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        enriched.push({
+          ...variable,
+          typeHint: bladeShortTypeName(resolvedType) ?? variable.typeHint,
+        });
+      }
+
+      return enriched;
+    },
+    [
+      collectBladeViewVariables,
+      resolveBladeViewVariableTypeForView,
+      workspaceRoot,
+    ],
+  );
+
   // Completion for `.blade.php` documents: `@directive` names (pure filter of
   // BLADE_DIRECTIVES), view names for @include/@extends/… literals (reusing the
   // resources/views scan), and `<x-...>` component names (components scan).
@@ -22016,11 +22203,25 @@ export function useWorkbenchController(
         // mapping: every controller sighting of this variable is resolved
         // (declared hint first, full expression engine second) and the types
         // must agree - a conflict or an unknown type yields NO completions
-        // rather than guessed ones.
-        const resolvedType = await resolveBladeViewVariableTypeForView(
+        // rather than guessed ones. A `@foreach` loop variable is not a view
+        // variable, so it falls back to the enclosing loop's element type.
+        const viewVariableType = await resolveBladeViewVariableTypeForView(
           viewName,
           `$${memberCompletion.variableName}`,
         );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const resolvedType =
+          viewVariableType ??
+          (await resolveBladeForeachElementTypeForVariable(
+            viewName,
+            source,
+            offset,
+            memberCompletion.variableName,
+          ));
 
         if (!isRequestedRootActive()) {
           return [];
@@ -22066,14 +22267,40 @@ export function useWorkbenchController(
           : "";
         const viewName = phpLaravelViewNameFromRelativePath(relativePath);
         const variables = viewName
-          ? await collectBladeViewVariables(viewName)
+          ? await collectBladeViewVariablesWithDisplayTypes(viewName)
           : [];
 
         if (!isRequestedRootActive()) {
           return [];
         }
 
-        return [...variables, ...BLADE_BUILT_IN_VARIABLES]
+        // `@foreach` loop variables are locals, not view data, so they are
+        // surfaced separately (with the enclosing loop's element type when it
+        // resolves) ahead of the view variables and built-ins - so the moment
+        // `$` is typed the user sees every in-scope name and its type.
+        const foreachVariables = viewName
+          ? await collectBladeForeachLoopVariables(
+              viewName,
+              source,
+              offset,
+              variables,
+            )
+          : [];
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        // `collectBladeForeachLoopVariables` already excludes any name present
+        // in `variables`, so the three lists never overlap and a plain
+        // concatenation keeps each name once (loop vars first for visibility).
+        const candidates = [
+          ...foreachVariables,
+          ...variables,
+          ...BLADE_BUILT_IN_VARIABLES,
+        ];
+
+        return candidates
           .filter((variable) =>
             variable.name
               .toLowerCase()
@@ -22189,7 +22416,8 @@ export function useWorkbenchController(
     [
       activeDocument,
       collectBladeComponentNames,
-      collectBladeViewVariables,
+      collectBladeForeachLoopVariables,
+      collectBladeViewVariablesWithDisplayTypes,
       collectPhpLaravelConfigTargets,
       collectPhpLaravelNamedRouteTargets,
       collectPhpLaravelTranslationTargets,
@@ -22197,6 +22425,7 @@ export function useWorkbenchController(
       ensurePhpLaravelMigrationSourcesLoaded,
       ensurePhpLaravelProviderSourcesLoaded,
       isLaravelFrameworkActive,
+      resolveBladeForeachElementTypeForVariable,
       resolveBladeViewVariableTypeForView,
       resolvePhpReceiverMethodCompletions,
       workspaceRoot,
@@ -32317,6 +32546,27 @@ function bladePhpMemberAccessCompletionAt(
     start: offset - prefix.length,
     variableName: match[2],
   };
+}
+
+/**
+ * Short display name for a (possibly fully-qualified) PHP type: the last
+ * namespace segment of the base type, matching how the cheap declared-hint list
+ * renders types (`App\Models\Invoice` -> `Invoice`). The generic suffix of a
+ * carrier type is dropped first so a `Collection<int, App\Models\Invoice>`
+ * renders as `Collection` (its base) rather than a fragment of the argument.
+ * Returns `null` for a missing type so the variable list stays conservative (no
+ * hint) rather than showing an empty one.
+ */
+function bladeShortTypeName(typeName: string | null): string | null {
+  if (!typeName) {
+    return null;
+  }
+
+  const baseType = typeName.split("<")[0] ?? typeName;
+  const segments = baseType.replace(/^\\+/, "").split("\\");
+  const shortName = segments[segments.length - 1]?.trim() ?? "";
+
+  return shortName.length > 0 ? shortName : null;
 }
 
 function bladeSyntheticPhpMemberAccessSource(

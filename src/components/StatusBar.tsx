@@ -14,6 +14,7 @@ interface StatusBarProps {
   dirtyCount: number;
   errorCount?: number;
   gitBranch?: string | null;
+  ideActivityDetail?: string | null;
   ideActivityLabel: string | null;
   ideActivityState: IdeActivityState | null;
   intelligenceMode: IntelligenceMode;
@@ -27,6 +28,7 @@ interface StatusBarProps {
     key: keyof StatusBarItemVisibility,
     visible: boolean,
   ): void;
+  onOpenRuntimePanel?(): void;
   onShowGitBranches?(): void;
   onShowGoToLine?(): void;
   onShowProblems?(): void;
@@ -81,11 +83,13 @@ function StatusBarComponent({
   dirtyCount,
   errorCount = 0,
   gitBranch = null,
+  ideActivityDetail = null,
   ideActivityLabel,
   ideActivityState,
   intelligenceMode,
   message,
   onChangeVisibility,
+  onOpenRuntimePanel,
   onShowGitBranches,
   onShowGoToLine,
   onShowProblems,
@@ -192,12 +196,20 @@ function StatusBarComponent({
         <span title={workspaceInfoLabel}>{workspaceInfoLabel}</span>
       ) : null}
       {(statusBar.index || statusBar.languageServer) && ideActivityLabel ? (
-        <span
+        <button
+          aria-label={ideActivityLabel}
           className={`status-ide-activity ${ideActivityState ?? "idle"}`}
-          title={ideActivityLabel}
+          onClick={onOpenRuntimePanel}
+          style={statusButtonStyle}
+          title={ideActivityTitle(ideActivityLabel, ideActivityDetail)}
+          type="button"
         >
+          <span
+            aria-hidden="true"
+            className={`status-ide-activity-dot ${ideActivityState ?? "idle"}`}
+          />
           {ideActivityLabel}
-        </span>
+        </button>
       ) : null}
       {statusBar.workspaceTrust && workspaceTrustLabel ? (
         <span>{workspaceTrustLabel}</span>
@@ -256,6 +268,20 @@ function StatusBarComponent({
 export const StatusBar = memo(StatusBarComponent);
 
 export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
+
+// The headline label plus an optional per-runtime mini-overview (PHPactor/TS
+// Server/Index lines), so hovering the chip shows what is actually running for
+// the active project without opening the Runtime panel.
+function ideActivityTitle(
+  label: string,
+  detail: string | null,
+): string {
+  if (!detail) {
+    return label;
+  }
+
+  return `${label}\n\n${detail}`;
+}
 
 function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;

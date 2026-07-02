@@ -493,11 +493,15 @@ function App() {
         .join(" · ") || null,
     [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
   );
+  const openRuntimePanel = useCallback(() => {
+    workbench.showBottomPanelView("runtime");
+  }, [workbench.showBottomPanelView]);
   const renderNoticeToast = useNoticeToastRenderers({
     intelligenceMode: workbench.intelligenceMode,
     onInstallManagedPhpactor: workbench.installManagedPhpactor,
     isInstallingManagedPhpactor: workbench.installingManagedPhpactor,
     onOpenLanguageServerSetup: () => workbench.setLanguageServerSetupOpen(true),
+    onOpenRuntimePanel: openRuntimePanel,
     workspaceRoot: workbench.workspaceRoot,
     workspaceTrusted: workbench.workspaceTrust?.trusted ?? false,
   });
@@ -513,6 +517,21 @@ function App() {
       ),
     [
       combinedLanguageServerLabel,
+      workbench.indexProgress,
+      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+      workbench.languageServerRuntimeStatus,
+      workbench.workspaceRoot,
+    ],
+  );
+  const ideActivityChipDetail = useMemo(
+    () =>
+      ideActivityDetail(
+        workbench.workspaceRoot,
+        workbench.languageServerRuntimeStatus,
+        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+        workbench.indexProgress,
+      ),
+    [
       workbench.indexProgress,
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
       workbench.languageServerRuntimeStatus,
@@ -1329,6 +1348,7 @@ function App() {
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
+        onOpenRuntimePanel={openRuntimePanel}
         onShowGitBranches={workbench.openGitBranchPanel}
         onShowGoToLine={showGoToLine}
         onShowProblems={showProblemsPanel}
@@ -1336,6 +1356,7 @@ function App() {
         warningCount={workbench.diagnosticsSummary.warnings}
         workspaceRoot={workbench.workspaceRoot}
         workspaceInfoLabel={workspaceLabel}
+        ideActivityDetail={ideActivityChipDetail}
         ideActivityLabel={ideActivity.label}
         ideActivityState={ideActivity.state}
         workspaceTrustLabel={
@@ -1757,6 +1778,73 @@ export function ideActivityState(
   }
 
   return "idle";
+}
+
+/**
+ * Mini-overview tooltip for the status-bar IDE activity chip: one line per
+ * runtime plus the index, so a project's "what's running" state is visible on
+ * hover without opening the Runtime panel. Runtime statuses that belong to a
+ * different workspace root are treated as stopped (per-project isolation:
+ * never leak another open tab's runtime state into this chip).
+ */
+export function ideActivityDetail(
+  workspaceRoot: string | null,
+  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
+  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
+  indexProgress: IndexProgressState,
+): string {
+  return [
+    `PHPactor: ${runtimeKindLabel(runtimeStatusKindForWorkspace(phpRuntimeStatus, workspaceRoot))}`,
+    `TS Server: ${runtimeKindLabel(runtimeStatusKindForWorkspace(javaScriptTypeScriptRuntimeStatus, workspaceRoot))}`,
+    `Index: ${indexDetailLabel(indexProgress, workspaceRoot)}`,
+  ].join("\n");
+}
+
+function runtimeKindLabel(kind: LanguageServerRuntimeStatus["kind"] | null): string {
+  if (kind === "starting") {
+    return "starting";
+  }
+
+  if (kind === "running") {
+    return "running";
+  }
+
+  if (kind === "crashed") {
+    return "crashed";
+  }
+
+  return "stopped";
+}
+
+function indexDetailLabel(
+  progress: IndexProgressState,
+  workspaceRoot: string | null,
+): string {
+  if (!progress.rootPath || !workspaceRootKeysEqual(progress.rootPath, workspaceRoot ?? "")) {
+    return "idle";
+  }
+
+  if (progress.status === "idle") {
+    return "idle";
+  }
+
+  if (progress.status === "failed") {
+    return "failed";
+  }
+
+  if (progress.status === "completed") {
+    return "completed";
+  }
+
+  if (progress.totalFiles !== null && progress.totalFiles > 0) {
+    return `${progress.processedFiles} of ${progress.totalFiles} (${indexProgressPercent(progress)}%)`;
+  }
+
+  if (progress.processedFiles > 0) {
+    return `${progress.processedFiles} files`;
+  }
+
+  return "scanning";
 }
 
 function runtimeStatusKindForWorkspace(

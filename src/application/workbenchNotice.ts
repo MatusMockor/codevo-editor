@@ -51,6 +51,18 @@ export function createWorkbenchNotice(
   };
 }
 
+/**
+ * Groups a PHP language server crash notice by workspace root, so the
+ * "Open Runtime panel" toast action (wired in `LanguageServerCrashNotice`)
+ * only ever targets the crash for the active project - never another open
+ * project tab's runtime.
+ */
+export function languageServerCrashNoticeGroupKey(
+  workspaceRoot: string | null,
+): string | null {
+  return workspaceRoot ? `language-server-crash:${workspaceRoot}` : null;
+}
+
 export function replaceWorkbenchNoticeGroup(
   current: WorkbenchNotice[],
   groupKey: string,
