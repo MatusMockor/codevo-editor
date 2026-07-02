@@ -6211,7 +6211,7 @@ function phpLaravelAccessorAttributeMatches(
         attributeName: phpCamelCaseToSnakeCase(name),
         methodOffset,
         returnType:
-          phpLaravelAttributeAccessorValueType(returnType) ??
+          phpLaravelAttributeAccessorValueType(source, returnType) ??
           phpLaravelAttributeAccessorValueTypeFromReturnExpression(source, name) ??
           "mixed",
       });
@@ -6492,13 +6492,16 @@ function phpLaravelAttributeAccessorReturnType(returnType: string | null): boole
 }
 
 function phpLaravelAttributeAccessorValueType(
+  source: string,
   returnType: string | null,
 ): string | null {
-  if (!returnType) {
+  const genericArgument = firstPhpGenericTypeArgument(returnType ?? "");
+
+  if (!genericArgument) {
     return null;
   }
 
-  return normalizeReturnType(firstPhpGenericTypeArgument(returnType));
+  return phpLaravelAccessorValueType(source, genericArgument);
 }
 
 function phpLaravelAttributeAccessorValueTypeFromReturnExpression(

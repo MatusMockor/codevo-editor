@@ -4438,6 +4438,44 @@ class User extends Model
     ]);
   });
 
+  it("resolves class-typed Attribute accessor docblock generics to fully-qualified names", () => {
+    const completions = phpMethodCompletionsFromSource(
+      `<?php
+namespace App\\Models;
+
+use App\\Enums\\Priority;
+use App\\ValueObjects\\Address;
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Ticket extends Model
+{
+    /** @return Attribute<Priority, string> */
+    protected function priority(): Attribute
+    {
+        return Attribute::make(get: fn (string $value) => Priority::from($value));
+    }
+
+    /** @return Attribute<Address, string> */
+    protected function shippingAddress(): Attribute
+    {
+        return Attribute::make(get: fn (string $value) => Address::parse($value));
+    }
+}
+`,
+      "Ticket",
+      laravelCompletionOptions,
+    );
+
+    expect(
+      completions.find((completion) => completion.name === "priority")?.returnType,
+    ).toBe("App\\Enums\\Priority");
+    expect(
+      completions.find((completion) => completion.name === "shipping_address")
+        ?.returnType,
+    ).toBe("App\\ValueObjects\\Address");
+  });
+
   it("parses parameter names, types, defaults and optionality", () => {
     expect(
       phpMethodParameters(
