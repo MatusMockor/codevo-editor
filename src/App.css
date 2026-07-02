@@ -2025,13 +2025,20 @@ button {
   background: var(--color-panel-deep);
 }
 
+/*
+ * This bar repeats the active tab's file name (as its first segment)
+ * directly under the tab strip, which already marks the active tab with an
+ * accent underline. A divider here read as a second "current file"
+ * indicator stacked under that marker. Keep the file-name + symbol-path
+ * navigation working; drop the border seam so the bar reads as part of the
+ * tab strip rather than its own boxed indicator.
+ */
 .breadcrumbs {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
   min-height: 26px;
-  border-bottom: 1px solid var(--color-border);
   background: var(--color-tabs);
   padding: 0 10px;
   overflow: hidden;
@@ -4893,6 +4900,19 @@ button.problem-row:focus-visible {
 
 .palette-search input:focus::placeholder {
   color: transparent;
+}
+
+/*
+ * The search field autofocuses the instant a palette opens, and autofocused
+ * text inputs always earn a real `:focus-visible` match in Chromium. That
+ * trips the generic `:focus-visible { box-shadow: var(--focus-ring); }`
+ * rule below, painting a sharp-cornered ring around this borderless input.
+ * The palette shell clips its content with a large border-radius, so the
+ * square ring reads as a stray corner artifact jammed against the shell's
+ * rounded top edge. Suppress it: the open palette is already the focus cue.
+ */
+.palette-search input:focus-visible {
+  box-shadow: none;
 }
 
 .recent-files-heading {

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -250,5 +251,29 @@ describe("CommandPalette", () => {
     setQuery("s");
     const rows = host.querySelectorAll(".palette-command");
     expect(rows[0]?.className).toContain("active");
+  });
+});
+
+/**
+ * The palette search row (`.palette-search input`, shared by every command
+ * palette: Cmd+Shift+P, Cmd+P, Cmd+R, ...) autofocuses on open. Autofocused
+ * text inputs always earn a real `:focus-visible` match in Chromium, so the
+ * generic `:focus-visible { box-shadow: var(--focus-ring); }` rule (App.css)
+ * paints a sharp-cornered ring around the input the instant the palette
+ * opens. The palette shell clips its content with `overflow: hidden` and a
+ * large `border-radius`, so that sharp ring reads as a stray corner artifact
+ * jammed against the shell's rounded top edge. Suppress it here since the
+ * open palette itself is already the focus affordance.
+ */
+describe("Command palette search focus ring", () => {
+  const appCss = readFileSync("src/App.css", "utf8");
+
+  it("does not paint the generic focus-visible ring on the search input", () => {
+    const selector = ".palette-search input:focus-visible";
+    const index = appCss.indexOf(selector);
+    expect(index, "missing .palette-search input:focus-visible override").toBeGreaterThan(-1);
+
+    const body = appCss.slice(appCss.indexOf("{", index), appCss.indexOf("}", index));
+    expect(body).toContain("box-shadow: none");
   });
 });

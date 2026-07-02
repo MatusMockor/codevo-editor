@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,5 +124,25 @@ describe("Breadcrumbs", () => {
     });
 
     expect(onNavigate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The breadcrumb bar already repeats the active tab's file name (as its
+ * first segment) directly below the tab strip, which itself marks the
+ * active tab with an accent underline. A dividing border on the bar reads
+ * as its own extra "current file" indicator stacked under that accent
+ * marker, on top of the name being shown twice. Keep the bar's navigation
+ * (file name + symbol path) fully working; only drop the border seam.
+ */
+describe("Breadcrumbs bar chrome", () => {
+  const appCss = readFileSync("src/App.css", "utf8");
+
+  it("does not draw its own divider border", () => {
+    const index = appCss.indexOf(".breadcrumbs {");
+    expect(index, "missing .breadcrumbs rule").toBeGreaterThan(-1);
+
+    const body = appCss.slice(appCss.indexOf("{", index), appCss.indexOf("}", index));
+    expect(body).not.toMatch(/border(-bottom|-top)?:/);
   });
 });
