@@ -25402,6 +25402,20 @@ export function useWorkbenchController(
   ]);
 
   const goToDefinition = useCallback(async () => {
+    const document = activeDocumentRef.current;
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (document?.path.endsWith(".blade.php") && editorPosition) {
+      const openedBladeTarget = await provideBladeDefinition(
+        document.content,
+        bladeOffsetAtEditorPosition(document.content, editorPosition),
+      );
+
+      if (openedBladeTarget) {
+        return;
+      }
+    }
+
     const openedJavaScriptTypeScriptTarget =
       await goToJavaScriptTypeScriptLanguageServerLocation(
         "definition",
@@ -25433,6 +25447,7 @@ export function useWorkbenchController(
     goToIndexedSymbolDefinition,
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
+    provideBladeDefinition,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {

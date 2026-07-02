@@ -39,6 +39,20 @@ describe("detectBladeReferenceAt", () => {
     });
   });
 
+  it("detects an @include literal when the cursor is just after the closing quote", () => {
+    const source = "@include('admin.partials.header')";
+    const offset = source.indexOf("')") + 1;
+
+    expect(detectBladeReferenceAt(source, offset)).toEqual({
+      kind: "view",
+      name: "admin.partials.header",
+      nameStart: source.indexOf("admin.partials.header"),
+      nameEnd:
+        source.indexOf("admin.partials.header") +
+        "admin.partials.header".length,
+    });
+  });
+
   it("detects an @extends literal as a view reference", () => {
     const source = "@extends('layouts.app')";
     const offset = offsetOf(source, "layouts.app", 1);

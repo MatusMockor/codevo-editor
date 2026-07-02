@@ -558,7 +558,7 @@ function enclosingStringLiteral(
     const closed = end < source.length;
     const quoteEnd = closed ? end : source.length;
 
-    if (offset > index && offset <= quoteEnd) {
+    if (offset > index && offset <= quoteEnd + 1) {
       return {
         quote: character as "'" | "\"",
         quoteStart: index,

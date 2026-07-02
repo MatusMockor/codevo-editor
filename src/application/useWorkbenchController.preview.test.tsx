@@ -52695,6 +52695,133 @@ class SendShipmentNotification
       });
     });
 
+    it("navigates a nested hyphenated @include directive to the referenced view file", async () => {
+      const bladePath = "/workspace/resources/views/codevo-qa/show.blade.php";
+      const partialPath =
+        "/workspace/resources/views/codevo-qa/partials/card.blade.php";
+      const bladeSource = "@include('codevo-qa.partials.card')\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            return "<section>Card</section>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("codevo-qa.partials.card") +
+            "codevo-qa.partials.card".length,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: partialPath,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+
+    it("prioritizes Blade include definitions over TypeScript symbols in IDE mode", async () => {
+      const bladePath = "/workspace/resources/views/codevo-qa/show.blade.php";
+      const partialPath =
+        "/workspace/resources/views/codevo-qa/partials/card.blade.php";
+      const cardComponentPath = "/workspace/resources/js/components/ui/card.tsx";
+      const bladeSource = "@include('codevo-qa.partials.card')\n";
+      const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 72,
+      };
+      const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+      vi.mocked(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      ).mockResolvedValue([
+        {
+          range: range(4, 6, 4, 10),
+          uri: fileUriFromPath(cardComponentPath),
+        },
+      ]);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          javaScriptTypeScriptRuntimeStatus,
+        javaScriptTypeScriptLanguageServerFeaturesGateway,
+        javaScriptTypeScriptRuntimeStatus,
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            return "<section>Card</section>\n";
+          }
+
+          if (path === cardComponentPath) {
+            return "export const Card = () => null;\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveEditorPosition(
+          positionAfter(bladeSource, "codevo-qa.partials.card"),
+        );
+      });
+
+      await act(async () => {
+        await getWorkbench().commands
+          .find((candidate) => candidate.id === "editor.goToDefinition")
+          ?.run();
+      });
+
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      ).not.toHaveBeenCalled();
+      expect(getWorkbench().activePath).toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: partialPath,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+
   it("navigates a Blade view helper literal to the referenced view file", async () => {
     const bladePath = "/workspace/resources/views/show.blade.php";
     const partialPath = "/workspace/resources/views/comments/show.blade.php";
