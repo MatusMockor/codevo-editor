@@ -21,7 +21,11 @@
  * are masked so a directive mentioned inside a comment is never matched.
  */
 
-import { resolveLaravelViewTarget } from "./laravelPathResolution";
+import {
+  resolveLaravelViewTarget,
+  resolveLaravelWorkspaceFileTargets,
+  type LaravelWorkspaceFileTarget,
+} from "./laravelPathResolution";
 
 export type BladeReferenceKind = "view" | "component" | "section" | "stack";
 
@@ -229,6 +233,16 @@ export function bladeViewCandidateRelativePaths(name: string): string[] {
   return resolveLaravelViewTarget(name)?.relativeFilePaths ?? [];
 }
 
+export function bladeViewCandidateWorkspacePaths(
+  rootPath: string,
+  name: string,
+): LaravelWorkspaceFileTarget[] {
+  return resolveLaravelWorkspaceFileTargets(
+    rootPath,
+    bladeViewCandidateRelativePaths(name),
+  );
+}
+
 /**
  * Maps an `<x-...>` / `@component` component name to its candidate blade file
  * paths under `resources/views/components` (anonymous components). Class-based
@@ -245,6 +259,31 @@ export function bladeComponentCandidateRelativePaths(name: string): string[] {
     `resources/views/components/${relativePath}.blade.php`,
     `resources/views/components/${relativePath}/index.blade.php`,
   ];
+}
+
+export function bladeComponentCandidateWorkspacePaths(
+  rootPath: string,
+  name: string,
+): LaravelWorkspaceFileTarget[] {
+  return resolveLaravelWorkspaceFileTargets(rootPath, [
+    ...bladeComponentCandidateRelativePaths(name),
+    ...bladeComponentClassCandidatePaths(name),
+  ]);
+}
+
+export function bladeReferenceCandidateWorkspacePaths(
+  rootPath: string,
+  reference: Pick<BladeReference, "kind" | "name">,
+): LaravelWorkspaceFileTarget[] {
+  if (reference.kind === "view") {
+    return bladeViewCandidateWorkspacePaths(rootPath, reference.name);
+  }
+
+  if (reference.kind === "component") {
+    return bladeComponentCandidateWorkspacePaths(rootPath, reference.name);
+  }
+
+  return [];
 }
 
 /**

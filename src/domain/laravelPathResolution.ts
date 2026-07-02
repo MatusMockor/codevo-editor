@@ -17,6 +17,8 @@
  * or otherwise malformed resolves to `null` rather than a guessed path.
  */
 
+import { joinWorkspacePath, workspaceRelativePath } from "./workspace";
+
 export interface LaravelConfigTarget {
   /** Workspace-relative path of the config file, e.g. `config/app.php`. */
   relativeFilePath: string;
@@ -27,6 +29,13 @@ export interface LaravelConfigTarget {
 export interface LaravelViewTarget {
   /** Ordered candidate workspace-relative paths for the Blade view. */
   relativeFilePaths: string[];
+}
+
+export interface LaravelWorkspaceFileTarget {
+  /** Absolute path inside the workspace root. */
+  path: string;
+  /** Workspace-relative path, normalized with `/` separators. */
+  relativePath: string;
 }
 
 export interface LaravelTransTarget {
@@ -114,6 +123,69 @@ export function resolveLaravelViewTarget(
       `resources/views/${relativePath}.php`,
     ],
   };
+}
+
+/**
+ * Safely maps a workspace-relative Laravel target path to an absolute path
+ * under `rootPath`. Rejects blank roots, absolute target paths, traversal, and
+ * top-level dependency directories so callers cannot navigate outside the
+ * active workspace or into ignored dependency roots.
+ */
+export function resolveLaravelWorkspaceFileTarget(
+  rootPath: string,
+  relativeFilePath: string,
+): LaravelWorkspaceFileTarget | null {
+  if (rootPath.trim().length === 0) {
+    return null;
+  }
+
+  const relativePath = safeLaravelWorkspaceRelativePath(relativeFilePath);
+
+  if (!relativePath) {
+    return null;
+  }
+
+  const path = joinWorkspacePath(rootPath, relativePath);
+
+  if (workspaceRelativePath(rootPath, path) !== relativePath) {
+    return null;
+  }
+
+  return { path, relativePath };
+}
+
+export function resolveLaravelWorkspaceFileTargets(
+  rootPath: string,
+  relativeFilePaths: string[],
+): LaravelWorkspaceFileTarget[] {
+  const targets: LaravelWorkspaceFileTarget[] = [];
+  const seen = new Set<string>();
+
+  for (const relativeFilePath of relativeFilePaths) {
+    const target = resolveLaravelWorkspaceFileTarget(rootPath, relativeFilePath);
+
+    if (!target || seen.has(target.relativePath)) {
+      continue;
+    }
+
+    seen.add(target.relativePath);
+    targets.push(target);
+  }
+
+  return targets;
+}
+
+export function resolveLaravelViewWorkspaceTargets(
+  rootPath: string,
+  literal: string,
+): LaravelWorkspaceFileTarget[] {
+  const target = resolveLaravelViewTarget(literal);
+
+  if (!target) {
+    return [];
+  }
+
+  return resolveLaravelWorkspaceFileTargets(rootPath, target.relativeFilePaths);
 }
 
 /**
@@ -230,4 +302,36 @@ function isUsableLocale(locale: string): boolean {
 
 function isUsableEnvKey(key: string): boolean {
   return /^[A-Za-z0-9_][A-Za-z0-9_.]*$/.test(key);
+}
+
+function safeLaravelWorkspaceRelativePath(relativePath: string): string | null {
+  const normalized = relativePath.trim().split("\\").join("/");
+
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized)
+  ) {
+    return null;
+  }
+
+  const segments = normalized.split("/");
+
+  if (!segments.every(isSafeRelativePathSegment)) {
+    return null;
+  }
+
+  if (isIgnoredWorkspaceRootSegment(segments[0] ?? "")) {
+    return null;
+  }
+
+  return segments.join("/");
+}
+
+function isSafeRelativePathSegment(segment: string): boolean {
+  return segment.length > 0 && segment !== "." && segment !== "..";
+}
+
+function isIgnoredWorkspaceRootSegment(segment: string): boolean {
+  return segment === "vendor" || segment === "node_modules";
 }

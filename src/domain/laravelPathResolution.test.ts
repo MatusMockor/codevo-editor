@@ -4,6 +4,9 @@ import {
   resolveLaravelEnvTarget,
   resolveLaravelTransTarget,
   resolveLaravelViewTarget,
+  resolveLaravelViewWorkspaceTargets,
+  resolveLaravelWorkspaceFileTarget,
+  resolveLaravelWorkspaceFileTargets,
 } from "./laravelPathResolution";
 
 describe("resolveLaravelConfigTarget", () => {
@@ -115,6 +118,119 @@ describe("resolveLaravelViewTarget", () => {
 
   it("returns null for a vendor namespaced view", () => {
     expect(resolveLaravelViewTarget("package::admin.dashboard")).toBeNull();
+  });
+});
+
+describe("resolveLaravelWorkspaceFileTarget", () => {
+  it("maps a safe relative path under the requested workspace root", () => {
+    expect(
+      resolveLaravelWorkspaceFileTarget(
+        "/workspace-a",
+        "resources/views/comments/index.blade.php",
+      ),
+    ).toEqual({
+      path: "/workspace-a/resources/views/comments/index.blade.php",
+      relativePath: "resources/views/comments/index.blade.php",
+    });
+  });
+
+  it("normalizes Windows separators without changing the workspace root", () => {
+    expect(
+      resolveLaravelWorkspaceFileTarget(
+        "C:\\project\\",
+        "resources\\views\\comments\\index.blade.php",
+      ),
+    ).toEqual({
+      path: "C:/project/resources/views/comments/index.blade.php",
+      relativePath: "resources/views/comments/index.blade.php",
+    });
+  });
+
+  it("rejects paths that could escape or bypass the workspace root", () => {
+    expect(
+      resolveLaravelWorkspaceFileTarget("/workspace", "../secrets/.env"),
+    ).toBeNull();
+    expect(
+      resolveLaravelWorkspaceFileTarget("/workspace", "resources/../.env"),
+    ).toBeNull();
+    expect(
+      resolveLaravelWorkspaceFileTarget("/workspace", "/etc/passwd"),
+    ).toBeNull();
+    expect(
+      resolveLaravelWorkspaceFileTarget("/workspace", "C:/other/passwd"),
+    ).toBeNull();
+    expect(
+      resolveLaravelWorkspaceFileTarget("", "resources/views/index.blade.php"),
+    ).toBeNull();
+  });
+
+  it("rejects top-level dependency directory candidates", () => {
+    expect(
+      resolveLaravelWorkspaceFileTarget(
+        "/workspace",
+        "vendor/package/views/index.blade.php",
+      ),
+    ).toBeNull();
+    expect(
+      resolveLaravelWorkspaceFileTarget(
+        "/workspace",
+        "node_modules/package/views/index.blade.php",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps resources/views/vendor as an app-owned Laravel view path", () => {
+    expect(
+      resolveLaravelWorkspaceFileTarget(
+        "/workspace",
+        "resources/views/vendor/mail/html/message.blade.php",
+      ),
+    ).toEqual({
+      path: "/workspace/resources/views/vendor/mail/html/message.blade.php",
+      relativePath: "resources/views/vendor/mail/html/message.blade.php",
+    });
+  });
+
+  it("deduplicates candidate paths while preserving order", () => {
+    expect(
+      resolveLaravelWorkspaceFileTargets("/workspace", [
+        "resources/views/dashboard.blade.php",
+        "resources/views/dashboard.blade.php",
+        "vendor/package/dashboard.blade.php",
+        "resources/views/dashboard.php",
+      ]),
+    ).toEqual([
+      {
+        path: "/workspace/resources/views/dashboard.blade.php",
+        relativePath: "resources/views/dashboard.blade.php",
+      },
+      {
+        path: "/workspace/resources/views/dashboard.php",
+        relativePath: "resources/views/dashboard.php",
+      },
+    ]);
+  });
+});
+
+describe("resolveLaravelViewWorkspaceTargets", () => {
+  it("maps a dotted view name to absolute workspace-bound candidates", () => {
+    expect(resolveLaravelViewWorkspaceTargets("/workspace-a", "comments.index")).toEqual([
+      {
+        path: "/workspace-a/resources/views/comments/index.blade.php",
+        relativePath: "resources/views/comments/index.blade.php",
+      },
+      {
+        path: "/workspace-a/resources/views/comments/index.php",
+        relativePath: "resources/views/comments/index.php",
+      },
+    ]);
+  });
+
+  it("returns no targets for package namespaced or traversal-like views", () => {
+    expect(resolveLaravelViewWorkspaceTargets("/workspace", "package::view")).toEqual(
+      [],
+    );
+    expect(resolveLaravelViewWorkspaceTargets("/workspace", "../view")).toEqual([]);
   });
 });
 

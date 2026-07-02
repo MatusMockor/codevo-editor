@@ -4,8 +4,11 @@ import {
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
   bladeComponentCandidateRelativePaths,
+  bladeComponentCandidateWorkspacePaths,
   bladeComponentClassCandidatePaths,
+  bladeReferenceCandidateWorkspacePaths,
   bladeViewCandidateRelativePaths,
+  bladeViewCandidateWorkspacePaths,
 } from "./bladeNavigation";
 
 /**
@@ -348,6 +351,29 @@ describe("bladeViewCandidateRelativePaths", () => {
   });
 });
 
+describe("bladeViewCandidateWorkspacePaths", () => {
+  it("maps Blade view names to workspace-bound candidates", () => {
+    expect(
+      bladeViewCandidateWorkspacePaths("/workspace-a", "comments.index"),
+    ).toEqual([
+      {
+        path: "/workspace-a/resources/views/comments/index.blade.php",
+        relativePath: "resources/views/comments/index.blade.php",
+      },
+      {
+        path: "/workspace-a/resources/views/comments/index.php",
+        relativePath: "resources/views/comments/index.php",
+      },
+    ]);
+  });
+
+  it("returns no candidates for views that cannot be resolved locally", () => {
+    expect(
+      bladeViewCandidateWorkspacePaths("/workspace", "package::comments.index"),
+    ).toEqual([]);
+  });
+});
+
 describe("bladeComponentCandidateRelativePaths", () => {
   it("maps a dotted component name to a views/components blade candidate", () => {
     expect(bladeComponentCandidateRelativePaths("forms.input")).toContain(
@@ -370,6 +396,87 @@ describe("bladeComponentCandidateRelativePaths", () => {
       "resources/views/components/alert.blade.php",
       "resources/views/components/alert/index.blade.php",
     ]);
+  });
+});
+
+describe("bladeComponentCandidateWorkspacePaths", () => {
+  it("maps anonymous and class-based component candidates under one root", () => {
+    expect(bladeComponentCandidateWorkspacePaths("/workspace-a", "ui.button")).toEqual([
+      {
+        path: "/workspace-a/resources/views/components/ui/button.blade.php",
+        relativePath: "resources/views/components/ui/button.blade.php",
+      },
+      {
+        path: "/workspace-a/resources/views/components/ui/button/index.blade.php",
+        relativePath: "resources/views/components/ui/button/index.blade.php",
+      },
+      {
+        path: "/workspace-a/app/View/Components/Ui/Button.php",
+        relativePath: "app/View/Components/Ui/Button.php",
+      },
+    ]);
+  });
+
+  it("keeps each workspace root isolated", () => {
+    expect(bladeComponentCandidateWorkspacePaths("/workspace-a", "alert")[0]).toEqual({
+      path: "/workspace-a/resources/views/components/alert.blade.php",
+      relativePath: "resources/views/components/alert.blade.php",
+    });
+    expect(bladeComponentCandidateWorkspacePaths("/workspace-b", "alert")[0]).toEqual({
+      path: "/workspace-b/resources/views/components/alert.blade.php",
+      relativePath: "resources/views/components/alert.blade.php",
+    });
+  });
+
+  it("returns no candidates for package-namespaced components", () => {
+    expect(bladeComponentCandidateWorkspacePaths("/workspace", "mail::message")).toEqual(
+      [],
+    );
+  });
+});
+
+describe("bladeReferenceCandidateWorkspacePaths", () => {
+  it("resolves detected view and component references through the shared API", () => {
+    expect(
+      bladeReferenceCandidateWorkspacePaths("/workspace", {
+        kind: "view",
+        name: "comments.index",
+      }),
+    ).toEqual([
+      {
+        path: "/workspace/resources/views/comments/index.blade.php",
+        relativePath: "resources/views/comments/index.blade.php",
+      },
+      {
+        path: "/workspace/resources/views/comments/index.php",
+        relativePath: "resources/views/comments/index.php",
+      },
+    ]);
+
+    expect(
+      bladeReferenceCandidateWorkspacePaths("/workspace", {
+        kind: "component",
+        name: "alert",
+      })[0],
+    ).toEqual({
+      path: "/workspace/resources/views/components/alert.blade.php",
+      relativePath: "resources/views/components/alert.blade.php",
+    });
+  });
+
+  it("does not resolve section or stack references to files", () => {
+    expect(
+      bladeReferenceCandidateWorkspacePaths("/workspace", {
+        kind: "section",
+        name: "content",
+      }),
+    ).toEqual([]);
+    expect(
+      bladeReferenceCandidateWorkspacePaths("/workspace", {
+        kind: "stack",
+        name: "scripts",
+      }),
+    ).toEqual([]);
   });
 });
 
