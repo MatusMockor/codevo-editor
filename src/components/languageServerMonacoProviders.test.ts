@@ -10236,6 +10236,69 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     );
   });
 
+  it("maps blade quick fixes to new-file code actions", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@include('missing.view')\n";
+    const newFile = {
+      content: "",
+      path: "/project/resources/views/missing/view.blade.php",
+      title: "Create Blade View",
+    };
+    const provideBladeCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile,
+        title: "Create Blade view missing.view",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      applyPhpCodeActionNewFile: vi.fn(async () => true),
+      provideBladeCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(registered.bladeCodeActionLanguage).toBe("blade");
+    expect(registered.bladeCodeActionMetadata).toEqual({
+      providedCodeActionKinds: ["quickfix"],
+    });
+
+    const result = await registered.bladeCodeActionProvider.provideCodeActions(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      new registered.monaco.Range(1, 12, 1, 24),
+      { markers: [], only: "quickfix" },
+    );
+
+    expect(provideBladeCodeActions).toHaveBeenCalledWith(source, {
+      end: source.indexOf("missing.view") + "missing.view".length + 1,
+      start: source.indexOf("missing.view") + 1,
+    });
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        command: expect.objectContaining({
+          arguments: [
+            expect.objectContaining({
+              edits: [],
+              newFile,
+              sourcePath: "/project/resources/views/show.blade.php",
+              versionId: 42,
+            }),
+          ],
+          title: "Create file",
+        }),
+        edit: { edits: [] },
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create Blade view missing.view",
+      }),
+    ]);
+  });
+
   it("maps blade variable and helper completions to distinct Monaco kinds", async () => {
     const registered = createRegisteredProviders();
     const source = "{{ $co }} {{ ro }}\n";
@@ -10282,6 +10345,43 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
         insertText: "route()",
         kind: registered.monaco.languages.CompletionItemKind.Function,
         label: "route",
+      }),
+    ]);
+  });
+
+  it("maps blade member completions to method items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{{ $comment->ex }}\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "App\\Models\\Comment::excerpt(): string",
+        insertText: "excerpt()",
+        kind: "member" as const,
+        label: "excerpt",
+        replaceEnd: source.indexOf("ex") + "ex".length,
+        replaceStart: source.indexOf("ex"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      { column: source.indexOf("ex") + "ex".length + 1, lineNumber: 1 },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        detail: "App\\Models\\Comment::excerpt(): string",
+        insertText: "excerpt()",
+        kind: registered.monaco.languages.CompletionItemKind.Method,
+        label: "excerpt",
       }),
     ]);
   });
@@ -10459,6 +10559,10 @@ function createRegisteredProviders() {
     bladeCompletionDispose: ReturnType<typeof vi.fn>;
     bladeCompletionLanguage: string | null;
     bladeCompletionProvider: any;
+    bladeCodeActionDispose: ReturnType<typeof vi.fn>;
+    bladeCodeActionLanguage: string | null;
+    bladeCodeActionMetadata: any;
+    bladeCodeActionProvider: any;
     bladeDefinitionDispose: ReturnType<typeof vi.fn>;
     bladeDefinitionLanguage: string | null;
     bladeDefinitionProvider: any;
@@ -10545,6 +10649,10 @@ function createRegisteredProviders() {
     bladeCompletionDispose,
     bladeCompletionLanguage: null,
     bladeCompletionProvider: null,
+    bladeCodeActionDispose: codeActionDispose,
+    bladeCodeActionLanguage: null,
+    bladeCodeActionMetadata: null,
+    bladeCodeActionProvider: null,
     bladeDefinitionDispose,
     bladeDefinitionLanguage: null,
     bladeDefinitionProvider: null,
@@ -10721,6 +10829,13 @@ function createRegisteredProviders() {
         Deprecated: 1,
       },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
+        if (language === "blade") {
+          registered.bladeCodeActionLanguage = language;
+          registered.bladeCodeActionProvider = provider;
+          registered.bladeCodeActionMetadata = metadata;
+          return { dispose: codeActionDispose };
+        }
+
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;
         registered.codeActionMetadata = metadata;
@@ -10898,6 +11013,9 @@ function providerContext(
     provideBladeCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
     >;
+    provideBladeCodeActions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCodeActions"]
+    >;
     provideBladeDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeDefinition"]
     >;
@@ -10942,6 +11060,7 @@ function providerContext(
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
     provideBladeCompletions: overrides.provideBladeCompletions,
+    provideBladeCodeActions: overrides.provideBladeCodeActions,
     provideBladeDefinition: overrides.provideBladeDefinition,
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,

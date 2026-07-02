@@ -113,6 +113,7 @@ export interface PhpCodeActionTextEdit {
 export interface PhpCodeActionNewFile {
   content: string;
   path: string;
+  title?: string;
 }
 
 export interface PhpCodeActionDescriptor {
@@ -271,7 +272,8 @@ export type BladeCompletionKind =
   | "view"
   | "component"
   | "variable"
-  | "helper";
+  | "helper"
+  | "member";
 
 export interface BladeCompletion {
   detail?: string;
@@ -354,6 +356,10 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<BladeCompletion[]>;
+  provideBladeCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -905,10 +911,11 @@ export function registerLanguageServerMonacoProviders(
       })
     : { dispose: () => undefined };
   // Blade (`.blade.php`) has no managed language server — its syntax is owned by
-  // Shiki. We register exactly two Monaco providers for the "blade" language:
+  // Shiki. We register a small set of Monaco providers for the "blade" language:
   // go-to-definition (view / component navigation) and completion (directives,
-  // view names, component names). Both delegate the workspace-aware resolution
-  // to controller callbacks that carry the per-project isolation guards.
+  // view names, component names), plus safe local quick fixes. They delegate the
+  // workspace-aware resolution to controller callbacks that carry the
+  // per-project isolation guards.
   const bladeDefinition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("blade", {
         provideDefinition: (model, position) =>
@@ -923,6 +930,16 @@ export function registerLanguageServerMonacoProviders(
         provideBladeCompletionItems(monaco, context, model, position),
     },
   );
+  const bladeCodeActions = context.provideBladeCodeActions
+    ? monaco.languages.registerCodeActionProvider(
+        "blade",
+        {
+          provideCodeActions: (model, range, actionContext) =>
+            provideBladeCodeActions(monaco, context, model, range, actionContext),
+        },
+        { providedCodeActionKinds: ["quickfix"] },
+      )
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -960,6 +977,7 @@ export function registerLanguageServerMonacoProviders(
       rangeSemanticTokens.dispose();
       bladeDefinition.dispose();
       bladeCompletion.dispose();
+      bladeCodeActions.dispose();
     },
   };
 }
@@ -1059,6 +1077,61 @@ async function provideBladeCompletionItems(
   }
 }
 
+async function provideBladeCodeActions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+): Promise<Monaco.languages.CodeActionList> {
+  if (
+    !context.provideBladeCodeActions ||
+    !bladeQuickFixKindRequested(actionContext.only)
+  ) {
+    return emptyBladeCodeActions();
+  }
+
+  const documentContext = activeBladeDocumentContext(context, model);
+
+  if (!documentContext) {
+    return emptyBladeCodeActions();
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+
+  try {
+    const descriptors = await context.provideBladeCodeActions(
+      source,
+      phpCodeActionOffsetRange(source, range),
+    );
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return emptyBladeCodeActions();
+    }
+
+    return {
+      actions: descriptors.map((descriptor) =>
+        toPhpCodeAction(monaco, context, model, descriptor),
+      ),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return emptyBladeCodeActions();
+  }
+}
+
+function bladeQuickFixKindRequested(only: string | undefined): boolean {
+  return !only || only.startsWith("quickfix");
+}
+
+function emptyBladeCodeActions(): Monaco.languages.CodeActionList {
+  return { actions: [], dispose: () => undefined };
+}
+
 function toMonacoBladeCompletion(
   monaco: MonacoApi,
   model: MonacoModel,
@@ -1106,6 +1179,10 @@ function monacoBladeCompletionKind(
 
   if (kind === "helper") {
     return monaco.languages.CompletionItemKind.Function;
+  }
+
+  if (kind === "member") {
+    return monaco.languages.CompletionItemKind.Method;
   }
 
   return monaco.languages.CompletionItemKind.Keyword;

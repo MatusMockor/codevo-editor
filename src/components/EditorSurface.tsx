@@ -233,6 +233,10 @@ interface EditorSurfaceProps {
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
+  provideBladeCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   provideBladeCompletions?(
     source: string,
     position: EditorPosition,
@@ -322,6 +326,7 @@ function EditorSurfaceComponent({
   onRevealTargetHandled,
   onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
+  provideBladeCodeActions = async () => [],
   provideBladeCompletions = async () => [],
   provideBladeDefinition = async () => false,
   providePhpCodeActions = async () => [],
@@ -451,6 +456,7 @@ function EditorSurfaceComponent({
     path: string;
   } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const bladeCodeActionsRef = useRef(provideBladeCodeActions);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
   const clearLanguageServerDiagnosticsForPathRef = useRef(
     clearLanguageServerDiagnosticsForPath,
@@ -632,6 +638,10 @@ function EditorSurfaceComponent({
   }, [providePhpCodeActions]);
 
   useEffect(() => {
+    bladeCodeActionsRef.current = provideBladeCodeActions;
+  }, [provideBladeCodeActions]);
+
+  useEffect(() => {
     applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
   }, [applyPhpCodeActionNewFile]);
 
@@ -782,6 +792,8 @@ function EditorSurfaceComponent({
         Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
       isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
       limitNavigationResultsToOpenModels: true,
+      provideBladeCodeActions: (source, range) =>
+        bladeCodeActionsRef.current(source, range),
       provideBladeCompletions: (source, position) =>
         bladeCompletionsRef.current(source, position),
       provideBladeDefinition: (source, offset) =>

@@ -89,6 +89,10 @@ import {
   suspiciousPhpBareIdentifierDiagnostics,
 } from "../domain/phpSyntaxDiagnostics";
 import {
+  bladeLaravelReferenceDiagnostics,
+  missingLaravelViewReferenceAt,
+} from "../domain/laravelDiagnostics";
+import {
   DiagnosticsCoalescer,
   animationFrameDiagnosticsFlushScheduler,
   type DiagnosticsFlushScheduler,
@@ -255,6 +259,7 @@ import {
   phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
+  orderPhpMemberCompletionsByCategory,
   type PhpMethodCompletion,
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
@@ -321,6 +326,7 @@ import {
   bladeViewCandidateRelativePaths,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
+  isInsideBladeComment,
 } from "../domain/bladeNavigation";
 import {
   phpLaravelNamedRouteDefinitions,
@@ -790,6 +796,7 @@ interface PhpCodeActionTextEdit {
 export interface PhpCodeActionNewFile {
   content: string;
   path: string;
+  title?: string;
 }
 
 export interface PhpCodeActionDescriptor {
@@ -827,10 +834,15 @@ export interface PhpCodeActionRange {
 export interface BladeCompletionItem {
   detail?: string;
   insertText: string;
-  kind: "directive" | "view" | "component" | "variable" | "helper";
+  kind: "directive" | "view" | "component" | "variable" | "helper" | "member";
   label: string;
   replaceStart?: number;
   replaceEnd?: number;
+}
+
+interface BladeViewVariableContext {
+  source: string;
+  variable: PhpLaravelViewVariable;
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
@@ -1149,6 +1161,8 @@ export function useWorkbenchController(
     javaScriptTypeScriptDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
   ] = useState<Record<string, LanguageServerDiagnostic[]>>({});
+  const [laravelDiagnosticsByPath, setLaravelDiagnosticsByPath] =
+    useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
@@ -1628,6 +1642,7 @@ export function useWorkbenchController(
     ReturnType<typeof setTimeout> | null
   >(null);
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
+  const laravelDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
     ReturnType<typeof setTimeout>[]
   >([]);
@@ -2554,6 +2569,15 @@ export function useWorkbenchController(
         });
       }
 
+      setLaravelDiagnosticsByPath((current) => {
+        if (!(diagnosticPath in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[diagnosticPath];
+        return next;
+      });
       clearPhpLocalDiagnosticsForPath(diagnosticPath);
 
       const uri = fileUriFromPath(diagnosticPath);
@@ -9992,6 +10016,7 @@ export function useWorkbenchController(
       }
 
       const targetPath = newFile.path;
+      const operationTitle = newFile.title ?? "Extract Interface";
       const result = await writeExtractedInterfaceFile(
         targetPath,
         newFile.content,
@@ -10006,9 +10031,11 @@ export function useWorkbenchController(
       if (result.status === "target-exists") {
         reportErrorForActiveWorkspaceRoot(
           requestedRoot,
-          "Extract Interface",
+          operationTitle,
           new Error(
-            `${getFileName(targetPath)} already exists - the class was left unchanged.`,
+            newFile.title
+              ? `${getFileName(targetPath)} already exists - no changes were applied.`
+              : `${getFileName(targetPath)} already exists - the class was left unchanged.`,
           ),
         );
 
@@ -10026,7 +10053,7 @@ export function useWorkbenchController(
       if (result.status === "write-failed") {
         reportErrorForActiveWorkspaceRoot(
           requestedRoot,
-          "Extract Interface",
+          operationTitle,
           result.error,
         );
 
@@ -20417,6 +20444,63 @@ export function useWorkbenchController(
     [readNavigationFileContent, resolvePhpClassSourcePaths],
   );
 
+  const createMissingBladeViewCodeAction = useCallback(
+    async (
+      source: string,
+      range: PhpCodeActionRange,
+      language: "blade" | "php",
+      isRequestedRootActive: () => boolean,
+    ): Promise<PhpCodeActionDescriptor | null> => {
+      const requestedRoot = workspaceRoot;
+
+      if (!requestedRoot || !isLaravelFrameworkActive) {
+        return null;
+      }
+
+      const viewTargets = await collectPhpLaravelViewTargets();
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      const missing = missingLaravelViewReferenceAt(
+        source,
+        range.start,
+        language,
+        viewTargets.map((target) => target.name),
+      );
+
+      if (!missing) {
+        return null;
+      }
+
+      const path = joinWorkspacePath(requestedRoot, missing.relativePath);
+      const existing = await readTestFileIfExists(path);
+
+      if (!isRequestedRootActive() || existing !== null) {
+        return null;
+      }
+
+      return {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content: "",
+          path,
+          title: "Create Blade View",
+        },
+        title: `Create Blade view ${missing.name}`,
+      };
+    },
+    [
+      collectPhpLaravelViewTargets,
+      isLaravelFrameworkActive,
+      readTestFileIfExists,
+      workspaceRoot,
+    ],
+  );
+
   // Builds the PhpStorm "Create class X" quick fix from a referenced-but-missing
   // type under the cursor. Conservative: offered only when the reference is NOT
   // already imported-and-resolvable, NOT a PHP built-in, the resolved FQN maps
@@ -20636,6 +20720,21 @@ export function useWorkbenchController(
         actions.push(createClassAction);
       }
 
+      const createMissingViewAction = await createMissingBladeViewCodeAction(
+        source,
+        range,
+        "php",
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      if (createMissingViewAction) {
+        actions.push(createMissingViewAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
         // Free-function context: only the pre-class-guard refactors are offered.
         // Order them like the class path so the list stays "most likely first".
@@ -20828,6 +20927,7 @@ export function useWorkbenchController(
       activeDocument?.path,
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
+      createMissingBladeViewCodeAction,
       intelligenceMode,
       phpCreateClassCodeAction,
       projectSymbolSearch,
@@ -21482,79 +21582,80 @@ export function useWorkbenchController(
     ],
   );
 
-  // Cmd+Click navigation for `.blade.php` documents. detectBladeReferenceAt
-  // (pure) classifies the offset; view / component references resolve to their
-  // candidate blade files and we open the first that exists. Conservative: an
-  // unresolvable or non-existent reference returns false (no phpactor fallback
-  // for blade). Per-project isolation: capture the requested root up front and
-  // re-check after every file read (and before openNavigationTarget) so a tab
-  // switch mid-resolution can never navigate into a stale-workspace file.
-  const provideBladeDefinition = useCallback(
-    async (source: string, offset: number): Promise<boolean> => {
+  const collectBladeViewVariableTypes = useCallback(
+    async (viewName: string): Promise<Map<string, string>> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot) {
-        return false;
+      if (!requestedRoot || !isLaravelFrameworkActive) {
+        return new Map();
       }
 
-      const reference = detectBladeReferenceAt(source, offset);
+      const variableTypes = new Map<string, string>();
+      const addVariables = (source: string) => {
+        for (const variable of phpLaravelViewVariablesForView(source, viewName)) {
+          const resolvedType = resolvePhpDeclaredType(source, variable.typeHint);
 
-      if (!reference) {
-        return false;
+          if (resolvedType) {
+            variableTypes.set(variable.name.toLowerCase(), resolvedType);
+          }
+        }
+      };
+      const activePath = activeDocument?.path ?? "";
+
+      if (activeDocument?.content && isPhpPath(activePath)) {
+        addVariables(activeDocument.content);
       }
 
-      // Component references resolve to anonymous blade views first (PhpStorm:
-      // `<x-...>` prefers a `resources/views/components` blade) then fall through
-      // to the class-based component PHP file (`app/View/Components`). The shared
-      // loop below picks the FIRST candidate that exists, so ordering here
-      // encodes the preference; class candidates come from the domain helper.
-      const candidateRelativePaths =
-        reference.kind === "component"
-          ? [
-              ...bladeComponentCandidateRelativePaths(reference.name),
-              ...bladeComponentClassCandidatePaths(reference.name),
-            ]
-          : reference.kind === "view"
-            ? bladeViewCandidateRelativePaths(reference.name)
-            : [];
+      const searchResults = await Promise.all(
+        ["view(", "View::make", "->with(", "compact("].map((query) =>
+          textSearch.searchText(requestedRoot, query, 200),
+        ),
+      );
 
-      if (candidateRelativePaths.length === 0) {
-        return false;
+      if (!isRequestedRootActive()) {
+        return new Map();
       }
 
-      for (const relativePath of candidateRelativePaths) {
+      const visitedPaths = new Set(activePath ? [activePath] : []);
+
+      for (const result of searchResults.flat()) {
         if (!isRequestedRootActive()) {
-          return false;
+          return new Map();
         }
 
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
-        try {
-          await readNavigationFileContent(path);
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
           continue;
         }
 
-        if (!isRequestedRootActive()) {
-          return false;
-        }
+        visitedPaths.add(result.path);
 
-        return openNavigationTarget(
-          path,
-          { column: 1, lineNumber: 1 },
-          reference.name,
-        );
+        try {
+          const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return new Map();
+          }
+
+          addVariables(content);
+        } catch {
+          if (!isRequestedRootActive()) {
+            return new Map();
+          }
+        }
       }
 
-      return false;
+      return variableTypes;
     },
-    [openNavigationTarget, readNavigationFileContent, workspaceRoot],
+    [
+      activeDocument,
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      resolvePhpDeclaredType,
+      textSearch,
+      workspaceRoot,
+    ],
   );
 
   // Scans `resources/views/components` for component blade files and returns
@@ -21622,8 +21723,8 @@ export function useWorkbenchController(
     return Array.from(names).sort((left, right) => left.localeCompare(right));
   }, [workspaceFiles, workspaceRoot]);
 
-  const collectBladeViewVariables = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
+  const collectBladeViewVariableContexts = useCallback(
+    async (viewName: string): Promise<BladeViewVariableContext[]> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -21632,10 +21733,10 @@ export function useWorkbenchController(
         return [];
       }
 
-      const variables = new Map<string, PhpLaravelViewVariable>();
+      const variables = new Map<string, BladeViewVariableContext>();
       const addVariables = (source: string) => {
         for (const variable of phpLaravelViewVariablesForView(source, viewName)) {
-          variables.set(variable.name, variable);
+          variables.set(variable.name, { source, variable });
         }
       };
       const activePath = activeDocument?.path ?? "";
@@ -21683,7 +21784,7 @@ export function useWorkbenchController(
       }
 
       return Array.from(variables.values()).sort((left, right) =>
-        left.name.localeCompare(right.name),
+        left.variable.name.localeCompare(right.variable.name),
       );
     },
     [
@@ -21693,6 +21794,14 @@ export function useWorkbenchController(
       textSearch,
       workspaceRoot,
     ],
+  );
+
+  const collectBladeViewVariables = useCallback(
+    async (viewName: string): Promise<PhpLaravelViewVariable[]> =>
+      (await collectBladeViewVariableContexts(viewName)).map(
+        (context) => context.variable,
+      ),
+    [collectBladeViewVariableContexts],
   );
 
   // Completion for `.blade.php` documents: `@directive` names (pure filter of
@@ -21715,6 +21824,7 @@ export function useWorkbenchController(
 
       const offset = bladeOffsetAtEditorPosition(source, position);
       const directiveCompletion = detectBladeDirectiveCompletionAt(source, offset);
+      const memberCompletion = bladePhpMemberAccessCompletionAt(source, offset);
       const phpLikeCompletion = bladePhpLikeCompletionAt(source, offset);
 
       if (directiveCompletion) {
@@ -21732,6 +21842,71 @@ export function useWorkbenchController(
             replaceEnd: offset,
             replaceStart: directiveCompletion.start + 1,
           }));
+      }
+
+      if (memberCompletion) {
+        const activePath = activeDocument?.path ?? "";
+        const relativePath = activePath
+          ? relativeWorkspacePath(requestedRoot, activePath)
+          : "";
+        const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+
+        if (!viewName) {
+          return [];
+        }
+
+        if (isLaravelFrameworkActive) {
+          void ensurePhpLaravelMigrationSourcesLoaded(requestedRoot);
+          void ensurePhpLaravelProviderSourcesLoaded(requestedRoot);
+        }
+
+        const variableContexts = await collectBladeViewVariableContexts(viewName);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const variableContext = variableContexts.find(
+          (context) => context.variable.name === `$${memberCompletion.variableName}`,
+        );
+        const resolvedType = variableContext?.variable.typeHint
+          ? resolvePhpDeclaredType(
+              variableContext.source,
+              variableContext.variable.typeHint,
+            )
+          : null;
+
+        if (!resolvedType) {
+          return [];
+        }
+
+        const synthetic = bladeSyntheticPhpMemberAccessSource(
+          memberCompletion.variableName,
+          resolvedType,
+        );
+        const members = await resolvePhpReceiverMethodCompletions(
+          synthetic.source,
+          synthetic.position,
+          memberCompletion.receiverExpression,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const normalizedPrefix = memberCompletion.prefix.toLowerCase();
+
+        return orderPhpMemberCompletionsByCategory(members)
+          .filter((member) =>
+            member.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((member) =>
+            bladeMemberCompletionItem(member, {
+              replaceEnd: memberCompletion.end,
+              replaceStart: memberCompletion.start,
+            }),
+          );
       }
 
       if (phpLikeCompletion?.kind === "variable") {
@@ -21833,10 +22008,118 @@ export function useWorkbenchController(
     [
       activeDocument,
       collectBladeComponentNames,
+      collectBladeViewVariableContexts,
       collectBladeViewVariables,
       collectPhpLaravelViewTargets,
+      ensurePhpLaravelMigrationSourcesLoaded,
+      ensurePhpLaravelProviderSourcesLoaded,
+      isLaravelFrameworkActive,
+      resolvePhpDeclaredType,
+      resolvePhpReceiverMethodCompletions,
       workspaceRoot,
     ],
+  );
+
+  const provideLaravelDiagnosticsForActiveDocument = useCallback(async () => {
+    const document = activeDocumentRef.current;
+    const requestedRoot = workspaceRoot;
+    const generation = laravelDiagnosticValidationGenerationRef.current + 1;
+    laravelDiagnosticValidationGenerationRef.current = generation;
+    const isRequestedStateActive = () =>
+      laravelDiagnosticValidationGenerationRef.current === generation &&
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current?.path === document?.path &&
+      activeDocumentRef.current?.content === document?.content;
+
+    if (
+      !requestedRoot ||
+      !document ||
+      !isLaravelFrameworkActive ||
+      document.language !== "blade"
+    ) {
+      if (document?.path) {
+        setLaravelDiagnosticsByPath((current) => {
+          if (!(document.path in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[document.path];
+          return next;
+        });
+      }
+
+      return;
+    }
+
+    const viewTargets = await collectPhpLaravelViewTargets();
+
+    if (!isRequestedStateActive()) {
+      return;
+    }
+
+    const diagnostics = bladeLaravelReferenceDiagnostics(document.content, {
+      viewNames: viewTargets.map((target) => target.name),
+    });
+
+    setLaravelDiagnosticsByPath((current) => {
+      if (diagnostics.length === 0) {
+        if (!(document.path in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[document.path];
+        return next;
+      }
+
+      return {
+        ...current,
+        [document.path]: diagnostics,
+      };
+    });
+  }, [
+    collectPhpLaravelViewTargets,
+    isLaravelFrameworkActive,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    void provideLaravelDiagnosticsForActiveDocument();
+  }, [
+    activeDocument?.content,
+    activeDocument?.language,
+    activeDocument?.path,
+    provideLaravelDiagnosticsForActiveDocument,
+  ]);
+
+  const provideBladeCodeActions = useCallback(
+    async (
+      source: string,
+      range: PhpCodeActionRange = { end: 0, start: 0 },
+    ): Promise<PhpCodeActionDescriptor[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const action = await createMissingBladeViewCodeAction(
+        source,
+        range,
+        "blade",
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return action ? [action] : [];
+    },
+    [createMissingBladeViewCodeAction, workspaceRoot],
   );
 
   const openPhpMethodHintTarget = useCallback(
@@ -22662,6 +22945,201 @@ export function useWorkbenchController(
       resolvePhpClassSourcePaths,
       isLaravelFrameworkActive,
       workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  // Cmd+Click navigation for `.blade.php` documents. detectBladeReferenceAt
+  // (pure) classifies Blade view/component offsets; Laravel helper literals and
+  // typed view-data member access reuse the existing PHP/Laravel resolvers.
+  // Conservative: an unresolvable or non-existent reference returns false (no
+  // phpactor fallback for blade). Per-project isolation: capture the requested
+  // root up front and re-check after every await so a tab switch mid-resolution
+  // can never navigate into a stale-workspace file.
+  const provideBladeDefinition = useCallback(
+    async (source: string, offset: number): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return false;
+      }
+
+      if (isInsideBladeComment(source, offset)) {
+        return false;
+      }
+
+      if (isLaravelFrameworkActive) {
+        const helper = detectLaravelStringLiteralHelper(source, offset);
+
+        if (helper?.helper === "view") {
+          if (!resolveLaravelViewTarget(helper.literal)) {
+            return false;
+          }
+
+          const target = await findPhpLaravelViewTarget(helper.literal);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          return target
+            ? openNavigationTarget(target.path, target.position, target.name)
+            : false;
+        }
+
+        if (helper?.helper === "route") {
+          if (!activeDocument) {
+            return false;
+          }
+
+          const routes = await collectPhpLaravelNamedRouteTargets(
+            activeDocument.content,
+            activeDocument.path,
+          );
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          const target = routes.find(
+            (route) =>
+              route.name.toLowerCase() === helper.literal.toLowerCase(),
+          );
+
+          return target
+            ? openNavigationTarget(target.path, target.position, target.name)
+            : false;
+        }
+
+        const memberContext = phpIdentifierContextAt(
+          source,
+          editorPositionAtOffset(source, offset),
+        );
+
+        if (
+          memberContext?.kind === "methodCall" ||
+          memberContext?.kind === "memberPropertyAccess"
+        ) {
+          const activePath = activeDocument?.path ?? "";
+          const relativePath = activePath
+            ? relativeWorkspacePath(requestedRoot, activePath)
+            : "";
+          const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+          const variableName = memberContext.variableName
+            ? `$${memberContext.variableName}`.toLowerCase()
+            : "";
+          const memberName =
+            memberContext.kind === "methodCall"
+              ? memberContext.methodName
+              : memberContext.propertyName;
+
+          if (viewName && variableName && memberName) {
+            const variableTypes = await collectBladeViewVariableTypes(viewName);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            const className = variableTypes.get(variableName);
+
+            if (className) {
+              const openedMethod = await openDirectPhpMethodTarget(
+                className,
+                memberName,
+              );
+
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
+              if (openedMethod) {
+                return true;
+              }
+
+              if (memberContext.kind === "memberPropertyAccess") {
+                const openedAttribute = await openPhpLaravelModelAttributeTarget(
+                  className,
+                  memberName,
+                );
+
+                if (!isRequestedRootActive()) {
+                  return false;
+                }
+
+                if (openedAttribute) {
+                  return true;
+                }
+
+                return openDirectPhpPropertyTarget(className, memberName);
+              }
+            }
+          }
+        }
+      }
+
+      const reference = detectBladeReferenceAt(source, offset);
+
+      if (!reference) {
+        return false;
+      }
+
+      const candidateRelativePaths =
+        reference.kind === "component"
+          ? [
+              ...bladeComponentCandidateRelativePaths(reference.name),
+              ...bladeComponentClassCandidatePaths(reference.name),
+            ]
+          : reference.kind === "view"
+            ? bladeViewCandidateRelativePaths(reference.name)
+            : [];
+
+      if (candidateRelativePaths.length === 0) {
+        return false;
+      }
+
+      for (const relativePath of candidateRelativePaths) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const path = joinWorkspacePath(requestedRoot, relativePath);
+
+        try {
+          await readNavigationFileContent(path);
+        } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          continue;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return openNavigationTarget(
+          path,
+          { column: 1, lineNumber: 1 },
+          reference.name,
+        );
+      }
+
+      return false;
+    },
+    [
+      activeDocument,
+      collectBladeViewVariableTypes,
+      collectPhpLaravelNamedRouteTargets,
+      findPhpLaravelViewTarget,
+      isLaravelFrameworkActive,
+      openDirectPhpMethodTarget,
+      openDirectPhpPropertyTarget,
+      openNavigationTarget,
+      openPhpLaravelModelAttributeTarget,
+      readNavigationFileContent,
       workspaceRoot,
     ],
   );
@@ -30750,10 +31228,17 @@ export function useWorkbenchController(
   const mergedLanguageServerDiagnosticsByPath = useMemo(
     () =>
       mergeDiagnosticsByPath(
-        languageServerDiagnosticsByPath,
-        javaScriptTypeScriptDiagnosticsByPath,
+        mergeDiagnosticsByPath(
+          languageServerDiagnosticsByPath,
+          javaScriptTypeScriptDiagnosticsByPath,
+        ),
+        laravelDiagnosticsByPath,
       ),
-    [javaScriptTypeScriptDiagnosticsByPath, languageServerDiagnosticsByPath],
+    [
+      javaScriptTypeScriptDiagnosticsByPath,
+      languageServerDiagnosticsByPath,
+      laravelDiagnosticsByPath,
+    ],
   );
   const activePhpLocalDiagnosticsByPath = useMemo(() => {
     if (!activeDocument || activeDocument.language !== "php") {
@@ -31003,6 +31488,7 @@ export function useWorkbenchController(
     previewFile,
     previewPath,
     applyPhpCodeActionNewFile,
+    provideBladeCodeActions,
     provideBladeCompletions,
     provideBladeDefinition,
     providePhpCodeActions,
@@ -31420,6 +31906,103 @@ function bladePhpLikeCompletionAt(
     prefix: helperMatch[1],
     start: offset - helperMatch[1].length,
   };
+}
+
+function bladePhpMemberAccessCompletionAt(
+  source: string,
+  offset: number,
+): {
+  end: number;
+  prefix: string;
+  receiverExpression: string;
+  start: number;
+  variableName: string;
+} | null {
+  if (isInsideBladeStringLiteral(source, offset)) {
+    return null;
+  }
+
+  const before = source.slice(0, offset);
+  const match =
+    /(\$([A-Za-z_][A-Za-z0-9_]*))\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
+      before,
+    );
+
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  const prefix = match[3] ?? "";
+
+  return {
+    end: offset,
+    prefix,
+    receiverExpression: match[1],
+    start: offset - prefix.length,
+    variableName: match[2],
+  };
+}
+
+function bladeSyntheticPhpMemberAccessSource(
+  variableName: string,
+  typeName: string,
+): { position: EditorPosition; source: string } {
+  const source = `<?php\n/** @var \\${typeName.replace(/^\\+/, "")} $${variableName} */\n$${variableName}->`;
+
+  return {
+    position: editorPositionAtOffset(source, source.length),
+    source,
+  };
+}
+
+function bladeMemberCompletionItem(
+  member: PhpMethodCompletion,
+  range: { replaceEnd: number; replaceStart: number },
+): BladeCompletionItem {
+  return {
+    detail: bladeMemberCompletionDetail(member),
+    insertText: bladeMemberCompletionInsertText(member),
+    kind: "member",
+    label: member.name,
+    replaceEnd: range.replaceEnd,
+    replaceStart: range.replaceStart,
+  };
+}
+
+function bladeMemberCompletionInsertText(member: PhpMethodCompletion): string {
+  if (member.insertText) {
+    return member.insertText;
+  }
+
+  if (member.kind === "property" || member.kind === "relation") {
+    return member.name;
+  }
+
+  return `${member.name}()`;
+}
+
+function bladeMemberCompletionDetail(member: PhpMethodCompletion): string {
+  const returnType = member.returnType ? `: ${member.returnType}` : "";
+
+  if (member.kind === "property") {
+    return `${member.declaringClassName}::$${member.name}${returnType}`;
+  }
+
+  if (member.kind === "relation") {
+    return `${member.declaringClassName}::${member.name} relation${returnType}`;
+  }
+
+  if (member.kind === "scope") {
+    return `${member.declaringClassName}::${member.name} scope${returnType}`;
+  }
+
+  if (member.kind === "magic-where") {
+    return `${member.declaringClassName}::${member.name} dynamic where${returnType}`;
+  }
+
+  const parameters = member.parameters ? `(${member.parameters})` : "()";
+
+  return `${member.declaringClassName}::${member.name}${parameters}${returnType}`;
 }
 
 function isInsideBladeStringLiteral(source: string, offset: number): boolean {

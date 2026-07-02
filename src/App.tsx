@@ -1275,6 +1275,7 @@ function App() {
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            provideBladeCodeActions={workbench.provideBladeCodeActions}
             provideBladeCompletions={workbench.provideBladeCompletions}
             provideBladeDefinition={workbench.provideBladeDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}

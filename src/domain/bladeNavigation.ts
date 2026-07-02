@@ -681,7 +681,7 @@ function directiveAtSignBefore(source: string, offset: number): number | null {
 /**
  * Returns true when `offset` lies inside a Blade comment `{{-- ... --}}`.
  */
-function isInsideBladeComment(source: string, offset: number): boolean {
+export function isInsideBladeComment(source: string, offset: number): boolean {
   const open = "{{--";
   const close = "--}}";
 

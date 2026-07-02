@@ -52695,6 +52695,206 @@ class SendShipmentNotification
       });
     });
 
+  it("navigates a Blade view helper literal to the referenced view file", async () => {
+    const bladePath = "/workspace/resources/views/show.blade.php";
+    const partialPath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ view('comments.show') }}\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === partialPath) {
+          return "<h1>Comment</h1>\n";
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let handled = false;
+    await act(async () => {
+      handled = await getWorkbench().provideBladeDefinition(
+        bladeSource,
+        bladeSource.indexOf("comments.show") + 1,
+      );
+    });
+
+    expect(handled).toBe(true);
+    expect(getWorkbench().activePath).toBe(partialPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: partialPath,
+      position: { column: 1, lineNumber: 1 },
+    });
+  });
+
+  it("navigates a Blade route helper literal to its named route definition", async () => {
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const routesPath = "/workspace/routes/web.php";
+    const bladeSource = "{{ route('comments.show', $comment) }}\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.show');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let handled = false;
+    await act(async () => {
+      handled = await getWorkbench().provideBladeDefinition(
+        bladeSource,
+        bladeSource.indexOf("comments.show") + 1,
+      );
+    });
+
+    expect(handled).toBe(true);
+    expect(getWorkbench().activePath).toBe(routesPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: routesPath,
+      position: { column: 13, lineNumber: 3 },
+    });
+  });
+
+  it("navigates a typed Blade view-data member to its PHP method", async () => {
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const controllerPath =
+      "/workspace/app/Http/Controllers/CommentController.php";
+    const modelPath = "/workspace/app/Models/Comment.php";
+    const bladeSource = "{{ $comment->author }}\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+class Comment extends Model
+{
+    public function author()
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === modelPath) {
+          return modelSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "view("
+          ? [
+              {
+                column: 16,
+                lineNumber: 12,
+                lineText:
+                  "return view('comments.show', ['comment' => $comment]);",
+                path: controllerPath,
+                relativePath: "app/Http/Controllers/CommentController.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let handled = false;
+    await act(async () => {
+      handled = await getWorkbench().provideBladeDefinition(
+        bladeSource,
+        bladeSource.indexOf("author") + 1,
+      );
+    });
+
+    expect(handled).toBe(true);
+    expect(getWorkbench().activePath).toBe(modelPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: modelPath,
+      position: { column: 21, lineNumber: 6 },
+    });
+  });
+
     it("navigates an <x-...> component tag to its component view file", async () => {
       const bladePath = "/workspace/resources/views/show.blade.php";
       // The flat candidate (forms/input.blade.php) is intentionally absent so the
@@ -53191,6 +53391,139 @@ class CommentController
       ]),
     );
     expect(searchText).toHaveBeenCalledWith("/workspace", "view(", 200);
+  });
+
+  it("suggests typed Blade members from controller view-data model bindings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const modelPath = "/workspace/app/Models/Comment.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $comment-> }}\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'body',
+    ];
+
+    protected array $casts = [
+        'approved' => 'bool',
+    ];
+
+    public function author(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function excerpt(): string
+    {
+        return '';
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 12,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === modelPath) {
+        return modelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "App\\Models\\Comment::$body: mixed",
+          insertText: "body",
+          kind: "member",
+          label: "body",
+        }),
+        expect.objectContaining({
+          detail: "App\\Models\\Comment::$approved: bool",
+          insertText: "approved",
+          kind: "member",
+          label: "approved",
+        }),
+        expect.objectContaining({
+          detail: "App\\Models\\Comment::$author: User",
+          insertText: "author",
+          kind: "member",
+          label: "author",
+        }),
+        expect.objectContaining({
+          detail: "App\\Models\\Comment::excerpt(): string",
+          insertText: "excerpt()",
+          kind: "member",
+          label: "excerpt",
+        }),
+      ]),
+    );
+    expect(readTextFile).toHaveBeenCalledWith(modelPath);
   });
 
   it("suggests Laravel built-in Blade variables by prefix", async () => {
