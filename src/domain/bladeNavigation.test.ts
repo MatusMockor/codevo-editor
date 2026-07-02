@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   BLADE_DIRECTIVES,
+  detectBladeComponentCompletionAt,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
   bladeComponentCandidateRelativePaths,
   bladeComponentCandidateWorkspacePaths,
   bladeComponentClassCandidatePaths,
+  bladeComponentNameFromClassRelativePath,
+  bladeComponentNavigationCandidateRelativePaths,
   bladeReferenceCandidateWorkspacePaths,
   bladeViewCandidateRelativePaths,
   bladeViewCandidateWorkspacePaths,
+  isBladeComponentSourcePath,
 } from "./bladeNavigation";
 
 /**
@@ -549,5 +553,244 @@ describe("bladeComponentClassCandidatePaths", () => {
     expect(bladeComponentClassCandidatePaths("package::alert")).toEqual([]);
     expect(bladeComponentClassCandidatePaths(".alert")).toEqual([]);
     expect(bladeComponentClassCandidatePaths("forms..input")).toEqual([]);
+  });
+});
+
+describe("bladeComponentNavigationCandidateRelativePaths", () => {
+  it("probes the class-based component before the anonymous blade views (PhpStorm parity)", () => {
+    expect(bladeComponentNavigationCandidateRelativePaths("alert")).toEqual([
+      "app/View/Components/Alert.php",
+      "resources/views/components/alert.blade.php",
+      "resources/views/components/alert/index.blade.php",
+    ]);
+  });
+
+  it("orders dotted kebab-case names class-first as well", () => {
+    expect(
+      bladeComponentNavigationCandidateRelativePaths("forms.text-input"),
+    ).toEqual([
+      "app/View/Components/Forms/TextInput.php",
+      "resources/views/components/forms/text-input.blade.php",
+      "resources/views/components/forms/text-input/index.blade.php",
+    ]);
+  });
+
+  it("returns no candidates for an unusable component name", () => {
+    expect(bladeComponentNavigationCandidateRelativePaths("")).toEqual([]);
+    expect(
+      bladeComponentNavigationCandidateRelativePaths("mail::message"),
+    ).toEqual([]);
+  });
+});
+
+describe("bladeComponentNameFromClassRelativePath", () => {
+  it("maps a top-level component class to its tag name", () => {
+    expect(bladeComponentNameFromClassRelativePath("Alert.php")).toBe("alert");
+  });
+
+  it("kebab-cases multi-word class names", () => {
+    expect(bladeComponentNameFromClassRelativePath("UserProfile.php")).toBe(
+      "user-profile",
+    );
+  });
+
+  it("maps nested directories to dotted kebab-case segments", () => {
+    expect(
+      bladeComponentNameFromClassRelativePath("Forms/TextInput.php"),
+    ).toBe("forms.text-input");
+  });
+
+  it("round-trips through the class candidate resolver", () => {
+    const name = bladeComponentNameFromClassRelativePath("Forms/TextInput.php");
+
+    expect(name).not.toBeNull();
+    expect(bladeComponentClassCandidatePaths(name ?? "")).toEqual([
+      "app/View/Components/Forms/TextInput.php",
+    ]);
+  });
+
+  it("returns null for non-PHP files", () => {
+    expect(bladeComponentNameFromClassRelativePath(".gitkeep")).toBeNull();
+    expect(bladeComponentNameFromClassRelativePath("Alert.blade.php")).toBeNull();
+  });
+
+  it("returns null for names that do not round-trip to a component class (conservative)", () => {
+    expect(bladeComponentNameFromClassRelativePath("index.php")).toBeNull();
+    expect(bladeComponentNameFromClassRelativePath("myHelper.php")).toBeNull();
+    expect(bladeComponentNameFromClassRelativePath("Text_Input.php")).toBeNull();
+  });
+
+  it("returns null for an empty path", () => {
+    expect(bladeComponentNameFromClassRelativePath("")).toBeNull();
+    expect(bladeComponentNameFromClassRelativePath(".php")).toBeNull();
+  });
+});
+
+describe("detectBladeComponentCompletionAt", () => {
+  it("offers completion with an empty prefix right after <x-", () => {
+    const source = "<x-";
+
+    expect(detectBladeComponentCompletionAt(source, source.length)).toEqual({
+      prefix: "",
+      replaceStart: 3,
+      replaceEnd: 3,
+    });
+  });
+
+  it("captures the typed prefix inside an opening tag", () => {
+    const source = "<x-fo\n";
+    const offset = offsetOf(source, "fo", 2);
+
+    expect(detectBladeComponentCompletionAt(source, offset)).toEqual({
+      prefix: "fo",
+      replaceStart: offsetOf(source, "fo"),
+      replaceEnd: offsetOf(source, "fo") + 2,
+    });
+  });
+
+  it("keeps offering completion after a trailing dot (<x-forms.)", () => {
+    const source = "<x-forms.";
+
+    expect(detectBladeComponentCompletionAt(source, source.length)).toEqual({
+      prefix: "forms.",
+      replaceStart: 3,
+      replaceEnd: source.length,
+    });
+  });
+
+  it("offers completion inside a closing tag", () => {
+    const source = "</x-al";
+
+    expect(detectBladeComponentCompletionAt(source, source.length)).toEqual({
+      prefix: "al",
+      replaceStart: 4,
+      replaceEnd: source.length,
+    });
+  });
+
+  it("replaces the full component name when the cursor sits mid-name", () => {
+    const source = "<x-forms.input />";
+    const offset = offsetOf(source, "forms.input", 2);
+
+    expect(detectBladeComponentCompletionAt(source, offset)).toEqual({
+      prefix: "fo",
+      replaceStart: offsetOf(source, "forms.input"),
+      replaceEnd: offsetOf(source, "forms.input") + "forms.input".length,
+    });
+  });
+
+  it("does not fire before the dash (<x)", () => {
+    const source = "<x";
+
+    expect(detectBladeComponentCompletionAt(source, source.length)).toBeNull();
+  });
+
+  it("does not fire in ordinary HTML tags", () => {
+    const source = "<div class=\"x-\">";
+
+    expect(detectBladeComponentCompletionAt(source, offsetOf(source, "div", 2))).toBeNull();
+  });
+
+  it("does not fire inside the attribute area of a component tag", () => {
+    const source = "<x-alert type=\"info\"";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "type", 2)),
+    ).toBeNull();
+  });
+
+  it("declines package-namespaced components (<x-mail::...)", () => {
+    const source = "<x-mail::message";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "mail", 4)),
+    ).toBeNull();
+  });
+
+  it("does not fire inside Blade comments", () => {
+    const source = "{{-- <x-al --}}";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "al", 2)),
+    ).toBeNull();
+  });
+
+  it("does not fire after the tag closed", () => {
+    const source = "<x-alert> text";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "text", 2)),
+    ).toBeNull();
+  });
+});
+
+describe("isBladeComponentSourcePath", () => {
+  it("matches files under resources/views/components", () => {
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/resources/views/components/alert.blade.php",
+      ),
+    ).toBe(true);
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/resources/views/components/forms/input/index.blade.php",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches files under app/View/Components", () => {
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/app/View/Components/Alert.php",
+      ),
+    ).toBe(true);
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/app/View/Components/Forms/TextInput.php",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches the component directories themselves (rename/delete of the dir)", () => {
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/resources/views/components",
+      ),
+    ).toBe(true);
+    expect(
+      isBladeComponentSourcePath("/workspace", "/workspace/app/View/Components"),
+    ).toBe(true);
+  });
+
+  it("does not match other workspace paths", () => {
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/resources/views/welcome.blade.php",
+      ),
+    ).toBe(false);
+    expect(
+      isBladeComponentSourcePath("/workspace", "/workspace/app/Models/User.php"),
+    ).toBe(false);
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace",
+        "/workspace/resources/views/componentsextra/a.blade.php",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match paths from another workspace root (isolation)", () => {
+    expect(
+      isBladeComponentSourcePath(
+        "/workspace-a",
+        "/workspace-b/resources/views/components/alert.blade.php",
+      ),
+    ).toBe(false);
   });
 });

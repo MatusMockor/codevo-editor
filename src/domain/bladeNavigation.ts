@@ -26,6 +26,7 @@ import {
   resolveLaravelWorkspaceFileTargets,
   type LaravelWorkspaceFileTarget,
 } from "./laravelPathResolution";
+import { workspaceRelativePath } from "./workspace";
 
 export type BladeReferenceKind = "view" | "component" | "section" | "stack";
 
@@ -44,6 +45,21 @@ export interface BladeDirectiveCompletion {
   /** Offset of the `@` that begins the directive being typed. */
   start: number;
 }
+
+export interface BladeComponentCompletion {
+  /** The component-name characters typed between `<x-` and the cursor. */
+  prefix: string;
+  /** Offset of the first character after the `x-` tag prefix. */
+  replaceStart: number;
+  /** Offset one past the last character of the (possibly partial) name. */
+  replaceEnd: number;
+}
+
+/** Directory holding anonymous Blade components, relative to the workspace root. */
+export const BLADE_ANONYMOUS_COMPONENTS_DIR = "resources/views/components";
+
+/** Directory holding class-based Blade components, relative to the workspace root. */
+export const BLADE_CLASS_COMPONENTS_DIR = "app/View/Components";
 
 /**
  * Blade directives offered for completion (without the leading `@`). Covers
@@ -226,6 +242,61 @@ export function detectBladeDirectiveCompletionAt(
 }
 
 /**
+ * Returns the `<x-...>` component name being typed at `offset` (for
+ * completion), or `null` when the offset is not inside a component tag name.
+ *
+ * Unlike `detectBladeReferenceAt` this deliberately accepts an EMPTY or
+ * partial prefix (`<x-`, `<x-forms.`) so the full component list appears the
+ * moment the tag prefix is typed. It still declines package-namespaced tags
+ * (`<x-mail::...`), Blade comments, and offsets past the tag name.
+ */
+export function detectBladeComponentCompletionAt(
+  source: string,
+  offset: number,
+): BladeComponentCompletion | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  if (isInsideBladeComment(source, offset)) {
+    return null;
+  }
+
+  const tagPrefix = "x-";
+  const searchStart = Math.max(0, offset - 200);
+  const openAngle = lastTagOpenBefore(source, offset, searchStart);
+
+  if (openAngle === null) {
+    return null;
+  }
+
+  const nameStart = componentNameStartAfter(source, openAngle);
+
+  if (nameStart === null) {
+    return null;
+  }
+
+  if (!source.startsWith(tagPrefix, nameStart)) {
+    return null;
+  }
+
+  const replaceStart = nameStart + tagPrefix.length;
+  const replaceEnd = componentNameEnd(source, replaceStart);
+
+  // Package-namespaced components (`<x-mail::message>`) resolve outside the
+  // workspace; decline conservatively rather than offer local names.
+  if (source.startsWith("::", replaceEnd)) {
+    return null;
+  }
+
+  if (offset < replaceStart || offset > replaceEnd) {
+    return null;
+  }
+
+  return { prefix: source.slice(replaceStart, offset), replaceStart, replaceEnd };
+}
+
+/**
  * Maps a Blade view name to its candidate blade file paths, reusing the shared
  * Laravel view resolver so view-path logic lives in one place.
  */
@@ -256,8 +327,23 @@ export function bladeComponentCandidateRelativePaths(name: string): string[] {
   const relativePath = name.split(".").join("/");
 
   return [
-    `resources/views/components/${relativePath}.blade.php`,
-    `resources/views/components/${relativePath}/index.blade.php`,
+    `${BLADE_ANONYMOUS_COMPONENTS_DIR}/${relativePath}.blade.php`,
+    `${BLADE_ANONYMOUS_COMPONENTS_DIR}/${relativePath}/index.blade.php`,
+  ];
+}
+
+/**
+ * Candidate paths for Cmd+B on a component tag, in probe order: the class-based
+ * component first (PhpStorm parity — Laravel itself resolves a class component
+ * before falling back to an anonymous view), then the anonymous blade view and
+ * its directory-index variant.
+ */
+export function bladeComponentNavigationCandidateRelativePaths(
+  name: string,
+): string[] {
+  return [
+    ...bladeComponentClassCandidatePaths(name),
+    ...bladeComponentCandidateRelativePaths(name),
   ];
 }
 
@@ -302,7 +388,73 @@ export function bladeComponentClassCandidatePaths(name: string): string[] {
 
   const classPath = name.split(".").map(pascalCaseSegment).join("/");
 
-  return [`app/View/Components/${classPath}.php`];
+  return [`${BLADE_CLASS_COMPONENTS_DIR}/${classPath}.php`];
+}
+
+/**
+ * Maps a component class file path relative to `app/View/Components` to its
+ * `<x-...>` tag name — the inverse of `bladeComponentClassCandidatePaths`.
+ * `Alert.php` → `alert`; `Forms/TextInput.php` → `forms.text-input` (each
+ * PascalCase segment kebab-cased, Laravel's `Str::kebab` convention).
+ *
+ * Stays CONSERVATIVE: returns `null` unless every kebab-cased segment
+ * round-trips back to the original segment through `pascalCaseSegment`, so
+ * non-component files in the directory (helpers, lowercase scripts,
+ * underscore-named files) never surface as completions.
+ */
+export function bladeComponentNameFromClassRelativePath(
+  relativePath: string,
+): string | null {
+  const normalized = relativePath.split("\\").join("/").replace(/^\/+/, "");
+
+  if (!normalized.endsWith(".php") || normalized.endsWith(".blade.php")) {
+    return null;
+  }
+
+  const withoutExtension = normalized.slice(0, -".php".length);
+  const segments = withoutExtension.split("/").filter((part) => part.length > 0);
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  const nameSegments: string[] = [];
+
+  for (const segment of segments) {
+    const kebab = kebabCaseSegment(segment);
+
+    if (pascalCaseSegment(kebab) !== segment) {
+      return null;
+    }
+
+    nameSegments.push(kebab);
+  }
+
+  return nameSegments.join(".");
+}
+
+/**
+ * Returns true when `path` lies at or under one of the workspace's Blade
+ * component source directories (anonymous blade views or class-based
+ * components). Used to invalidate the per-root component-name cache on file
+ * changes. Conservative by design: any change under either directory counts.
+ */
+export function isBladeComponentSourcePath(
+  rootPath: string,
+  path: string,
+): boolean {
+  const relativePath = workspaceRelativePath(rootPath, path);
+
+  if (relativePath === null) {
+    return false;
+  }
+
+  return (
+    relativePath === BLADE_ANONYMOUS_COMPONENTS_DIR ||
+    relativePath.startsWith(`${BLADE_ANONYMOUS_COMPONENTS_DIR}/`) ||
+    relativePath === BLADE_CLASS_COMPONENTS_DIR ||
+    relativePath.startsWith(`${BLADE_CLASS_COMPONENTS_DIR}/`)
+  );
 }
 
 /**
@@ -315,6 +467,15 @@ function pascalCaseSegment(segment: string): string {
     .filter((part) => part.length > 0)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join("");
+}
+
+/**
+ * Converts a PascalCase class-name segment to kebab-case, following Laravel's
+ * `Str::kebab` (a hyphen before every uppercase letter that follows another
+ * character): `TextInput` → `text-input`.
+ */
+function kebabCaseSegment(segment: string): string {
+  return segment.replace(/(.)(?=[A-Z])/g, "$1-").toLowerCase();
 }
 
 /**
