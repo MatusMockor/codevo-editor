@@ -21346,6 +21346,23 @@ export function useWorkbenchController(
         return false;
       }
 
+      const viewReference = phpLaravelViewReferenceContextAt(
+        source,
+        editorPositionAtOffset(source, offset),
+      );
+
+      if (viewReference) {
+        const target = await findPhpLaravelViewTarget(viewReference.name);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.name)
+          : false;
+      }
+
       const match = detectLaravelStringLiteralHelper(source, offset);
 
       if (!match) {
@@ -31216,6 +31233,24 @@ function bladeOffsetAtEditorPosition(
   const column = Math.max(0, position.column - 1);
 
   return offset + Math.min(column, lines[targetLine]?.length ?? 0);
+}
+
+function editorPositionAtOffset(source: string, offset: number): EditorPosition {
+  const clampedOffset = Math.max(0, Math.min(offset, source.length));
+  let lineNumber = 1;
+  let lineStart = 0;
+
+  for (let index = 0; index < clampedOffset; index += 1) {
+    if (source[index] === "\n") {
+      lineNumber += 1;
+      lineStart = index + 1;
+    }
+  }
+
+  return {
+    column: clampedOffset - lineStart + 1,
+    lineNumber,
+  };
 }
 
 function workspacePathBelongsToRoot(

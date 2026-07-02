@@ -50769,6 +50769,69 @@ class DashboardController
       });
     });
 
+    it("navigates a View::make literal to its Blade file", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/DashboardController.php";
+      const bladePath = "/workspace/resources/views/admin/dashboard.blade.php";
+      const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\View;
+
+class DashboardController
+{
+    public function show(): mixed
+    {
+        return View::make('admin.dashboard');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === bladePath) {
+            return "<h1>Dashboard</h1>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "DashboardController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("admin.dashboard") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: bladePath,
+        position: {
+          column: 1,
+          lineNumber: 1,
+        },
+      });
+    });
+
     it("navigates a trans literal to the lang file key line", async () => {
       const controllerPath =
         "/workspace/app/Http/Controllers/AppController.php";
