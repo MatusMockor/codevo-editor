@@ -49,7 +49,6 @@ import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import {
-  languageServerCapabilityLabels,
   languageServerStatusLabel,
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
@@ -426,66 +425,33 @@ function App() {
     workbench.workspaceSettings.javaScriptTypeScriptVersion,
     workbench.workspaceSettings.phpVersionOverride,
   ]);
-  const languageServerLabel = useMemo(() => {
-    if (!shouldStartLanguageServer(workbench.intelligenceMode)) {
-      return null;
-    }
-
-    const runtimeLabel = languageServerStatusLabel(
-      workbench.languageServerRuntimeStatus,
-      "PHPactor",
-      { workspaceRoot: workbench.workspaceRoot },
-    );
-
-    if (runtimeLabel) {
-      const enabledCapabilities = languageServerCapabilityLabels(
+  const languageServerLabel = useMemo(
+    () =>
+      phpLanguageServerActivityLabel(
+        workbench.intelligenceMode,
         workbench.languageServerRuntimeStatus,
-      );
-
-      if (enabledCapabilities.length > 0) {
-        return `${runtimeLabel} · ${enabledCapabilities.join(", ")}`;
-      }
-
-      return runtimeLabel;
-    }
-
-    const plan = workbench.languageServerPlan;
-
-    if (!plan) {
-      return null;
-    }
-
-    return languageServerPlanLabel(plan);
-  }, [
-    workbench.intelligenceMode,
-    workbench.languageServerPlan,
-    workbench.languageServerRuntimeStatus,
-    workbench.workspaceRoot,
-  ]);
-  const javaScriptTypeScriptLanguageServerLabel = useMemo(() => {
-    const runtimeLabel = languageServerStatusLabel(
+        workbench.workspaceRoot,
+        workbench.languageServerPlan,
+      ),
+    [
+      workbench.intelligenceMode,
+      workbench.languageServerPlan,
+      workbench.languageServerRuntimeStatus,
+      workbench.workspaceRoot,
+    ],
+  );
+  const javaScriptTypeScriptLanguageServerLabel = useMemo(
+    () =>
+      languageServerStatusLabel(
+        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+        "TS Server",
+        { workspaceRoot: workbench.workspaceRoot },
+      ),
+    [
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-      "TS Server",
-      { workspaceRoot: workbench.workspaceRoot },
-    );
-
-    if (!runtimeLabel) {
-      return null;
-    }
-
-    const enabledCapabilities = languageServerCapabilityLabels(
-      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-    );
-
-    if (enabledCapabilities.length > 0) {
-      return `${runtimeLabel} · ${enabledCapabilities.join(", ")}`;
-    }
-
-    return runtimeLabel;
-  }, [
-    workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-    workbench.workspaceRoot,
-  ]);
+      workbench.workspaceRoot,
+    ],
+  );
   const combinedLanguageServerLabel = useMemo(
     () =>
       [languageServerLabel, javaScriptTypeScriptLanguageServerLabel]
@@ -1663,6 +1629,36 @@ function smartModeSummary(
   }
 
   return "IDE setup needed";
+}
+
+// Compact PHPactor segment of the IDE activity chip: just the runtime state
+// (e.g. "PHPactor: running"), never the enabled-capability list. Capabilities
+// are an implementation detail useful for diagnostics, not status-bar chrome,
+// so they must never be concatenated onto this label (see ideActivityDetail
+// for the tooltip-worthy per-runtime summary instead).
+export function phpLanguageServerActivityLabel(
+  intelligenceMode: IntelligenceMode,
+  runtimeStatus: LanguageServerRuntimeStatus | null,
+  workspaceRoot: string | null,
+  plan: LanguageServerPlan | null,
+): string | null {
+  if (!shouldStartLanguageServer(intelligenceMode)) {
+    return null;
+  }
+
+  const runtimeLabel = languageServerStatusLabel(runtimeStatus, "PHPactor", {
+    workspaceRoot,
+  });
+
+  if (runtimeLabel) {
+    return runtimeLabel;
+  }
+
+  if (!plan) {
+    return null;
+  }
+
+  return languageServerPlanLabel(plan);
 }
 
 export function ideActivityStatus(
