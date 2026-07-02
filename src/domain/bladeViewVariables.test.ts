@@ -5,6 +5,7 @@ import {
   bladeViewVariableSightingsForView,
   bladeViewVariablesForViewFromEntries,
   mergeBladeViewVariableResolvedTypes,
+  parseBladeForeachCollection,
 } from "./bladeViewVariables";
 
 const invoiceControllerSource = `<?php
@@ -221,6 +222,59 @@ describe("bladeForeachLoopBindingsAt", () => {
     const offset = source.indexOf("$invoices") + "$invoices".length;
 
     expect(bladeForeachLoopBindingsAt(source, offset)).toEqual([]);
+  });
+});
+
+describe("parseBladeForeachCollection", () => {
+  it("parses a bare loop-collection variable", () => {
+    expect(parseBladeForeachCollection("$invoices")).toEqual({
+      relationNames: [],
+      rootVariableName: "invoices",
+    });
+  });
+
+  it("parses a single relation access as root + one relation", () => {
+    expect(parseBladeForeachCollection("$businessEntity->invoices")).toEqual({
+      relationNames: ["invoices"],
+      rootVariableName: "businessEntity",
+    });
+  });
+
+  it("parses a multi-level relation chain outermost-first", () => {
+    expect(parseBladeForeachCollection("$order->customer->addresses")).toEqual({
+      relationNames: ["customer", "addresses"],
+      rootVariableName: "order",
+    });
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(parseBladeForeachCollection("  $invoice->lines  ")).toEqual({
+      relationNames: ["lines"],
+      rootVariableName: "invoice",
+    });
+  });
+
+  it("declines a method call on the collection (conservative, no parens)", () => {
+    expect(parseBladeForeachCollection("$invoice->items()")).toBeNull();
+  });
+
+  it("declines a chained method call in the relation path", () => {
+    expect(parseBladeForeachCollection("$invoice->items->where('a', 1)")).toBeNull();
+  });
+
+  it("declines array-access and other non-relation expressions", () => {
+    expect(parseBladeForeachCollection("$data['items']")).toBeNull();
+    expect(parseBladeForeachCollection("$invoice->items[0]")).toBeNull();
+  });
+
+  it("declines a non-variable expression", () => {
+    expect(parseBladeForeachCollection("invoices")).toBeNull();
+    expect(parseBladeForeachCollection("Invoice::all()")).toBeNull();
+  });
+
+  it("declines an empty or whitespace-only expression", () => {
+    expect(parseBladeForeachCollection("")).toBeNull();
+    expect(parseBladeForeachCollection("   ")).toBeNull();
   });
 });
 

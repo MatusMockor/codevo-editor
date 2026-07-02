@@ -48,6 +48,43 @@ export interface BladeForeachLoopBinding {
   loopVariableName: string;
 }
 
+/**
+ * The structural shape of a `@foreach` collection expression that the
+ * application layer can resolve to an element type: the root `$variable` and the
+ * chain of `->relation` / `->property` accesses applied to it (empty for a bare
+ * variable). CONSERVATIVE: only a plain variable or a pure property/relation
+ * chain is accepted - anything with a method call `(...)`, array access `[...]`,
+ * or a non-variable receiver yields `null`, so the resolver never guesses.
+ */
+export interface BladeForeachCollection {
+  relationNames: string[];
+  rootVariableName: string;
+}
+
+const BLADE_FOREACH_COLLECTION =
+  /^\$([A-Za-z_][A-Za-z0-9_]*)((?:->[A-Za-z_][A-Za-z0-9_]*)*)$/;
+
+/**
+ * Parses a trimmed `@foreach` collection expression into its root variable and
+ * relation chain, or `null` when it is not a plain variable / property chain.
+ */
+export function parseBladeForeachCollection(
+  expression: string,
+): BladeForeachCollection | null {
+  const match = BLADE_FOREACH_COLLECTION.exec(expression.trim());
+
+  if (!match) {
+    return null;
+  }
+
+  const relationNames = Array.from(
+    (match[2] ?? "").matchAll(/->([A-Za-z_][A-Za-z0-9_]*)/g),
+    (relation) => relation[1] ?? "",
+  );
+
+  return { relationNames, rootVariableName: match[1] ?? "" };
+}
+
 const BLADE_FOREACH_OPEN =
   /@(?:foreach|forelse)\s*\(\s*(.+?)\s+as\s+(?:\$[A-Za-z_][A-Za-z0-9_]*\s*=>\s*)?\$([A-Za-z_][A-Za-z0-9_]*)\s*\)/giy;
 const BLADE_FOREACH_CLOSE = /@(?:endforeach|endforelse)\b/giy;

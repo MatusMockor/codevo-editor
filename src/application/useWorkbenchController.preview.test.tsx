@@ -53955,6 +53955,146 @@ class Comment extends Model
     );
   });
 
+  it("suggests typed Blade members for foreach items from view-data relation chains", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/BusinessEntityController.php";
+    const userCompanyPath = "/workspace/app/Models/UserCompany.php";
+    const invoicePath = "/workspace/app/Models/Invoice.php";
+    const bladePath = "/workspace/resources/views/business-entities/show.blade.php";
+    const bladeSource = `
+@foreach($businessEntity->invoices as $invoice)
+    {{ $invoice-> }}
+@endforeach
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\UserCompany;
+
+class BusinessEntityController
+{
+    public function show(UserCompany $businessEntity): mixed
+    {
+        return view('business-entities.show', ['businessEntity' => $businessEntity]);
+    }
+}
+`;
+    const userCompanySource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+/**
+ * @property-read \\Illuminate\\Database\\Eloquent\\Collection|\\App\\Models\\Invoice[] $invoices
+ */
+class UserCompany extends Model
+{
+    /** @return HasMany<Invoice> */
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
+}
+`;
+    const invoiceSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Invoice extends Model
+{
+    protected $fillable = [
+        'invoice_number',
+    ];
+
+    public function getEffectiveVatStatus(): string
+    {
+        return '';
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText:
+                "return view('business-entities.show', ['businessEntity' => $businessEntity]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/BusinessEntityController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === userCompanyPath) {
+        return userCompanySource;
+      }
+
+      if (path === invoicePath) {
+        return invoiceSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      const memberLine = "    {{ $invoice-> }}";
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: memberLine.indexOf("$invoice->") + "$invoice->".length + 1,
+        lineNumber: 3,
+      });
+    });
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "App\\Models\\Invoice::$invoice_number: mixed",
+          insertText: "invoice_number",
+          kind: "member",
+          label: "invoice_number",
+        }),
+        expect.objectContaining({
+          detail: "App\\Models\\Invoice::getEffectiveVatStatus(): string",
+          insertText: "getEffectiveVatStatus()",
+          kind: "member",
+          label: "getEffectiveVatStatus",
+        }),
+      ]),
+    );
+    expect(readTextFile).toHaveBeenCalledWith(userCompanyPath);
+    expect(readTextFile).toHaveBeenCalledWith(invoicePath);
+  });
+
   it("does not offer model members for a collection-valued Blade variable", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const modelPath = "/workspace/app/Models/Comment.php";
@@ -55013,6 +55153,320 @@ class ReportController
 
     expect(completions).toEqual([]);
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
+  it("shadows a same-named view variable with the closer enclosing @foreach loop variable", async () => {
+    // Real Blade views are rendered by MULTIPLE controllers, and generic loop
+    // names (`$item`) are reused across them. Here `InvoiceController` renders
+    // `invoices.index` with `$invoices` (no `item`), while an UNRELATED
+    // `WidgetController` also renders the same view name with a top-level
+    // `$item` of a completely different type. The template itself declares
+    // `@foreach ($invoices as $item)` - PHP/Blade scoping means the ENCLOSING
+    // LOOP variable must shadow the same-named outer view variable, so the
+    // nested loop over `$item->rows` resolves against `Invoice::rows()`
+    // (-> InvoiceLine), never against the unrelated `Widget::rows()`
+    // (-> WidgetPart) merged in from the other controller's sighting.
+    const invoiceControllerPath =
+      "/workspace/app/Http/Controllers/InvoiceController.php";
+    const widgetControllerPath =
+      "/workspace/app/Http/Controllers/WidgetController.php";
+    const invoiceModelPath = "/workspace/app/Models/Invoice.php";
+    const invoiceLineModelPath = "/workspace/app/Models/InvoiceLine.php";
+    const widgetModelPath = "/workspace/app/Models/Widget.php";
+    const widgetPartModelPath = "/workspace/app/Models/WidgetPart.php";
+    const bladePath = "/workspace/resources/views/invoices/index.blade.php";
+    const bladeSource =
+      "@foreach ($invoices as $item)\n" +
+      "  @foreach ($item->rows as $line)\n" +
+      "    {{ $line-> }}\n" +
+      "  @endforeach\n" +
+      "@endforeach\n";
+    const invoiceControllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Invoice;
+
+class InvoiceController
+{
+    public function index(): mixed
+    {
+        $invoices = Invoice::all();
+
+        return view('invoices.index', ['invoices' => $invoices]);
+    }
+}
+`;
+    const widgetControllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Widget;
+
+class WidgetController
+{
+    public function show(): mixed
+    {
+        $item = Widget::findOrFail(1);
+
+        return view('invoices.index', ['item' => $item]);
+    }
+}
+`;
+    const invoiceModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Invoice extends Model
+{
+    /** @return HasMany<InvoiceLine> */
+    public function rows(): HasMany
+    {
+        return $this->hasMany(InvoiceLine::class);
+    }
+}
+`;
+    const invoiceLineModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class InvoiceLine extends Model
+{
+    protected $fillable = ['line_total'];
+
+    public function formattedLineTotal(): string
+    {
+        return '';
+    }
+}
+`;
+    const widgetModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Widget extends Model
+{
+    /** @return HasMany<WidgetPart> */
+    public function rows(): HasMany
+    {
+        return $this->hasMany(WidgetPart::class);
+    }
+}
+`;
+    const widgetPartModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class WidgetPart extends Model
+{
+    protected $fillable = ['part_number'];
+
+    public function formattedPartNumber(): string
+    {
+        return '';
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText:
+                "return view('invoices.index', ['invoices' => $invoices]);",
+              path: invoiceControllerPath,
+              relativePath: "app/Http/Controllers/InvoiceController.php",
+            },
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('invoices.index', ['item' => $item]);",
+              path: widgetControllerPath,
+              relativePath: "app/Http/Controllers/WidgetController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === invoiceControllerPath) {
+        return invoiceControllerSource;
+      }
+
+      if (path === widgetControllerPath) {
+        return widgetControllerSource;
+      }
+
+      if (path === invoiceModelPath) {
+        return invoiceModelSource;
+      }
+
+      if (path === invoiceLineModelPath) {
+        return invoiceLineModelSource;
+      }
+
+      if (path === widgetModelPath) {
+        return widgetModelSource;
+      }
+
+      if (path === widgetPartModelPath) {
+        return widgetPartModelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      const memberLine = "    {{ $line-> }}";
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: memberLine.indexOf("$line->") + "$line->".length + 1,
+        lineNumber: 3,
+      });
+    });
+
+    const memberLabels = completions.map((completion) => completion.label);
+    expect(memberLabels).toContain("formattedLineTotal");
+    expect(memberLabels).not.toContain("formattedPartNumber");
+  });
+
+  it("bounds the @foreach relation-chain walk for a self-referencing relation", async () => {
+    // A pathological Blade collection expression can chain a self-referencing
+    // relation (`$node->children->children->...`) arbitrarily deep. The
+    // relation-chain walk must be capped (consistent with the other chain
+    // resolvers in this file) so a long chain resolves in bounded work instead
+    // of one file read per hop with no limit.
+    const controllerPath = "/workspace/app/Http/Controllers/NodeController.php";
+    const nodeModelPath = "/workspace/app/Models/Node.php";
+    const bladePath = "/workspace/resources/views/nodes/index.blade.php";
+    const relationHopCount = 20;
+    const relationChain = Array.from(
+      { length: relationHopCount },
+      () => "children",
+    ).join("->");
+    const bladeSource = `@foreach ($root->${relationChain} as $node)\n  {{ $node-> }}\n@endforeach\n`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Node;
+
+class NodeController
+{
+    public function index(): mixed
+    {
+        $root = Node::findOrFail(1);
+
+        return view('nodes.index', ['root' => $root]);
+    }
+}
+`;
+    const nodeModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Node extends Model
+{
+    /** @return HasMany<Node> */
+    public function children(): HasMany
+    {
+        return $this->hasMany(Node::class);
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('nodes.index', ['root' => $root]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/NodeController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === nodeModelPath) {
+        return nodeModelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      const memberLine = "  {{ $node-> }}";
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: memberLine.indexOf("$node->") + "$node->".length + 1,
+        lineNumber: 2,
+      });
+    });
+
+    // CONSERVATIVE: a chain past the cap yields no guessed members.
+    expect(completions).toEqual([]);
+
+    // BOUNDED: the walk must not read the model source once per hop - a
+    // capped walk reads it a small, fixed number of times regardless of how
+    // deep the (adversarial) chain in the Blade source goes.
+    const nodeModelReadCount = readTextFile.mock.calls.filter(
+      ([path]) => path === nodeModelPath,
+    ).length;
+    expect(nodeModelReadCount).toBeLessThan(relationHopCount);
   });
   });
 
