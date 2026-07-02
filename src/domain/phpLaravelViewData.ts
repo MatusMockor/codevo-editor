@@ -4,6 +4,19 @@ export interface PhpLaravelViewVariable {
   detail: string;
   name: string;
   typeHint: string | null;
+  /**
+   * The PHP expression whose value the controller passes for this variable
+   * (e.g. `$invoice`, `$this->connectedUseraccount`, `new Invoice()`), or
+   * `null` when no single value expression is statically known (compact()
+   * without a matching local, dynamic spreads, …). Consumers can feed it to a
+   * full expression-type resolver for PhpStorm-grade inference.
+   */
+  valueExpression: string | null;
+  /**
+   * Absolute offset of `valueExpression` in the source (scope anchor for
+   * position-aware type resolution), or `null` when there is no expression.
+   */
+  valueOffset: number | null;
 }
 
 export interface PhpLaravelViewDataBinding {
@@ -14,9 +27,16 @@ export interface PhpLaravelViewDataBinding {
 interface ViewCallSpan {
   closeParen: number;
   dataExpression: string | null;
+  dataExpressionOffset: number | null;
   end: number;
   start: number;
   viewName: string;
+}
+
+interface TopLevelPart {
+  /** Absolute offset of the trimmed part text within the split input. */
+  offset: number;
+  text: string;
 }
 
 export function phpLaravelViewDataBindings(
@@ -27,7 +47,11 @@ export function phpLaravelViewDataBindings(
   for (const call of viewCallSpans(source)) {
     const variables = new Map<string, PhpLaravelViewVariable>();
 
-    for (const variable of variablesFromDataExpression(source, call.dataExpression)) {
+    for (const variable of variablesFromDataExpression(
+      source,
+      call.dataExpression,
+      call.dataExpressionOffset,
+    )) {
       variables.set(variable.name, variable);
     }
 
@@ -40,10 +64,7 @@ export function phpLaravelViewDataBindings(
     }
 
     bindings.push({
-      variables: Array.from(variables.values()).map((variable) => ({
-        ...variable,
-        typeHint: variable.typeHint ?? typeHintForVariable(source, variable.name, call.start),
-      })),
+      variables: Array.from(variables.values()),
       viewName: call.viewName,
     });
   }
@@ -86,16 +107,19 @@ function viewCallSpans(source: string): ViewCallSpan[] {
     }
 
     const args = source.slice(openParen + 1, closeParen);
-    const parts = splitTopLevel(args, ",");
-    const viewName = stringLiteralValue(parts[0] ?? "");
+    const parts = splitTopLevelParts(args, ",");
+    const viewName = stringLiteralValue(parts[0]?.text ?? "");
 
     if (!viewName || !isUsableLaravelViewName(viewName)) {
       continue;
     }
 
+    const dataPart = parts[1] ?? null;
+
     spans.push({
       closeParen,
-      dataExpression: parts[1]?.trim() ?? null,
+      dataExpression: dataPart?.text ?? null,
+      dataExpressionOffset: dataPart ? openParen + 1 + dataPart.offset : null,
       end: closeParen + 1,
       start: match.index ?? 0,
       viewName,
@@ -108,20 +132,38 @@ function viewCallSpans(source: string): ViewCallSpan[] {
 function variablesFromDataExpression(
   source: string,
   expression: string | null,
+  expressionOffset: number | null,
 ): PhpLaravelViewVariable[] {
-  if (!expression) {
+  if (!expression || expressionOffset === null) {
     return [];
   }
 
   const compactVariables = compactVariableNames(expression).map((name) =>
-    viewVariable(source, name, "view data compact()"),
+    viewDataVariable(
+      source,
+      name,
+      "view data compact()",
+      `$${name}`,
+      expressionOffset,
+    ),
   );
 
   if (compactVariables.length > 0) {
     return compactVariables;
   }
 
-  return variablesFromAssociativeArray(source, expression, "view data");
+  const arrayVariables = variablesFromAssociativeArray(
+    source,
+    expression,
+    expressionOffset,
+    "view data",
+  );
+
+  if (arrayVariables.length > 0) {
+    return arrayVariables;
+  }
+
+  return variablesFromArrayVariableExpression(source, expression, expressionOffset);
 }
 
 function variablesFromWithChain(
@@ -146,18 +188,40 @@ function variablesFromWithChain(
     }
 
     const args = source.slice(openParen + 1, chainCloseParen);
-    const parts = splitTopLevel(args, ",");
-    const name = stringLiteralValue(parts[0] ?? "");
+    const parts = splitTopLevelParts(args, ",");
+    const name = stringLiteralValue(parts[0]?.text ?? "");
 
     if (name && isSafeBladeVariableName(name)) {
-      variables.push(viewVariable(source, name, "view data with()"));
+      const valuePart = parts[1] ?? null;
+
+      variables.push(
+        viewDataVariable(
+          source,
+          name,
+          "view data with()",
+          valuePart && valuePart.text.length > 0 ? valuePart.text : null,
+          valuePart && valuePart.text.length > 0
+            ? openParen + 1 + valuePart.offset
+            : null,
+        ),
+      );
       cursor = chainCloseParen + 1;
       continue;
     }
 
-    variables.push(
-      ...variablesFromAssociativeArray(source, parts[0] ?? "", "view data with()"),
-    );
+    const arrayPart = parts[0] ?? null;
+
+    if (arrayPart) {
+      variables.push(
+        ...variablesFromAssociativeArray(
+          source,
+          arrayPart.text,
+          openParen + 1 + arrayPart.offset,
+          "view data with()",
+        ),
+      );
+    }
+
     cursor = chainCloseParen + 1;
   }
 
@@ -167,6 +231,7 @@ function variablesFromWithChain(
 function variablesFromAssociativeArray(
   source: string,
   expression: string,
+  expressionOffset: number,
   detail: string,
 ): PhpLaravelViewVariable[] {
   const trimmed = expression.trim();
@@ -175,21 +240,269 @@ function variablesFromAssociativeArray(
     return [];
   }
 
+  const openBracket = expression.indexOf("[");
   const body = trimmed.slice(1, -1);
+  const bodyOffset = expressionOffset + openBracket + 1;
   const variables: PhpLaravelViewVariable[] = [];
 
-  for (const entry of splitTopLevel(body, ",")) {
-    const [key] = splitTopLevel(entry, "=>");
-    const name = stringLiteralValue(key ?? "");
+  for (const entry of splitTopLevelParts(body, ",")) {
+    const entryParts = splitTopLevelParts(entry.text, "=>");
+    const keyPart = entryParts[0] ?? null;
+    const valuePart = entryParts[1] ?? null;
+    const name = stringLiteralValue(keyPart?.text ?? "");
 
     if (!name || !isSafeBladeVariableName(name)) {
       continue;
     }
 
-    variables.push(viewVariable(source, name, detail));
+    const valueExpression =
+      valuePart && valuePart.text.length > 0 ? valuePart.text : null;
+    const valueOffset =
+      valuePart && valueExpression
+        ? bodyOffset + entry.offset + valuePart.offset
+        : null;
+
+    variables.push(
+      viewDataVariable(source, name, detail, valueExpression, valueOffset),
+    );
   }
 
   return variables;
+}
+
+/**
+ * Supports the "array variable" controller idiom that dominates real Laravel
+ * codebases (kontentino toolbox et al.):
+ *
+ *   $viewVariables = ['a' => $b];
+ *   $viewVariables['useraccount'] = $userAccount;
+ *   return view('tools.search_account', $viewVariables);
+ *
+ * Only a bare `$variable` data expression is considered, and only assignments
+ * BETWEEN the enclosing named function start and the view call contribute, so
+ * unrelated methods reusing the same array name never leak variables into the
+ * wrong view (conservative by construction).
+ */
+function variablesFromArrayVariableExpression(
+  source: string,
+  expression: string,
+  expressionOffset: number,
+): PhpLaravelViewVariable[] {
+  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression.trim());
+
+  if (!match?.[1]) {
+    return [];
+  }
+
+  const arrayVariableName = match[1];
+  const scopeStart = enclosingNamedFunctionStart(source, expressionOffset);
+  const variables = new Map<string, PhpLaravelViewVariable>();
+
+  for (const inline of arrayVariableInlineAssignments(
+    source,
+    arrayVariableName,
+    scopeStart,
+    expressionOffset,
+  )) {
+    for (const variable of variablesFromAssociativeArray(
+      source,
+      inline.expression,
+      inline.offset,
+      "view data",
+    )) {
+      variables.set(variable.name, variable);
+    }
+  }
+
+  for (const element of arrayVariableElementAssignments(
+    source,
+    arrayVariableName,
+    scopeStart,
+    expressionOffset,
+  )) {
+    if (!isSafeBladeVariableName(element.name)) {
+      continue;
+    }
+
+    variables.set(
+      `$${element.name}`,
+      viewDataVariable(
+        source,
+        element.name,
+        "view data",
+        element.valueExpression,
+        element.valueOffset,
+      ),
+    );
+  }
+
+  return Array.from(variables.values());
+}
+
+interface ArrayVariableInlineAssignment {
+  /** The `[ ... ]` literal expression assigned to the array variable. */
+  expression: string;
+  /** Absolute offset of the `[` in the source. */
+  offset: number;
+}
+
+function arrayVariableInlineAssignments(
+  source: string,
+  arrayVariableName: string,
+  scopeStart: number,
+  beforeOffset: number,
+): ArrayVariableInlineAssignment[] {
+  const assignments: ArrayVariableInlineAssignment[] = [];
+  const pattern = new RegExp(
+    String.raw`\$${escapeRegExp(arrayVariableName)}\s*=(?!=)\s*\[`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const index = match.index ?? 0;
+
+    if (index < scopeStart || index >= beforeOffset) {
+      continue;
+    }
+
+    const bracketStart = index + match[0].length - 1;
+    const bracketEnd = matchingBracketOffset(source, bracketStart, "[", "]");
+
+    if (bracketEnd === null || bracketEnd >= beforeOffset) {
+      continue;
+    }
+
+    assignments.push({
+      expression: source.slice(bracketStart, bracketEnd + 1),
+      offset: bracketStart,
+    });
+  }
+
+  return assignments;
+}
+
+interface ArrayVariableElementAssignment {
+  name: string;
+  valueExpression: string;
+  valueOffset: number;
+}
+
+function arrayVariableElementAssignments(
+  source: string,
+  arrayVariableName: string,
+  scopeStart: number,
+  beforeOffset: number,
+): ArrayVariableElementAssignment[] {
+  const assignments: ArrayVariableElementAssignment[] = [];
+  const pattern = new RegExp(
+    String.raw`\$${escapeRegExp(arrayVariableName)}\s*\[\s*('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")\s*\]\s*=(?!=)\s*`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const index = match.index ?? 0;
+
+    if (index < scopeStart || index >= beforeOffset) {
+      continue;
+    }
+
+    const name = stringLiteralValue(match[1] ?? "");
+
+    if (!name) {
+      continue;
+    }
+
+    const valueStart = index + match[0].length;
+    const valueEnd = topLevelStatementEnd(source, valueStart);
+
+    if (valueEnd === null || valueEnd > beforeOffset) {
+      continue;
+    }
+
+    const valueExpression = source.slice(valueStart, valueEnd).trim();
+
+    if (!valueExpression) {
+      continue;
+    }
+
+    assignments.push({ name, valueExpression, valueOffset: valueStart });
+  }
+
+  return assignments;
+}
+
+/**
+ * Returns the offset of the last named `function` declaration before
+ * `beforeOffset`, or 0 when there is none. Anonymous closures are ignored so a
+ * callback between the assignments and the view call does not truncate the
+ * scope.
+ */
+function enclosingNamedFunctionStart(
+  source: string,
+  beforeOffset: number,
+): number {
+  let scopeStart = 0;
+  const pattern = /\bfunction\s+&?[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+
+  for (const match of source.matchAll(pattern)) {
+    const index = match.index ?? 0;
+
+    if (index >= beforeOffset) {
+      break;
+    }
+
+    scopeStart = index;
+  }
+
+  return scopeStart;
+}
+
+/**
+ * Returns the offset of the `;` that terminates the statement starting at
+ * `start` (tracking quotes and bracket nesting), or `null` when the statement
+ * never closes.
+ */
+function topLevelStatementEnd(source: string, start: number): number | null {
+  let depth = 0;
+  let quote: "'" | "\"" | null = null;
+
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === ";" && depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
 }
 
 function compactVariableNames(expression: string): string[] {
@@ -204,16 +517,50 @@ function compactVariableNames(expression: string): string[] {
     .filter((name): name is string => Boolean(name && isSafeBladeVariableName(name)));
 }
 
-function viewVariable(
+function viewDataVariable(
   source: string,
   name: string,
   detail: string,
+  valueExpression: string | null,
+  valueOffset: number | null,
 ): PhpLaravelViewVariable {
   return {
     detail,
     name: `$${name}`,
-    typeHint: typeHintForVariable(source, name),
+    typeHint: typeHintForViewVariable(source, name, valueExpression, valueOffset),
+    valueExpression,
+    valueOffset,
   };
+}
+
+/**
+ * Cheap display-oriented type hint: first the classic lookup keyed by the
+ * Blade variable name, then - when the passed value is a plain `$variable`
+ * with a DIFFERENT name (`['useraccount' => $userAccount]`) - the lookup keyed
+ * by the value variable. Deep expression inference is delegated to the
+ * consumer via `valueExpression`/`valueOffset`.
+ */
+function typeHintForViewVariable(
+  source: string,
+  name: string,
+  valueExpression: string | null,
+  valueOffset: number | null,
+): string | null {
+  const direct = typeHintForVariable(source, name);
+
+  if (direct) {
+    return direct;
+  }
+
+  const valueVariableName = valueExpression
+    ? /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(valueExpression)?.[1] ?? null
+    : null;
+
+  if (!valueVariableName || valueVariableName === name) {
+    return null;
+  }
+
+  return typeHintForVariable(source, valueVariableName, valueOffset ?? source.length);
 }
 
 function typeHintForVariable(
@@ -250,7 +597,7 @@ function assignmentTypeForVariable(
   variableName: string,
 ): string | null {
   const pattern = new RegExp(
-    String.raw`\$${escapeRegExp(variableName)}\s*=\s*(?:new\s+)?(\\?[A-Z][A-Za-z0-9_\\]*)\s*(?:::|->|\()`,
+    String.raw`\$${escapeRegExp(variableName)}\s*=(?!=)\s*(?:new\s+)?(\\?[A-Z][A-Za-z0-9_\\]*)\s*(?:::|->|\()`,
     "g",
   );
   let found: string | null = null;
@@ -280,7 +627,7 @@ function stringLiteralValue(source: string): string | null {
     return null;
   }
 
-  if (trimmed[trimmed.length - 1] !== quote) {
+  if (trimmed.length < 2 || trimmed[trimmed.length - 1] !== quote) {
     return null;
   }
 
@@ -294,10 +641,24 @@ function stringLiteralValue(source: string): string | null {
 }
 
 function splitTopLevel(source: string, separator: "," | "=>"): string[] {
-  const parts: string[] = [];
+  return splitTopLevelParts(source, separator).map((part) => part.text);
+}
+
+function splitTopLevelParts(
+  source: string,
+  separator: "," | "=>",
+): TopLevelPart[] {
+  const parts: TopLevelPart[] = [];
   let depth = 0;
   let start = 0;
   let quote: "'" | "\"" | null = null;
+
+  const pushPart = (endIndex: number) => {
+    const raw = source.slice(start, endIndex);
+    const leading = raw.length - raw.trimStart().length;
+
+    parts.push({ offset: start + leading, text: raw.trim() });
+  };
 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index] ?? "";
@@ -334,12 +695,12 @@ function splitTopLevel(source: string, separator: "," | "=>"): string[] {
       continue;
     }
 
-    parts.push(source.slice(start, index).trim());
+    pushPart(index);
     index += separator.length - 1;
     start = index + 1;
   }
 
-  parts.push(source.slice(start).trim());
+  pushPart(source.length);
 
   return parts;
 }
