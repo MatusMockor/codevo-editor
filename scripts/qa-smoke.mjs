@@ -49,6 +49,27 @@ export const qaSmokeProfiles = {
       "src/App.test.ts",
     ],
   },
+  vitestBladeLaravelViews: {
+    description:
+      "Targeted Blade/Laravel view support smoke for view helper/facade completion and navigation, Blade directive/component navigation, per-project isolation, and baseline diagnostics quietness.",
+    command: [
+      "npm",
+      "test",
+      "--",
+      "src/domain/phpLaravelViews.test.ts",
+      "src/domain/bladeNavigation.test.ts",
+      "src/components/languageServerMonacoProviders.test.ts",
+      "src/application/useWorkbenchController.preview.test.tsx",
+      "-t",
+      "phpLaravelViews|detectBladeReferenceAt|bladeViewCandidateRelativePaths|bladeComponentCandidateRelativePaths|bladeComponentClassCandidatePaths|registerLanguageServerMonacoProviders blade providers|Laravel Blade view|View::make|Route::view|basic Blade document|Blade Cmd\\+Click definition and completion",
+    ],
+    files: [
+      "src/domain/phpLaravelViews.test.ts",
+      "src/domain/bladeNavigation.test.ts",
+      "src/components/languageServerMonacoProviders.test.ts",
+      "src/application/useWorkbenchController.preview.test.tsx",
+    ],
+  },
   vitestExtended: {
     description:
       "Slower frontend regression profile for runtime observability panel behavior, the Quick Open empty-tab editor race, and broad workbench per-project isolation regressions.",
@@ -114,6 +135,9 @@ export const qaSmokeProfiles = {
 const fastSteps = [
   npmStep("TypeScript check", ["run", "check"], { timeoutMs: minutes(5) }),
   profileStep("Fast Vitest smoke", qaSmokeProfiles.vitestFast, {
+    timeoutMs: minutes(5),
+  }),
+  profileStep("Blade/Laravel view Vitest smoke", qaSmokeProfiles.vitestBladeLaravelViews, {
     timeoutMs: minutes(5),
   }),
 ];

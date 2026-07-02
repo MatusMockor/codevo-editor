@@ -179,6 +179,18 @@ describe("detectBladeReferenceAt", () => {
     );
   });
 
+  it("detects nested <x-...> component tags", () => {
+    const source = "<x-layouts.nav.item :active=\"$active\" />";
+    const offset = offsetOf(source, "layouts.nav.item", 8);
+
+    expect(detectBladeReferenceAt(source, offset)).toEqual({
+      kind: "component",
+      name: "layouts.nav.item",
+      nameStart: source.indexOf("layouts.nav.item"),
+      nameEnd: source.indexOf("layouts.nav.item") + "layouts.nav.item".length,
+    });
+  });
+
   it("detects @yield as a section reference", () => {
     const source = "@yield('content')";
     const offset = offsetOf(source, "content", 1);
@@ -379,6 +391,13 @@ describe("bladeComponentCandidateRelativePaths", () => {
     expect(bladeComponentCandidateRelativePaths("forms.input")).toContain(
       "resources/views/components/forms/input.blade.php",
     );
+  });
+
+  it("maps a nested component name to a nested views/components candidate", () => {
+    expect(bladeComponentCandidateRelativePaths("layouts.nav.item")).toEqual([
+      "resources/views/components/layouts/nav/item.blade.php",
+      "resources/views/components/layouts/nav/item/index.blade.php",
+    ]);
   });
 
   it("maps a single-segment component name to a blade candidate", () => {

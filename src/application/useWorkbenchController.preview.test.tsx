@@ -53425,7 +53425,7 @@ class CommentController
     });
   });
 
-  it("opens Laravel view factory Blade views before LSP fallback", async () => {
+  it("opens Laravel View::make Blade views before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewPath = "/workspace/resources/views/comments/show.blade.php";
     const controllerSource = `<?php
@@ -53436,7 +53436,7 @@ class CommentController
 {
     public function show(): mixed
     {
-        return View::first(['comments.show', 'dashboard']);
+        return View::make('comments.show');
     }
 }
 `;
@@ -53499,6 +53499,115 @@ class CommentController
         lineNumber: 1,
       },
     });
+  });
+
+  it("does not resolve a Laravel Blade view from another project tab", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const workspaceAViewPath =
+      "/workspace-a/resources/views/comments/show.blade.php";
+    const workspaceBViewPath =
+      "/workspace-b/resources/views/comments/show.blade.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.show');
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === workspaceBViewPath) {
+        return "<h1>Wrong project</h1>\n";
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    let handled = true;
+    await act(async () => {
+      handled = await getWorkbench().providePhpLaravelDefinition(
+        controllerSource,
+        controllerSource.indexOf("comments.show") + 1,
+      );
+    });
+
+    expect(handled).toBe(false);
+    expect(readTextFile).toHaveBeenCalledWith(workspaceAViewPath);
+    expect(readTextFile).not.toHaveBeenCalledWith(workspaceBViewPath);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().activePath).toBe(controllerPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
+  it("keeps a basic Blade document free of diagnostics noise", async () => {
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = `@extends('layouts.app')
+
+@section('content')
+    <x-alert type="info">{{ $comment->title }}</x-alert>
+@endsection
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 9,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+    await flushAsyncTurns(4);
+
+    expect(getWorkbench().activeDocument?.language).toBe("blade");
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.groupKey?.includes("diagnostics"),
+      ),
+    ).toBe(false);
   });
 
   it("opens Laravel Route::view Blade views before LSP fallback", async () => {
