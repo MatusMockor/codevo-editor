@@ -320,14 +320,23 @@ import {
   resolveLaravelViewTarget,
 } from "../domain/laravelPathResolution";
 import {
+  BLADE_ANONYMOUS_COMPONENTS_DIR,
+  BLADE_CLASS_COMPONENTS_DIR,
   BLADE_DIRECTIVES,
-  bladeComponentCandidateRelativePaths,
-  bladeComponentClassCandidatePaths,
+  bladeComponentNameFromClassRelativePath,
+  bladeComponentNavigationCandidateRelativePaths,
   bladeViewCandidateRelativePaths,
+  detectBladeComponentCompletionAt,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
+  isBladeComponentSourcePath,
   isInsideBladeComment,
 } from "../domain/bladeNavigation";
+import {
+  bladeLaravelHelperCompletionContextAt,
+  bladeLaravelStringLiteralHelperAt,
+  type BladeLaravelHelperCompletionContext,
+} from "../domain/bladeLaravelHelperCompletions";
 import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
@@ -442,10 +451,15 @@ import {
   phpLaravelViewReferenceContextAt,
   type PhpLaravelViewTarget,
 } from "../domain/phpLaravelViews";
+import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import {
-  phpLaravelViewVariablesForView,
-  type PhpLaravelViewVariable,
-} from "../domain/phpLaravelViewData";
+  bladeViewDataEntryFromSource,
+  bladeViewVariableSightingsForView,
+  bladeViewVariablesForViewFromEntries,
+  mergeBladeViewVariableResolvedTypes,
+  type BladeViewDataEntry,
+  type BladeViewVariableSighting,
+} from "../domain/bladeViewVariables";
 import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
@@ -838,11 +852,6 @@ export interface BladeCompletionItem {
   label: string;
   replaceStart?: number;
   replaceEnd?: number;
-}
-
-interface BladeViewVariableContext {
-  source: string;
-  variable: PhpLaravelViewVariable;
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
@@ -1632,6 +1641,27 @@ export function useWorkbenchController(
   const phpLaravelProviderSourcesLoadInFlightRef = useRef<Set<string>>(
     new Set(),
   );
+  // Per-root cache of controller view-data entries (`view('x', [...])`,
+  // `View::make`, `->with(...)`, `compact(...)` sources) feeding Blade variable
+  // and member completions. Keyed by workspace root and reset on workspace
+  // switch / reindex like the migration/provider caches, and invalidated when
+  // any PHP file in the root changes, so the blade completion hot path never
+  // re-runs the workspace text search. The in-flight map dedupes concurrent
+  // loads; a load only writes the cache while it is still the registered load
+  // for its root (mid-load invalidation drops the result).
+  const bladeViewDataEntriesByRootRef = useRef<
+    Record<string, BladeViewDataEntry[]>
+  >({});
+  const bladeViewDataEntriesLoadInFlightRef = useRef<
+    Map<string, Promise<BladeViewDataEntry[] | null>>
+  >(new Map());
+  // Per-root cache of Blade component tag names (anonymous blade views under
+  // resources/views/components plus class-based components under
+  // app/View/Components) fed into `<x-` completion. Keyed by workspace root,
+  // reset on workspace switch / reindex and invalidated when a file under
+  // either component directory changes, so names never leak across project
+  // tabs and never go stale after a component is added/removed.
+  const bladeComponentNamesByRootRef = useRef<Record<string, string[]>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const pendingWorkspaceDirectoryRefreshesRef = useRef<Set<string>>(new Set());
@@ -3543,6 +3573,9 @@ export function useWorkbenchController(
       phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
       phpLaravelProviderSourcesByRootRef.current = {};
       phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+      bladeViewDataEntriesByRootRef.current = {};
+      bladeViewDataEntriesLoadInFlightRef.current = new Map();
+      bladeComponentNamesByRootRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -3666,6 +3699,9 @@ export function useWorkbenchController(
     phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
     phpLaravelProviderSourcesByRootRef.current = {};
     phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+    bladeViewDataEntriesByRootRef.current = {};
+    bladeViewDataEntriesLoadInFlightRef.current = new Map();
+    bladeComponentNamesByRootRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -5660,6 +5696,9 @@ export function useWorkbenchController(
       phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
       phpLaravelProviderSourcesByRootRef.current = {};
       phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+      bladeViewDataEntriesByRootRef.current = {};
+      bladeViewDataEntriesLoadInFlightRef.current = new Map();
+      bladeComponentNamesByRootRef.current = {};
       setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
@@ -21582,87 +21621,209 @@ export function useWorkbenchController(
     ],
   );
 
-  const collectBladeViewVariableTypes = useCallback(
-    async (viewName: string): Promise<Map<string, string>> => {
+  // Loads (and caches per root) the controller sources that pass data to Blade
+  // views: one workspace text search per query, each hit parsed once into its
+  // view-data bindings. The hot completion path then works from the in-memory
+  // entries. Per-project isolation: the requested root is captured up front and
+  // re-checked after EVERY await; a stale root drops the result and never
+  // writes the cache. Concurrent callers share the same in-flight promise.
+  const ensureBladeViewDataEntriesLoaded = useCallback(
+    async (requestedRoot: string): Promise<BladeViewDataEntry[] | null> => {
+      if (!requestedRoot || !isLaravelFrameworkActive) {
+        return null;
+      }
+
+      const cached = bladeViewDataEntriesByRootRef.current[requestedRoot];
+
+      if (cached) {
+        return cached;
+      }
+
+      const inFlight =
+        bladeViewDataEntriesLoadInFlightRef.current.get(requestedRoot);
+
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      // `load` is only compared against the in-flight registry AFTER the first
+      // await inside the closure, i.e. strictly after the assignment below.
+      let load: Promise<BladeViewDataEntry[] | null> | null = null;
+      const isRegisteredLoad = () =>
+        load !== null &&
+        bladeViewDataEntriesLoadInFlightRef.current.get(requestedRoot) === load;
+
+      load = (async (): Promise<BladeViewDataEntry[] | null> => {
+        try {
+          const searchResults = await Promise.all(
+            BLADE_VIEW_DATA_SEARCH_QUERIES.map((query) =>
+              textSearch.searchText(requestedRoot, query, 200),
+            ),
+          );
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          const visitedPaths = new Set<string>();
+          const entries: BladeViewDataEntry[] = [];
+
+          for (const result of searchResults.flat()) {
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+              continue;
+            }
+
+            visitedPaths.add(result.path);
+
+            try {
+              const content = await readNavigationFileContent(result.path);
+
+              if (!isRequestedRootActive()) {
+                return null;
+              }
+
+              const entry = bladeViewDataEntryFromSource(content);
+
+              if (entry.bindings.length > 0) {
+                entries.push(entry);
+              }
+            } catch {
+              if (!isRequestedRootActive()) {
+                return null;
+              }
+            }
+          }
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          // Write the cache only while this load is still the registered one
+          // for the root: a file-change invalidation that raced the load must
+          // not be resurrected by stale results.
+          if (isRegisteredLoad()) {
+            bladeViewDataEntriesByRootRef.current[requestedRoot] = entries;
+          }
+
+          return entries;
+        } finally {
+          if (isRegisteredLoad()) {
+            bladeViewDataEntriesLoadInFlightRef.current.delete(requestedRoot);
+          }
+        }
+      })();
+
+      bladeViewDataEntriesLoadInFlightRef.current.set(requestedRoot, load);
+
+      return load;
+    },
+    [isLaravelFrameworkActive, readNavigationFileContent, textSearch],
+  );
+
+  // Drops the cached view-data entries for `root` when any PHP file changes
+  // (controllers can live anywhere - app/, routes/, modules/ - so the
+  // invalidation is deliberately broad). The next Blade completion reloads
+  // lazily; deleting the in-flight entry also prevents a racing load from
+  // caching pre-change sources.
+  const invalidateBladeViewDataEntriesForPath = useCallback(
+    (root: string, path: string): void => {
+      if (!isPhpPath(path)) {
+        return;
+      }
+
+      delete bladeViewDataEntriesByRootRef.current[root];
+      bladeViewDataEntriesLoadInFlightRef.current.delete(root);
+    },
+    [],
+  );
+
+  // Resolves the receiver type of ONE view-data sighting: FIRST the full PHP
+  // expression engine on the value expression at its source position - the
+  // same engine `providePhpMethodCompletions` uses - so route-model-bound
+  // parameters, typed properties, `@var` docs and Eloquent chains all infer
+  // like PhpStorm (including `->get()` resolving to a Collection rather than
+  // the model). Only when no expression is known (or the engine declines)
+  // does the cheap declared-type hint from the view-data extraction apply.
+  const resolveBladeViewVariableSightingType = useCallback(
+    async (sighting: BladeViewVariableSighting): Promise<string | null> => {
+      if (sighting.variable.valueExpression) {
+        const expressionType = await resolvePhpExpressionType(
+          sighting.source,
+          editorPositionAtOffset(
+            sighting.source,
+            sighting.variable.valueOffset ?? sighting.source.length,
+          ),
+          sighting.variable.valueExpression,
+        );
+
+        if (expressionType) {
+          return expressionType;
+        }
+      }
+
+      return resolvePhpDeclaredType(sighting.source, sighting.variable.typeHint);
+    },
+    [resolvePhpDeclaredType, resolvePhpExpressionType],
+  );
+
+  // CONSERVATIVE view-variable receiver type: every sighting of the variable
+  // (across all controllers passing data to the view) is resolved and the
+  // types must agree - a conflict yields `null` (no member completions, no
+  // guessing). Unresolvable sightings do not veto a resolved type.
+  const resolveBladeViewVariableTypeForView = useCallback(
+    async (viewName: string, variableName: string): Promise<string | null> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !isLaravelFrameworkActive) {
-        return new Map();
+      if (!requestedRoot) {
+        return null;
       }
 
-      const variableTypes = new Map<string, string>();
-      const addVariables = (source: string) => {
-        for (const variable of phpLaravelViewVariablesForView(source, viewName)) {
-          const resolvedType = resolvePhpDeclaredType(source, variable.typeHint);
+      const entries = await ensureBladeViewDataEntriesLoaded(requestedRoot);
 
-          if (resolvedType) {
-            variableTypes.set(variable.name.toLowerCase(), resolvedType);
-          }
-        }
-      };
-      const activePath = activeDocument?.path ?? "";
-
-      if (activeDocument?.content && isPhpPath(activePath)) {
-        addVariables(activeDocument.content);
+      if (!entries || !isRequestedRootActive()) {
+        return null;
       }
 
-      const searchResults = await Promise.all(
-        ["view(", "View::make", "->with(", "compact("].map((query) =>
-          textSearch.searchText(requestedRoot, query, 200),
-        ),
-      );
+      const resolvedTypes: (string | null)[] = [];
 
-      if (!isRequestedRootActive()) {
-        return new Map();
-      }
+      for (const sighting of bladeViewVariableSightingsForView(
+        entries,
+        viewName,
+        variableName,
+      )) {
+        resolvedTypes.push(await resolveBladeViewVariableSightingType(sighting));
 
-      const visitedPaths = new Set(activePath ? [activePath] : []);
-
-      for (const result of searchResults.flat()) {
         if (!isRequestedRootActive()) {
-          return new Map();
-        }
-
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
-
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
-          if (!isRequestedRootActive()) {
-            return new Map();
-          }
-
-          addVariables(content);
-        } catch {
-          if (!isRequestedRootActive()) {
-            return new Map();
-          }
+          return null;
         }
       }
 
-      return variableTypes;
+      return mergeBladeViewVariableResolvedTypes(resolvedTypes);
     },
     [
-      activeDocument,
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      resolvePhpDeclaredType,
-      textSearch,
+      ensureBladeViewDataEntriesLoaded,
+      resolveBladeViewVariableSightingType,
       workspaceRoot,
     ],
   );
 
-  // Scans `resources/views/components` for component blade files and returns
-  // their dotted component names (without the `.blade.php` / `/index.blade.php`
-  // suffix). Reuses the directory-walk shape of collectPhpLaravelViewTargets;
-  // re-checks the active workspace after each readDirectory await so a tab
-  // switch drops in-flight results (per-project isolation).
+  // Returns the workspace's Blade component tag names for `<x-` completion:
+  // anonymous blade views under resources/views/components (dotted names
+  // without the `.blade.php` / `/index.blade.php` suffix) merged with
+  // class-based components under app/View/Components (PascalCase segments
+  // kebab-cased, Laravel convention). The scan result is cached per workspace
+  // root (see bladeComponentNamesByRootRef) so the completion hot path stays
+  // off the file system; the walk re-checks the active workspace after each
+  // readDirectory await and before the cache write, so a tab switch drops
+  // in-flight results (per-project isolation).
   const collectBladeComponentNames = useCallback(async (): Promise<string[]> => {
     const requestedRoot = workspaceRoot;
     const isRequestedRootActive = () =>
@@ -21672,13 +21833,19 @@ export function useWorkbenchController(
       return [];
     }
 
-    const componentsRoot = joinWorkspacePath(
-      requestedRoot,
-      "resources/views/components",
-    );
+    const cachedNames = bladeComponentNamesByRootRef.current[requestedRoot];
+
+    if (cachedNames) {
+      return cachedNames;
+    }
+
     const names = new Set<string>();
 
-    const visitDirectory = async (directory: string): Promise<void> => {
+    const visitDirectory = async (
+      directory: string,
+      addEntry: (relativePath: string) => void,
+      scanRoot: string,
+    ): Promise<void> => {
       let entries: FileEntry[];
 
       try {
@@ -21697,111 +21864,96 @@ export function useWorkbenchController(
         }
 
         if (entry.kind === "directory") {
-          await visitDirectory(entry.path);
+          await visitDirectory(entry.path, addEntry, scanRoot);
           continue;
         }
 
-        if (!entry.name.endsWith(".blade.php")) {
-          continue;
-        }
+        addEntry(relativeWorkspacePath(scanRoot, entry.path));
+      }
+    };
 
-        const relativePath = relativeWorkspacePath(componentsRoot, entry.path);
+    const componentsRoot = joinWorkspacePath(
+      requestedRoot,
+      BLADE_ANONYMOUS_COMPONENTS_DIR,
+    );
+    await visitDirectory(
+      componentsRoot,
+      (relativePath) => {
         const componentName = bladeComponentNameFromRelativePath(relativePath);
 
         if (componentName) {
           names.add(componentName);
         }
-      }
-    };
+      },
+      componentsRoot,
+    );
 
-    await visitDirectory(componentsRoot);
+    const classComponentsRoot = joinWorkspacePath(
+      requestedRoot,
+      BLADE_CLASS_COMPONENTS_DIR,
+    );
+    await visitDirectory(
+      classComponentsRoot,
+      (relativePath) => {
+        const componentName =
+          bladeComponentNameFromClassRelativePath(relativePath);
+
+        if (componentName) {
+          names.add(componentName);
+        }
+      },
+      classComponentsRoot,
+    );
 
     if (!isRequestedRootActive()) {
       return [];
     }
 
-    return Array.from(names).sort((left, right) => left.localeCompare(right));
+    const sortedNames = Array.from(names).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    bladeComponentNamesByRootRef.current[requestedRoot] = sortedNames;
+
+    return sortedNames;
   }, [workspaceFiles, workspaceRoot]);
 
-  const collectBladeViewVariableContexts = useCallback(
-    async (viewName: string): Promise<BladeViewVariableContext[]> => {
+  // Drops the cached component names for `root` when a file under either Blade
+  // component directory changes so the next `<x-` completion re-scans. Mirrors
+  // invalidatePhpLaravelMigrationSourcesForPath.
+  const invalidateBladeComponentNamesForPath = useCallback(
+    (root: string, path: string): void => {
+      if (!isBladeComponentSourcePath(root, path)) {
+        return;
+      }
+
+      delete bladeComponentNamesByRootRef.current[root];
+    },
+    [],
+  );
+
+  // The variables every controller passes to `viewName`, served from the
+  // per-root view-data cache (no workspace scan on the hot path). Display
+  // type hints are merged conservatively in the domain layer: hinted sightings
+  // must agree or the hint is dropped.
+  const collectBladeViewVariables = useCallback(
+    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !isLaravelFrameworkActive) {
+      if (!requestedRoot) {
         return [];
       }
 
-      const variables = new Map<string, BladeViewVariableContext>();
-      const addVariables = (source: string) => {
-        for (const variable of phpLaravelViewVariablesForView(source, viewName)) {
-          variables.set(variable.name, { source, variable });
-        }
-      };
-      const activePath = activeDocument?.path ?? "";
+      const entries = await ensureBladeViewDataEntriesLoaded(requestedRoot);
 
-      if (activeDocument?.content && isPhpPath(activePath)) {
-        addVariables(activeDocument.content);
-      }
-
-      const searchResults = await Promise.all(
-        ["view(", "View::make", "->with(", "compact("].map((query) =>
-          textSearch.searchText(requestedRoot, query, 200),
-        ),
-      );
-
-      if (!isRequestedRootActive()) {
+      if (!entries || !isRequestedRootActive()) {
         return [];
       }
 
-      const visitedPaths = new Set(activePath ? [activePath] : []);
-
-      for (const result of searchResults.flat()) {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
-
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          addVariables(content);
-        } catch {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-        }
-      }
-
-      return Array.from(variables.values()).sort((left, right) =>
-        left.variable.name.localeCompare(right.variable.name),
-      );
+      return bladeViewVariablesForViewFromEntries(entries, viewName);
     },
-    [
-      activeDocument,
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      textSearch,
-      workspaceRoot,
-    ],
-  );
-
-  const collectBladeViewVariables = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewVariable[]> =>
-      (await collectBladeViewVariableContexts(viewName)).map(
-        (context) => context.variable,
-      ),
-    [collectBladeViewVariableContexts],
+    [ensureBladeViewDataEntriesLoaded, workspaceRoot],
   );
 
   // Completion for `.blade.php` documents: `@directive` names (pure filter of
@@ -21860,21 +22012,19 @@ export function useWorkbenchController(
           void ensurePhpLaravelProviderSourcesLoaded(requestedRoot);
         }
 
-        const variableContexts = await collectBladeViewVariableContexts(viewName);
+        // The receiver type comes from the reverse `view -> controllers`
+        // mapping: every controller sighting of this variable is resolved
+        // (declared hint first, full expression engine second) and the types
+        // must agree - a conflict or an unknown type yields NO completions
+        // rather than guessed ones.
+        const resolvedType = await resolveBladeViewVariableTypeForView(
+          viewName,
+          `$${memberCompletion.variableName}`,
+        );
 
         if (!isRequestedRootActive()) {
           return [];
         }
-
-        const variableContext = variableContexts.find(
-          (context) => context.variable.name === `$${memberCompletion.variableName}`,
-        );
-        const resolvedType = variableContext?.variable.typeHint
-          ? resolvePhpDeclaredType(
-              variableContext.source,
-              variableContext.variable.typeHint,
-            )
-          : null;
 
         if (!resolvedType) {
           return [];
@@ -21957,6 +22107,28 @@ export function useWorkbenchController(
         }));
       }
 
+      if (isLaravelFrameworkActive) {
+        const helperCompletion = bladeLaravelHelperCompletionContextAt(
+          source,
+          position,
+        );
+
+        if (helperCompletion) {
+          return provideBladeLaravelHelperCompletionItems(
+            helperCompletion,
+            offset,
+            {
+              collectPhpLaravelConfigTargets,
+              collectPhpLaravelNamedRouteTargets,
+              collectPhpLaravelTranslationTargets,
+              currentDocumentContent: source,
+              currentDocumentPath: activeDocument?.path ?? "",
+              isRequestedRootActive,
+            },
+          );
+        }
+      }
+
       const reference = detectBladeReferenceAt(source, offset);
 
       if (reference?.kind === "view") {
@@ -21981,14 +22153,23 @@ export function useWorkbenchController(
           }));
       }
 
-      if (reference?.kind === "component") {
+      // Component tags use a dedicated completion detector so the list appears
+      // the moment `<x-` is typed (empty prefix) and keeps appearing after a
+      // trailing segment dot (`<x-forms.`), unlike the conservative navigation
+      // reference detector.
+      const componentCompletion = detectBladeComponentCompletionAt(
+        source,
+        offset,
+      );
+
+      if (componentCompletion) {
         const componentNames = await collectBladeComponentNames();
 
         if (!isRequestedRootActive()) {
           return [];
         }
 
-        const normalizedPrefix = reference.name.toLowerCase();
+        const normalizedPrefix = componentCompletion.prefix.toLowerCase();
 
         return componentNames
           .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
@@ -21998,8 +22179,8 @@ export function useWorkbenchController(
             insertText: name,
             kind: "component",
             label: name,
-            replaceEnd: reference.nameEnd,
-            replaceStart: reference.nameStart,
+            replaceEnd: componentCompletion.replaceEnd,
+            replaceStart: componentCompletion.replaceStart,
           }));
       }
 
@@ -22008,13 +22189,15 @@ export function useWorkbenchController(
     [
       activeDocument,
       collectBladeComponentNames,
-      collectBladeViewVariableContexts,
       collectBladeViewVariables,
+      collectPhpLaravelConfigTargets,
+      collectPhpLaravelNamedRouteTargets,
+      collectPhpLaravelTranslationTargets,
       collectPhpLaravelViewTargets,
       ensurePhpLaravelMigrationSourcesLoaded,
       ensurePhpLaravelProviderSourcesLoaded,
       isLaravelFrameworkActive,
-      resolvePhpDeclaredType,
+      resolveBladeViewVariableTypeForView,
       resolvePhpReceiverMethodCompletions,
       workspaceRoot,
     ],
@@ -22971,7 +23154,7 @@ export function useWorkbenchController(
       }
 
       if (isLaravelFrameworkActive) {
-        const helper = detectLaravelStringLiteralHelper(source, offset);
+        const helper = bladeLaravelStringLiteralHelperAt(source, offset);
 
         if (helper?.helper === "view") {
           if (!resolveLaravelViewTarget(helper.literal)) {
@@ -23013,6 +23196,38 @@ export function useWorkbenchController(
             : false;
         }
 
+        if (helper?.helper === "config") {
+          if (!resolveLaravelConfigTarget(helper.literal)) {
+            return false;
+          }
+
+          const target = await findPhpLaravelConfigTarget(helper.literal);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          return target
+            ? openNavigationTarget(target.path, target.position, target.key)
+            : false;
+        }
+
+        if (helper?.helper === "trans") {
+          if (!resolveLaravelTransTarget(helper.literal)) {
+            return false;
+          }
+
+          const target = await findPhpLaravelTranslationTarget(helper.literal);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          return target
+            ? openNavigationTarget(target.path, target.position, target.key)
+            : false;
+        }
+
         const memberContext = phpIdentifierContextAt(
           source,
           editorPositionAtOffset(source, offset),
@@ -23028,7 +23243,7 @@ export function useWorkbenchController(
             : "";
           const viewName = phpLaravelViewNameFromRelativePath(relativePath);
           const variableName = memberContext.variableName
-            ? `$${memberContext.variableName}`.toLowerCase()
+            ? `$${memberContext.variableName}`
             : "";
           const memberName =
             memberContext.kind === "methodCall"
@@ -23036,13 +23251,14 @@ export function useWorkbenchController(
               : memberContext.propertyName;
 
           if (viewName && variableName && memberName) {
-            const variableTypes = await collectBladeViewVariableTypes(viewName);
+            const className = await resolveBladeViewVariableTypeForView(
+              viewName,
+              variableName,
+            );
 
             if (!isRequestedRootActive()) {
               return false;
             }
-
-            const className = variableTypes.get(variableName);
 
             if (className) {
               const openedMethod = await openDirectPhpMethodTarget(
@@ -23085,12 +23301,11 @@ export function useWorkbenchController(
         return false;
       }
 
+      // Components probe the class-based PHP file before the anonymous blade
+      // view (PhpStorm parity — Laravel resolves a class component first too).
       const candidateRelativePaths =
         reference.kind === "component"
-          ? [
-              ...bladeComponentCandidateRelativePaths(reference.name),
-              ...bladeComponentClassCandidatePaths(reference.name),
-            ]
+          ? bladeComponentNavigationCandidateRelativePaths(reference.name)
           : reference.kind === "view"
             ? bladeViewCandidateRelativePaths(reference.name)
             : [];
@@ -23131,8 +23346,9 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      collectBladeViewVariableTypes,
       collectPhpLaravelNamedRouteTargets,
+      findPhpLaravelConfigTarget,
+      findPhpLaravelTranslationTarget,
       findPhpLaravelViewTarget,
       isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
@@ -23140,6 +23356,7 @@ export function useWorkbenchController(
       openNavigationTarget,
       openPhpLaravelModelAttributeTarget,
       readNavigationFileContent,
+      resolveBladeViewVariableTypeForView,
       workspaceRoot,
     ],
   );
@@ -26896,12 +27113,16 @@ export function useWorkbenchController(
 
       queueWorkspaceGitStatusRefresh(requestedRoot);
 
-      // Drop the cached migration / provider sources when anything under
-      // database/migrations or app/Providers changes so the next completion
-      // reloads the DB columns / Builder macros. Covers create/modify/delete and
+      // Drop the cached migration / provider sources / Blade component names /
+      // Blade view-data entries when anything under database/migrations,
+      // app/Providers, the Blade component directories, or any PHP file
+      // changes so the next completion reloads the DB columns / Builder macros
+      // / component tags / view variables. Covers create/modify/delete and
       // both ends of a rename.
       invalidatePhpLaravelMigrationSourcesForPath(requestedRoot, event.path);
       invalidatePhpLaravelProviderSourcesForPath(requestedRoot, event.path);
+      invalidateBladeComponentNamesForPath(requestedRoot, event.path);
+      invalidateBladeViewDataEntriesForPath(requestedRoot, event.path);
 
       if (event.previousPath) {
         invalidatePhpLaravelMigrationSourcesForPath(
@@ -26909,6 +27130,14 @@ export function useWorkbenchController(
           event.previousPath,
         );
         invalidatePhpLaravelProviderSourcesForPath(
+          requestedRoot,
+          event.previousPath,
+        );
+        invalidateBladeComponentNamesForPath(
+          requestedRoot,
+          event.previousPath,
+        );
+        invalidateBladeViewDataEntriesForPath(
           requestedRoot,
           event.previousPath,
         );
@@ -26940,6 +27169,8 @@ export function useWorkbenchController(
     [
       handleExternalRemovedPath,
       forgetExternallyRemovedDocumentPath,
+      invalidateBladeComponentNamesForPath,
+      invalidateBladeViewDataEntriesForPath,
       invalidatePhpLaravelMigrationSourcesForPath,
       invalidatePhpLaravelProviderSourcesForPath,
       queueWorkspaceGitStatusRefresh,
@@ -31842,9 +32073,139 @@ function bladeComponentNameFromRelativePath(relativePath: string): string | null
 }
 
 const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
-  { detail: "Laravel Blade variable", name: "$errors", typeHint: "ViewErrorBag" },
-  { detail: "Laravel Blade variable", name: "$loop", typeHint: "Loop" },
+  {
+    detail: "Laravel Blade variable",
+    name: "$errors",
+    typeHint: "ViewErrorBag",
+    valueExpression: null,
+    valueOffset: null,
+  },
+  {
+    detail: "Laravel Blade variable",
+    name: "$loop",
+    typeHint: "Loop",
+    valueExpression: null,
+    valueOffset: null,
+  },
 ];
+
+/**
+ * Workspace text-search queries that locate every construct feeding data into
+ * a Blade view (`view('x', [...])` / `View::make` / `->with(...)` /
+ * `compact(...)`). The hits are read once and cached per root as parsed
+ * view-data entries (see ensureBladeViewDataEntriesLoaded).
+ */
+const BLADE_VIEW_DATA_SEARCH_QUERIES = [
+  "view(",
+  "View::make",
+  "->with(",
+  "compact(",
+] as const;
+
+interface BladeLaravelHelperCompletionDependencies {
+  collectPhpLaravelConfigTargets: () => Promise<PhpLaravelConfigTarget[]>;
+  collectPhpLaravelNamedRouteTargets: (
+    currentSource: string,
+    currentPath: string,
+  ) => Promise<PhpLaravelNamedRouteTarget[]>;
+  collectPhpLaravelTranslationTargets: () => Promise<PhpLaravelTranslationTarget[]>;
+  currentDocumentContent: string;
+  currentDocumentPath: string;
+  isRequestedRootActive: () => boolean;
+}
+
+/**
+ * Resolves `route()` / `config()` / `trans()` / `__()` string-literal
+ * completions for Blade files by reusing the same target collectors and
+ * insert-text formatting the PHP completion path uses
+ * (`providePhpMethodCompletions`). Kept as a thin, isolation-guarded adapter
+ * over `bladeLaravelHelperCompletionContextAt` so the target-collection and
+ * insert-text logic is never duplicated.
+ */
+async function provideBladeLaravelHelperCompletionItems(
+  helperCompletion: BladeLaravelHelperCompletionContext,
+  offset: number,
+  dependencies: BladeLaravelHelperCompletionDependencies,
+): Promise<BladeCompletionItem[]> {
+  const replaceStart = offset - helperCompletion.prefix.length;
+  const replaceEnd = offset;
+  const normalizedPrefix = helperCompletion.prefix.toLowerCase();
+
+  if (helperCompletion.kind === "route") {
+    const routes = await dependencies.collectPhpLaravelNamedRouteTargets(
+      dependencies.currentDocumentContent,
+      dependencies.currentDocumentPath,
+    );
+
+    if (!dependencies.isRequestedRootActive()) {
+      return [];
+    }
+
+    return routes
+      .filter((route) => route.name.toLowerCase().startsWith(normalizedPrefix))
+      .slice(0, 80)
+      .map((route) => ({
+        detail: route.relativePath ?? undefined,
+        insertText: phpNamedRouteCompletionInsertText(
+          route.name,
+          helperCompletion.prefix,
+        ),
+        kind: "helper" as const,
+        label: route.name,
+        replaceEnd,
+        replaceStart,
+      }));
+  }
+
+  if (helperCompletion.kind === "trans") {
+    const targets = await dependencies.collectPhpLaravelTranslationTargets();
+
+    if (!dependencies.isRequestedRootActive()) {
+      return [];
+    }
+
+    return targets
+      .filter((target) => target.key.toLowerCase().startsWith(normalizedPrefix))
+      .slice(0, 80)
+      .map((target) => ({
+        detail: target.relativePath,
+        insertText: target.relativePath.endsWith(".json")
+          ? phpLaravelJsonTranslationCompletionInsertText(
+              target.key,
+              helperCompletion.prefix,
+            )
+          : phpLaravelTranslationCompletionInsertText(
+              target.key,
+              helperCompletion.prefix,
+            ),
+        kind: "helper" as const,
+        label: target.key,
+        replaceEnd,
+        replaceStart,
+      }));
+  }
+
+  const targets = await dependencies.collectPhpLaravelConfigTargets();
+
+  if (!dependencies.isRequestedRootActive()) {
+    return [];
+  }
+
+  return targets
+    .filter((target) => target.key.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, 80)
+    .map((target) => ({
+      detail: target.relativePath,
+      insertText: phpLaravelConfigCompletionInsertText(
+        target.key,
+        helperCompletion.prefix,
+      ),
+      kind: "helper" as const,
+      label: target.key,
+      replaceEnd,
+      replaceStart,
+    }));
+}
 
 const BLADE_LARAVEL_HELPERS = [
   {

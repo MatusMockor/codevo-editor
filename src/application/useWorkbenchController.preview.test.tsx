@@ -53111,7 +53111,7 @@ class Comment extends Model
       expect(getWorkbench().activePath).toBe(componentClassPath);
     });
 
-    it("prefers the anonymous blade view over the class-based PHP file when both exist", async () => {
+    it("prefers the class-based PHP file over the anonymous blade view when both exist (PhpStorm parity)", async () => {
       const bladePath = "/workspace/resources/views/show.blade.php";
       const componentBladePath =
         "/workspace/resources/views/components/alert.blade.php";
@@ -53156,7 +53156,50 @@ class Comment extends Model
       });
 
       expect(handled).toBe(true);
-      expect(getWorkbench().activePath).toBe(componentBladePath);
+      expect(getWorkbench().activePath).toBe(componentClassPath);
+    });
+
+    it("navigates a kebab-case <x-...> component to its PascalCase class file", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const componentClassPath =
+        "/workspace/app/View/Components/UserProfile.php";
+      const bladeSource = "<x-user-profile />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentClassPath) {
+            return "<?php\n\nnamespace App\\View\\Components;\n\nclass UserProfile {}\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("user-profile") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentClassPath);
     });
 
     it("does not navigate an <x-...> component when neither blade nor class file exists", async () => {
@@ -53397,6 +53440,8 @@ class Comment extends Model
       const componentsRoot = "/workspace/resources/views/components";
       const formsDirectory =
         "/workspace/resources/views/components/forms";
+      const classComponentsRoot = "/workspace/app/View/Components";
+      const classFormsDirectory = "/workspace/app/View/Components/Forms";
       const { getWorkbench } = renderController({
         appSettings: {
           ...defaultAppSettings(),
@@ -53411,6 +53456,21 @@ class Comment extends Model
             return [
               fileEntry(`${formsDirectory}/input.blade.php`, "input.blade.php"),
               fileEntry(`${formsDirectory}/select.blade.php`, "select.blade.php"),
+            ];
+          }
+
+          if (path === classComponentsRoot) {
+            return [
+              directoryEntry(classFormsDirectory, "Forms"),
+              fileEntry(`${classComponentsRoot}/Alert.php`, "Alert.php"),
+            ];
+          }
+
+          if (path === classFormsDirectory) {
+            return [
+              fileEntry(`${classFormsDirectory}/TextInput.php`, "TextInput.php"),
+              // Non-component helper: lowercase name must never surface.
+              fileEntry(`${classFormsDirectory}/helpers.php`, "helpers.php"),
             ];
           }
 
@@ -53434,10 +53494,146 @@ class Comment extends Model
       });
 
       const labels = completions.map((completion) => completion.label).sort();
-      expect(labels).toEqual(["forms.input", "forms.select"]);
+      expect(labels).toEqual([
+        "forms.input",
+        "forms.select",
+        "forms.text-input",
+      ]);
     expect(
       completions.every((completion) => completion.kind === "component"),
     ).toBe(true);
+  });
+
+  it("lists anonymous and class-based components right after typing <x-", async () => {
+    const bladeSource = "<x-\n";
+    const componentsRoot = "/workspace/resources/views/components";
+    const classComponentsRoot = "/workspace/app/View/Components";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) => {
+        if (path === componentsRoot) {
+          return [
+            fileEntry(`${componentsRoot}/badge.blade.php`, "badge.blade.php"),
+          ];
+        }
+
+        if (path === classComponentsRoot) {
+          return [
+            fileEntry(`${classComponentsRoot}/Alert.php`, "Alert.php"),
+            fileEntry(
+              `${classComponentsRoot}/UserProfile.php`,
+              "UserProfile.php",
+            ),
+          ];
+        }
+
+        return [];
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("\n") + 1,
+        lineNumber: 1,
+      });
+    });
+
+    const labels = completions.map((completion) => completion.label).sort();
+    expect(labels).toEqual(["alert", "badge", "user-profile"]);
+  });
+
+  it("caches the component scan per root and re-scans after a component file change", async () => {
+    const bladeSource = "<x-\n";
+    const componentsRoot = "/workspace/resources/views/components";
+    let includeBadge = false;
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) => {
+        if (path === componentsRoot) {
+          const entries = [
+            fileEntry(`${componentsRoot}/alert.blade.php`, "alert.blade.php"),
+          ];
+
+          if (includeBadge) {
+            entries.push(
+              fileEntry(`${componentsRoot}/badge.blade.php`, "badge.blade.php"),
+            );
+          }
+
+          return entries;
+        }
+
+        return [];
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    const completeComponents = async (): Promise<string[]> => {
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(
+          bladeSource,
+          {
+            column: bladeSource.indexOf("\n") + 1,
+            lineNumber: 1,
+          },
+        );
+      });
+
+      return completions.map((completion) => completion.label).sort();
+    };
+
+    expect(await completeComponents()).toEqual(["alert"]);
+
+    // The scan is cached: a new file on disk is not picked up until a watcher
+    // event under a component directory invalidates the per-root cache.
+    includeBadge = true;
+    expect(await completeComponents()).toEqual(["alert"]);
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "created",
+        path: `${componentsRoot}/badge.blade.php`,
+        relativePath: "resources/views/components/badge.blade.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(await completeComponents()).toEqual(["alert", "badge"]);
   });
 
   it("suggests variables passed from a controller into the active Blade view", async () => {
@@ -53651,6 +53847,629 @@ class Comment extends Model
       ]),
     );
     expect(readTextFile).toHaveBeenCalledWith(modelPath);
+  });
+
+  it("suggests typed Blade members from a route-model-bound controller parameter", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const modelPath = "/workspace/app/Models/Comment.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $comment-> }}\n";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): mixed
+    {
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'body',
+    ];
+
+    public function excerpt(): string
+    {
+        return '';
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === modelPath) {
+        return modelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          insertText: "body",
+          kind: "member",
+          label: "body",
+        }),
+        expect.objectContaining({
+          insertText: "excerpt()",
+          kind: "member",
+          label: "excerpt",
+        }),
+      ]),
+    );
+  });
+
+  it("does not offer model members for a collection-valued Blade variable", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const modelPath = "/workspace/app/Models/Comment.php";
+    const bladePath = "/workspace/resources/views/comments/index.blade.php";
+    const bladeSource = "{{ $comments-> }}\n";
+    // The value expression is an Eloquent COLLECTION (`...->get()`), so the
+    // full expression engine must win over the cheap `$comments = Comment::`
+    // declared-hint heuristic - offering Comment model members on a
+    // Collection would be wrong completions.
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function index(): mixed
+    {
+        $comments = Comment::query()->where('approved', 1)->get();
+
+        return view('comments.index', ['comments' => $comments]);
+    }
+}
+`;
+    const modelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = ['body'];
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 11,
+              lineText: "return view('comments.index', ['comments' => $comments]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === modelPath) {
+        return modelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "index.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$comments->") + "$comments->".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(
+      completions.map((completion) => completion.label),
+    ).not.toContain("body");
+  });
+
+  it("skips Blade member completions when controllers pass conflicting types", async () => {
+    const commentControllerPath =
+      "/workspace/app/Http/Controllers/CommentController.php";
+    const postControllerPath =
+      "/workspace/app/Http/Controllers/PostCommentController.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $comment-> }}\n";
+    const commentControllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const postControllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Post;
+
+class PostCommentController
+{
+    public function show(): mixed
+    {
+        $comment = Post::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = ['body'];
+}
+`;
+    const postModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+    protected $fillable = ['title'];
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: commentControllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: postControllerPath,
+              relativePath: "app/Http/Controllers/PostCommentController.php",
+            },
+          ]
+        : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === bladePath) {
+        return bladeSource;
+      }
+
+      if (path === commentControllerPath) {
+        return commentControllerSource;
+      }
+
+      if (path === postControllerPath) {
+        return postControllerSource;
+      }
+
+      if (path === "/workspace/app/Models/Comment.php") {
+        return commentModelSource;
+      }
+
+      if (path === "/workspace/app/Models/Post.php") {
+        return postModelSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual([]);
+  });
+
+  it("serves Blade view-data completions from the per-root cache and reloads after a PHP file change", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $co }}\n";
+    const controllerSource = `<?php
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    let publishFileChange: ((event: WorkspaceFileChangeEvent) => void) | null =
+      null;
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceFileChangeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    const completeVariables = async () => {
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: bladeSource.indexOf("$co") + "$co".length + 1,
+          lineNumber: 1,
+        });
+      });
+      return completions;
+    };
+
+    const first = await completeVariables();
+    expect(first.map((completion) => completion.label)).toContain("$comment");
+
+    await completeVariables();
+    await completeVariables();
+
+    const viewSearches = searchText.mock.calls.filter(
+      ([, query]) => query === "view(",
+    );
+    expect(viewSearches).toHaveLength(1);
+
+    // A controller changes on disk: the watcher event must invalidate the
+    // per-root view-data cache so the next completion re-scans the workspace.
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: controllerPath,
+        relativePath: "app/Http/Controllers/CommentController.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await completeVariables();
+
+    const viewSearchesAfterChange = searchText.mock.calls.filter(
+      ([, query]) => query === "view(",
+    );
+    expect(viewSearchesAfterChange).toHaveLength(2);
+  });
+
+  it("shares one in-flight Blade view-data load between concurrent completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $co }}\n";
+    const controllerSource = `<?php
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const deferredViewSearch = createDeferred<
+      {
+        column: number;
+        lineNumber: number;
+        lineText: string;
+        path: string;
+        relativePath: string;
+      }[]
+    >();
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view(" ? deferredViewSearch.promise : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    const position = {
+      column: bladeSource.indexOf("$co") + "$co".length + 1,
+      lineNumber: 1,
+    };
+    let firstPromise: Promise<
+      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+    > = Promise.resolve([]);
+    let secondPromise: Promise<
+      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+    > = Promise.resolve([]);
+    await act(async () => {
+      firstPromise = getWorkbench().provideBladeCompletions(
+        bladeSource,
+        position,
+      );
+      secondPromise = getWorkbench().provideBladeCompletions(
+        bladeSource,
+        position,
+      );
+      await Promise.resolve();
+    });
+
+    deferredViewSearch.resolve([
+      {
+        column: 16,
+        lineNumber: 10,
+        lineText: "return view('comments.show', ['comment' => $comment]);",
+        path: controllerPath,
+        relativePath: "app/Http/Controllers/CommentController.php",
+      },
+    ]);
+
+    let first: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    let second: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      first = await firstPromise;
+      second = await secondPromise;
+    });
+
+    expect(first.map((completion) => completion.label)).toContain("$comment");
+    expect(second.map((completion) => completion.label)).toContain("$comment");
+
+    const viewSearches = searchText.mock.calls.filter(
+      ([, query]) => query === "view(",
+    );
+    expect(viewSearches).toHaveLength(1);
+  });
+
+  it("drops stale Blade view-data results after switching project tabs mid-search", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const bladePath = "/workspace-a/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $comment-> }}\n";
+    const staleSearch = createDeferred<
+      { column: number; lineNumber: number; lineText: string; path: string; relativePath: string }[]
+    >();
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view(" ? staleSearch.promise : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completionsPromise: Promise<
+      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+    > = Promise.resolve([]);
+    await act(async () => {
+      completionsPromise = getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
+        lineNumber: 1,
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleSearch.resolve([
+      {
+        column: 16,
+        lineNumber: 10,
+        lineText: "return view('comments.show', ['comment' => $comment]);",
+        path: controllerPath,
+        relativePath: "app/Http/Controllers/CommentController.php",
+      },
+    ]);
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await completionsPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(completions).toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
   it("suggests Laravel built-in Blade variables by prefix", async () => {
