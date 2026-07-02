@@ -53108,10 +53108,157 @@ class SendShipmentNotification
 
       const labels = completions.map((completion) => completion.label).sort();
       expect(labels).toEqual(["forms.input", "forms.select"]);
-      expect(
-        completions.every((completion) => completion.kind === "component"),
-      ).toBe(true);
+    expect(
+      completions.every((completion) => completion.kind === "component"),
+    ).toBe(true);
+  });
+
+  it("suggests variables passed from a controller into the active Blade view", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const bladePath = "/workspace/resources/views/comments/show.blade.php";
+    const bladeSource = "{{ $co }}\n";
+    const controllerSource = `<?php
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        $comment = Comment::findOrFail(1);
+
+        return view('comments.show', ['comment' => $comment]);
+    }
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "view("
+        ? [
+            {
+              column: 16,
+              lineNumber: 10,
+              lineText: "return view('comments.show', ['comment' => $comment]);",
+              path: controllerPath,
+              relativePath: "app/Http/Controllers/CommentController.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === bladePath) {
+          return bladeSource;
+        }
+
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
     });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$co") + "$co".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "view data · Comment",
+          insertText: "$comment",
+          kind: "variable",
+          label: "$comment",
+        }),
+      ]),
+    );
+    expect(searchText).toHaveBeenCalledWith("/workspace", "view(", 200);
+  });
+
+  it("suggests Laravel built-in Blade variables by prefix", async () => {
+    const bladeSource = "{{ $e }}\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("$e") + "$e".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual([
+      expect.objectContaining({
+        detail: "Laravel Blade variable · ViewErrorBag",
+        insertText: "$errors",
+        kind: "variable",
+        label: "$errors",
+      }),
+    ]);
+  });
+
+  it("suggests Laravel helpers in Blade echo contexts", async () => {
+    const bladeSource = "{{ ro }}\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    let completions: Awaited<
+      ReturnType<WorkbenchController["provideBladeCompletions"]>
+    > = [];
+    await act(async () => {
+      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        column: bladeSource.indexOf("ro") + "ro".length + 1,
+        lineNumber: 1,
+      });
+    });
+
+    expect(completions).toEqual([
+      expect.objectContaining({
+        insertText: "route()",
+        kind: "helper",
+        label: "route",
+      }),
+    ]);
+  });
   });
 
   it("suggests Laravel Blade views inside view helper strings", async () => {

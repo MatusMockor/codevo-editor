@@ -266,7 +266,12 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
  * data the Monaco provider maps to `Monaco.languages.CompletionItem`. The kind
  * picks the Monaco icon (directive → keyword, view → file, component → field).
  */
-export type BladeCompletionKind = "directive" | "view" | "component";
+export type BladeCompletionKind =
+  | "directive"
+  | "view"
+  | "component"
+  | "variable"
+  | "helper";
 
 export interface BladeCompletion {
   detail?: string;
@@ -1093,6 +1098,14 @@ function monacoBladeCompletionKind(
 
   if (kind === "component") {
     return monaco.languages.CompletionItemKind.Field;
+  }
+
+  if (kind === "variable") {
+    return monaco.languages.CompletionItemKind.Variable;
+  }
+
+  if (kind === "helper") {
+    return monaco.languages.CompletionItemKind.Function;
   }
 
   return monaco.languages.CompletionItemKind.Keyword;

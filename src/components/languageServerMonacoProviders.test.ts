@@ -10236,6 +10236,56 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     );
   });
 
+  it("maps blade variable and helper completions to distinct Monaco kinds", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{{ $co }} {{ ro }}\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "view data · Comment",
+        insertText: "$comment",
+        kind: "variable" as const,
+        label: "$comment",
+        replaceEnd: source.indexOf("$co") + "$co".length,
+        replaceStart: source.indexOf("$co"),
+      },
+      {
+        detail: "Laravel helper",
+        insertText: "route()",
+        kind: "helper" as const,
+        label: "route",
+        replaceEnd: source.indexOf("ro") + "ro".length,
+        replaceStart: source.indexOf("ro"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      { column: source.indexOf("$co") + "$co".length + 1, lineNumber: 1 },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        detail: "view data · Comment",
+        insertText: "$comment",
+        kind: registered.monaco.languages.CompletionItemKind.Variable,
+        label: "$comment",
+      }),
+      expect.objectContaining({
+        insertText: "route()",
+        kind: registered.monaco.languages.CompletionItemKind.Function,
+        label: "route",
+      }),
+    ]);
+  });
+
   it("offers built-in blade live-template snippets alongside controller completions", async () => {
     const registered = createRegisteredProviders();
     const source = "@fore\n";

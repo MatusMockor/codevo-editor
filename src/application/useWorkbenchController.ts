@@ -437,6 +437,10 @@ import {
   type PhpLaravelViewTarget,
 } from "../domain/phpLaravelViews";
 import {
+  phpLaravelViewVariablesForView,
+  type PhpLaravelViewVariable,
+} from "../domain/phpLaravelViewData";
+import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
 } from "../domain/phpLaravelValidation";
@@ -823,7 +827,7 @@ export interface PhpCodeActionRange {
 export interface BladeCompletionItem {
   detail?: string;
   insertText: string;
-  kind: "directive" | "view" | "component";
+  kind: "directive" | "view" | "component" | "variable" | "helper";
   label: string;
   replaceStart?: number;
   replaceEnd?: number;
@@ -21618,6 +21622,79 @@ export function useWorkbenchController(
     return Array.from(names).sort((left, right) => left.localeCompare(right));
   }, [workspaceFiles, workspaceRoot]);
 
+  const collectBladeViewVariables = useCallback(
+    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !isLaravelFrameworkActive) {
+        return [];
+      }
+
+      const variables = new Map<string, PhpLaravelViewVariable>();
+      const addVariables = (source: string) => {
+        for (const variable of phpLaravelViewVariablesForView(source, viewName)) {
+          variables.set(variable.name, variable);
+        }
+      };
+      const activePath = activeDocument?.path ?? "";
+
+      if (activeDocument?.content && isPhpPath(activePath)) {
+        addVariables(activeDocument.content);
+      }
+
+      const searchResults = await Promise.all(
+        ["view(", "View::make", "->with(", "compact("].map((query) =>
+          textSearch.searchText(requestedRoot, query, 200),
+        ),
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      const visitedPaths = new Set(activePath ? [activePath] : []);
+
+      for (const result of searchResults.flat()) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          addVariables(content);
+        } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+        }
+      }
+
+      return Array.from(variables.values()).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+    },
+    [
+      activeDocument,
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   // Completion for `.blade.php` documents: `@directive` names (pure filter of
   // BLADE_DIRECTIVES), view names for @include/@extends/… literals (reusing the
   // resources/views scan), and `<x-...>` component names (components scan).
@@ -21638,6 +21715,7 @@ export function useWorkbenchController(
 
       const offset = bladeOffsetAtEditorPosition(source, position);
       const directiveCompletion = detectBladeDirectiveCompletionAt(source, offset);
+      const phpLikeCompletion = bladePhpLikeCompletionAt(source, offset);
 
       if (directiveCompletion) {
         const normalizedPrefix = directiveCompletion.directivePrefix.toLowerCase();
@@ -21654,6 +21732,54 @@ export function useWorkbenchController(
             replaceEnd: offset,
             replaceStart: directiveCompletion.start + 1,
           }));
+      }
+
+      if (phpLikeCompletion?.kind === "variable") {
+        const activePath = activeDocument?.path ?? "";
+        const relativePath = activePath
+          ? relativeWorkspacePath(requestedRoot, activePath)
+          : "";
+        const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+        const variables = viewName
+          ? await collectBladeViewVariables(viewName)
+          : [];
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return [...variables, ...BLADE_BUILT_IN_VARIABLES]
+          .filter((variable) =>
+            variable.name
+              .toLowerCase()
+              .startsWith(`$${phpLikeCompletion.prefix.toLowerCase()}`),
+          )
+          .slice(0, 100)
+          .map((variable) => ({
+            detail: variable.typeHint
+              ? `${variable.detail} · ${variable.typeHint}`
+              : variable.detail,
+            insertText: variable.name,
+            kind: "variable",
+            label: variable.name,
+            replaceEnd: phpLikeCompletion.end,
+            replaceStart: phpLikeCompletion.start,
+          }));
+      }
+
+      if (phpLikeCompletion?.kind === "helper") {
+        const normalizedPrefix = phpLikeCompletion.prefix.toLowerCase();
+
+        return BLADE_LARAVEL_HELPERS.filter((helper) =>
+          helper.label.toLowerCase().startsWith(normalizedPrefix),
+        ).map((helper) => ({
+          detail: helper.detail,
+          insertText: helper.insertText,
+          kind: "helper",
+          label: helper.label,
+          replaceEnd: phpLikeCompletion.end,
+          replaceStart: phpLikeCompletion.start,
+        }));
       }
 
       const reference = detectBladeReferenceAt(source, offset);
@@ -21704,7 +21830,13 @@ export function useWorkbenchController(
 
       return [];
     },
-    [collectBladeComponentNames, collectPhpLaravelViewTargets, workspaceRoot],
+    [
+      activeDocument,
+      collectBladeComponentNames,
+      collectBladeViewVariables,
+      collectPhpLaravelViewTargets,
+      workspaceRoot,
+    ],
   );
 
   const openPhpMethodHintTarget = useCallback(
@@ -31206,6 +31338,116 @@ function bladeComponentNameFromRelativePath(relativePath: string): string | null
   }
 
   return segments.join(".");
+}
+
+const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
+  { detail: "Laravel Blade variable", name: "$errors", typeHint: "ViewErrorBag" },
+  { detail: "Laravel Blade variable", name: "$loop", typeHint: "Loop" },
+];
+
+const BLADE_LARAVEL_HELPERS = [
+  {
+    detail: "Laravel helper",
+    insertText: "old()",
+    label: "old",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "route()",
+    label: "route",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "asset()",
+    label: "asset",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "config()",
+    label: "config",
+  },
+  {
+    detail: "Laravel translation helper",
+    insertText: "__()",
+    label: "__",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "csrf_field()",
+    label: "csrf_field",
+  },
+] as const;
+
+function bladePhpLikeCompletionAt(
+  source: string,
+  offset: number,
+):
+  | { end: number; kind: "variable"; prefix: string; start: number }
+  | { end: number; kind: "helper"; prefix: string; start: number }
+  | null {
+  const before = source.slice(0, offset);
+  const variableMatch = /\$([A-Za-z_][A-Za-z0-9_]*)?$/.exec(before);
+
+  if (variableMatch) {
+    return {
+      end: offset,
+      kind: "variable",
+      prefix: variableMatch[1] ?? "",
+      start: offset - variableMatch[0].length,
+    };
+  }
+
+  if (isInsideBladeStringLiteral(source, offset)) {
+    return null;
+  }
+
+  const helperMatch = /([A-Za-z_][A-Za-z0-9_]*|__)$/.exec(before);
+
+  if (!helperMatch?.[1]) {
+    return null;
+  }
+
+  const beforeHelper = before.slice(0, before.length - helperMatch[1].length);
+  const previousCharacter = beforeHelper[beforeHelper.length - 1] ?? "";
+
+  if (/[$>:\w.-]/.test(previousCharacter)) {
+    return null;
+  }
+
+  return {
+    end: offset,
+    kind: "helper",
+    prefix: helperMatch[1],
+    start: offset - helperMatch[1].length,
+  };
+}
+
+function isInsideBladeStringLiteral(source: string, offset: number): boolean {
+  const lineStart = source.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
+  let quote: "'" | "\"" | null = null;
+
+  for (let index = lineStart; index < offset; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+    }
+  }
+
+  return quote !== null;
 }
 
 /**

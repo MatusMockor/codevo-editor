@@ -51,20 +51,22 @@ export const qaSmokeProfiles = {
   },
   vitestBladeLaravelViews: {
     description:
-      "Targeted Blade/Laravel view support smoke for view helper/facade completion and navigation, Blade directive/component navigation, per-project isolation, and baseline diagnostics quietness.",
+      "Targeted Blade/Laravel view support smoke for view helper/facade completion and navigation, Blade directive/component navigation, view-data variables, per-project isolation, and baseline diagnostics quietness.",
     command: [
       "npm",
       "test",
       "--",
       "src/domain/phpLaravelViews.test.ts",
+      "src/domain/phpLaravelViewData.test.ts",
       "src/domain/bladeNavigation.test.ts",
       "src/components/languageServerMonacoProviders.test.ts",
       "src/application/useWorkbenchController.preview.test.tsx",
       "-t",
-      "phpLaravelViews|detectBladeReferenceAt|bladeViewCandidateRelativePaths|bladeComponentCandidateRelativePaths|bladeComponentClassCandidatePaths|registerLanguageServerMonacoProviders blade providers|Laravel Blade view|View::make|Route::view|basic Blade document|Blade Cmd\\+Click definition and completion",
+      "phpLaravelViews|phpLaravelViewDataBindings|detectBladeReferenceAt|bladeViewCandidateRelativePaths|bladeComponentCandidateRelativePaths|bladeComponentClassCandidatePaths|registerLanguageServerMonacoProviders blade providers|Laravel Blade view|View::make|Route::view|basic Blade document|Blade Cmd\\+Click definition and completion|variables passed from a controller|built-in Blade variables|Laravel helpers in Blade",
     ],
     files: [
       "src/domain/phpLaravelViews.test.ts",
+      "src/domain/phpLaravelViewData.test.ts",
       "src/domain/bladeNavigation.test.ts",
       "src/components/languageServerMonacoProviders.test.ts",
       "src/application/useWorkbenchController.preview.test.tsx",
