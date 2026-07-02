@@ -206,6 +206,18 @@ Každý slice: TDD (RED first) → nezávislý adversarial review (iný agent ne
 - **Cache invalidácia**: per-root cache (presenter discovery, template mapping, view-data) invalidovaná pri zmene/pridaní/zmazaní súborov, ako Blade.
 - **Grammar riziko**: Latte/NEON grammar nie je v Shiki - vendoring/licencia alebo vlastná grammar (3.6). Fallback: minimálna vlastná grammar (nižšia vernosť farbenia, funkčne OK).
 
+## 6b. Performance (merať, nie pocitovo)
+
+Zásady platné pre všetky slices; overované meraním (runtime cockpit už má operation latency median/p95):
+
+- **Provider dispatch bez réžie na keystroke**: refaktor (Slice 2) nesmie pridať merateľnú latenciu do completion/diagnostics hot path. `activePhpFrameworkProviders` je memoizované (existujúca signature cache); dispatch je iterácia 1-2 providerov cez voliteľné metódy - žiadne opakované `appliesTo` vyhodnocovanie per request. Akceptačné kritérium: completion latencia pred/po refaktore bez regresie (porovnať p95 na reálnom Laravel projekte).
+- **Lazy, on-demand scanovanie**: presenter discovery, template mapping a NEON služby sa NEskenujú eager pri otvorení projektu - budujú sa pri prvom použití (ako Blade view-data: text-search až na dopyt) a cachujú per-root. Žiadny nový cold-start náklad pri otvorení workspace.
+- **Inkrementálna invalidácia**: file-watcher invaliduje len dotknuté cache položky (zmenený presenter → jeho template mapping), nie celý per-root cache; bez re-scan búrok pri hromadných zmenách (git checkout).
+- **Parsery na hot path sú pure a bounded**: Latte parsing pri completion pracuje nad aktuálnym dokumentom (string ops, jeden prechod, bounded advance) - žiadne FS/async volania v synchronnej ceste, žiadny full-project parse pri písaní.
+- **Highlighting lazy**: Latte/NEON grammar sa načítava dynamickým importom ako ostatné Shiki jazyky (až keď sa prvý taký súbor otvorí) - žiadny nárast startup bundle/času pre ne-Nette používateľov.
+- **Pamäť a cleanup**: per-root Nette cache (presentery, mapping, view-data, NEON) sa uvoľňujú pri vypnutí IDE mode / zatvorení projektu - rovnaký lifecycle ako existujúce Blade/index cache (žiadny leak pri prepínaní projektov).
+- **Meranie súčasťou QA**: po Slice 2 a po Slice 6/7 zmerať completion latenciu a index/warmup časy na reálnom Laravel projekte (regresia) a Nette fixture (baseline) - profilovať pred akoukoľvek optimalizáciou (žiadne slepé optimalizácie).
+
 ## 7. Testing stratégia
 
 - TDD per slice (RED first), guard clauses / žiadny `else`, SOLID.
