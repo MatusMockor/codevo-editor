@@ -21,14 +21,19 @@ import {
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
+  phpFrameworkSupportsStringLiterals,
   phpFrameworkSupportsTranslations,
+  phpFrameworkSupportsValidation,
   phpFrameworkSupportsViewData,
   phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
+  phpFrameworkValidationRuleCompletions,
+  phpFrameworkValidationRuleReferenceAt,
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
   phpFrameworkViewReferenceAt,
@@ -56,6 +61,11 @@ import {
 } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
+import {
+  phpLaravelValidationRuleCompletions,
+  phpLaravelValidationRuleStringContextAt,
+} from "./phpLaravelValidation";
+import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -1731,6 +1741,110 @@ return new class extends Migration
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(phpFrameworkViewDataEntryFromSource(viewDataSource, [])).toBeNull();
       expect(phpFrameworkViewDataSearchQueries([])).toEqual([]);
+    });
+  });
+
+  describe("validation capability", () => {
+    const referenceSource =
+      "<?php\n\nValidator::make($data, ['name' => 'req']);\n";
+    const referencePosition = { column: 37, lineNumber: 3 };
+
+    it("dispatches Laravel validation-rule references 1:1 through the provider", () => {
+      const direct = phpLaravelValidationRuleStringContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkValidationRuleReferenceAt(
+          referenceSource,
+          referencePosition,
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel validation-rule completions 1:1 through the provider", () => {
+      const direct = phpLaravelValidationRuleCompletions("req");
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkValidationRuleCompletions("req", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("reports validation support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsValidation([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsValidation([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
+      expect(phpFrameworkSupportsValidation([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the validation capability", () => {
+      expect(
+        phpFrameworkValidationRuleReferenceAt(
+          referenceSource,
+          referencePosition,
+          [phpNetteFrameworkProvider],
+        ),
+      ).toBeNull();
+      expect(
+        phpFrameworkValidationRuleCompletions("req", [phpNetteFrameworkProvider]),
+      ).toEqual([]);
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkValidationRuleReferenceAt(
+          referenceSource,
+          referencePosition,
+          [],
+        ),
+      ).toBeNull();
+      expect(phpFrameworkValidationRuleCompletions("req", [])).toEqual([]);
+    });
+  });
+
+  describe("stringLiterals capability", () => {
+    const helperSource = "<?php\n\nreturn config('app.name');\n";
+    const helperOffset = 25;
+
+    it("dispatches Laravel string-literal helpers 1:1 through the provider", () => {
+      const direct = detectLaravelStringLiteralHelper(helperSource, helperOffset);
+
+      expect(direct).not.toBeNull();
+      expect(direct?.helper).toBe("config");
+      expect(
+        phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("reports string-literal support only for providers shipping the capability", () => {
+      expect(
+        phpFrameworkSupportsStringLiterals([phpLaravelFrameworkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsStringLiterals([phpNetteFrameworkProvider]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsStringLiterals([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the stringLiterals capability", () => {
+      expect(
+        phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, []),
+      ).toBeNull();
     });
   });
 });

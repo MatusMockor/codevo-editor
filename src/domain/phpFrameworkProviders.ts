@@ -37,6 +37,11 @@ import {
 } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
+import {
+  phpLaravelValidationRuleCompletions,
+  phpLaravelValidationRuleStringContextAt,
+} from "./phpLaravelValidation";
+import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
 import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
@@ -253,6 +258,62 @@ export interface PhpFrameworkViewDataEntryContext {
   source: string;
 }
 
+/**
+ * A validation-rule reference detected at the cursor (inside a rules array
+ * value, e.g. the `'req...'` in `['name' => 'req...']`). Framework-agnostic
+ * mirror of Laravel's `PhpLaravelValidationRuleStringContext` so the
+ * controller's completion path never binds to one framework's parser.
+ */
+export interface PhpFrameworkValidationRuleReference {
+  position: EditorPosition;
+  prefix: string;
+}
+
+/** A single validation-rule completion (its inserted text + display name). */
+export interface PhpFrameworkValidationRuleCompletion {
+  insertText: string;
+  name: string;
+}
+
+export interface PhpFrameworkValidationRuleReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkValidationRuleCompletionContext {
+  prefix: string;
+}
+
+/**
+ * The classification of a string literal a framework recognises as a navigation
+ * helper argument (config / route / view / trans / env). Framework-agnostic
+ * mirror of Laravel's `LaravelStringLiteralHelper` so the controller's Cmd+B
+ * path never binds to one framework's classifier.
+ */
+export type PhpFrameworkStringLiteralHelper =
+  | "config"
+  | "route"
+  | "view"
+  | "trans"
+  | "env";
+
+/**
+ * A string literal at the cursor classified as a framework navigation-helper
+ * argument, with the literal text and its span. Framework-agnostic mirror of
+ * Laravel's `LaravelStringLiteralHelperMatch`.
+ */
+export interface PhpFrameworkStringLiteralHelperMatch {
+  helper: PhpFrameworkStringLiteralHelper;
+  literal: string;
+  literalStart: number;
+  literalEnd: number;
+}
+
+export interface PhpFrameworkStringLiteralContext {
+  offset: number;
+  source: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   /**
@@ -335,6 +396,19 @@ export interface PhpFrameworkProvider {
      * framework-agnostic; a future provider ships its own anchors.
      */
     searchQueries?: readonly string[];
+  };
+  validation?: {
+    ruleReferenceAt?: (
+      context: PhpFrameworkValidationRuleReferenceContext,
+    ) => PhpFrameworkValidationRuleReference | null;
+    ruleCompletions?: (
+      context: PhpFrameworkValidationRuleCompletionContext,
+    ) => PhpFrameworkValidationRuleCompletion[];
+  };
+  stringLiterals?: {
+    helperAt?: (
+      context: PhpFrameworkStringLiteralContext,
+    ) => PhpFrameworkStringLiteralHelperMatch | null;
   };
   semantics?: {
     propertyTypeFromSource?: (
@@ -490,6 +564,16 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   viewData: {
     entryFromSource: ({ source }) => bladeViewDataEntryFromSource(source),
     searchQueries: laravelViewDataSearchQueries,
+  },
+  validation: {
+    ruleReferenceAt: ({ position, source }) =>
+      phpLaravelValidationRuleStringContextAt(source, position),
+    ruleCompletions: ({ prefix }) =>
+      phpLaravelValidationRuleCompletions(prefix),
+  },
+  stringLiterals: {
+    helperAt: ({ offset, source }) =>
+      detectLaravelStringLiteralHelper(source, offset),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -936,6 +1020,87 @@ export function phpFrameworkSupportsViewData(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.viewData !== undefined);
+}
+
+/**
+ * First validation-rule reference detected at the cursor across the active
+ * providers. Exclusive resolution keeps this to at most one provider today, so
+ * the first non-null match wins and non-validation providers are inert.
+ */
+export function phpFrameworkValidationRuleReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkValidationRuleReference | null {
+  for (const provider of providers) {
+    const reference = provider.validation?.ruleReferenceAt?.({
+      position,
+      source,
+    });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validation-rule completions for a prefix, aggregated across the active
+ * providers. Providers without a validation capability contribute nothing.
+ */
+export function phpFrameworkValidationRuleCompletions(
+  prefix: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkValidationRuleCompletion[] {
+  return providers.flatMap(
+    (provider) => provider.validation?.ruleCompletions?.({ prefix }) ?? [],
+  );
+}
+
+/**
+ * Whether any active provider ships a validation capability - the
+ * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
+ * validation checks.
+ */
+export function phpFrameworkSupportsValidation(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.validation !== undefined);
+}
+
+/**
+ * First string-literal helper classification detected at the cursor across the
+ * active providers. Exclusive resolution keeps this to at most one provider
+ * today, so the first non-null match wins and non-stringLiteral providers are
+ * inert.
+ */
+export function phpFrameworkStringLiteralHelperAt(
+  source: string,
+  offset: number,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkStringLiteralHelperMatch | null {
+  for (const provider of providers) {
+    const match = provider.stringLiterals?.helperAt?.({ offset, source });
+
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Whether any active provider ships a stringLiterals capability - the
+ * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
+ * string-helper navigation checks.
+ */
+export function phpFrameworkSupportsStringLiterals(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.stringLiterals !== undefined);
 }
 
 export function phpFrameworkPropertyTypeFromSource(

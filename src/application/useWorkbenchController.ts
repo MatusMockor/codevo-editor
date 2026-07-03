@@ -303,7 +303,6 @@ import {
   phpLaravelStaticModelMemberCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
-import { detectLaravelStringLiteralHelper } from "../domain/laravelStringLiteralHelpers";
 import {
   detectLaravelRouteModelBindingAt,
   explicitLaravelRouteModelBindingClassName,
@@ -450,10 +449,6 @@ import {
   type BladeViewDataEntry,
   type BladeViewVariableSighting,
 } from "../domain/bladeViewVariables";
-import {
-  phpLaravelValidationRuleCompletions,
-  phpLaravelValidationRuleStringContextAt,
-} from "../domain/phpLaravelValidation";
 import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
@@ -488,14 +483,18 @@ import {
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
+  phpFrameworkSupportsStringLiterals,
   phpFrameworkSupportsTranslations,
-  phpFrameworkSupportsViewData,
-  phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
+  phpFrameworkSupportsViewData,
+  phpFrameworkSupportsViews,
+  phpFrameworkValidationRuleCompletions,
+  phpFrameworkValidationRuleReferenceAt,
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
   phpFrameworkViewReferenceAt,
@@ -20052,13 +20051,17 @@ export function useWorkbenchController(
         );
       }
 
-      const validationRuleContext = phpLaravelValidationRuleStringContextAt(
+      const validationRuleContext = phpFrameworkValidationRuleReferenceAt(
         source,
         position,
+        activePhpFrameworkProviders,
       );
 
-      if (isLaravelFrameworkActive && validationRuleContext) {
-        return phpLaravelValidationRuleCompletions(validationRuleContext.prefix)
+      if (validationRuleContext) {
+        return phpFrameworkValidationRuleCompletions(
+          validationRuleContext.prefix,
+          activePhpFrameworkProviders,
+        )
           .slice(0, 80)
           .map((rule) => ({
             declaringClassName: "Laravel validation rule",
@@ -21460,8 +21463,9 @@ export function useWorkbenchController(
   // delegates here; because the editor opens files through its own tab system
   // (and limits native navigation to already-open models), this callback DOES
   // the navigation and resolves `true` when it handled the request — the
-  // provider then returns null and Monaco does not also navigate. Detection uses
-  // detectLaravelStringLiteralHelper; laravelPathResolution gates resolvability;
+  // provider then returns null and Monaco does not also navigate. Detection
+  // dispatches through the active framework provider's stringLiterals classifier
+  // (phpFrameworkStringLiteralHelperAt); laravelPathResolution gates resolvability;
   // the proven per-helper finders perform the file read + key-line lookup and
   // carry the per-workspace isolation guards (requested-root capture +
   // re-check after each await), so stale results are dropped on tab switch.
@@ -21588,7 +21592,11 @@ export function useWorkbenchController(
         }
       }
 
-      if (!isLaravelFrameworkActive) {
+      // TODO(nette): this gate also covers the templating viewReference lookup below and
+      // the per-helper branches resolve through Laravel-shaped targets. When the Nette
+      // provider ships `templating` or `stringLiterals`, split the gate per capability
+      // and route helper matches through provider-owned resolvers.
+      if (!phpFrameworkSupportsStringLiterals(activePhpFrameworkProviders)) {
         return false;
       }
 
@@ -21610,7 +21618,11 @@ export function useWorkbenchController(
           : false;
       }
 
-      const match = detectLaravelStringLiteralHelper(source, offset);
+      const match = phpFrameworkStringLiteralHelperAt(
+        source,
+        offset,
+        activePhpFrameworkProviders,
+      );
 
       if (!match) {
         return false;
