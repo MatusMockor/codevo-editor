@@ -223,6 +223,33 @@ export function gitChangeKey(change: GitChangedFile): string {
   return `${change.isStaged ? "staged" : "worktree"}:${change.relativePath}`;
 }
 
+/**
+ * A commit/reconcile inclusion key that stays unique across every repository in
+ * a multi-repo (PhpStorm-style directory-mapping) workspace.
+ *
+ * `gitChangeKey` alone is `{staged|worktree}:{relativePath}`, and `relativePath`
+ * is repository-root-relative, so two repositories that each hold a file with
+ * the same relative path collide: a primary `README.md` and a nested
+ * `workbench/lcsk/x/README.md` both key to `worktree:README.md`. Selecting the
+ * one the panel shows would then silently match the one it does not. Prefixing
+ * with the repository's workspace-root-relative directory removes the ambiguity.
+ *
+ * The primary (workspace-root) repository uses the empty prefix and therefore
+ * returns a key byte-identical to {@link gitChangeKey}. The single-repo UI
+ * surface (GitChangesPanel keys its primary changes with `gitChangeKey`) keeps
+ * working unchanged, and single-repo behaviour stays identical.
+ */
+export function gitChangeKeyForRepository(
+  repositoryRootRelative: string,
+  change: GitChangedFile,
+): string {
+  if (repositoryRootRelative === "") {
+    return gitChangeKey(change);
+  }
+
+  return `${repositoryRootRelative}:${gitChangeKey(change)}`;
+}
+
 export function emptyGitStatus(rootPath: string | null = null): GitStatus {
   return {
     branch: null,

@@ -3,6 +3,8 @@ import {
   emptyGitStatus,
   gitBlameAnnotation,
   gitBlameRelativeDate,
+  gitChangeKey,
+  gitChangeKeyForRepository,
   groupGitChanges,
   hasStagedGitChanges,
   gitStatusLabel,
@@ -98,6 +100,33 @@ describe("git domain helpers", () => {
     };
 
     expect(gitBlameAnnotation(line, now)).toBe("Alice Example, 2 days ago");
+  });
+
+  it("qualifies inclusion keys per repository so identical relative paths stay distinct", () => {
+    const primaryReadme = gitChange("modified", "README.md", false);
+    const nestedReadme = gitChange("modified", "README.md", false);
+
+    // Primary (empty prefix) is byte-identical to the unqualified key, so the
+    // single-repo UI surface keeps keying its changes with `gitChangeKey`.
+    expect(gitChangeKeyForRepository("", primaryReadme)).toBe(
+      gitChangeKey(primaryReadme),
+    );
+
+    // The same relative path in two different repositories must not collide.
+    expect(gitChangeKeyForRepository("", primaryReadme)).not.toBe(
+      gitChangeKeyForRepository("workbench/lcsk/x", nestedReadme),
+    );
+    expect(
+      gitChangeKeyForRepository("workbench/lcsk/x", nestedReadme),
+    ).not.toBe(gitChangeKeyForRepository("workbench/lcsk/y", nestedReadme));
+
+    // Staged vs worktree is still distinguished within one repository.
+    expect(
+      gitChangeKeyForRepository(
+        "workbench/lcsk/x",
+        gitChange("modified", "README.md", true),
+      ),
+    ).not.toBe(gitChangeKeyForRepository("workbench/lcsk/x", nestedReadme));
   });
 
   it("renders uncommitted blame lines compactly", () => {

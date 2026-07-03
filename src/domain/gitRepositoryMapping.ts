@@ -11,6 +11,12 @@
  * paths.
  */
 
+import {
+  emptyGitStatus,
+  type GitChangedFile,
+  type GitStatus,
+} from "./git";
+
 /** A single git repository directory within a workspace. */
 export interface GitRepositoryMapping {
   /**
@@ -192,6 +198,239 @@ export function resolveGitRepositoryForPath(
     repositoryRoot,
     repositoryRelativePath,
   };
+}
+
+/**
+ * The primary repository: the workspace root itself. Every effective mapping
+ * list includes it so a single `gitStatus` view (the pre-multi-repo surface)
+ * always has a repository to reflect, even in a workspace whose root is not a
+ * git repository (the status then reports `isRepository: false`, exactly as
+ * before multi-repo support).
+ */
+export const WORKSPACE_ROOT_MAPPING: GitRepositoryMapping = {
+  rootRelativePath: "",
+};
+
+/** One repository's status within a multi-repo workspace (whole-map view). */
+export interface GitRepositoryStatus {
+  /** The owning mapping. */
+  mapping: GitRepositoryMapping;
+  /** Absolute repository root, forward slashes, no trailing slash. */
+  root: string;
+  /** The repository's git status (empty when {@link failed}). */
+  status: GitStatus;
+  /** True when this repository's status could not be read (isolated failure). */
+  failed: boolean;
+}
+
+/** A batch of changes routed to the single repository that owns them. */
+export interface GitRepositoryChangeGroup {
+  mapping: GitRepositoryMapping;
+  /** Absolute repository root, forward slashes, no trailing slash. */
+  repositoryRoot: string;
+  /** The owning repository's changes, in the caller's original order. */
+  changes: GitChangedFile[];
+}
+
+/**
+ * Absolute repository root for a mapping given the (canonical) workspace root:
+ * the workspace root itself for the empty (primary) mapping, else the mapping
+ * joined onto it. Separators are normalized to forward slashes.
+ */
+export function repositoryRootForMapping(
+  mapping: GitRepositoryMapping,
+  workspaceRoot: string,
+): string {
+  const normalizedRoot = normalizeAbsolutePath(workspaceRoot);
+  const relative = normalizeRelativeDirectory(mapping.rootRelativePath);
+
+  if (relative === null || relative === "") {
+    return normalizedRoot;
+  }
+
+  return `${normalizedRoot}/${relative}`;
+}
+
+/**
+ * The effective repository mappings for a freshly opened workspace: the manual
+ * mappings persisted in the workspace settings, unioned with the auto-detected
+ * repositories when auto-detection is enabled, and always including the
+ * workspace root (primary). Detected directories are `.git`-suffix tolerant.
+ *
+ * The workspace root is always present so the single-repo/no-repo behaviour is
+ * preserved: with no manual mappings and nothing (or `null`) detected the
+ * result is exactly `[""]`, the pre-multi-repo default.
+ */
+export function resolveEffectiveGitRepositoryMappings(options: {
+  manualMappings: unknown;
+  detectedDirectories?: readonly string[] | null;
+  auto: boolean;
+}): GitRepositoryMapping[] {
+  const manual = Array.isArray(options.manualMappings)
+    ? options.manualMappings
+    : [];
+  const detected =
+    options.auto && options.detectedDirectories
+      ? gitDirectoryMappingPaths(
+          gitMappingCandidatesFromDirectoryListing([
+            ...options.detectedDirectories,
+          ]),
+        )
+      : [];
+
+  return normalizeGitDirectoryMappings(["", ...manual, ...detected]);
+}
+
+/**
+ * Fans out `getStatus` across every mapping, one call per repository root, and
+ * collects a status per repository. Each repository is isolated: a rejection
+ * from one becomes a `failed` entry with an empty status and never prevents the
+ * others from resolving. Never rejects.
+ *
+ * The caller owns per-workspace isolation: capture the requested workspace root
+ * before calling and re-check the active root after the returned promise
+ * resolves before publishing the statuses.
+ */
+export async function fanOutGitRepositoryStatuses(
+  mappings: GitRepositoryMapping[],
+  workspaceRoot: string,
+  getStatus: (repositoryRoot: string) => Promise<GitStatus>,
+): Promise<GitRepositoryStatus[]> {
+  return Promise.all(
+    mappings.map(async (mapping): Promise<GitRepositoryStatus> => {
+      const root = repositoryRootForMapping(mapping, workspaceRoot);
+
+      try {
+        const status = await getStatus(root);
+        return { mapping, root, status, failed: false };
+      } catch {
+        return { mapping, root, status: emptyGitStatus(root), failed: true };
+      }
+    }),
+  );
+}
+
+/**
+ * The primary (workspace-root) repository's status, for the single `gitStatus`
+ * surface that predates multi-repo support. Falls back to an empty status for
+ * the workspace root when, defensively, no primary entry is present.
+ */
+export function primaryGitStatus(
+  statuses: GitRepositoryStatus[],
+  workspaceRoot: string,
+): GitStatus {
+  const normalizedRoot = normalizeAbsolutePath(workspaceRoot);
+  const primary = statuses.find(
+    (entry) => normalizeAbsolutePath(entry.root) === normalizedRoot,
+  );
+
+  if (!primary) {
+    return emptyGitStatus(normalizedRoot);
+  }
+
+  return primary.status;
+}
+
+/** Every change across every repository, flattened in mapping order. */
+export function aggregateGitChanges(
+  statuses: GitRepositoryStatus[],
+): GitChangedFile[] {
+  return statuses.flatMap((entry) => entry.status.changes);
+}
+
+/**
+ * Routes each change into the repository that owns it (deepest match, via
+ * {@link resolveGitRepositoryForPath}) and groups them by repository root,
+ * preserving the caller's order both within and across groups. Changes that
+ * resolve to no repository are collected separately as `unresolved` so callers
+ * can skip them and report the fail-safe rather than committing a file into the
+ * wrong repository.
+ *
+ * Each routed change's `relativePath` is rebased to the owning repository's
+ * relative path (`repositoryRelativePath`). Callers usually pass already
+ * repo-relative paths (a per-repo git status), in which case this is a no-op and
+ * the original object is preserved; the rebase is a fail-safe so a workspace-
+ * root-relative path handed in for a nested repo is never fed to git against the
+ * wrong root. The absolute `path` is left untouched.
+ */
+export function groupGitChangesByRepository(
+  mappings: GitRepositoryMapping[],
+  workspaceRoot: string,
+  changes: GitChangedFile[],
+): { groups: GitRepositoryChangeGroup[]; unresolved: GitChangedFile[] } {
+  const groupsByRoot = new Map<string, GitRepositoryChangeGroup>();
+  const order: string[] = [];
+  const unresolved: GitChangedFile[] = [];
+
+  for (const change of changes) {
+    const resolved = resolveGitRepositoryForPath(
+      mappings,
+      workspaceRoot,
+      change.path,
+    );
+
+    if (!resolved) {
+      unresolved.push(change);
+      continue;
+    }
+
+    const routedChange =
+      resolved.repositoryRelativePath === change.relativePath
+        ? change
+        : { ...change, relativePath: resolved.repositoryRelativePath };
+
+    const existing = groupsByRoot.get(resolved.repositoryRoot);
+
+    if (existing) {
+      existing.changes.push(routedChange);
+      continue;
+    }
+
+    groupsByRoot.set(resolved.repositoryRoot, {
+      mapping: resolved.mapping,
+      repositoryRoot: resolved.repositoryRoot,
+      changes: [routedChange],
+    });
+    order.push(resolved.repositoryRoot);
+  }
+
+  return {
+    groups: order.map((root) => groupsByRoot.get(root)!),
+    unresolved,
+  };
+}
+
+/**
+ * Merges freshly produced per-repository statuses (from a git operation) into
+ * the current whole-map view: touched repositories are replaced by root, the
+ * others are preserved in place, and any brand-new repository is appended.
+ */
+export function mergeGitRepositoryStatuses(
+  current: GitRepositoryStatus[],
+  updates: GitRepositoryStatus[],
+): GitRepositoryStatus[] {
+  const updateByRoot = new Map(
+    updates.map((entry) => [normalizeAbsolutePath(entry.root), entry]),
+  );
+  const merged = current.map((entry) => {
+    const update = updateByRoot.get(normalizeAbsolutePath(entry.root));
+
+    if (!update) {
+      return entry;
+    }
+
+    updateByRoot.delete(normalizeAbsolutePath(entry.root));
+    return update;
+  });
+
+  for (const entry of updates) {
+    if (updateByRoot.has(normalizeAbsolutePath(entry.root))) {
+      merged.push(entry);
+      updateByRoot.delete(normalizeAbsolutePath(entry.root));
+    }
+  }
+
+  return merged;
 }
 
 function rawMappingRootRelativePath(entry: unknown): string | null {

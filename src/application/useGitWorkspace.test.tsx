@@ -463,4 +463,280 @@ describe("useGitWorkspace", () => {
     expect(harness.workspace().includedGitChangePaths.size).toBe(0);
     harness.unmount();
   });
+
+  const NESTED_ROOT = `${ROOT}/workbench/lcsk/x`;
+
+  function nestedChangedFile(
+    relativePath: string,
+    overrides: Partial<GitChangedFile> = {},
+  ): GitChangedFile {
+    return {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `${NESTED_ROOT}/${relativePath}`,
+      relativePath,
+      status: "modified",
+      ...overrides,
+    };
+  }
+
+  it("routes staged files into the repository that owns each one", async () => {
+    const stageFiles = vi.fn(async (root: string) => status(root));
+    const primary = changedFile("app.php");
+    const nested = nestedChangedFile("lib.php");
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitChanges([primary, nested]);
+    });
+
+    expect(stageFiles).toHaveBeenCalledWith(ROOT, [primary]);
+    expect(stageFiles).toHaveBeenCalledWith(NESTED_ROOT, [nested]);
+    harness.unmount();
+  });
+
+  it("commits only the primary repo's included changes; a toggled nested change is ignored until G5", async () => {
+    // The multi-repo grouping/commit infra stays wired (gitRepositoryStatuses is
+    // supplied), but the panel is primary-only, so runGitCommit is scoped to the
+    // visible primary changes. A programmatically toggled nested change (which
+    // the UI cannot surface yet) must never be committed. TODO(G5): once the
+    // panel shows the aggregate grouped view, the nested change becomes visible
+    // and committable.
+    const commit = vi.fn(async (root: string) => status(root, []));
+    const stageFiles = vi.fn(async (root: string) => status(root));
+    const primary = changedFile("app.php", { isStaged: true });
+    const nested = nestedChangedFile("lib.php", { isStaged: true });
+    const applyRepositoryOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ commit, stageFiles }),
+      gitStatus: status(ROOT, [primary]),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      gitRepositoryStatuses: [
+        {
+          mapping: { rootRelativePath: "" },
+          root: ROOT,
+          status: status(ROOT, [primary]),
+          failed: false,
+        },
+        {
+          mapping: { rootRelativePath: "workbench/lcsk/x" },
+          root: NESTED_ROOT,
+          status: status(NESTED_ROOT, [nested]),
+          failed: false,
+        },
+      ],
+      applyRepositoryOperationStatuses,
+    });
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("unified message");
+      harness.workspace().toggleGitChangeIncluded(primary);
+      harness.workspace().toggleGitChangeIncluded(nested);
+    });
+
+    await act(async () => {
+      await harness.workspace().commitGitChanges();
+    });
+
+    expect(stageFiles).not.toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledWith(ROOT, "unified message", [primary]);
+    expect(commit).not.toHaveBeenCalledWith(
+      NESTED_ROOT,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(applyRepositoryOperationStatuses).toHaveBeenCalled();
+    expect(harness.workspace().gitCommitMessage).toBe("");
+    harness.unmount();
+  });
+
+  it("pushes only the committed primary repo; a nested repo is left untouched until G5", async () => {
+    const commit = vi.fn(async (root: string) => status(root, []));
+    const push = vi.fn(async (root: string) => status(root, []));
+    const primary = changedFile("app.php", { isStaged: true });
+    const nested = nestedChangedFile("lib.php", { isStaged: true });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ commit, push }),
+      gitStatus: status(ROOT, [primary]),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      gitRepositoryStatuses: [
+        {
+          mapping: { rootRelativePath: "" },
+          root: ROOT,
+          status: status(ROOT, [primary]),
+          failed: false,
+        },
+        {
+          mapping: { rootRelativePath: "workbench/lcsk/x" },
+          root: NESTED_ROOT,
+          status: status(NESTED_ROOT, [nested]),
+          failed: false,
+        },
+      ],
+      applyRepositoryOperationStatuses: vi.fn(),
+    });
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("ship it");
+      harness.workspace().toggleGitChangeIncluded(primary);
+      harness.workspace().toggleGitChangeIncluded(nested);
+    });
+
+    await act(async () => {
+      await harness.workspace().commitAndPushGitChanges();
+    });
+
+    // Only the visible primary repo is committed, so only it is pushed.
+    expect(commit).toHaveBeenCalledWith(ROOT, "ship it", [primary]);
+    expect(commit).not.toHaveBeenCalledWith(
+      NESTED_ROOT,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(push).toHaveBeenCalledWith(ROOT);
+    expect(push).not.toHaveBeenCalledWith(NESTED_ROOT);
+    expect(harness.setMessage).toHaveBeenCalledWith("Pushed current branch");
+    harness.unmount();
+  });
+
+  it("commits only the visible primary repo when two repos share a relative path", async () => {
+    // HIGH regression: an unqualified inclusion key is `{staged|worktree}:{relativePath}`
+    // and `relativePath` is repo-root-relative, so a primary `README.md` and a
+    // nested `workbench/lcsk/x/README.md` collide. The panel only shows the
+    // primary, yet the commit set must never sweep in the invisible nested one.
+    const commit = vi.fn(async (root: string) => status(root, []));
+    const stageFiles = vi.fn(async (root: string) => status(root));
+    const primaryReadme = changedFile("README.md");
+    const nestedReadme = nestedChangedFile("README.md");
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ commit, stageFiles }),
+      gitStatus: status(ROOT, [primaryReadme]),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      gitRepositoryStatuses: [
+        {
+          mapping: { rootRelativePath: "" },
+          root: ROOT,
+          status: status(ROOT, [primaryReadme]),
+          failed: false,
+        },
+        {
+          mapping: { rootRelativePath: "workbench/lcsk/x" },
+          root: NESTED_ROOT,
+          status: status(NESTED_ROOT, [nestedReadme]),
+          failed: false,
+        },
+      ],
+      applyRepositoryOperationStatuses: vi.fn(),
+    });
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("touch readme");
+      harness.workspace().toggleGitChangeIncluded(primaryReadme);
+    });
+
+    await act(async () => {
+      await harness.workspace().commitGitChanges();
+    });
+
+    expect(commit).toHaveBeenCalledWith(ROOT, "touch readme", [primaryReadme]);
+    expect(commit).not.toHaveBeenCalledWith(
+      NESTED_ROOT,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(stageFiles).toHaveBeenCalledWith(ROOT, [primaryReadme]);
+    expect(stageFiles).not.toHaveBeenCalledWith(
+      NESTED_ROOT,
+      expect.anything(),
+    );
+    harness.unmount();
+  });
+
+  it("does not auto-include a staged change from a repo the panel never shows (until G5)", async () => {
+    // MEDIUM regression: the reconcile effect auto-includes every staged change.
+    // While the panel is primary-only it must not silently arm a nested repo's
+    // staged change for the next commit.
+    const stagedNested = nestedChangedFile("lib.php", { isStaged: true });
+    const primaryStatus = {
+      mapping: { rootRelativePath: "" },
+      root: ROOT,
+      status: status(ROOT, []),
+      failed: false,
+    };
+    const harness = renderGitWorkspace({
+      gitStatus: status(ROOT, []),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      gitRepositoryStatuses: [
+        primaryStatus,
+        {
+          mapping: { rootRelativePath: "workbench/lcsk/x" },
+          root: NESTED_ROOT,
+          status: status(NESTED_ROOT, []),
+          failed: false,
+        },
+      ],
+    });
+
+    // A staged change surfaces in the nested repo (not the primary panel view).
+    harness.rerender({
+      gitRepositoryStatuses: [
+        primaryStatus,
+        {
+          mapping: { rootRelativePath: "workbench/lcsk/x" },
+          root: NESTED_ROOT,
+          status: status(NESTED_ROOT, [stagedNested]),
+          failed: false,
+        },
+      ],
+    });
+
+    expect(
+      harness.workspace().includedGitChangePaths.has(gitChangeKey(stagedNested)),
+    ).toBe(false);
+    harness.unmount();
+  });
+
+  it("skips a file that resolves to no repository (fail-safe) instead of misrouting it", async () => {
+    const stageFiles = vi.fn(async (root: string) => status(root));
+    const outside: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: "/elsewhere/app.php",
+      relativePath: "app.php",
+      status: "modified",
+    };
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles }),
+      gitRepositoryMappings: [{ rootRelativePath: "workbench/lcsk/x" }],
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitChanges([outside]);
+    });
+
+    expect(stageFiles).not.toHaveBeenCalled();
+    harness.unmount();
+  });
 });

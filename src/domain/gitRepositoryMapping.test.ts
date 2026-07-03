@@ -1,14 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateGitChanges,
+  fanOutGitRepositoryStatuses,
   gitDirectoryMappingPaths,
   gitMappingCandidatesFromDirectoryListing,
+  groupGitChangesByRepository,
+  mergeGitRepositoryStatuses,
   normalizeGitDirectoryMappings,
+  primaryGitStatus,
+  repositoryRootForMapping,
+  resolveEffectiveGitRepositoryMappings,
   resolveGitRepositoryForPath,
+  WORKSPACE_ROOT_MAPPING,
   type GitRepositoryMapping,
+  type GitRepositoryStatus,
 } from "./gitRepositoryMapping";
+import { emptyGitStatus, type GitChangedFile, type GitStatus } from "./git";
 
 function mapping(rootRelativePath: string): GitRepositoryMapping {
   return { rootRelativePath };
+}
+
+const ROOT = "/workspace";
+
+function changedFile(
+  absolutePath: string,
+  relativePath: string,
+): GitChangedFile {
+  return {
+    isStaged: false,
+    isUnversioned: false,
+    oldPath: null,
+    oldRelativePath: null,
+    path: absolutePath,
+    relativePath,
+    status: "modified",
+  };
+}
+
+function statusWith(
+  rootPath: string,
+  changes: GitChangedFile[] = [],
+): GitStatus {
+  return { branch: "main", changes, isRepository: true, rootPath };
 }
 
 describe("normalizeGitDirectoryMappings", () => {
@@ -314,5 +348,233 @@ describe("gitMappingCandidatesFromDirectoryListing", () => {
     expect(
       gitMappingCandidatesFromDirectoryListing(["../evil/.git"]),
     ).toEqual([]);
+  });
+});
+
+describe("resolveEffectiveGitRepositoryMappings", () => {
+  it("merges auto-detected repositories with the manual settings mappings", () => {
+    expect(
+      resolveEffectiveGitRepositoryMappings({
+        manualMappings: ["workbench/lcsk/manual"],
+        detectedDirectories: ["", "workbench/lcsk/attendance"],
+        auto: true,
+      }),
+    ).toEqual([
+      mapping(""),
+      mapping("workbench/lcsk/attendance"),
+      mapping("workbench/lcsk/manual"),
+    ]);
+  });
+
+  it("keeps manual mappings but ignores detection when auto is off", () => {
+    expect(
+      resolveEffectiveGitRepositoryMappings({
+        manualMappings: ["workbench/lcsk/manual"],
+        detectedDirectories: ["workbench/lcsk/attendance"],
+        auto: false,
+      }),
+    ).toEqual([mapping(""), mapping("workbench/lcsk/manual")]);
+  });
+
+  it("always includes the workspace root and falls back to it alone", () => {
+    expect(
+      resolveEffectiveGitRepositoryMappings({
+        manualMappings: [],
+        detectedDirectories: null,
+        auto: true,
+      }),
+    ).toEqual([mapping("")]);
+  });
+
+  it("strips a stray .git segment from detected directories", () => {
+    expect(
+      resolveEffectiveGitRepositoryMappings({
+        manualMappings: [],
+        detectedDirectories: ["workbench/lcsk/x/.git"],
+        auto: true,
+      }),
+    ).toEqual([mapping(""), mapping("workbench/lcsk/x")]);
+  });
+});
+
+describe("repositoryRootForMapping", () => {
+  it("returns the workspace root for the empty (primary) mapping", () => {
+    expect(repositoryRootForMapping(WORKSPACE_ROOT_MAPPING, ROOT)).toBe(ROOT);
+  });
+
+  it("joins a nested mapping onto the workspace root", () => {
+    expect(repositoryRootForMapping(mapping("workbench/lcsk/x"), ROOT)).toBe(
+      `${ROOT}/workbench/lcsk/x`,
+    );
+  });
+});
+
+describe("fanOutGitRepositoryStatuses", () => {
+  it("collects a status per repository, isolating a single failure", async () => {
+    const primary = statusWith(ROOT, [changedFile(`${ROOT}/app.php`, "app.php")]);
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+
+    const statuses = await fanOutGitRepositoryStatuses(
+      [WORKSPACE_ROOT_MAPPING, mapping("workbench/lcsk/x")],
+      ROOT,
+      async (root) => {
+        if (root === nestedRoot) {
+          throw new Error("not a repository");
+        }
+        return primary;
+      },
+    );
+
+    expect(statuses).toEqual([
+      { mapping: mapping(""), root: ROOT, status: primary, failed: false },
+      {
+        mapping: mapping("workbench/lcsk/x"),
+        root: nestedRoot,
+        status: emptyGitStatus(nestedRoot),
+        failed: true,
+      },
+    ]);
+  });
+});
+
+describe("primaryGitStatus", () => {
+  it("returns the workspace-root repository status", () => {
+    const primary = statusWith(ROOT);
+    const statuses: GitRepositoryStatus[] = [
+      { mapping: mapping(""), root: ROOT, status: primary, failed: false },
+      {
+        mapping: mapping("workbench/lcsk/x"),
+        root: `${ROOT}/workbench/lcsk/x`,
+        status: statusWith(`${ROOT}/workbench/lcsk/x`),
+        failed: false,
+      },
+    ];
+
+    expect(primaryGitStatus(statuses, ROOT)).toBe(primary);
+  });
+
+  it("falls back to an empty status when no primary repository exists", () => {
+    expect(primaryGitStatus([], ROOT)).toEqual(emptyGitStatus(ROOT));
+  });
+});
+
+describe("aggregateGitChanges", () => {
+  it("flattens the changes across every repository", () => {
+    const a = changedFile(`${ROOT}/app.php`, "app.php");
+    const b = changedFile(`${ROOT}/workbench/lcsk/x/lib.php`, "lib.php");
+
+    expect(
+      aggregateGitChanges([
+        { mapping: mapping(""), root: ROOT, status: statusWith(ROOT, [a]), failed: false },
+        {
+          mapping: mapping("workbench/lcsk/x"),
+          root: `${ROOT}/workbench/lcsk/x`,
+          status: statusWith(`${ROOT}/workbench/lcsk/x`, [b]),
+          failed: false,
+        },
+      ]),
+    ).toEqual([a, b]);
+  });
+});
+
+describe("groupGitChangesByRepository", () => {
+  it("routes each file into its owning repository, deepest match wins", () => {
+    const primaryChange = changedFile(`${ROOT}/app.php`, "app.php");
+    const nestedChange = changedFile(
+      `${ROOT}/workbench/lcsk/attendance/src/Foo.php`,
+      "src/Foo.php",
+    );
+
+    const { groups, unresolved } = groupGitChangesByRepository(
+      [WORKSPACE_ROOT_MAPPING, mapping("workbench/lcsk/attendance")],
+      ROOT,
+      [primaryChange, nestedChange],
+    );
+
+    expect(unresolved).toEqual([]);
+    expect(groups).toEqual([
+      {
+        mapping: mapping(""),
+        repositoryRoot: ROOT,
+        changes: [primaryChange],
+      },
+      {
+        mapping: mapping("workbench/lcsk/attendance"),
+        repositoryRoot: `${ROOT}/workbench/lcsk/attendance`,
+        changes: [nestedChange],
+      },
+    ]);
+  });
+
+  it("rebases a workspace-root-relative path to the owning repository's relative path", () => {
+    // Fail-safe: a change handed in with a workspace-root-relative path must be
+    // corrected to the nested repo's own relative path once routed, so git never
+    // runs against the wrong root. The absolute path is preserved.
+    const workspaceRelative = changedFile(
+      `${ROOT}/workbench/lcsk/x/src/Lib.php`,
+      "workbench/lcsk/x/src/Lib.php",
+    );
+
+    const { groups, unresolved } = groupGitChangesByRepository(
+      [WORKSPACE_ROOT_MAPPING, mapping("workbench/lcsk/x")],
+      ROOT,
+      [workspaceRelative],
+    );
+
+    expect(unresolved).toEqual([]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].repositoryRoot).toBe(`${ROOT}/workbench/lcsk/x`);
+    expect(groups[0].changes[0].relativePath).toBe("src/Lib.php");
+    expect(groups[0].changes[0].path).toBe(workspaceRelative.path);
+  });
+
+  it("collects changes that resolve to no repository as unresolved (fail-safe)", () => {
+    const outside = changedFile("/elsewhere/app.php", "app.php");
+
+    const { groups, unresolved } = groupGitChangesByRepository(
+      [mapping("workbench/lcsk/x")],
+      ROOT,
+      [outside],
+    );
+
+    expect(groups).toEqual([]);
+    expect(unresolved).toEqual([outside]);
+  });
+});
+
+describe("mergeGitRepositoryStatuses", () => {
+  it("replaces touched repositories while preserving the others and their order", () => {
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+    const current: GitRepositoryStatus[] = [
+      { mapping: mapping(""), root: ROOT, status: statusWith(ROOT), failed: false },
+      {
+        mapping: mapping("workbench/lcsk/x"),
+        root: nestedRoot,
+        status: statusWith(nestedRoot),
+        failed: false,
+      },
+    ];
+    const updatedNested = statusWith(nestedRoot, [
+      changedFile(`${nestedRoot}/lib.php`, "lib.php"),
+    ]);
+
+    expect(
+      mergeGitRepositoryStatuses(current, [
+        {
+          mapping: mapping("workbench/lcsk/x"),
+          root: nestedRoot,
+          status: updatedNested,
+          failed: false,
+        },
+      ]),
+    ).toEqual([
+      current[0],
+      {
+        mapping: mapping("workbench/lcsk/x"),
+        root: nestedRoot,
+        status: updatedNested,
+        failed: false,
+      },
+    ]);
   });
 });

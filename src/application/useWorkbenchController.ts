@@ -50,6 +50,15 @@ import {
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
+import {
+  fanOutGitRepositoryStatuses,
+  mergeGitRepositoryStatuses,
+  primaryGitStatus,
+  resolveEffectiveGitRepositoryMappings,
+  WORKSPACE_ROOT_MAPPING,
+  type GitRepositoryMapping,
+  type GitRepositoryStatus,
+} from "../domain/gitRepositoryMapping";
 import type {
   LocalHistoryDiff,
   LocalHistoryGateway,
@@ -1235,6 +1244,17 @@ export function useWorkbenchController(
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
+  // Effective git repository mappings (manual + auto-detected, always incl. the
+  // workspace root). Defaults to the single workspace-root repo so behaviour is
+  // identical to the pre-multi-repo world until discovery runs.
+  const [gitRepositoryMappings, setGitRepositoryMappings] = useState<
+    GitRepositoryMapping[]
+  >([WORKSPACE_ROOT_MAPPING]);
+  // Whole-map status view (one entry per mapping), for the multi-repo Changes
+  // panel. `gitStatus` above stays the primary (workspace-root) repo.
+  const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<
+    GitRepositoryStatus[]
+  >([]);
   const [gitLoading, setGitLoading] = useState(false);
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
   const [selectedGitChange, setSelectedGitChange] =
@@ -4399,6 +4419,8 @@ export function useWorkbenchController(
     setWorkspaceTodos([]);
     setWorkspaceTodosLoading(false);
     setGitStatus(emptyGitStatus());
+    setGitRepositoryStatuses([]);
+    setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
     setGitLoading(false);
     setGitDiffLoading(false);
     selectedGitChangeRef.current = null;
@@ -5660,6 +5682,8 @@ export function useWorkbenchController(
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
       setGitStatus(emptyGitStatus(path));
+      setGitRepositoryStatuses([]);
+      setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
       setGitLoading(false);
       setGitDiffLoading(false);
       selectedGitChangeRef.current = null;
@@ -5878,6 +5902,38 @@ export function useWorkbenchController(
         workspaceSessionRestoredRef.current = true;
       };
 
+      // Discover nested git repositories (PhpStorm-style directory mappings) so
+      // every git operation routes into the repo that owns each file. Auto-detection
+      // is optional (the gateway may not implement it) and gated on the workspace
+      // setting; manual mappings are always honoured. Per-root isolated: captures
+      // `path` and re-checks the live root after the await before publishing. On
+      // failure or when auto is off it falls back to the manual mappings plus the
+      // workspace root (single-repo behaviour).
+      const discoverGitRepositoriesTask = async (): Promise<void> => {
+        const auto = workspaceSettings.gitDirectoryMappingsAuto;
+        let detected: string[] | null = null;
+
+        try {
+          if (auto && gitGateway.detectRepositories) {
+            detected = await gitGateway.detectRepositories(path);
+          }
+        } catch (error) {
+          reportErrorForActiveWorkspaceRoot(path, "Git", error);
+        }
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+          return;
+        }
+
+        setGitRepositoryMappings(
+          resolveEffectiveGitRepositoryMappings({
+            manualMappings: workspaceSettings.gitDirectoryMappings,
+            detectedDirectories: detected,
+            auto,
+          }),
+        );
+      };
+
       // Fire-and-forget plans/scans that already isolate themselves per root.
       void refreshJavaScriptTypeScriptLanguageServerPlan(path);
 
@@ -5890,6 +5946,7 @@ export function useWorkbenchController(
         loadTrustTask(),
         detectWorkspaceTask(),
         restoreSessionTask(),
+        discoverGitRepositoriesTask(),
       ]);
 
       if (!isCurrentOpenWorkspaceRequest()) {
@@ -6878,6 +6935,7 @@ export function useWorkbenchController(
   const refreshGitStatus = useCallback(async () => {
     if (!workspaceRoot) {
       setGitStatus(emptyGitStatus());
+      setGitRepositoryStatuses([]);
       setGitLoading(false);
       return;
     }
@@ -6886,12 +6944,23 @@ export function useWorkbenchController(
     setGitLoading(true);
 
     try {
-      const status = await gitGateway.getStatus(requestedRoot);
+      // Fan out one status request per mapped repository; a single repo's
+      // failure is isolated and never breaks the others. With the default
+      // single (workspace-root) mapping this is exactly one getStatus call.
+      const statuses = await fanOutGitRepositoryStatuses(
+        gitRepositoryMappings,
+        requestedRoot,
+        (root) => gitGateway.getStatus(root),
+      );
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
+      setGitRepositoryStatuses(statuses);
+      // The primary (workspace-root) repo drives the existing single-status UI
+      // and the diff-preview reconciliation below.
+      const status = primaryGitStatus(statuses, requestedRoot);
       setGitStatus(status);
       const selectedGitChange = selectedGitChangeRef.current;
       if (
@@ -6947,6 +7016,7 @@ export function useWorkbenchController(
       }
 
       setGitStatus(emptyGitStatus(requestedRoot));
+      setGitRepositoryStatuses([]);
       reportError("Git", error);
     } finally {
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -6958,6 +7028,7 @@ export function useWorkbenchController(
   }, [
     clearGitDiffPreviewState,
     gitGateway,
+    gitRepositoryMappings,
     loadGitDiffDocument,
     reportError,
     workspaceRoot,
@@ -7252,6 +7323,18 @@ export function useWorkbenchController(
     [closeGitDiffPreview, selectedGitChange],
   );
 
+  // Publishes fresh per-repository statuses after a multi-repo git operation:
+  // merges them into the whole-map view so the multi-repo panel stays current.
+  // The primary repo's status is applied separately via applyGitOperationStatus.
+  const applyRepositoryOperationStatuses = useCallback(
+    (statuses: GitRepositoryStatus[]) => {
+      setGitRepositoryStatuses((current) =>
+        mergeGitRepositoryStatuses(current, statuses),
+      );
+    },
+    [],
+  );
+
   const {
     gitCommitMessage,
     includedGitChangePaths,
@@ -7275,6 +7358,9 @@ export function useWorkbenchController(
     reportError,
     setMessage,
     prompter,
+    gitRepositoryMappings,
+    gitRepositoryStatuses,
+    applyRepositoryOperationStatuses,
   });
 
   const refreshPhpTree = useCallback(async () => {
@@ -31415,6 +31501,7 @@ export function useWorkbenchController(
     gitLoading,
     gitOperationLoading,
     gitStatus,
+    gitRepositoryStatuses,
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
