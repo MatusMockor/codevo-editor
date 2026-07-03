@@ -35,6 +35,8 @@ import {
   phpLaravelTranslationReferenceContextAt,
   phpLaravelTranslationTargetFromSource,
 } from "./phpLaravelTranslations";
+import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
+import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
@@ -195,6 +197,62 @@ export interface PhpFrameworkJsonTranslationTargetContext {
   source: string;
 }
 
+/**
+ * A view reference detected at the cursor (e.g. the `view('x')` argument).
+ * Framework-agnostic mirror of the Laravel view reference so the controller's
+ * completion / navigation path never binds to one framework's parser.
+ */
+export interface PhpFrameworkViewReference {
+  call: string;
+  name: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+export interface PhpFrameworkViewReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+/**
+ * A single variable bound into a view/template render (e.g. `compact('user')`
+ * or `['user' => $user]`), with a cheap display-type hint and, where
+ * statically known, the source expression that produced the value.
+ * Framework-agnostic mirror of Laravel's `PhpLaravelViewVariable` so the
+ * controller's view-data cache never binds to one framework's parser.
+ */
+export interface PhpFrameworkViewDataVariable {
+  detail: string;
+  name: string;
+  typeHint: string | null;
+  valueExpression: string | null;
+  valueOffset: number | null;
+}
+
+/**
+ * One `view(...)` / `View::make(...)`-style render call, with every variable it
+ * binds. Framework-agnostic mirror of Laravel's `PhpLaravelViewDataBinding`.
+ */
+export interface PhpFrameworkViewDataBinding {
+  variables: PhpFrameworkViewDataVariable[];
+  viewName: string;
+}
+
+/**
+ * A controller/presenter source's parsed view-data bindings (every render call
+ * it contains). Framework-agnostic mirror of Laravel's `BladeViewDataEntry` so
+ * a future provider (Nette) can ship `viewData.entryFromSource` without a
+ * breaking rename.
+ */
+export interface PhpFrameworkViewDataEntry {
+  bindings: PhpFrameworkViewDataBinding[];
+  source: string;
+}
+
+export interface PhpFrameworkViewDataEntryContext {
+  source: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   /**
@@ -256,6 +314,28 @@ export interface PhpFrameworkProvider {
       context: PhpFrameworkJsonTranslationTargetContext,
     ) => PhpFrameworkTranslationKey | null;
   };
+  templating?: {
+    referenceAt?: (
+      context: PhpFrameworkViewReferenceContext,
+    ) => PhpFrameworkViewReference | null;
+  };
+  viewData?: {
+    /**
+     * Parses one controller/presenter source into its view-data bindings (the
+     * variables each template render passes). Pure; the controller owns the
+     * file discovery, per-root cache, and per-workspace isolation guards.
+     */
+    entryFromSource?: (
+      context: PhpFrameworkViewDataEntryContext,
+    ) => PhpFrameworkViewDataEntry;
+    /**
+     * Text-search anchors that surface the sources feeding data into templates
+     * (`view(...)`, `View::make`, `->with(...)`, `compact(...)` for Laravel).
+     * Owned by the provider so the controller's view-data loader stays
+     * framework-agnostic; a future provider ships its own anchors.
+     */
+    searchQueries?: readonly string[];
+  };
   semantics?: {
     propertyTypeFromSource?: (
       context: PhpFrameworkPropertyTypeContext,
@@ -288,6 +368,18 @@ const laravelRouteSearchQueries: readonly string[] = [
   "Route::resources",
   "Route::apiResources",
   "Route::softDeletableResources",
+];
+
+/**
+ * Text-search anchors for the sources feeding data into Blade views. Kept beside
+ * the provider (not the controller) so view-data knowledge stays
+ * framework-owned; a future provider ships its own anchors (Latte presenters).
+ */
+const laravelViewDataSearchQueries: readonly string[] = [
+  "view(",
+  "View::make",
+  "->with(",
+  "compact(",
 ];
 
 export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
@@ -390,6 +482,14 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelJsonTranslationKeysFromSource(source),
     jsonTargetFromSource: ({ key, source }) =>
       phpLaravelJsonTranslationTargetFromSource(source, key),
+  },
+  templating: {
+    referenceAt: ({ position, source }) =>
+      phpLaravelViewReferenceContextAt(source, position),
+  },
+  viewData: {
+    entryFromSource: ({ source }) => bladeViewDataEntryFromSource(source),
+    searchQueries: laravelViewDataSearchQueries,
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -763,6 +863,79 @@ export function phpFrameworkSupportsTranslations(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.translations !== undefined);
+}
+
+/**
+ * First view reference detected at the cursor across the active providers.
+ * Exclusive resolution keeps this to at most one provider today, so the first
+ * non-null match wins and non-templating providers are inert.
+ */
+export function phpFrameworkViewReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkViewReference | null {
+  for (const provider of providers) {
+    const reference = provider.templating?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Whether any active provider ships a templating capability - the
+ * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
+ * view checks.
+ */
+export function phpFrameworkSupportsViews(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.templating !== undefined);
+}
+
+/**
+ * First view-data entry parsed from a single controller/presenter source across
+ * the active providers. Providers without a viewData capability contribute
+ * nothing; exclusive resolution keeps this to at most one provider today.
+ */
+export function phpFrameworkViewDataEntryFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkViewDataEntry | null {
+  for (const provider of providers) {
+    const entry = provider.viewData?.entryFromSource?.({ source });
+
+    if (entry) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Text-search anchors the active providers use to surface the sources feeding
+ * data into templates. Empty when no active provider ships viewData.
+ */
+export function phpFrameworkViewDataSearchQueries(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap((provider) => provider.viewData?.searchQueries ?? []);
+}
+
+/**
+ * Whether any active provider ships a viewData capability - the
+ * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
+ * view-data checks.
+ */
+export function phpFrameworkSupportsViewData(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.viewData !== undefined);
 }
 
 export function phpFrameworkPropertyTypeFromSource(

@@ -24,9 +24,14 @@ import {
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsTranslations,
+  phpFrameworkSupportsViewData,
+  phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
+  phpFrameworkViewDataEntryFromSource,
+  phpFrameworkViewDataSearchQueries,
+  phpFrameworkViewReferenceAt,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
   resolvePhpFrameworkProfile,
@@ -49,6 +54,8 @@ import {
   phpLaravelTranslationReferenceContextAt,
   phpLaravelTranslationTargetFromSource,
 } from "./phpLaravelTranslations";
+import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
+import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -1639,6 +1646,91 @@ return new class extends Migration
       expect(
         phpFrameworkJsonTranslationKeysFromSource(jsonLangSource, []),
       ).toEqual([]);
+    });
+  });
+
+  describe("templating capability", () => {
+    const referenceSource = "<?php\n\nreturn view('users.index');\n";
+    const referencePosition = { column: 16, lineNumber: 3 };
+
+    it("dispatches Laravel view references 1:1 through the provider", () => {
+      const direct = phpLaravelViewReferenceContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkViewReferenceAt(referenceSource, referencePosition, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("reports view support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsViews([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsViews([phpNetteFrameworkProvider])).toBe(false);
+      expect(phpFrameworkSupportsViews([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the templating capability", () => {
+      expect(
+        phpFrameworkViewReferenceAt(referenceSource, referencePosition, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkViewReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+    });
+  });
+
+  describe("viewData capability", () => {
+    const viewDataSource =
+      "<?php\n\nreturn view('users.index', ['user' => $user]);\n";
+
+    it("dispatches Laravel view-data entries 1:1 through the provider", () => {
+      const direct = bladeViewDataEntryFromSource(viewDataSource);
+
+      expect(direct.bindings.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkViewDataEntryFromSource(viewDataSource, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("exposes the Laravel view-data search anchors byte-for-byte", () => {
+      expect(
+        phpFrameworkViewDataSearchQueries([phpLaravelFrameworkProvider]),
+      ).toEqual(["view(", "View::make", "->with(", "compact("]);
+    });
+
+    it("reports view-data support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsViewData([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsViewData([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
+      expect(phpFrameworkSupportsViewData([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the viewData capability", () => {
+      expect(
+        phpFrameworkViewDataEntryFromSource(viewDataSource, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkViewDataSearchQueries([phpNetteFrameworkProvider]),
+      ).toEqual([]);
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(phpFrameworkViewDataEntryFromSource(viewDataSource, [])).toBeNull();
+      expect(phpFrameworkViewDataSearchQueries([])).toEqual([]);
     });
   });
 });

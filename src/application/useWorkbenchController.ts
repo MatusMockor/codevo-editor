@@ -437,13 +437,11 @@ import {
   phpLaravelViewCompletionInsertText,
   phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
-  phpLaravelViewReferenceContextAt,
   type PhpLaravelViewTarget,
 } from "../domain/phpLaravelViews";
 import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import {
   bladeForeachLoopBindingsAt,
-  bladeViewDataEntryFromSource,
   bladeViewVariableSightingsForView,
   bladeViewVariablesForViewFromEntries,
   mergeBladeViewVariableResolvedTypes,
@@ -493,9 +491,14 @@ import {
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsTranslations,
+  phpFrameworkSupportsViewData,
+  phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
+  phpFrameworkViewDataEntryFromSource,
+  phpFrameworkViewDataSearchQueries,
+  phpFrameworkViewReferenceAt,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
@@ -14002,7 +14005,10 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (
+        !phpFrameworkSupportsViews(activePhpFrameworkProviders) ||
+        !requestedRoot
+      ) {
         return null;
       }
 
@@ -14036,7 +14042,7 @@ export function useWorkbenchController(
       return null;
     },
     [
-      isLaravelFrameworkActive,
+      activePhpFrameworkProviders,
       readNavigationFileContent,
       workspaceRoot,
     ],
@@ -14049,7 +14055,10 @@ export function useWorkbenchController(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!isLaravelFrameworkActive || !requestedRoot) {
+    if (
+      !phpFrameworkSupportsViews(activePhpFrameworkProviders) ||
+      !requestedRoot
+    ) {
       return [];
     }
 
@@ -14118,7 +14127,7 @@ export function useWorkbenchController(
 
     return result;
   }, [
-    isLaravelFrameworkActive,
+    activePhpFrameworkProviders,
     readPhpLaravelTargetCache,
     workspaceFiles,
     workspaceRoot,
@@ -19977,9 +19986,13 @@ export function useWorkbenchController(
           }));
       }
 
-      const viewContext = phpLaravelViewReferenceContextAt(source, position);
+      const viewContext = phpFrameworkViewReferenceAt(
+        source,
+        position,
+        activePhpFrameworkProviders,
+      );
 
-      if (isLaravelFrameworkActive && viewContext && activeDocument) {
+      if (viewContext && activeDocument) {
         const normalizedPrefix = viewContext.prefix.toLowerCase();
         const views = await collectPhpLaravelViewTargets();
 
@@ -21579,9 +21592,10 @@ export function useWorkbenchController(
         return false;
       }
 
-      const viewReference = phpLaravelViewReferenceContextAt(
+      const viewReference = phpFrameworkViewReferenceAt(
         source,
         editorPositionAtOffset(source, offset),
+        activePhpFrameworkProviders,
       );
 
       if (viewReference) {
@@ -21696,6 +21710,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      activePhpFrameworkProviders,
       collectPhpLaravelNamedRouteTargets,
       findPhpLaravelConfigTarget,
       findPhpLaravelEnvTarget,
@@ -21719,7 +21734,10 @@ export function useWorkbenchController(
   // writes the cache. Concurrent callers share the same in-flight promise.
   const ensureBladeViewDataEntriesLoaded = useCallback(
     async (requestedRoot: string): Promise<BladeViewDataEntry[] | null> => {
-      if (!requestedRoot || !isLaravelFrameworkActive) {
+      if (
+        !requestedRoot ||
+        !phpFrameworkSupportsViewData(activePhpFrameworkProviders)
+      ) {
         return null;
       }
 
@@ -21748,8 +21766,8 @@ export function useWorkbenchController(
       load = (async (): Promise<BladeViewDataEntry[] | null> => {
         try {
           const searchResults = await Promise.all(
-            BLADE_VIEW_DATA_SEARCH_QUERIES.map((query) =>
-              textSearch.searchText(requestedRoot, query, 200),
+            phpFrameworkViewDataSearchQueries(activePhpFrameworkProviders).map(
+              (query) => textSearch.searchText(requestedRoot, query, 200),
             ),
           );
 
@@ -21778,9 +21796,12 @@ export function useWorkbenchController(
                 return null;
               }
 
-              const entry = bladeViewDataEntryFromSource(content);
+              const entry = phpFrameworkViewDataEntryFromSource(
+                content,
+                activePhpFrameworkProviders,
+              );
 
-              if (entry.bindings.length > 0) {
+              if (entry && entry.bindings.length > 0) {
                 entries.push(entry);
               }
             } catch {
@@ -21813,7 +21834,7 @@ export function useWorkbenchController(
 
       return load;
     },
-    [isLaravelFrameworkActive, readNavigationFileContent, textSearch],
+    [activePhpFrameworkProviders, readNavigationFileContent, textSearch],
   );
 
   // Drops the cached view-data entries for `root` when any PHP file changes
@@ -24446,7 +24467,11 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+      if (
+        !requestedRoot ||
+        !activeDocument ||
+        !phpFrameworkSupportsViews(activePhpFrameworkProviders)
+      ) {
         return false;
       }
 
@@ -24465,8 +24490,8 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      activePhpFrameworkProviders,
       findPhpLaravelViewTarget,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
     ],
@@ -32492,19 +32517,6 @@ const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
     valueOffset: null,
   },
 ];
-
-/**
- * Workspace text-search queries that locate every construct feeding data into
- * a Blade view (`view('x', [...])` / `View::make` / `->with(...)` /
- * `compact(...)`). The hits are read once and cached per root as parsed
- * view-data entries (see ensureBladeViewDataEntriesLoaded).
- */
-const BLADE_VIEW_DATA_SEARCH_QUERIES = [
-  "view(",
-  "View::make",
-  "->with(",
-  "compact(",
-] as const;
 
 interface BladeLaravelHelperCompletionDependencies {
   collectPhpLaravelConfigTargets: () => Promise<PhpLaravelConfigTarget[]>;
