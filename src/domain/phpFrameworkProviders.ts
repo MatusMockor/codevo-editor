@@ -23,6 +23,18 @@ import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
 } from "./phpLaravelRoutes";
+import {
+  phpLaravelConfigKeysFromSource,
+  phpLaravelConfigReferenceContextAt,
+  phpLaravelConfigTargetFromSource,
+} from "./phpLaravelConfig";
+import {
+  phpLaravelJsonTranslationKeysFromSource,
+  phpLaravelJsonTranslationTargetFromSource,
+  phpLaravelTranslationKeysFromSource,
+  phpLaravelTranslationReferenceContextAt,
+  phpLaravelTranslationTargetFromSource,
+} from "./phpLaravelTranslations";
 import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
@@ -105,6 +117,84 @@ export interface PhpFrameworkRouteDefinitionsContext {
   source: string;
 }
 
+/**
+ * A config reference detected at the cursor (e.g. the `config('x')` argument).
+ * Framework-agnostic mirror of the Laravel config reference so the controller's
+ * completion path never binds to one framework's parser.
+ */
+export interface PhpFrameworkConfigReference {
+  call: string;
+  key: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+/** A config key declared in a source (its dotted key + declaration position). */
+export interface PhpFrameworkConfigKey {
+  key: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkConfigReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkConfigKeysContext {
+  fileName: string;
+  source: string;
+}
+
+export interface PhpFrameworkConfigTargetContext {
+  fileName: string;
+  key: string;
+  source: string;
+}
+
+/**
+ * A translation reference detected at the cursor (e.g. the `__('x')` /
+ * `trans('x')` argument). Framework-agnostic mirror of the Laravel translation
+ * reference so the controller's completion path never binds to one framework's
+ * parser.
+ */
+export interface PhpFrameworkTranslationReference {
+  call: string;
+  key: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+/** A translation key declared in a source (its key + declaration position). */
+export interface PhpFrameworkTranslationKey {
+  key: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkTranslationReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkTranslationKeysContext {
+  fileName: string;
+  source: string;
+}
+
+export interface PhpFrameworkTranslationTargetContext {
+  fileName: string;
+  key: string;
+  source: string;
+}
+
+export interface PhpFrameworkJsonTranslationKeysContext {
+  source: string;
+}
+
+export interface PhpFrameworkJsonTranslationTargetContext {
+  key: string;
+  source: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   /**
@@ -137,6 +227,34 @@ export interface PhpFrameworkProvider {
      * is framework-agnostic.
      */
     searchQueries?: readonly string[];
+  };
+  config?: {
+    referenceAt?: (
+      context: PhpFrameworkConfigReferenceContext,
+    ) => PhpFrameworkConfigReference | null;
+    keysFromSource?: (
+      context: PhpFrameworkConfigKeysContext,
+    ) => PhpFrameworkConfigKey[];
+    targetFromSource?: (
+      context: PhpFrameworkConfigTargetContext,
+    ) => PhpFrameworkConfigKey | null;
+  };
+  translations?: {
+    referenceAt?: (
+      context: PhpFrameworkTranslationReferenceContext,
+    ) => PhpFrameworkTranslationReference | null;
+    keysFromSource?: (
+      context: PhpFrameworkTranslationKeysContext,
+    ) => PhpFrameworkTranslationKey[];
+    targetFromSource?: (
+      context: PhpFrameworkTranslationTargetContext,
+    ) => PhpFrameworkTranslationKey | null;
+    jsonKeysFromSource?: (
+      context: PhpFrameworkJsonTranslationKeysContext,
+    ) => PhpFrameworkTranslationKey[];
+    jsonTargetFromSource?: (
+      context: PhpFrameworkJsonTranslationTargetContext,
+    ) => PhpFrameworkTranslationKey | null;
   };
   semantics?: {
     propertyTypeFromSource?: (
@@ -252,6 +370,26 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     referenceAt: ({ position, source }) =>
       phpLaravelNamedRouteReferenceContextAt(source, position),
     searchQueries: laravelRouteSearchQueries,
+  },
+  config: {
+    referenceAt: ({ position, source }) =>
+      phpLaravelConfigReferenceContextAt(source, position),
+    keysFromSource: ({ fileName, source }) =>
+      phpLaravelConfigKeysFromSource(source, fileName),
+    targetFromSource: ({ fileName, key, source }) =>
+      phpLaravelConfigTargetFromSource(source, fileName, key),
+  },
+  translations: {
+    referenceAt: ({ position, source }) =>
+      phpLaravelTranslationReferenceContextAt(source, position),
+    keysFromSource: ({ fileName, source }) =>
+      phpLaravelTranslationKeysFromSource(source, fileName),
+    targetFromSource: ({ fileName, key, source }) =>
+      phpLaravelTranslationTargetFromSource(source, fileName, key),
+    jsonKeysFromSource: ({ source }) =>
+      phpLaravelJsonTranslationKeysFromSource(source),
+    jsonTargetFromSource: ({ key, source }) =>
+      phpLaravelJsonTranslationTargetFromSource(source, key),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -443,6 +581,188 @@ export function phpFrameworkSupportsRoutes(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.routes !== undefined);
+}
+
+/**
+ * First config reference detected at the cursor across the active providers.
+ * Exclusive resolution keeps this to at most one provider today, so the first
+ * non-null match wins and non-config providers are inert.
+ */
+export function phpFrameworkConfigReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkConfigReference | null {
+  for (const provider of providers) {
+    const reference = provider.config?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Config keys declared in a single source, aggregated across the active
+ * providers. Providers without a config capability contribute nothing.
+ */
+export function phpFrameworkConfigKeysFromSource(
+  source: string,
+  fileName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkConfigKey[] {
+  return providers.flatMap(
+    (provider) => provider.config?.keysFromSource?.({ fileName, source }) ?? [],
+  );
+}
+
+/**
+ * First config target for a key resolved in a single source across the active
+ * providers. Providers without a config capability contribute nothing.
+ */
+export function phpFrameworkConfigTargetFromSource(
+  source: string,
+  fileName: string,
+  key: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkConfigKey | null {
+  for (const provider of providers) {
+    const target = provider.config?.targetFromSource?.({
+      fileName,
+      key,
+      source,
+    });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Whether any active provider ships a config capability - the framework-agnostic
+ * gate that replaces the hardcoded `isLaravelFrameworkActive` config checks.
+ */
+export function phpFrameworkSupportsConfig(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.config !== undefined);
+}
+
+/**
+ * First translation reference detected at the cursor across the active
+ * providers. Exclusive resolution keeps this to at most one provider today, so
+ * the first non-null match wins and non-translation providers are inert.
+ */
+export function phpFrameworkTranslationReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationReference | null {
+  for (const provider of providers) {
+    const reference = provider.translations?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Translation keys declared in a single PHP lang source, aggregated across the
+ * active providers. Providers without a translations capability contribute
+ * nothing.
+ */
+export function phpFrameworkTranslationKeysFromSource(
+  source: string,
+  fileName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationKey[] {
+  return providers.flatMap(
+    (provider) =>
+      provider.translations?.keysFromSource?.({ fileName, source }) ?? [],
+  );
+}
+
+/**
+ * First translation target for a key resolved in a single PHP lang source
+ * across the active providers. Providers without a translations capability
+ * contribute nothing.
+ */
+export function phpFrameworkTranslationTargetFromSource(
+  source: string,
+  fileName: string,
+  key: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationKey | null {
+  for (const provider of providers) {
+    const target = provider.translations?.targetFromSource?.({
+      fileName,
+      key,
+      source,
+    });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Translation keys declared in a single JSON lang source, aggregated across the
+ * active providers. Providers without a translations capability contribute
+ * nothing.
+ */
+export function phpFrameworkJsonTranslationKeysFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationKey[] {
+  return providers.flatMap(
+    (provider) => provider.translations?.jsonKeysFromSource?.({ source }) ?? [],
+  );
+}
+
+/**
+ * First translation target for a key resolved in a single JSON lang source
+ * across the active providers. Providers without a translations capability
+ * contribute nothing.
+ */
+export function phpFrameworkJsonTranslationTargetFromSource(
+  source: string,
+  key: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationKey | null {
+  for (const provider of providers) {
+    const target = provider.translations?.jsonTargetFromSource?.({
+      key,
+      source,
+    });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Whether any active provider ships a translations capability - the
+ * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
+ * translation checks.
+ */
+export function phpFrameworkSupportsTranslations(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.translations !== undefined);
 }
 
 export function phpFrameworkPropertyTypeFromSource(

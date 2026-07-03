@@ -13,10 +13,20 @@ import {
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkPropertyTypeFromSource,
   phpFrameworkProvidersForProject,
+  phpFrameworkConfigKeysFromSource,
+  phpFrameworkConfigReferenceAt,
+  phpFrameworkConfigTargetFromSource,
+  phpFrameworkJsonTranslationKeysFromSource,
+  phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
+  phpFrameworkSupportsTranslations,
+  phpFrameworkTranslationKeysFromSource,
+  phpFrameworkTranslationReferenceAt,
+  phpFrameworkTranslationTargetFromSource,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
   resolvePhpFrameworkProfile,
@@ -27,6 +37,18 @@ import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
 } from "./phpLaravelRoutes";
+import {
+  phpLaravelConfigKeysFromSource,
+  phpLaravelConfigReferenceContextAt,
+  phpLaravelConfigTargetFromSource,
+} from "./phpLaravelConfig";
+import {
+  phpLaravelJsonTranslationKeysFromSource,
+  phpLaravelJsonTranslationTargetFromSource,
+  phpLaravelTranslationKeysFromSource,
+  phpLaravelTranslationReferenceContextAt,
+  phpLaravelTranslationTargetFromSource,
+} from "./phpLaravelTranslations";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -1404,6 +1426,219 @@ return new class extends Migration
         phpFrameworkRouteDefinitionsFromSource(definitionSource, []),
       ).toEqual([]);
       expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
+    });
+  });
+
+  describe("config capability", () => {
+    const referenceSource = "<?php\n\nreturn config('app.name');\n";
+    const referencePosition = { column: 22, lineNumber: 3 };
+    const configFileSource = "<?php\n\nreturn [\n    'name' => 'Codevo',\n];\n";
+
+    it("dispatches Laravel config references 1:1 through the provider", () => {
+      const direct = phpLaravelConfigReferenceContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkConfigReferenceAt(referenceSource, referencePosition, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel config keys 1:1 through the provider", () => {
+      const direct = phpLaravelConfigKeysFromSource(configFileSource, "app");
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkConfigKeysFromSource(configFileSource, "app", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel config targets 1:1 through the provider", () => {
+      const direct = phpLaravelConfigTargetFromSource(
+        configFileSource,
+        "app",
+        "app.name",
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("reports config support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsConfig([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsConfig([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
+      expect(phpFrameworkSupportsConfig([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the config capability", () => {
+      expect(
+        phpFrameworkConfigReferenceAt(referenceSource, referencePosition, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkConfigKeysFromSource(configFileSource, "app", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(
+        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkConfigReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+      expect(
+        phpFrameworkConfigKeysFromSource(configFileSource, "app", []),
+      ).toEqual([]);
+      expect(
+        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", []),
+      ).toBeNull();
+    });
+  });
+
+  describe("translations capability", () => {
+    const referenceSource = "<?php\n\nreturn __('messages.welcome');\n";
+    const referencePosition = { column: 18, lineNumber: 3 };
+    const langFileSource = "<?php\n\nreturn [\n    'welcome' => 'Hi',\n];\n";
+    const jsonLangSource = '{\n  "Welcome": "Vitajte"\n}\n';
+
+    it("dispatches Laravel translation references 1:1 through the provider", () => {
+      const direct = phpLaravelTranslationReferenceContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel translation keys 1:1 through the provider", () => {
+      const direct = phpLaravelTranslationKeysFromSource(
+        langFileSource,
+        "messages",
+      );
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkTranslationKeysFromSource(langFileSource, "messages", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel translation targets 1:1 through the provider", () => {
+      const direct = phpLaravelTranslationTargetFromSource(
+        langFileSource,
+        "messages",
+        "messages.welcome",
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkTranslationTargetFromSource(
+          langFileSource,
+          "messages",
+          "messages.welcome",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel JSON translation keys 1:1 through the provider", () => {
+      const direct = phpLaravelJsonTranslationKeysFromSource(jsonLangSource);
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkJsonTranslationKeysFromSource(jsonLangSource, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel JSON translation targets 1:1 through the provider", () => {
+      const direct = phpLaravelJsonTranslationTargetFromSource(
+        jsonLangSource,
+        "Welcome",
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkJsonTranslationTargetFromSource(jsonLangSource, "Welcome", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("reports translation support only for providers shipping the capability", () => {
+      expect(
+        phpFrameworkSupportsTranslations([phpLaravelFrameworkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsTranslations([phpNetteFrameworkProvider]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsTranslations([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the translations capability", () => {
+      expect(
+        phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkTranslationKeysFromSource(langFileSource, "messages", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(
+        phpFrameworkTranslationTargetFromSource(
+          langFileSource,
+          "messages",
+          "messages.welcome",
+          [phpNetteFrameworkProvider],
+        ),
+      ).toBeNull();
+      expect(
+        phpFrameworkJsonTranslationKeysFromSource(jsonLangSource, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(
+        phpFrameworkJsonTranslationTargetFromSource(jsonLangSource, "Welcome", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+      expect(
+        phpFrameworkTranslationKeysFromSource(langFileSource, "messages", []),
+      ).toEqual([]);
+      expect(
+        phpFrameworkJsonTranslationKeysFromSource(jsonLangSource, []),
+      ).toEqual([]);
     });
   });
 });

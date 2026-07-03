@@ -379,9 +379,6 @@ import {
   phpLaravelConfigCompletionInsertText,
   phpLaravelConfigFileNameFromRelativePath,
   phpLaravelConfigKeyCandidateRelativePath,
-  phpLaravelConfigKeysFromSource,
-  phpLaravelConfigReferenceContextAt,
-  phpLaravelConfigTargetFromSource,
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
 import {
@@ -430,15 +427,10 @@ import {
 import {
   isUsableLaravelTranslationLocale,
   phpLaravelJsonTranslationCompletionInsertText,
-  phpLaravelJsonTranslationKeysFromSource,
   phpLaravelJsonTranslationLocaleFromRelativePath,
-  phpLaravelJsonTranslationTargetFromSource,
   phpLaravelTranslationCompletionInsertText,
   phpLaravelTranslationFileNameFromKey,
   phpLaravelTranslationFileNameFromRelativePath,
-  phpLaravelTranslationKeysFromSource,
-  phpLaravelTranslationReferenceContextAt,
-  phpLaravelTranslationTargetFromSource,
   type PhpLaravelTranslationTarget,
 } from "../domain/phpLaravelTranslations";
 import {
@@ -489,11 +481,21 @@ import {
 import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
+  phpFrameworkConfigKeysFromSource,
+  phpFrameworkConfigReferenceAt,
+  phpFrameworkConfigTargetFromSource,
+  phpFrameworkJsonTranslationKeysFromSource,
+  phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
+  phpFrameworkSupportsTranslations,
+  phpFrameworkTranslationKeysFromSource,
+  phpFrameworkTranslationReferenceAt,
+  phpFrameworkTranslationTargetFromSource,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
@@ -14131,7 +14133,10 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (
+        !phpFrameworkSupportsConfig(activePhpFrameworkProviders) ||
+        !requestedRoot
+      ) {
         return null;
       }
 
@@ -14156,10 +14161,11 @@ export function useWorkbenchController(
           return null;
         }
 
-        const target = phpLaravelConfigTargetFromSource(
+        const target = phpFrameworkConfigTargetFromSource(
           content,
           fileName,
           configKey,
+          activePhpFrameworkProviders,
         );
 
         if (!target) {
@@ -14180,7 +14186,7 @@ export function useWorkbenchController(
       }
     },
     [
-      isLaravelFrameworkActive,
+      activePhpFrameworkProviders,
       readNavigationFileContent,
       workspaceRoot,
     ],
@@ -14193,7 +14199,10 @@ export function useWorkbenchController(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!isLaravelFrameworkActive || !requestedRoot) {
+    if (
+      !phpFrameworkSupportsConfig(activePhpFrameworkProviders) ||
+      !requestedRoot
+    ) {
       return [];
     }
 
@@ -14260,7 +14269,11 @@ export function useWorkbenchController(
           return [];
         }
 
-        for (const target of phpLaravelConfigKeysFromSource(content, fileName)) {
+        for (const target of phpFrameworkConfigKeysFromSource(
+          content,
+          fileName,
+          activePhpFrameworkProviders,
+        )) {
           rememberTarget({
             ...target,
             path: entry.path,
@@ -14286,7 +14299,7 @@ export function useWorkbenchController(
 
     return result;
   }, [
-    isLaravelFrameworkActive,
+    activePhpFrameworkProviders,
     readNavigationFileContent,
     readPhpLaravelTargetCache,
     workspaceFiles,
@@ -14881,7 +14894,10 @@ export function useWorkbenchController(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!isLaravelFrameworkActive || !requestedRoot) {
+    if (
+      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !requestedRoot
+    ) {
       return [];
     }
 
@@ -14931,7 +14947,7 @@ export function useWorkbenchController(
       return left.localeCompare(right);
     });
   }, [
-    isLaravelFrameworkActive,
+    activePhpFrameworkProviders,
     workspaceFiles,
     workspaceRoot,
   ]);
@@ -14943,7 +14959,10 @@ export function useWorkbenchController(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!isLaravelFrameworkActive || !requestedRoot) {
+    if (
+      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !requestedRoot
+    ) {
       return [];
     }
 
@@ -14994,7 +15013,7 @@ export function useWorkbenchController(
       left.relativePath.localeCompare(right.relativePath),
     );
   }, [
-    isLaravelFrameworkActive,
+    activePhpFrameworkProviders,
     workspaceFiles,
     workspaceRoot,
   ]);
@@ -15007,7 +15026,10 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (
+        !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+        !requestedRoot
+      ) {
         return null;
       }
 
@@ -15035,10 +15057,11 @@ export function useWorkbenchController(
               return null;
             }
 
-            const target = phpLaravelTranslationTargetFromSource(
+            const target = phpFrameworkTranslationTargetFromSource(
               content,
               fileName,
               translationKey,
+              activePhpFrameworkProviders,
             );
 
             if (!target) {
@@ -15077,9 +15100,10 @@ export function useWorkbenchController(
             return null;
           }
 
-          const target = phpLaravelJsonTranslationTargetFromSource(
+          const target = phpFrameworkJsonTranslationTargetFromSource(
             content,
             translationKey,
+            activePhpFrameworkProviders,
           );
 
           if (!target) {
@@ -15102,9 +15126,9 @@ export function useWorkbenchController(
       return null;
     },
     [
+      activePhpFrameworkProviders,
       collectPhpLaravelJsonTranslationFiles,
       collectPhpLaravelTranslationLocaleRoots,
-      isLaravelFrameworkActive,
       readNavigationFileContent,
       workspaceRoot,
     ],
@@ -15117,7 +15141,10 @@ export function useWorkbenchController(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!isLaravelFrameworkActive || !requestedRoot) {
+    if (
+      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !requestedRoot
+    ) {
       return [];
     }
 
@@ -15184,9 +15211,10 @@ export function useWorkbenchController(
             return [];
           }
 
-          for (const target of phpLaravelTranslationKeysFromSource(
+          for (const target of phpFrameworkTranslationKeysFromSource(
             content,
             fileName,
+            activePhpFrameworkProviders,
           )) {
             const key = target.key.toLowerCase();
 
@@ -15227,7 +15255,10 @@ export function useWorkbenchController(
           return [];
         }
 
-        for (const target of phpLaravelJsonTranslationKeysFromSource(content)) {
+        for (const target of phpFrameworkJsonTranslationKeysFromSource(
+          content,
+          activePhpFrameworkProviders,
+        )) {
           const key = target.key.toLowerCase();
 
           if (targets.has(key)) {
@@ -15260,9 +15291,9 @@ export function useWorkbenchController(
 
     return result;
   }, [
+    activePhpFrameworkProviders,
     collectPhpLaravelJsonTranslationFiles,
     collectPhpLaravelTranslationLocaleRoots,
-    isLaravelFrameworkActive,
     readNavigationFileContent,
     readPhpLaravelTargetCache,
     workspaceFiles,
@@ -19480,12 +19511,13 @@ export function useWorkbenchController(
           }));
       }
 
-      const translationContext = phpLaravelTranslationReferenceContextAt(
+      const translationContext = phpFrameworkTranslationReferenceAt(
         source,
         position,
+        activePhpFrameworkProviders,
       );
 
-      if (isLaravelFrameworkActive && translationContext && activeDocument) {
+      if (translationContext && activeDocument) {
         const normalizedPrefix = translationContext.prefix.toLowerCase();
         const targets = await collectPhpLaravelTranslationTargets();
 
@@ -19541,9 +19573,13 @@ export function useWorkbenchController(
           }));
       }
 
-      const configContext = phpLaravelConfigReferenceContextAt(source, position);
+      const configContext = phpFrameworkConfigReferenceAt(
+        source,
+        position,
+        activePhpFrameworkProviders,
+      );
 
-      if (isLaravelFrameworkActive && configContext && activeDocument) {
+      if (configContext && activeDocument) {
         const normalizedPrefix = configContext.prefix.toLowerCase();
         const targets = await collectPhpLaravelConfigTargets();
 
