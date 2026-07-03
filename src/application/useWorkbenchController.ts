@@ -22385,10 +22385,21 @@ export function useWorkbenchController(
     if (document?.path.endsWith(".blade.php") && editorPosition) {
       const openedBladeTarget = await provideBladeDefinition(
         document.content,
-        bladeOffsetAtEditorPosition(document.content, editorPosition),
+        documentOffsetAtEditorPosition(document.content, editorPosition),
       );
 
       if (openedBladeTarget) {
+        return;
+      }
+    }
+
+    if (document?.path.endsWith(".latte") && editorPosition) {
+      const openedLatteTarget = await provideLatteDefinition(
+        document.content,
+        documentOffsetAtEditorPosition(document.content, editorPosition),
+      );
+
+      if (openedLatteTarget) {
         return;
       }
     }
@@ -22425,6 +22436,7 @@ export function useWorkbenchController(
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
     provideBladeDefinition,
+    provideLatteDefinition,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {
@@ -28778,10 +28790,11 @@ function bladeSyntheticPhpMemberAccessSource(
 
 /**
  * Converts a 1-based editor position into a 0-based character offset into
- * `source` (used to feed the offset-based Blade detection helpers). Lines beyond
- * the source resolve to its end; columns beyond a line clamp to that line's end.
+ * `source` (used to feed the offset-based template detection helpers). Lines
+ * beyond the source resolve to its end; columns beyond a line clamp to that
+ * line's end.
  */
-function bladeOffsetAtEditorPosition(
+function documentOffsetAtEditorPosition(
   source: string,
   position: EditorPosition,
 ): number {

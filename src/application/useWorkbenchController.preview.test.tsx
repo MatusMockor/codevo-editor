@@ -52649,6 +52649,86 @@ class SendShipmentNotification
     });
   });
 
+  describe("Latte Cmd+Click definition and completion", () => {
+    it("prioritizes Latte include definitions over TypeScript symbols in IDE mode", async () => {
+      const lattePath = "/workspace/app/UI/Home/show.latte";
+      const partialPath = "/workspace/app/UI/Home/partials/@showHeader.latte";
+      const typeScriptPath = "/workspace/src/showHeader.ts";
+      const latteSource = "{include partials/@showHeader.latte}\n";
+      const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 73,
+      };
+      const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+      vi.mocked(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      ).mockResolvedValue([
+        {
+          range: range(1, 13, 1, 23),
+          uri: fileUriFromPath(typeScriptPath),
+        },
+      ]);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          javaScriptTypeScriptRuntimeStatus,
+        javaScriptTypeScriptLanguageServerFeaturesGateway,
+        javaScriptTypeScriptRuntimeStatus,
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === lattePath) {
+            return latteSource;
+          }
+
+          if (path === partialPath) {
+            return "<h1>Header</h1>\n";
+          }
+
+          if (path === typeScriptPath) {
+            return "export const showHeader = () => null;\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: netteWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(lattePath, "show.latte"));
+      });
+      act(() => {
+        getWorkbench().updateActiveEditorPosition(
+          positionAfter(latteSource, "partials/@showHeader"),
+        );
+      });
+
+      await act(async () => {
+        await getWorkbench().commands
+          .find((candidate) => candidate.id === "editor.goToDefinition")
+          ?.run();
+      });
+
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      ).not.toHaveBeenCalled();
+      expect(getWorkbench().activePath).toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: partialPath,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+  });
+
   describe("Blade Cmd+Click definition and completion", () => {
     it("navigates an @include directive to the referenced view file", async () => {
       const bladePath = "/workspace/resources/views/show.blade.php";
@@ -67384,6 +67464,44 @@ function phpWorkspaceDescriptor(
     php: phpProjectDescriptor(phpOverrides),
     rootPath: "/workspace",
   };
+}
+
+function netteWorkspaceDescriptor(): WorkspaceDescriptor {
+  return phpWorkspaceDescriptor({
+    packageName: "nette/application",
+    packages: [
+      {
+        classmapRoots: [],
+        dev: false,
+        installPath: "../nette/application",
+        name: "nette/application",
+        packageType: "library",
+        psr4Roots: [
+          {
+            dev: false,
+            namespace: "Nette\\Application\\",
+            paths: ["src/"],
+          },
+        ],
+        version: "3.2.0",
+      },
+      {
+        classmapRoots: [],
+        dev: false,
+        installPath: "../latte/latte",
+        name: "latte/latte",
+        packageType: "library",
+        psr4Roots: [
+          {
+            dev: false,
+            namespace: "Latte\\",
+            paths: ["src/"],
+          },
+        ],
+        version: "3.0.0",
+      },
+    ],
+  });
 }
 
 function javaScriptTypeScriptWorkspaceDescriptor(): WorkspaceDescriptor {

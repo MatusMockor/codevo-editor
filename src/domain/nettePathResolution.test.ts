@@ -216,6 +216,19 @@ describe("presenterCandidatePathsForTemplate", () => {
     ).toContain("app/Presenters/ProductPresenter.php");
   });
 
+  it("maps a classic module partial back to its presenter", () => {
+    expect(
+      presenterCandidatePathsForTemplate(
+        "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+      ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/PartialsPresenter.php",
+    ]);
+  });
+
   it("maps a classic dotted template back to its presenter", () => {
     expect(
       presenterCandidatePathsForTemplate(

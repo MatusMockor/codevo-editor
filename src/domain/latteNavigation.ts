@@ -136,6 +136,17 @@ export function detectLatteReferenceAt(
       return file;
     }
 
+    const unquotedFile = bareTemplateReference(
+      source,
+      offset,
+      "include",
+      macro.argStart,
+    );
+
+    if (unquotedFile) {
+      return unquotedFile;
+    }
+
     return bareReference(
       source,
       offset,
@@ -368,6 +379,40 @@ function quotedTemplateReference(
 }
 
 /**
+ * Detects Nette's common unquoted include file path form
+ * (`{include partials/@header.latte}`) without stealing plain block includes
+ * such as `{include sidebar}`.
+ */
+function bareTemplateReference(
+  source: string,
+  offset: number,
+  tag: string,
+  argStart: number,
+): LatteReference | null {
+  let index = skipSpaces(source, argStart);
+  const nameStart = index;
+
+  while (index < source.length && isTemplatePathChar(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const nameEnd = index;
+  const name = source.slice(nameStart, nameEnd);
+
+  if (!looksLikeTemplatePath(name) || offset < nameStart || offset > nameEnd) {
+    return null;
+  }
+
+  return {
+    kind: "template",
+    tag,
+    name,
+    nameStart,
+    nameEnd,
+  };
+}
+
+/**
  * Detects a bare identifier argument of `tag` (optionally `#`-prefixed) starting
  * at `argStart` and spanning `offset`, returning a reference of `kind` or
  * `null`. Reserved names resolve to `null`.
@@ -498,6 +543,17 @@ function isTagNameChar(character: string): boolean {
 
 function isBareNameChar(character: string): boolean {
   return /[A-Za-z0-9_-]/.test(character);
+}
+
+function isTemplatePathChar(character: string): boolean {
+  return /[A-Za-z0-9_./@-]/.test(character);
+}
+
+function looksLikeTemplatePath(name: string): boolean {
+  return (
+    isUsableTemplateName(name) &&
+    (name.endsWith(".latte") || name.includes("/") || name.startsWith("@"))
+  );
 }
 
 function isUsableTemplateName(name: string): boolean {

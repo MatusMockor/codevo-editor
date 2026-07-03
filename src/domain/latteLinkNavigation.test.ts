@@ -251,6 +251,34 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
     ).toEqual(["app/UI/Product/ProductPresenter.php"]);
   });
 
+  it("resolves a relative n:href action from a classic module partial to the current presenter", () => {
+    const source = '<a n:href="default">Back</a>';
+    const detection = detectLatteLinkAt(source, offsetOf(source, "default", 2));
+    const parsed = parseNetteLinkTarget(detection?.target ?? "");
+
+    expect(detection).toMatchObject({
+      tag: "n:href",
+      target: "default",
+    });
+    expect(parsed).toMatchObject({
+      action: "default",
+      isSignal: false,
+      presenter: null,
+    });
+    expect(
+      parsed &&
+        nettePresenterClassCandidatePathsForLink(
+          parsed,
+          "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+        ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/PartialsPresenter.php",
+    ]);
+  });
+
   it("detects a non-standard app root from the current path", () => {
     expect(
       nettePresenterClassCandidatePathsForLink(

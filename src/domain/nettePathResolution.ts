@@ -203,9 +203,10 @@ export function presenterCandidatePathsForTemplate(
   const fileName = basenameOf(path);
 
   return dedupe([
-    ...modernPresenterCandidate(dir),
+    ...classicDescendantPresenterCandidate(dir),
     ...classicSubfolderPresenterCandidate(dir),
     ...classicDottedPresenterCandidate(dir, fileName),
+    ...modernPresenterCandidate(dir),
   ]);
 }
 
@@ -240,7 +241,42 @@ function classicSubfolderPresenterCandidate(dir: string): string[] {
     return [];
   }
 
-  return [joinRelative(presenterBase, `${ucfirst(short)}${PRESENTER_SUFFIX}`)];
+  return classicPresenterCandidatesFromBase(presenterBase, short);
+}
+
+/** Classic convention partials: `.../templates/<Short>/partials/file.latte`. */
+function classicDescendantPresenterCandidate(dir: string): string[] {
+  const match = /^(.*)\/templates\/([^/]+)\/.+$/.exec(dir);
+
+  if (!match) {
+    return [];
+  }
+
+  const presenterBase = match[1] ?? "";
+  const short = match[2] ?? "";
+
+  if (!isUsableIdentifier(short)) {
+    return [];
+  }
+
+  return classicPresenterCandidatesFromBase(presenterBase, short);
+}
+
+function classicPresenterCandidatesFromBase(
+  presenterBase: string,
+  short: string,
+): string[] {
+  const file = `${ucfirst(short)}${PRESENTER_SUFFIX}`;
+
+  if (basenameOf(presenterBase).toLowerCase() === "presenters") {
+    return [joinRelative(presenterBase, file)];
+  }
+
+  return [
+    joinRelative(presenterBase, `presenters/${file}`),
+    joinRelative(presenterBase, `Presenters/${file}`),
+    joinRelative(presenterBase, file),
+  ];
 }
 
 /** Classic dotted convention: `.../templates/<Short>.<view>.latte`. */

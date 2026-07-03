@@ -51,6 +51,31 @@ describe("detectLatteReferenceAt", () => {
     expect(detectLatteReferenceAt(source, offset)?.name).toBe("menu.latte");
   });
 
+  it("detects an unquoted include path as a template reference", () => {
+    const source = "{include partials/@showHeader.latte}";
+    const offset = offsetOf(source, "@showHeader", 2);
+
+    expect(detectLatteReferenceAt(source, offset)).toEqual({
+      kind: "template",
+      tag: "include",
+      name: "partials/@showHeader.latte",
+      nameStart: source.indexOf("partials/@showHeader.latte"),
+      nameEnd:
+        source.indexOf("partials/@showHeader.latte") +
+        "partials/@showHeader.latte".length,
+    });
+  });
+
+  it("stops an unquoted include path before named arguments", () => {
+    const source = "{include partials/@showSubmenu.latte 'group' => $group}";
+    const offset = offsetOf(source, "@showSubmenu", 2);
+
+    expect(detectLatteReferenceAt(source, offset)).toMatchObject({
+      kind: "template",
+      name: "partials/@showSubmenu.latte",
+    });
+  });
+
   it("detects a {layout '...'} template reference", () => {
     const source = "{layout '../@layout.latte'}";
     const offset = offsetOf(source, "@layout.latte", 2);
