@@ -497,7 +497,7 @@ import {
   phpFrameworkMethodCallReturnTypeFromSource,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
-  phpFrameworkProvidersForProject,
+  resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
   phpClassConstantPositionOrNull,
@@ -1138,10 +1138,14 @@ export function useWorkbenchController(
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
-  const activePhpFrameworkProviders = useMemo(
-    () => phpFrameworkProvidersForProject(workspaceDescriptor?.php ?? null),
+  // One detection pass per workspace: the active provider set and the exclusive
+  // profile ("laravel" | "nette" | "generic") are derived from the same result,
+  // so they can never disagree (no second source of truth).
+  const phpFrameworkResolution = useMemo(
+    () => resolvePhpFrameworkProfile(workspaceDescriptor?.php ?? null),
     [workspaceDescriptor?.php],
   );
+  const activePhpFrameworkProviders = phpFrameworkResolution.providers;
   const activePhpFrameworkProviderSignature = useMemo(
     () => phpFrameworkProviderSignature(activePhpFrameworkProviders),
     [activePhpFrameworkProviders],
@@ -1150,6 +1154,29 @@ export function useWorkbenchController(
     () => isPhpFrameworkProviderActive(activePhpFrameworkProviders, "laravel"),
     [activePhpFrameworkProviders],
   );
+  const isNetteFrameworkActive = useMemo(
+    () => isPhpFrameworkProviderActive(activePhpFrameworkProviders, "nette"),
+    [activePhpFrameworkProviders],
+  );
+  // Exclusive, per-workspace framework profile - the single discriminator the
+  // status-bar chip and future gating key off.
+  const activeFrameworkProfile = phpFrameworkResolution.profile;
+  // Edge (spec 4.1): a project that declares several framework signals at once
+  // (e.g. a Laravel app carrying latte/latte transitively in composer.lock)
+  // resolves to a single exclusive profile by registry priority. Surface the
+  // ambiguity once per workspace so the deterministic pick stays observable and
+  // we never silently blend two frameworks' magic.
+  useEffect(() => {
+    if (phpFrameworkResolution.matchedProviderIds.length < 2) {
+      return;
+    }
+
+    console.warn(
+      `Multiple PHP framework signals detected (${phpFrameworkResolution.matchedProviderIds.join(
+        ", ",
+      )}); resolved exclusively to "${phpFrameworkResolution.profile}" by registry priority.`,
+    );
+  }, [phpFrameworkResolution]);
   const [workspaceTrust, setWorkspaceTrust] =
     useState<WorkspaceTrustState | null>(null);
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
@@ -32024,6 +32051,8 @@ export function useWorkbenchController(
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
+    activeFrameworkProfile,
+    isNetteFrameworkActive,
     implementationChooser,
     languageServerDiagnosticsByPath: mergedLanguageServerDiagnosticsByPath,
     loadingDirectories,

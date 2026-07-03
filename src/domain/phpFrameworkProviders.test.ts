@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  frameworkProfileForProject,
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
+  isNettePhpProject,
+  phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
+  isPhpFrameworkProviderActive,
   phpFrameworkProviderRegistry,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkPropertyTypeFromSource,
   phpFrameworkProvidersForProject,
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+  resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
 import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
@@ -1084,6 +1090,236 @@ return new class extends Migration
       expect(names).not.toContain("id");
       // Existing fillable/casts attributes remain intact.
       expect(names).toEqual(expect.arrayContaining(["user_id", "account_id"]));
+    });
+  });
+
+  describe("frameworkProfileForProject", () => {
+    it("detects Laravel projects from the composer signal", () => {
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({ packageName: "laravel/laravel", packages: [] }),
+        ),
+      ).toBe("laravel");
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({
+            packageName: "custom/api",
+            packages: [{ name: "laravel/framework" }],
+          }),
+        ),
+      ).toBe("laravel");
+    });
+
+    it("detects Nette projects from nette/application or latte/latte", () => {
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({
+            packageName: "nette/web-project",
+            packages: [{ name: "nette/application" }],
+          }),
+        ),
+      ).toBe("nette");
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({
+            packageName: "acme/site",
+            packages: [{ name: "latte/latte" }],
+          }),
+        ),
+      ).toBe("nette");
+    });
+
+    it("falls back to generic for unknown frameworks and empty input", () => {
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({
+            packageName: "symfony/app",
+            packages: [{ name: "symfony/framework-bundle" }],
+          }),
+        ),
+      ).toBe("generic");
+      expect(frameworkProfileForProject(null)).toBe("generic");
+      expect(frameworkProfileForProject(undefined)).toBe("generic");
+    });
+
+    it("resolves the ambiguous both-frameworks edge to Laravel deterministically", () => {
+      // A project that declares both signals is rare, but the profile must be a
+      // single, deterministic value. Laravel wins because it is first in order.
+      expect(
+        frameworkProfileForProject(
+          phpProjectDescriptor({
+            packageName: "custom/app",
+            packages: [
+              { name: "laravel/framework" },
+              { name: "nette/application" },
+            ],
+          }),
+        ),
+      ).toBe("laravel");
+    });
+  });
+
+  describe("isNettePhpProject", () => {
+    it("is true for nette/application and latte/latte, false otherwise", () => {
+      expect(
+        isNettePhpProject(
+          phpProjectDescriptor({ packages: [{ name: "nette/application" }] }),
+        ),
+      ).toBe(true);
+      expect(
+        isNettePhpProject(
+          phpProjectDescriptor({ packages: [{ name: "latte/latte" }] }),
+        ),
+      ).toBe(true);
+      expect(
+        isNettePhpProject(
+          phpProjectDescriptor({
+            packageName: "laravel/laravel",
+            packages: [{ name: "laravel/framework" }],
+          }),
+        ),
+      ).toBe(false);
+      expect(isNettePhpProject(phpProjectDescriptor({ packages: [] }))).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("phpNetteFrameworkProvider skeleton", () => {
+    const netteDescriptor = phpProjectDescriptor({
+      packageName: "nette/web-project",
+      packages: [{ name: "nette/application" }],
+    });
+
+    it("is registered and activates only for Nette projects (exclusive with Laravel)", () => {
+      expect(phpFrameworkProviderRegistry).toContain(phpNetteFrameworkProvider);
+      expect(phpNetteFrameworkProvider.appliesTo?.(netteDescriptor)).toBe(true);
+      expect(phpLaravelFrameworkProvider.appliesTo?.(netteDescriptor)).toBe(
+        false,
+      );
+      expect(phpFrameworkProvidersForProject(netteDescriptor)).toEqual([
+        phpNetteFrameworkProvider,
+      ]);
+    });
+
+    it("is a safe no-op through every dispatcher (no capabilities yet)", () => {
+      const providers = [phpNetteFrameworkProvider];
+
+      expect(
+        phpFrameworkMemberCompletionsFromSource("<?php", "Article", providers),
+      ).toEqual([]);
+      expect(
+        isKnownPhpFrameworkStaticMethod("<?php", "Article", "render", providers),
+      ).toBe(false);
+      expect(
+        isKnownPhpFrameworkMemberMethod("<?php", "$this", "render", providers),
+      ).toBe(false);
+      expect(
+        phpFrameworkPropertyTypeFromSource("<?php", "template", providers),
+      ).toBeNull();
+      expect(
+        phpFrameworkMethodCallReturnTypeFromSource(
+          "<?php",
+          "render",
+          null,
+          "$this",
+          providers,
+        ),
+      ).toBeNull();
+      expect(
+        phpFrameworkContainerExpressionClassName("$this->template", providers),
+      ).toBeNull();
+      expect(
+        phpFrameworkContainerBindingsFromSource("<?php", providers),
+      ).toEqual([]);
+    });
+  });
+
+  describe("exclusive framework provider resolution", () => {
+    it("activates only the highest-priority provider when several frameworks match", () => {
+      // PhpProjectDescriptor.packages carries require + require-dev + the whole
+      // composer.lock / installed.json (transitive) tree, so a Laravel app that
+      // also drags latte/latte in deep is common, not an edge. The active
+      // provider set must stay exclusive - Laravel wins by registry order and
+      // Nette is never co-active, so no dispatcher can blend both frameworks.
+      const providers = phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "custom/app",
+          packages: [
+            { name: "laravel/framework" },
+            { name: "nette/application" },
+          ],
+        }),
+      );
+
+      expect(providers).toEqual([phpLaravelFrameworkProvider]);
+      expect(isPhpFrameworkProviderActive(providers, "nette")).toBe(false);
+      expect(isPhpFrameworkProviderActive(providers, "laravel")).toBe(true);
+    });
+
+    it("resolves a Laravel project carrying transitive latte/latte to Laravel only", () => {
+      const providers = phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "laravel/laravel",
+          packages: [{ name: "latte/latte" }],
+        }),
+      );
+
+      expect(providers).toEqual([phpLaravelFrameworkProvider]);
+      expect(isPhpFrameworkProviderActive(providers, "nette")).toBe(false);
+    });
+
+    it("activates only the Nette provider for a clean Nette project", () => {
+      const providers = phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "nette/web-project",
+          packages: [{ name: "nette/application" }],
+        }),
+      );
+
+      expect(providers).toEqual([phpNetteFrameworkProvider]);
+      expect(isPhpFrameworkProviderActive(providers, "laravel")).toBe(false);
+    });
+
+    it("activates nothing for a generic PHP project", () => {
+      expect(
+        phpFrameworkProvidersForProject(
+          phpProjectDescriptor({
+            packageName: "vendor/plain",
+            packages: [{ name: "symfony/framework-bundle" }],
+          }),
+        ),
+      ).toEqual([]);
+    });
+
+    it("derives the profile and provider set from one detection pass", () => {
+      const php = phpProjectDescriptor({
+        packageName: "custom/app",
+        packages: [
+          { name: "laravel/framework" },
+          { name: "nette/application" },
+        ],
+      });
+      const resolution = resolvePhpFrameworkProfile(php);
+
+      // Single winner + laravel profile, but both matches surface for the edge log.
+      expect(resolution.providers).toEqual([phpLaravelFrameworkProvider]);
+      expect(resolution.profile).toBe("laravel");
+      expect(resolution.matchedProviderIds).toEqual(["laravel", "nette"]);
+      // The public helpers agree with the resolution (single source of truth).
+      expect(phpFrameworkProvidersForProject(php)).toEqual(resolution.providers);
+      expect(frameworkProfileForProject(php)).toBe(resolution.profile);
+    });
+
+    it("reports a single match for single-framework projects (no edge log)", () => {
+      expect(
+        resolvePhpFrameworkProfile(
+          phpProjectDescriptor({
+            packageName: "nette/web-project",
+            packages: [{ name: "latte/latte" }],
+          }),
+        ).matchedProviderIds,
+      ).toEqual(["nette"]);
     });
   });
 });

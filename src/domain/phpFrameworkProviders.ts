@@ -211,27 +211,44 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   },
 };
 
+/**
+ * Nette provider skeleton. Detection is wired today so the framework profile and
+ * per-workspace exclusivity resolve correctly; the capabilities (templating,
+ * viewData, routes, diagnostics, config) arrive in later slices. Until then this
+ * provider carries no capability objects, and every dispatcher treats it as a
+ * safe no-op via optional chaining - it can never crash the completion/diagnostic
+ * hot path.
+ */
+export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
+  id: "nette",
+  appliesTo: (php) => isNettePhpProject(php),
+};
+
 export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [];
 
 /**
  * Plugin registry of every known framework provider. Adding a framework means
  * appending its provider here (and giving it an `appliesTo`); the rest of the
- * pipeline discovers it automatically. Laravel ships today; the seam is ready
- * for Nette/Symfony providers without further changes.
+ * pipeline discovers it automatically. Laravel and Nette ship today; the seam is
+ * ready for further providers (Symfony, ...) without further changes.
  */
 export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
 ];
 
+/**
+ * Active provider set for a project: exclusive by construction (exactly zero or
+ * one provider). It shares the single detection pass with the framework profile
+ * via `resolvePhpFrameworkProfile`, so a project can never carry two active
+ * frameworks at once - the exclusivity is structural, not two independent
+ * computations that could drift apart.
+ */
 export function phpFrameworkProvidersForProject(
   php: PhpProjectDescriptor | null,
   registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
 ): readonly PhpFrameworkProvider[] {
-  if (!php) {
-    return [];
-  }
-
-  return registry.filter((provider) => provider.appliesTo?.(php) ?? false);
+  return resolvePhpFrameworkProfile(php, registry).providers;
 }
 
 export function phpFrameworkProviderSignature(
@@ -456,6 +473,103 @@ function phpFrameworkNormalizedClassName(className: string): string {
   return className.trim().replace(/^\\+/, "").toLowerCase();
 }
 
+/**
+ * Exclusive, per-workspace framework profile derived from `composer.json`. This
+ * is the single discriminator UI and isolation logic key off (status-bar chip,
+ * gating). A project carries at most one profile.
+ */
+export type FrameworkProfile = "laravel" | "nette" | "generic";
+
+/**
+ * Outcome of the single framework detection pass. Both the active provider set
+ * and the profile are derived from the same `matchedProviderIds`, so there is
+ * exactly one source of truth - they can never disagree (the HIGH finding was
+ * two independent computations that could).
+ */
+export interface PhpFrameworkResolution {
+  /** Exclusive active provider set: exactly zero or one provider. */
+  readonly providers: readonly PhpFrameworkProvider[];
+  /** Exclusive framework profile derived from the winning provider. */
+  readonly profile: FrameworkProfile;
+  /**
+   * Every provider id whose detection matched, in registry (priority) order.
+   * More than one id means the project declared several framework signals at
+   * once (e.g. a Laravel app carrying `latte/latte` transitively in
+   * composer.lock / installed.json) and the exclusive winner was chosen by
+   * registry priority - the caller should log that edge once per workspace.
+   */
+  readonly matchedProviderIds: readonly string[];
+}
+
+/**
+ * The one detection pass: every provider whose `appliesTo` matches, in registry
+ * order. Registry order is the deterministic priority (Laravel is registered
+ * first), so the exclusive winner is simply the first match.
+ */
+function matchingPhpFrameworkProviders(
+  php: PhpProjectDescriptor | null,
+  registry: readonly PhpFrameworkProvider[],
+): readonly PhpFrameworkProvider[] {
+  if (!php) {
+    return [];
+  }
+
+  return registry.filter((provider) => provider.appliesTo?.(php) ?? false);
+}
+
+/**
+ * Resolves the exclusive framework profile and active provider from a project
+ * descriptor over the given registry (defaulting to the shipped registry). This
+ * is the single detection path both `phpFrameworkProvidersForProject` and
+ * `frameworkProfileForProject` delegate to. If the registry has no provider for
+ * the project the result is empty/generic.
+ */
+export function resolvePhpFrameworkProfile(
+  php: PhpProjectDescriptor | null,
+  registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
+): PhpFrameworkResolution {
+  const matches = matchingPhpFrameworkProviders(php, registry);
+  const [winner] = matches;
+
+  if (!winner) {
+    return { matchedProviderIds: [], profile: "generic", providers: [] };
+  }
+
+  return {
+    matchedProviderIds: matches.map((provider) => provider.id),
+    profile: frameworkProfileFromProviderId(winner.id),
+    providers: [winner],
+  };
+}
+
+/**
+ * Type-safe narrowing from a provider id (an open `string`) to the closed
+ * `FrameworkProfile` set. Providers outside the UI-facing set (a future
+ * "symfony") stay active as providers but map to "generic" for the chip.
+ */
+function frameworkProfileFromProviderId(id: string): FrameworkProfile {
+  if (id === "laravel") {
+    return "laravel";
+  }
+
+  if (id === "nette") {
+    return "nette";
+  }
+
+  return "generic";
+}
+
+/**
+ * Resolves the exclusive framework profile for a project. Delegates to the same
+ * detection pass as `phpFrameworkProvidersForProject`, so the chip label and the
+ * active provider set are always consistent.
+ */
+export function frameworkProfileForProject(
+  php: PhpProjectDescriptor | null | undefined,
+): FrameworkProfile {
+  return resolvePhpFrameworkProfile(php ?? null).profile;
+}
+
 function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
   if (php.packageName === "laravel/laravel") {
     return true;
@@ -465,3 +579,20 @@ function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
     (composerPackage) => composerPackage.name === "laravel/framework",
   );
 }
+
+/**
+ * Nette detection mirrors `isLaravelPhpProject`: an exact composer package name
+ * match (Composer normalizes package names to lowercase, so no case folding is
+ * needed - and staying identical to the Laravel check keeps behavior consistent).
+ * `nette/application` (the framework) or `latte/latte` (the template engine)
+ * signal a Nette project.
+ */
+function isNettePhpProject(php: PhpProjectDescriptor): boolean {
+  return php.packages.some(
+    (composerPackage) =>
+      composerPackage.name === "nette/application" ||
+      composerPackage.name === "latte/latte",
+  );
+}
+
+export { isNettePhpProject };

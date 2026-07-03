@@ -251,6 +251,7 @@ describe("ideActivityStatus composed with the PHPactor and TS Server labels", ()
       runningTs,
       progress,
       combinedLabel,
+      "generic",
     );
 
     expect(activity.label).toBe(
@@ -279,7 +280,14 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus("/workspace", null, null, progress, null);
+    const activity = ideActivityStatus(
+      "/workspace",
+      null,
+      null,
+      progress,
+      null,
+      "generic",
+    );
 
     expect(activity.state).toBe("scanning");
     expect(activity.label).toBe("IDE: Indexing 500 of 1000 (50%)");
@@ -300,9 +308,91 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus("/workspace", null, null, progress, null);
+    const activity = ideActivityStatus(
+      "/workspace",
+      null,
+      null,
+      progress,
+      null,
+      "generic",
+    );
 
     expect(activity.label).toBe("IDE: Indexing 320 files");
+  });
+});
+
+describe("ideActivityStatus framework profile segment", () => {
+  const runningPhp: LanguageServerRuntimeStatus = {
+    capabilities: fullLanguageServerCapabilities(),
+    kind: "running",
+    rootPath: "/workspace",
+    sessionId: 1,
+  };
+  const completedIndex = {
+    ...initialIndexProgress(),
+    indexedFiles: 610,
+    rootPath: "/workspace",
+    status: "completed" as const,
+  };
+
+  function phpChipLabel(): string | null {
+    return phpLanguageServerActivityLabel(
+      "fullSmart",
+      runningPhp,
+      "/workspace",
+      null,
+    );
+  }
+
+  it("adds a compact Laravel/Nette segment after the runtime label", () => {
+    expect(
+      ideActivityStatus(
+        "/workspace",
+        runningPhp,
+        null,
+        completedIndex,
+        phpChipLabel(),
+        "laravel",
+      ).label,
+    ).toBe("IDE: PHPactor running · Laravel · Index 610 files");
+    expect(
+      ideActivityStatus(
+        "/workspace",
+        runningPhp,
+        null,
+        completedIndex,
+        phpChipLabel(),
+        "nette",
+      ).label,
+    ).toBe("IDE: PHPactor running · Nette · Index 610 files");
+  });
+
+  it("omits the profile segment for generic projects", () => {
+    const label = ideActivityStatus(
+      "/workspace",
+      runningPhp,
+      null,
+      completedIndex,
+      phpChipLabel(),
+      "generic",
+    ).label;
+
+    expect(label).toBe("IDE: PHPactor running · Index 610 files");
+    expect(label).not.toContain("Laravel");
+    expect(label).not.toContain("Nette");
+  });
+
+  it("does not show a lonely profile segment without an active runtime label", () => {
+    const idleIndex = {
+      ...initialIndexProgress(),
+      rootPath: "/workspace",
+      status: "idle" as const,
+    };
+
+    expect(
+      ideActivityStatus("/workspace", null, null, idleIndex, null, "nette")
+        .label,
+    ).toBeNull();
   });
 });
 

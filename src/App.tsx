@@ -53,6 +53,7 @@ import {
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
 import { shouldStartLanguageServer } from "./domain/intelligence";
+import type { FrameworkProfile } from "./domain/phpFrameworkProviders";
 import type { EditorPosition } from "./domain/languageServerFeatures";
 import type { LanguageServerPlan } from "./domain/languageServer";
 import {
@@ -480,9 +481,11 @@ function App() {
         workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
         workbench.indexProgress,
         combinedLanguageServerLabel,
+        workbench.activeFrameworkProfile,
       ),
     [
       combinedLanguageServerLabel,
+      workbench.activeFrameworkProfile,
       workbench.indexProgress,
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
       workbench.languageServerRuntimeStatus,
@@ -1667,9 +1670,15 @@ export function ideActivityStatus(
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
   indexProgress: IndexProgressState,
   languageServerLabel: string | null,
+  frameworkProfile: FrameworkProfile,
 ): { label: string | null; state: IdeActivityState | null } {
+  const runtimeLabel = compactLanguageServerActivityLabel(languageServerLabel);
   const labels = [
-    compactLanguageServerActivityLabel(languageServerLabel),
+    runtimeLabel,
+    // The framework segment rides alongside an active runtime label only; it is
+    // never a lonely chip on its own (a basic-mode Laravel/Nette project shows
+    // nothing until the IDE runtime is up).
+    runtimeLabel ? frameworkProfileActivityLabel(frameworkProfile) : null,
     compactIndexActivityLabel(indexProgress),
   ].filter((label): label is string => Boolean(label));
 
@@ -1686,6 +1695,22 @@ export function ideActivityStatus(
       indexProgress,
     ),
   };
+}
+
+// Compact framework badge for the IDE activity chip: "Laravel" / "Nette" for a
+// detected framework profile, nothing for generic PHP (no noise).
+function frameworkProfileActivityLabel(
+  profile: FrameworkProfile,
+): string | null {
+  if (profile === "laravel") {
+    return "Laravel";
+  }
+
+  if (profile === "nette") {
+    return "Nette";
+  }
+
+  return null;
 }
 
 function compactLanguageServerActivityLabel(label: string | null): string | null {
