@@ -7,6 +7,8 @@ import { CommandRegistry } from "./commandRegistry";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useGitWorkspace } from "./useGitWorkspace";
+import { useWorkspaceTodos } from "./useWorkspaceTodos";
+import { useBookmarks } from "./useBookmarks";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import {
@@ -67,8 +69,6 @@ import type {
   LocalHistoryVersion,
 } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
-import { extractTodoComments } from "../domain/todoComments";
-import type { WorkspaceTodo } from "../domain/workspaceTodo";
 import {
   applyIndexProgress,
   applyMetadataScanCompletion,
@@ -663,12 +663,9 @@ import {
   type RecentLocation,
 } from "../domain/recentLocations";
 import {
-  nextBookmark,
-  previousBookmark,
   removeBookmarksForPath,
   renameBookmarksForPath,
   sortBookmarks,
-  toggleBookmark,
   type Bookmark,
 } from "../domain/bookmarks";
 import {
@@ -1054,44 +1051,6 @@ function languageServerDiagnosticsEqual(
 // an unbounded run of sequential file-read awaits.
 const BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH = 8;
 
-// TODO-comment scan is conservative so it never blocks the UI on large trees:
-// it skips dependency / VCS / build directories, only reads source-like files,
-// caps the number of files read and skips files that are too large to be hand
-// written source (generated bundles, fixtures, etc.).
-const WORKSPACE_TODO_MAX_FILES = 2000;
-const WORKSPACE_TODO_MAX_FILE_BYTES = 512 * 1024;
-const WORKSPACE_TODO_SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
-  ".git",
-  ".hg",
-  ".idea",
-  ".next",
-  ".nuxt",
-  ".svn",
-  ".turbo",
-  ".vscode",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "out",
-  "storage",
-  "target",
-  "vendor",
-]);
-const WORKSPACE_TODO_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
-  "blade.php",
-  "css",
-  "htm",
-  "html",
-  "js",
-  "jsx",
-  "mjs",
-  "php",
-  "scss",
-  "ts",
-  "tsx",
-  "vue",
-]);
 const PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX = "php-local-diagnostics:";
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 
@@ -1240,9 +1199,6 @@ export function useWorkbenchController(
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
-  const [todoPanelOpen, setTodoPanelOpen] = useState(false);
-  const [workspaceTodos, setWorkspaceTodos] = useState<WorkspaceTodo[]>([]);
-  const [workspaceTodosLoading, setWorkspaceTodosLoading] = useState(false);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
@@ -1353,7 +1309,6 @@ export function useWorkbenchController(
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-  const [bookmarksPanelOpen, setBookmarksPanelOpen] = useState(false);
   const [fileHistoryPanelOpen, setFileHistoryPanelOpen] = useState(false);
   const [fileHistoryRelativePath, setFileHistoryRelativePath] = useState<
     string | null
@@ -4414,16 +4369,14 @@ export function useWorkbenchController(
     setRecentFiles([]);
     setRecentLocations([]);
     setBookmarks([]);
-    setBookmarksPanelOpen(false);
+    closeBookmarksPanel();
     setGitBlameEnabledPaths(new Set());
     setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
     setBottomPanelView("problems");
     setBottomPanelVisible(false);
-    setTodoPanelOpen(false);
-    setWorkspaceTodos([]);
-    setWorkspaceTodosLoading(false);
+    resetWorkspaceTodos();
     setGitStatus(emptyGitStatus());
     setGitRepositoryStatuses([]);
     setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
@@ -5645,9 +5598,7 @@ export function useWorkbenchController(
       // The TODO panel is a transient, workspace-scoped overlay (not part of the
       // cached per-tab state). Always reset it on a switch so one project's TODOs
       // can never appear inside another project's tab.
-      setTodoPanelOpen(false);
-      setWorkspaceTodos([]);
-      setWorkspaceTodosLoading(false);
+      resetWorkspaceTodos();
       // The recent files switcher is a transient overlay too; close it on a
       // switch so it never shows another tab's MRU list mid-transition.
       setRecentFilesSwitcherOpen(false);
@@ -5658,7 +5609,7 @@ export function useWorkbenchController(
       // The bookmarks panel is a transient overlay; close it on a switch so it
       // never shows another tab's bookmarks mid-transition. The bookmark list
       // itself is cached/restored per tab above.
-      setBookmarksPanelOpen(false);
+      closeBookmarksPanel();
 
       setEditorRevealTarget(null);
       setLoadingDirectories(new Set());
@@ -10879,209 +10830,42 @@ export function useWorkbenchController(
     [workspaceFiles],
   );
 
-  // Harvests TODO/FIXME/... comments across the active workspace. The walk is
-  // conservative (skips dependency / build / VCS directories, only reads
-  // source-like files, caps the file count + file size) so it never blocks the
-  // UI on large trees. Per-project isolation is sacred here: the requested root
-  // is captured up front and re-checked after EVERY readDirectory / readTextFile
-  // await — the moment the user switches project tabs the scan bails out and
-  // returns null so stale-workspace TODOs can never land in the now-active tab.
-  const collectWorkspaceTodos = useCallback(
-    async (root: string): Promise<WorkspaceTodo[] | null> => {
-      const requestedRoot = root;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+  const {
+    todoPanelOpen,
+    workspaceTodos,
+    workspaceTodosLoading,
+    refreshWorkspaceTodos,
+    openWorkspaceTodo,
+    openTodoPanel,
+    closeTodoPanel,
+    toggleTodoPanel,
+    resetWorkspaceTodos,
+  } = useWorkspaceTodos({
+    workspaceFiles,
+    currentWorkspaceRootRef,
+    workspaceRoot,
+    openNavigationTarget,
+    relativeWorkspacePath,
+  });
 
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      const todos: WorkspaceTodo[] = [];
-      let filesScanned = 0;
-
-      const visitDirectory = async (directory: string): Promise<boolean> => {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        let entries: FileEntry[];
-
-        try {
-          entries = await workspaceFiles.readDirectory(directory);
-        } catch {
-          // A directory that disappears mid-scan is skipped; a stale switch is
-          // reported so the whole scan is dropped by the caller.
-          return isRequestedRootActive();
-        }
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        for (const entry of entries) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          if (filesScanned >= WORKSPACE_TODO_MAX_FILES) {
-            return true;
-          }
-
-          if (entry.kind === "directory") {
-            if (WORKSPACE_TODO_SKIPPED_DIRECTORIES.has(entry.name)) {
-              continue;
-            }
-
-            const ok = await visitDirectory(entry.path);
-
-            if (!ok) {
-              return false;
-            }
-
-            continue;
-          }
-
-          if (!isWorkspaceTodoSourceFile(entry.name)) {
-            continue;
-          }
-
-          filesScanned += 1;
-
-          let content: string;
-
-          try {
-            content = await workspaceFiles.readTextFile(entry.path);
-          } catch {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            continue;
-          }
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          if (content.length > WORKSPACE_TODO_MAX_FILE_BYTES) {
-            continue;
-          }
-
-          const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
-
-          for (const comment of extractTodoComments(content)) {
-            todos.push({
-              column: comment.column,
-              filePath: entry.path,
-              line: comment.line,
-              relativePath,
-              tag: comment.tag,
-              text: comment.text,
-            });
-          }
-        }
-
-        return true;
-      };
-
-      const completed = await visitDirectory(requestedRoot);
-
-      if (!completed || !isRequestedRootActive()) {
-        return null;
-      }
-
-      return todos;
-    },
-    [workspaceFiles],
-  );
-
-  const refreshWorkspaceTodos = useCallback(async (): Promise<void> => {
-    const requestedRoot = workspaceRoot;
-
-    if (!requestedRoot) {
-      setWorkspaceTodos([]);
-      setWorkspaceTodosLoading(false);
-      return;
-    }
-
-    setWorkspaceTodosLoading(true);
-
-    const todos = await collectWorkspaceTodos(requestedRoot);
-
-    // Re-check after the awaited scan before mutating shared state: a tab switch
-    // during the scan must not splash another workspace's TODOs into this tab.
-    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-      return;
-    }
-
-    if (todos === null) {
-      setWorkspaceTodosLoading(false);
-      return;
-    }
-
-    setWorkspaceTodos(todos);
-    setWorkspaceTodosLoading(false);
-  }, [collectWorkspaceTodos, workspaceRoot]);
-
-  const openWorkspaceTodo = useCallback(
-    async (todo: WorkspaceTodo): Promise<boolean> => {
-      // WorkspaceTodo mirrors the pure extractTodoComments result, whose `line`
-      // and `column` are already 1-based — the same convention EditorPosition's
-      // `lineNumber`/`column` use — so this is a direct 1:1 mapping, no offset.
-      return openNavigationTarget(
-        todo.filePath,
-        { column: todo.column, lineNumber: todo.line },
-        todo.tag,
-      );
-    },
-    [openNavigationTarget],
-  );
-
-  const openTodoPanel = useCallback(() => {
-    setTodoPanelOpen(true);
-    void refreshWorkspaceTodos();
-  }, [refreshWorkspaceTodos]);
-
-  const closeTodoPanel = useCallback(() => {
-    setTodoPanelOpen(false);
-  }, []);
-
-  const toggleTodoPanel = useCallback(() => {
-    setTodoPanelOpen((open) => {
-      if (open) {
-        return false;
-      }
-
-      void refreshWorkspaceTodos();
-      return true;
-    });
-  }, [refreshWorkspaceTodos]);
-
-  // Toggles a bookmark on a specific line of the active document. The line
-  // preview text is captured from the document content at toggle time so the
-  // panel can render it without re-reading the file. Conservative line tracking:
-  // the bookmark holds the line number captured here (it can drift if the file
-  // is edited above it, which is acceptable for runtime-only marks).
-  const toggleBookmarkAtLine = useCallback((lineNumber: number) => {
-    const document = activeDocumentRef.current;
-
-    if (!document) {
-      return;
-    }
-
-    const preview = linePreviewFromContent(document.content, lineNumber);
-
-    setBookmarks((current) =>
-      toggleBookmark(current, { lineNumber, path: document.path, preview }),
-    );
-  }, []);
-
-  // Toggles a bookmark on the active document's current cursor line (keymap /
-  // command entry point — the gutter click uses toggleBookmarkAtLine directly).
-  const toggleBookmarkAtCursor = useCallback(() => {
-    const lineNumber = activeEditorPositionRef.current?.lineNumber ?? 1;
-    toggleBookmarkAtLine(lineNumber);
-  }, [toggleBookmarkAtLine]);
+  const {
+    bookmarksPanelOpen,
+    toggleBookmarkAtLine,
+    toggleBookmarkAtCursor,
+    openBookmark,
+    goToNextBookmark,
+    goToPreviousBookmark,
+    openBookmarksPanel,
+    closeBookmarksPanel,
+    toggleBookmarksPanel,
+  } = useBookmarks({
+    bookmarks,
+    setBookmarks,
+    activeDocumentRef,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
+    openNavigationTarget,
+  });
 
   // Toggles git blame annotations for the active document. State is keyed by the
   // absolute document path so it stays isolated per tab.
@@ -11596,73 +11380,6 @@ export function useWorkbenchController(
     setMessage,
     prompter,
   });
-
-  // The cursor anchor for next/previous bookmark navigation. Uses the active
-  // document plus the live editor position so navigation steps relative to where
-  // the user is, not an arbitrary start.
-  const currentBookmarkLocation = useCallback(() => {
-    const path = activeDocumentRef.current?.path;
-
-    if (!path) {
-      return null;
-    }
-
-    return {
-      lineNumber: activeEditorPositionRef.current?.lineNumber ?? 1,
-      path,
-    };
-  }, []);
-
-  const openBookmark = useCallback(
-    (bookmark: Bookmark): Promise<boolean> => {
-      return openNavigationTarget(
-        bookmark.path,
-        { column: 1, lineNumber: bookmark.lineNumber },
-        "bookmark",
-      );
-    },
-    [openNavigationTarget],
-  );
-
-  const goToNextBookmark = useCallback(async (): Promise<boolean> => {
-    const target = nextBookmark(bookmarks, currentBookmarkLocation());
-
-    if (!target) {
-      return false;
-    }
-
-    return openBookmark(target);
-  }, [bookmarks, currentBookmarkLocation, openBookmark]);
-
-  const goToPreviousBookmark = useCallback(async (): Promise<boolean> => {
-    const target = previousBookmark(bookmarks, currentBookmarkLocation());
-
-    if (!target) {
-      return false;
-    }
-
-    return openBookmark(target);
-  }, [bookmarks, currentBookmarkLocation, openBookmark]);
-
-  const openBookmarksPanel = useCallback(() => {
-    if (!currentWorkspaceRootRef.current) {
-      return;
-    }
-
-    setBookmarksPanelOpen(true);
-  }, []);
-
-  const closeBookmarksPanel = useCallback(() => {
-    setBookmarksPanelOpen(false);
-  }, []);
-
-  const toggleBookmarksPanel = useCallback(() => {
-    if (!currentWorkspaceRootRef.current) {
-      return;
-    }
-
-    setBookmarksPanelOpen((open) => !open);
-  }, []);
 
   const resolvePhpClassReference = useCallback(
     (source: string, className: string): string | null => {
@@ -31949,22 +31666,6 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   return path;
 }
 
-function isWorkspaceTodoSourceFile(name: string): boolean {
-  const fileName = name.toLowerCase();
-
-  if (fileName.endsWith(".blade.php")) {
-    return true;
-  }
-
-  const lastDot = fileName.lastIndexOf(".");
-
-  if (lastDot <= 0) {
-    return false;
-  }
-
-  return WORKSPACE_TODO_SOURCE_EXTENSIONS.has(fileName.slice(lastDot + 1));
-}
-
 /**
  * Maps a component blade file path relative to `resources/views/components` to
  * its dotted component name — the inverse of bladeComponentCandidateRelativePaths.
@@ -34056,16 +33757,6 @@ function cachedWorkspaceHasDirtyDocuments(
   cached: CachedWorkspaceWorkbenchState,
 ): boolean {
   return Object.values(cached.documents).some(isDirty);
-}
-
-// Extracts the trimmed text of a 1-based line from document content, used as a
-// bookmark's preview. Out-of-range lines (e.g. a bookmark on a line that no
-// longer exists after edits) yield an empty preview rather than throwing.
-function linePreviewFromContent(content: string, lineNumber: number): string {
-  const lines = content.split("\n");
-  const line = lines[lineNumber - 1];
-
-  return line ? line.trim() : "";
 }
 
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {
