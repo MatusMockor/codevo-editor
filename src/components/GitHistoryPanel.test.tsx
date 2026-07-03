@@ -174,6 +174,15 @@ describe("GitHistoryPanel", () => {
       commitHash,
       "src/App.tsx",
       "src/App.old.tsx",
+      [
+        {
+          isRename: true,
+          newPath: "src/App.tsx",
+          oldPath: "src/App.old.tsx",
+          path: "src/App.tsx",
+          status: "R",
+        },
+      ],
     );
   });
 
@@ -653,6 +662,7 @@ async function renderPanel(
     commitHash: string,
     path: string,
     oldPath: string | null,
+    files?: FileChange[],
   ) => Promise<void> | void,
 ) {
   await act(async () => {

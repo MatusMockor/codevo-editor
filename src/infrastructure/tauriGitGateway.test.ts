@@ -329,6 +329,7 @@ describe("TauriGitGateway", () => {
     });
     expect(invoke).toHaveBeenCalledWith("get_git_commit_diff", {
       commitHash: "abc123",
+      files: undefined,
       oldPath: undefined,
       path: "src/User.php",
       rootPath: "/workspace",
@@ -340,6 +341,31 @@ describe("TauriGitGateway", () => {
     expect(invoke).toHaveBeenCalledWith("get_git_repo_status", {
       rootPath: "/workspace",
     });
+  });
+
+  it("returns safe Git history fallbacks outside Tauri", async () => {
+    const invoke = vi.fn();
+    const gateway = new TauriGitGateway(invoke, () => false);
+
+    await expect(gateway.getCommitDetails("/workspace", "abc123")).rejects.toThrow(
+      "Git unavailable.",
+    );
+    await expect(
+      gateway.getCommitDiff("/workspace", "abc123", "src/User.php"),
+    ).resolves.toEqual({
+      commitHash: "abc123",
+      isRename: false,
+      language: "plaintext",
+      modifiedContent: "",
+      oldPath: null,
+      originalContent: "",
+      path: "src/User.php",
+      status: "M",
+    });
+    await expect(gateway.getCommitFiles("/workspace", "abc123")).resolves.toEqual([]);
+    await expect(gateway.getCommitLog("/workspace", { limit: 20 })).resolves.toEqual([]);
+    await expect(gateway.getCommitGraphPage("/workspace")).resolves.toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("invokes the hunk-level commands in Tauri", async () => {

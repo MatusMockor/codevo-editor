@@ -2237,7 +2237,7 @@ export function useWorkbenchController(
           : null;
       const nextActivePath = restoredActivePath(
         cacheableActivePath,
-        restoredOpenPaths,
+        visibleEditorPaths(restoredOpenPaths, restoredPreviewPath),
       );
 
       setEntriesByDirectory(cached.entriesByDirectory);
@@ -7270,6 +7270,7 @@ export function useWorkbenchController(
       setSelectedGitChange(null);
       setGitDiffPreview(null);
       setGitDiffLoading(false);
+      gitDiffRequestTokenRef.current += 1;
       setActivePath(nextDocument.path);
       setMessage(null);
     },

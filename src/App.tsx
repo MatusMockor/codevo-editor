@@ -63,7 +63,11 @@ import {
 } from "./domain/indexProgress";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
-import { type GitFileDiff, type GitChangeStatus } from "./domain/git";
+import {
+  type FileChange,
+  type GitChangeStatus,
+  type GitFileDiff,
+} from "./domain/git";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
@@ -669,8 +673,15 @@ function App() {
   }, [editorMenuCommandRunner, workbench.commandContext]);
 
   const openGitHistoryCommitDiff = useCallback(
-    async (commitHash: string, path: string, oldPath: string | null) => {
-      if (!workbench.workspaceRoot) {
+    async (
+      commitHash: string,
+      path: string,
+      oldPath: string | null,
+      files?: FileChange[],
+    ) => {
+      const requestedWorkspaceRoot = workbench.workspaceRoot;
+
+      if (!requestedWorkspaceRoot) {
         return;
       }
 
@@ -696,13 +707,20 @@ function App() {
 
       try {
         const diff = await gitHistoryGateway.getCommitDiff(
-          workbench.workspaceRoot,
+          requestedWorkspaceRoot,
           commitHash,
           path,
           oldPath,
+          files,
         );
 
-        if (requestToken !== gitHistoryDiffRequestTokenRef.current) {
+        if (
+          requestToken !== gitHistoryDiffRequestTokenRef.current ||
+          !workspaceRootKeysEqual(
+            gitHistoryWorkspaceRootRef.current,
+            requestedWorkspaceRoot,
+          )
+        ) {
           return;
         }
 
@@ -740,14 +758,26 @@ function App() {
         setGitHistoryDiffDocumentPath(documentPath);
         setGitHistoryDiff(nextHistoryDiff);
       } catch (error) {
-        if (requestToken !== gitHistoryDiffRequestTokenRef.current) {
+        if (
+          requestToken !== gitHistoryDiffRequestTokenRef.current ||
+          !workspaceRootKeysEqual(
+            gitHistoryWorkspaceRootRef.current,
+            requestedWorkspaceRoot,
+          )
+        ) {
           return;
         }
 
         setGitHistoryDiff(null);
         console.error("Failed to load commit file diff.", error);
       } finally {
-        if (requestToken === gitHistoryDiffRequestTokenRef.current) {
+        if (
+          requestToken === gitHistoryDiffRequestTokenRef.current &&
+          workspaceRootKeysEqual(
+            gitHistoryWorkspaceRootRef.current,
+            requestedWorkspaceRoot,
+          )
+        ) {
           setGitHistoryDiffLoading(false);
         }
       }

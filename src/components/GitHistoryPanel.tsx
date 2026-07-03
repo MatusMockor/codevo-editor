@@ -60,6 +60,7 @@ interface GitHistoryPanelProps {
     commitHash: string,
     path: string,
     oldPath: string | null,
+    files?: FileChange[],
   ): Promise<void> | void;
 }
 
@@ -468,6 +469,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   const detailsRequestTokenRef = useRef(0);
   const selectedCommitHashRef = useRef<string | null>(null);
   const lastAutoScrolledCommitHashRef = useRef<string | null>(null);
+  const currentRootPathRef = useRef(rootPath);
 
   const branchEntries = branches.local.map((branch) => ({
     group: "local",
@@ -602,8 +604,25 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     selectedCommitHashRef.current = selectedCommitHash;
   }, [selectedCommitHash]);
 
+  useEffect(() => {
+    currentRootPathRef.current = rootPath;
+  }, [rootPath]);
+
+  const isCurrentRootPath = useCallback(
+    (requestedRootPath: string | null) =>
+      currentRootPathRef.current === requestedRootPath,
+    [],
+  );
+
+  const invalidateHistoryRequests = useCallback(() => {
+    branchesRequestTokenRef.current += 1;
+    commitsRequestTokenRef.current += 1;
+    detailsRequestTokenRef.current += 1;
+  }, []);
+
   const loadBranches = useCallback(async () => {
     if (!rootPath) {
+      invalidateHistoryRequests();
       setRepoStatus(emptyRepoStatus());
       setBranches(emptyBranches());
       setCommits([]);
@@ -628,7 +647,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         gateway.getBranches(rootPath),
       ]);
 
-      if (requestToken !== branchesRequestTokenRef.current) {
+      if (
+        requestToken !== branchesRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
@@ -636,6 +658,8 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setBranches(nextBranches);
 
       if (!status.gitAvailable || !status.isRepository) {
+        commitsRequestTokenRef.current += 1;
+        detailsRequestTokenRef.current += 1;
         setCommits([]);
         setCommitGraph([]);
         setHasMoreCommits(false);
@@ -644,10 +668,15 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         setSelectedFiles([]);
       }
     } catch (nextError: unknown) {
-      if (requestToken !== branchesRequestTokenRef.current) {
+      if (
+        requestToken !== branchesRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
+      commitsRequestTokenRef.current += 1;
+      detailsRequestTokenRef.current += 1;
       setRepoStatus(emptyRepoStatus());
       setBranches(emptyBranches());
       setCommits([]);
@@ -659,14 +688,19 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setBranchesError("Failed to load git repository info.");
       console.error(nextError);
     } finally {
-      if (requestToken === branchesRequestTokenRef.current) {
+      if (
+        requestToken === branchesRequestTokenRef.current &&
+        isCurrentRootPath(rootPath)
+      ) {
         setLoading((current) => ({ ...current, branches: false }));
       }
     }
-  }, [gateway, rootPath]);
+  }, [gateway, invalidateHistoryRequests, isCurrentRootPath, rootPath]);
 
   const loadCommits = useCallback(async () => {
     if (!rootPath || !repoStatus.isRepository) {
+      commitsRequestTokenRef.current += 1;
+      detailsRequestTokenRef.current += 1;
       return;
     }
 
@@ -685,7 +719,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         query: query || undefined,
       });
 
-      if (requestToken !== commitsRequestTokenRef.current) {
+      if (
+        requestToken !== commitsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
@@ -714,10 +751,14 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       selectedCommitHashRef.current = nextSelectedHash;
       setSelectedCommitHash(nextSelectedHash);
     } catch (nextError: unknown) {
-      if (requestToken !== commitsRequestTokenRef.current) {
+      if (
+        requestToken !== commitsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
+      detailsRequestTokenRef.current += 1;
       setCommits([]);
       setCommitGraph([]);
       setHasMoreCommits(false);
@@ -728,7 +769,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setCommitsError("Failed to load commit log.");
       console.error(nextError);
     } finally {
-      if (requestToken === commitsRequestTokenRef.current) {
+      if (
+        requestToken === commitsRequestTokenRef.current &&
+        isCurrentRootPath(rootPath)
+      ) {
         setLoading((current) => ({ ...current, commits: false }));
       }
     }
@@ -739,6 +783,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     pathFilter,
     query,
     repoStatus.isRepository,
+    isCurrentRootPath,
     rootPath,
   ]);
 
@@ -767,7 +812,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         query: query || undefined,
       });
 
-      if (requestToken !== commitsRequestTokenRef.current) {
+      if (
+        requestToken !== commitsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
@@ -778,7 +826,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       });
       setHasMoreCommits(nextCommits.length === COMMIT_LOG_PAGE_SIZE);
     } catch (nextError: unknown) {
-      if (requestToken !== commitsRequestTokenRef.current) {
+      if (
+        requestToken !== commitsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
@@ -786,7 +837,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setCommitsError("Failed to load more commits.");
       console.error(nextError);
     } finally {
-      if (requestToken === commitsRequestTokenRef.current) {
+      if (
+        requestToken === commitsRequestTokenRef.current &&
+        isCurrentRootPath(rootPath)
+      ) {
         setLoadingMoreCommits(false);
       }
     }
@@ -801,11 +855,13 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     pathFilter,
     query,
     repoStatus.isRepository,
+    isCurrentRootPath,
     rootPath,
   ]);
 
   const loadSelectedCommitDetails = useCallback(async () => {
     if (!rootPath || !selectedCommitHash || !repoStatus.isRepository) {
+      detailsRequestTokenRef.current += 1;
       return;
     }
 
@@ -819,14 +875,20 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         gateway.getCommitFiles(rootPath, selectedCommitHash),
       ]);
 
-      if (requestToken !== detailsRequestTokenRef.current) {
+      if (
+        requestToken !== detailsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
       setSelectedDetails(details);
       setSelectedFiles(files);
     } catch (nextError: unknown) {
-      if (requestToken !== detailsRequestTokenRef.current) {
+      if (
+        requestToken !== detailsRequestTokenRef.current ||
+        !isCurrentRootPath(rootPath)
+      ) {
         return;
       }
 
@@ -835,11 +897,20 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setDetailsError("Failed to load selected commit data.");
       console.error(nextError);
     } finally {
-      if (requestToken === detailsRequestTokenRef.current) {
+      if (
+        requestToken === detailsRequestTokenRef.current &&
+        isCurrentRootPath(rootPath)
+      ) {
         setLoading((current) => ({ ...current, details: false }));
       }
     }
-  }, [gateway, rootPath, repoStatus.isRepository, selectedCommitHash]);
+  }, [
+    gateway,
+    isCurrentRootPath,
+    rootPath,
+    repoStatus.isRepository,
+    selectedCommitHash,
+  ]);
 
   useEffect(() => {
     void loadBranches();
@@ -1022,9 +1093,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         selectedCommit.hash,
         file.path,
         file.oldPath ?? null,
+        selectedFiles,
       );
     },
-    [onOpenCommitFileDiff, selectedCommit],
+    [onOpenCommitFileDiff, selectedCommit, selectedFiles],
   );
 
   if (!rootPath) {
@@ -1183,6 +1255,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             <label className="git-history-filter">
               <Search aria-hidden="true" size={13} />
               <input
+                aria-label="Search commits"
                 onChange={onCommitSearch}
                 placeholder="Search subject/hash"
                 value={query}
@@ -1190,6 +1263,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             </label>
             <label className="git-history-filter">
               <input
+                aria-label="Filter commits by author"
                 onChange={onAuthorSearch}
                 placeholder="Author"
                 value={authorFilter}
@@ -1197,6 +1271,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             </label>
             <label className="git-history-filter">
               <input
+                aria-label="Filter commits by path"
                 onChange={onPathSearch}
                 placeholder="Path"
                 value={pathFilter}

@@ -206,6 +206,7 @@ export interface GitHistoryGateway {
     commitHash: string,
     path: string,
     oldPath?: string | null,
+    files?: FileChange[],
   ): Promise<DiffPayload>;
   getCommitFiles(rootPath: string, commitHash: string): Promise<FileChange[]>;
   getCommitGraphPage(

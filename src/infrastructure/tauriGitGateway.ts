@@ -335,6 +335,7 @@ export class TauriGitGateway implements GitGateway {
     commitHash: string,
     path: string,
     oldPath?: string | null,
+    files?: FileChange[],
   ): Promise<DiffPayload> {
     if (!this.isRuntimeAvailable()) {
       return {
@@ -351,6 +352,7 @@ export class TauriGitGateway implements GitGateway {
 
     return this.invokeCommand("get_git_commit_diff", {
       commitHash,
+      files,
       oldPath,
       path,
       rootPath,
