@@ -1715,6 +1715,24 @@ async fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String>
 }
 
 #[tauri::command]
+async fn detect_git_repositories(
+    root_path: String,
+    max_depth: Option<usize>,
+) -> Result<Vec<String>, String> {
+    // Discovery walks the whole workspace tree (bounded by `max_depth`)
+    // looking for nested `.git` markers, which on a large multi-repo
+    // workspace means a lot of `read_dir`/`symlink_metadata` syscalls; run it
+    // off the main thread like every other filesystem-heavy command.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        let depth = max_depth.unwrap_or(git::DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH);
+
+        git::detect_git_repositories(&root, depth).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
@@ -7530,6 +7548,7 @@ pub fn run() {
             apply_workspace_edit,
             commit_git_changes,
             install_managed_phpactor,
+            detect_git_repositories,
             detect_php_tools,
             detect_workspace,
             dispose_workspace_root,

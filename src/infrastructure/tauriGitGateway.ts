@@ -47,6 +47,20 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitBlameLine[]>;
   }
 
+  async detectRepositories(
+    rootPath: string,
+    maxDepth?: number,
+  ): Promise<string[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("detect_git_repositories", {
+      maxDepth,
+      rootPath,
+    }) as Promise<string[]>;
+  }
+
   async fileHistory(
     rootPath: string,
     relativePath: string,

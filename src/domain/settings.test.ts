@@ -42,6 +42,8 @@ describe("settings defaults", () => {
       extraIgnorePatterns: [],
       formatOnPaste: false,
       formatOnSave: false,
+      gitDirectoryMappings: [],
+      gitDirectoryMappingsAuto: true,
       intelligenceMode: "basic",
       intelephensePath: null,
       javaScriptTypeScriptAddMissingImportsOnSave: false,
@@ -300,6 +302,14 @@ describe("normalizeWorkspaceSettings", () => {
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
         formatOnPaste: true,
         formatOnSave: true,
+        gitDirectoryMappings: [
+          "workbench/lcsk/x",
+          "",
+          "workbench\\lcsk\\x",
+          "workbench/lcsk/attendance",
+          "../escape",
+        ],
+        gitDirectoryMappingsAuto: false,
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
         javaScriptTypeScriptAddMissingImportsOnSave: true,
@@ -355,6 +365,12 @@ describe("normalizeWorkspaceSettings", () => {
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
       formatOnPaste: true,
       formatOnSave: true,
+      gitDirectoryMappings: [
+        "",
+        "workbench/lcsk/attendance",
+        "workbench/lcsk/x",
+      ],
+      gitDirectoryMappingsAuto: false,
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
       javaScriptTypeScriptAddMissingImportsOnSave: true,
@@ -422,6 +438,45 @@ describe("normalizeWorkspaceSettings", () => {
         intelligenceMode: "basic",
       }).autoSave,
     ).toBe(false);
+  });
+
+  it("defaults git directory mappings to empty with auto-detect enabled", () => {
+    expect(normalizeWorkspaceSettings({}).gitDirectoryMappings).toEqual([]);
+    expect(normalizeWorkspaceSettings({}).gitDirectoryMappingsAuto).toBe(true);
+  });
+
+  it("keeps settings without git fields backward compatible", () => {
+    const legacy = normalizeWorkspaceSettings({
+      intelligenceMode: "basic",
+      phpBackend: "phpactor",
+    });
+
+    expect(legacy.gitDirectoryMappings).toEqual([]);
+    expect(legacy.gitDirectoryMappingsAuto).toBe(true);
+  });
+
+  it("normalizes, dedupes and rejects unsafe git directory mappings", () => {
+    expect(
+      normalizeWorkspaceSettings({
+        gitDirectoryMappings: [
+          "workbench/lcsk/x",
+          "",
+          "workbench\\lcsk\\x",
+          "./workbench/lcsk/attendance/",
+          "/abs/repo",
+          "../escape",
+        ],
+        gitDirectoryMappingsAuto: false,
+      }).gitDirectoryMappings,
+    ).toEqual(["", "workbench/lcsk/attendance", "workbench/lcsk/x"]);
+    expect(
+      normalizeWorkspaceSettings({ gitDirectoryMappingsAuto: false })
+        .gitDirectoryMappingsAuto,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ gitDirectoryMappings: "nope" })
+        .gitDirectoryMappings,
+    ).toEqual([]);
   });
 
   it("defaults formatOnSave to false and respects explicit boolean values", () => {

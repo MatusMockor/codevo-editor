@@ -6,6 +6,10 @@ import {
 } from "./keymap";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
+import {
+  gitDirectoryMappingPaths,
+  normalizeGitDirectoryMappings,
+} from "./gitRepositoryMapping";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -137,6 +141,18 @@ export interface WorkspaceSettings {
   extraIgnorePatterns: string[];
   formatOnPaste: boolean;
   formatOnSave: boolean;
+  /**
+   * Git directory mappings (PhpStorm-style), each a repository directory
+   * relative to the workspace root; `""` is the workspace root itself (main
+   * repo). Empty means only the workspace root repo is tracked. See
+   * {@link normalizeGitDirectoryMappings} for the shape and safety rules.
+   */
+  gitDirectoryMappings: string[];
+  /**
+   * When true, nested repositories are auto-detected on workspace open. A user
+   * who edits the list switches to a manual override by turning this off.
+   */
+  gitDirectoryMappingsAuto: boolean;
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptAutoImports: boolean;
@@ -281,6 +297,8 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     extraIgnorePatterns: [],
     formatOnPaste: false,
     formatOnSave: false,
+    gitDirectoryMappings: [],
+    gitDirectoryMappingsAuto: true,
     intelligenceMode: "basic",
     intelephensePath: null,
     javaScriptTypeScriptAddMissingImportsOnSave: false,
@@ -413,6 +431,13 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       defaults.formatOnPaste,
     ),
     formatOnSave: normalizeBoolean(value.formatOnSave, defaults.formatOnSave),
+    gitDirectoryMappings: gitDirectoryMappingPaths(
+      normalizeGitDirectoryMappings(value.gitDirectoryMappings),
+    ),
+    gitDirectoryMappingsAuto: normalizeBoolean(
+      value.gitDirectoryMappingsAuto,
+      defaults.gitDirectoryMappingsAuto,
+    ),
     intelligenceMode: isIntelligenceMode(value.intelligenceMode)
       ? value.intelligenceMode
       : defaults.intelligenceMode,

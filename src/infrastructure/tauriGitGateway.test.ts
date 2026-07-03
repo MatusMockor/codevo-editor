@@ -3,6 +3,39 @@ import type { GitChangedFile } from "../domain/git";
 import { TauriGitGateway } from "./tauriGitGateway";
 
 describe("TauriGitGateway", () => {
+  it("invokes the repository discovery command in Tauri", async () => {
+    const invoke = vi.fn(async () => ["", "a/b", "worktrees/feature"]);
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    const repositories = await gateway.detectRepositories("/workspace", 3);
+
+    expect(invoke).toHaveBeenCalledWith("detect_git_repositories", {
+      maxDepth: 3,
+      rootPath: "/workspace",
+    });
+    expect(repositories).toEqual(["", "a/b", "worktrees/feature"]);
+  });
+
+  it("omits maxDepth when not provided so the backend applies its default", async () => {
+    const invoke = vi.fn(async () => [""]);
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    await gateway.detectRepositories("/workspace");
+
+    expect(invoke).toHaveBeenCalledWith("detect_git_repositories", {
+      maxDepth: undefined,
+      rootPath: "/workspace",
+    });
+  });
+
+  it("returns no repositories outside Tauri", async () => {
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.detectRepositories("/workspace")).resolves.toEqual(
+      [],
+    );
+  });
+
   it("returns empty status outside Tauri", async () => {
     const gateway = new TauriGitGateway(vi.fn(), () => false);
 

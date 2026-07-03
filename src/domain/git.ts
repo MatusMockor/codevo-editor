@@ -145,6 +145,17 @@ export interface GitGateway {
     message: string,
     changes: GitChangedFile[],
   ): Promise<GitStatus>;
+  /**
+   * Finds every git repository nested inside `rootPath` (a PhpStorm-style
+   * multi-repo "directory mapping" workspace), returning root-relative paths.
+   * The root itself is represented by an empty string when it is a
+   * repository. `maxDepth` bounds how many directory levels below the root
+   * are walked; omit it to use the backend's default.
+   *
+   * Optional: existing gateways/mocks predate this capability and are not
+   * required to implement it.
+   */
+  detectRepositories?(rootPath: string, maxDepth?: number): Promise<string[]>;
   fileCommitDiff(
     rootPath: string,
     relativePath: string,
