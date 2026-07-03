@@ -8,6 +8,7 @@ import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useGitWorkspace } from "./useGitWorkspace";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
+import { useLaravelTargets } from "./useLaravelTargets";
 import { useBookmarks } from "./useBookmarks";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
@@ -358,15 +359,11 @@ import {
 } from "../domain/phpLaravelAuth";
 import {
   phpLaravelGateAbilityCompletionInsertText,
-  phpLaravelGateAbilityDefinitions,
   phpLaravelGateAbilityReferenceContextAt,
-  type PhpLaravelGateAbilityDefinition,
 } from "../domain/phpLaravelAuthorization";
 import {
   phpLaravelMiddlewareAliasCompletionInsertText,
-  phpLaravelMiddlewareAliasDefinitions,
   phpLaravelMiddlewareAliasReferenceContextAt,
-  type PhpLaravelMiddlewareAliasDefinition,
 } from "../domain/phpLaravelMiddleware";
 import {
   phpLaravelBroadcastConnectionCompletionInsertText,
@@ -394,7 +391,6 @@ import {
 } from "../domain/phpLaravelConfig";
 import {
   phpLaravelEnvCompletionInsertText,
-  phpLaravelEnvEntriesFromSource,
   phpLaravelEnvReferenceContextAt,
   phpLaravelEnvTargetFromSource,
   type PhpLaravelEnvTarget,
@@ -492,9 +488,7 @@ import {
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkMethodCallReturnTypeFromSource,
-  phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
-  phpFrameworkRouteSearchQueries,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
@@ -873,17 +867,6 @@ export interface BladeCompletionItem {
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpFrameworkRouteDefinition {
-  path: string;
-  relativePath: string | null;
-}
-
-interface PhpLaravelGateAbilityTarget extends PhpLaravelGateAbilityDefinition {
-  path: string;
-  relativePath: string | null;
-}
-
-interface PhpLaravelMiddlewareAliasTarget
-  extends PhpLaravelMiddlewareAliasDefinition {
   path: string;
   relativePath: string | null;
 }
@@ -12800,323 +12783,22 @@ export function useWorkbenchController(
     ],
   );
 
-  const collectPhpLaravelNamedRouteTargets = useCallback(
-    async (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelNamedRouteTarget[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsRoutes(activePhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return [];
-      }
-
-      const targets = new Map<string, PhpLaravelNamedRouteTarget>();
-      const addDefinitions = (
-        path: string,
-        relativePath: string | null,
-        source: string,
-      ) => {
-        for (const definition of phpFrameworkRouteDefinitionsFromSource(
-          source,
-          activePhpFrameworkProviders,
-        )) {
-          const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
-
-          if (targets.has(key)) {
-            continue;
-          }
-
-          targets.set(key, {
-            ...definition,
-            path,
-            relativePath,
-          });
-        }
-      };
-
-      addDefinitions(
-        currentPath,
-        relativeWorkspacePath(requestedRoot, currentPath),
-        currentSource,
-      );
-
-      const searchResults = await Promise.all(
-        phpFrameworkRouteSearchQueries(activePhpFrameworkProviders).map(
-          (query) => textSearch.searchText(requestedRoot, query, 200),
-        ),
-      );
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const visitedPaths = new Set([currentPath]);
-
-      for (const result of searchResults.flat()) {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
-
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          addDefinitions(
-            result.path,
-            result.relativePath,
-            content,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          continue;
-        }
-      }
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      return Array.from(targets.values()).sort((left, right) => {
-        const nameOrder = left.name.localeCompare(right.name);
-
-        if (nameOrder !== 0) {
-          return nameOrder;
-        }
-
-        return left.path.localeCompare(right.path);
-      });
-    },
-    [
-      activePhpFrameworkProviders,
-      readNavigationFileContent,
-      textSearch,
-      workspaceRoot,
-    ],
-  );
-
-  const collectPhpLaravelGateAbilityTargets = useCallback(
-    async (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelGateAbilityTarget[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return [];
-      }
-
-      const targets = new Map<string, PhpLaravelGateAbilityTarget>();
-      const addDefinitions = (
-        path: string,
-        relativePath: string | null,
-        source: string,
-      ) => {
-        for (const definition of phpLaravelGateAbilityDefinitions(source)) {
-          const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
-
-          if (targets.has(key)) {
-            continue;
-          }
-
-          targets.set(key, {
-            ...definition,
-            path,
-            relativePath,
-          });
-        }
-      };
-
-      addDefinitions(
-        currentPath,
-        relativeWorkspacePath(requestedRoot, currentPath),
-        currentSource,
-      );
-
-      const searchResults = await textSearch.searchText(
-        requestedRoot,
-        "Gate::define",
-        200,
-      );
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const visitedPaths = new Set([currentPath]);
-
-      for (const result of searchResults) {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
-
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          addDefinitions(result.path, result.relativePath, content);
-        } catch {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          continue;
-        }
-      }
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      return Array.from(targets.values()).sort((left, right) => {
-        const nameOrder = left.name.localeCompare(right.name);
-
-        if (nameOrder !== 0) {
-          return nameOrder;
-        }
-
-        return left.path.localeCompare(right.path);
-      });
-    },
-    [
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      textSearch,
-      workspaceRoot,
-    ],
-  );
-
-  const collectPhpLaravelMiddlewareAliasTargets = useCallback(
-    async (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelMiddlewareAliasTarget[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return [];
-      }
-
-      const targets = new Map<string, PhpLaravelMiddlewareAliasTarget>();
-      const addDefinitions = (
-        path: string,
-        relativePath: string | null,
-        source: string,
-      ) => {
-        for (const definition of phpLaravelMiddlewareAliasDefinitions(source)) {
-          const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
-
-          if (targets.has(key)) {
-            continue;
-          }
-
-          targets.set(key, {
-            ...definition,
-            path,
-            relativePath,
-          });
-        }
-      };
-
-      addDefinitions(
-        currentPath,
-        relativeWorkspacePath(requestedRoot, currentPath),
-        currentSource,
-      );
-
-      const visitedPaths = new Set([currentPath]);
-
-      for (const query of ["middlewareAliases", "routeMiddleware"]) {
-        const searchResults = await textSearch.searchText(
-          requestedRoot,
-          query,
-          200,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        for (const result of searchResults) {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-            continue;
-          }
-
-          visitedPaths.add(result.path);
-
-          try {
-            const content = await readNavigationFileContent(result.path);
-
-            if (!isRequestedRootActive()) {
-              return [];
-            }
-
-            addDefinitions(result.path, result.relativePath, content);
-          } catch {
-            if (!isRequestedRootActive()) {
-              return [];
-            }
-
-            continue;
-          }
-        }
-      }
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      return Array.from(targets.values()).sort((left, right) => {
-        const nameOrder = left.name.localeCompare(right.name);
-
-        if (nameOrder !== 0) {
-          return nameOrder;
-        }
-
-        return left.path.localeCompare(right.path);
-      });
-    },
-    [
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      textSearch,
-      workspaceRoot,
-    ],
-  );
+  const {
+    collectPhpLaravelNamedRouteTargets,
+    collectPhpLaravelGateAbilityTargets,
+    collectPhpLaravelMiddlewareAliasTargets,
+    collectPhpLaravelEnvTargets,
+  } = useLaravelTargets({
+    currentWorkspaceRootRef,
+    workspaceRoot,
+    textSearch,
+    readNavigationFileContent,
+    relativeWorkspacePath,
+    joinWorkspacePath,
+    isPhpPath,
+    activePhpFrameworkProviders,
+    isLaravelFrameworkActive,
+  });
 
   const readPhpLaravelTargetCache = useCallback(
     <Kind extends keyof PhpLaravelTargetCacheBucket>(
@@ -14019,50 +13701,6 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
-
-  const collectPhpLaravelEnvTargets = useCallback(async (): Promise<
-    PhpLaravelEnvTarget[]
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (!isLaravelFrameworkActive || !requestedRoot) {
-      return [];
-    }
-
-    for (const relativePath of [".env", ".env.example"]) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const path = joinWorkspacePath(requestedRoot, relativePath);
-
-      try {
-        const content = await readNavigationFileContent(path);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return phpLaravelEnvEntriesFromSource(content).map((target) => ({
-          ...target,
-          path,
-          relativePath,
-        }));
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-
-    return [];
-  }, [
-    isLaravelFrameworkActive,
-    readNavigationFileContent,
-    workspaceRoot,
-  ]);
 
   const collectPhpLaravelTranslationLocaleRoots = useCallback(async (): Promise<
     string[]
