@@ -353,8 +353,6 @@ import {
 } from "../domain/bladeLaravelHelperCompletions";
 import {
   phpLaravelAuthGuardCompletionInsertText,
-  phpLaravelAuthGuardConfigKey,
-  phpLaravelAuthGuardNameFromConfigKey,
   phpLaravelAuthGuardReferenceContextAt,
 } from "../domain/phpLaravelAuth";
 import {
@@ -367,20 +365,14 @@ import {
 } from "../domain/phpLaravelMiddleware";
 import {
   phpLaravelBroadcastConnectionCompletionInsertText,
-  phpLaravelBroadcastConnectionConfigKey,
-  phpLaravelBroadcastConnectionNameFromConfigKey,
   phpLaravelBroadcastConnectionReferenceContextAt,
 } from "../domain/phpLaravelBroadcasting";
 import {
   phpLaravelCacheStoreCompletionInsertText,
-  phpLaravelCacheStoreConfigKey,
-  phpLaravelCacheStoreNameFromConfigKey,
   phpLaravelCacheStoreReferenceContextAt,
 } from "../domain/phpLaravelCache";
 import {
   phpLaravelDatabaseConnectionCompletionInsertText,
-  phpLaravelDatabaseConnectionConfigKey,
-  phpLaravelDatabaseConnectionNameFromConfigKey,
   phpLaravelDatabaseConnectionReferenceContextAt,
 } from "../domain/phpLaravelDatabase";
 import {
@@ -395,38 +387,26 @@ import {
 } from "../domain/phpLaravelEnv";
 import {
   phpLaravelLogChannelCompletionInsertText,
-  phpLaravelLogChannelConfigKey,
-  phpLaravelLogChannelNameFromConfigKey,
   phpLaravelLogChannelReferenceContextAt,
 } from "../domain/phpLaravelLog";
 import {
   phpLaravelMailMailerCompletionInsertText,
-  phpLaravelMailMailerConfigKey,
-  phpLaravelMailMailerNameFromConfigKey,
   phpLaravelMailMailerReferenceContextAt,
 } from "../domain/phpLaravelMail";
 import {
   phpLaravelPasswordBrokerCompletionInsertText,
-  phpLaravelPasswordBrokerConfigKey,
-  phpLaravelPasswordBrokerNameFromConfigKey,
   phpLaravelPasswordBrokerReferenceContextAt,
 } from "../domain/phpLaravelPassword";
 import {
   phpLaravelQueueConnectionCompletionInsertText,
-  phpLaravelQueueConnectionConfigKey,
-  phpLaravelQueueConnectionNameFromConfigKey,
   phpLaravelQueueConnectionReferenceContextAt,
 } from "../domain/phpLaravelQueue";
 import {
   phpLaravelRedisConnectionCompletionInsertText,
-  phpLaravelRedisConnectionConfigKey,
-  phpLaravelRedisConnectionNameFromConfigKey,
   phpLaravelRedisConnectionReferenceContextAt,
 } from "../domain/phpLaravelRedis";
 import {
   phpLaravelStorageDiskCompletionInsertText,
-  phpLaravelStorageDiskConfigKey,
-  phpLaravelStorageDiskNameFromConfigKey,
   phpLaravelStorageDiskReferenceContextAt,
 } from "../domain/phpLaravelStorage";
 import {
@@ -834,46 +814,6 @@ export interface BladeCompletionItem {
 interface PhpLaravelNamedRouteTarget extends PhpFrameworkRouteDefinition {
   path: string;
   relativePath: string | null;
-}
-
-interface PhpLaravelAuthGuardTarget extends PhpLaravelConfigTarget {
-  guardName: string;
-}
-
-interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
-  storeName: string;
-}
-
-interface PhpLaravelDatabaseConnectionTarget extends PhpLaravelConfigTarget {
-  connectionName: string;
-}
-
-interface PhpLaravelBroadcastConnectionTarget extends PhpLaravelConfigTarget {
-  connectionName: string;
-}
-
-interface PhpLaravelQueueConnectionTarget extends PhpLaravelConfigTarget {
-  connectionName: string;
-}
-
-interface PhpLaravelRedisConnectionTarget extends PhpLaravelConfigTarget {
-  connectionName: string;
-}
-
-interface PhpLaravelMailMailerTarget extends PhpLaravelConfigTarget {
-  mailerName: string;
-}
-
-interface PhpLaravelPasswordBrokerTarget extends PhpLaravelConfigTarget {
-  brokerName: string;
-}
-
-interface PhpLaravelLogChannelTarget extends PhpLaravelConfigTarget {
-  channelName: string;
-}
-
-interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
-  diskName: string;
 }
 
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
@@ -12750,9 +12690,29 @@ export function useWorkbenchController(
     collectPhpLaravelViewTargets,
     collectPhpLaravelConfigTargets,
     collectPhpLaravelTranslationTargets,
+    collectPhpLaravelAuthGuardTargets,
+    collectPhpLaravelCacheStoreTargets,
+    collectPhpLaravelDatabaseConnectionTargets,
+    collectPhpLaravelBroadcastConnectionTargets,
+    collectPhpLaravelQueueConnectionTargets,
+    collectPhpLaravelRedisConnectionTargets,
+    collectPhpLaravelMailMailerTargets,
+    collectPhpLaravelPasswordBrokerTargets,
+    collectPhpLaravelLogChannelTargets,
+    collectPhpLaravelStorageDiskTargets,
     findPhpLaravelViewTarget,
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
+    findPhpLaravelAuthGuardTarget,
+    findPhpLaravelCacheStoreTarget,
+    findPhpLaravelDatabaseConnectionTarget,
+    findPhpLaravelBroadcastConnectionTarget,
+    findPhpLaravelQueueConnectionTarget,
+    findPhpLaravelRedisConnectionTarget,
+    findPhpLaravelMailMailerTarget,
+    findPhpLaravelPasswordBrokerTarget,
+    findPhpLaravelLogChannelTarget,
+    findPhpLaravelStorageDiskTarget,
     invalidatePhpLaravelTargetCache,
   } = useLaravelTargets({
     currentWorkspaceRootRef,
@@ -12766,491 +12726,6 @@ export function useWorkbenchController(
     activePhpFrameworkProviders,
     isLaravelFrameworkActive,
   });
-
-  const collectPhpLaravelAuthGuardTargets = useCallback(async (): Promise<
-    PhpLaravelAuthGuardTarget[]
-  > => {
-    const targets = new Map<string, PhpLaravelAuthGuardTarget>();
-
-    for (const target of await collectPhpLaravelConfigTargets()) {
-      const guardName = phpLaravelAuthGuardNameFromConfigKey(target.key);
-
-      if (!guardName) {
-        continue;
-      }
-
-      const key = guardName.toLowerCase();
-
-      if (!targets.has(key)) {
-        targets.set(key, {
-          ...target,
-          guardName,
-        });
-      }
-    }
-
-    return Array.from(targets.values()).sort((left, right) =>
-      left.guardName.localeCompare(right.guardName),
-    );
-  }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelAuthGuardTarget = useCallback(
-    async (guardName: string): Promise<PhpLaravelAuthGuardTarget | null> => {
-      const configKey = phpLaravelAuthGuardConfigKey(guardName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            guardName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelCacheStoreTargets = useCallback(async (): Promise<
-    PhpLaravelCacheStoreTarget[]
-  > => {
-    const targets = new Map<string, PhpLaravelCacheStoreTarget>();
-
-    for (const target of await collectPhpLaravelConfigTargets()) {
-      const storeName = phpLaravelCacheStoreNameFromConfigKey(target.key);
-
-      if (!storeName) {
-        continue;
-      }
-
-      const key = storeName.toLowerCase();
-
-      if (!targets.has(key)) {
-        targets.set(key, {
-          ...target,
-          storeName,
-        });
-      }
-    }
-
-    return Array.from(targets.values()).sort((left, right) =>
-      left.storeName.localeCompare(right.storeName),
-    );
-  }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelCacheStoreTarget = useCallback(
-    async (storeName: string): Promise<PhpLaravelCacheStoreTarget | null> => {
-      const configKey = phpLaravelCacheStoreConfigKey(storeName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            storeName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelDatabaseConnectionTargets =
-    useCallback(async (): Promise<PhpLaravelDatabaseConnectionTarget[]> => {
-      const targets = new Map<string, PhpLaravelDatabaseConnectionTarget>();
-
-      for (const target of await collectPhpLaravelConfigTargets()) {
-        const connectionName = phpLaravelDatabaseConnectionNameFromConfigKey(
-          target.key,
-        );
-
-        if (!connectionName) {
-          continue;
-        }
-
-        const key = connectionName.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, {
-            ...target,
-            connectionName,
-          });
-        }
-      }
-
-      return Array.from(targets.values()).sort((left, right) =>
-        left.connectionName.localeCompare(right.connectionName),
-      );
-    }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelDatabaseConnectionTarget = useCallback(
-    async (
-      connectionName: string,
-    ): Promise<PhpLaravelDatabaseConnectionTarget | null> => {
-      const configKey = phpLaravelDatabaseConnectionConfigKey(connectionName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            connectionName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelBroadcastConnectionTargets =
-    useCallback(async (): Promise<PhpLaravelBroadcastConnectionTarget[]> => {
-      const targets = new Map<string, PhpLaravelBroadcastConnectionTarget>();
-
-      for (const target of await collectPhpLaravelConfigTargets()) {
-        const connectionName = phpLaravelBroadcastConnectionNameFromConfigKey(
-          target.key,
-        );
-
-        if (!connectionName) {
-          continue;
-        }
-
-        const key = connectionName.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, {
-            ...target,
-            connectionName,
-          });
-        }
-      }
-
-      return Array.from(targets.values()).sort((left, right) =>
-        left.connectionName.localeCompare(right.connectionName),
-      );
-    }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelBroadcastConnectionTarget = useCallback(
-    async (
-      connectionName: string,
-    ): Promise<PhpLaravelBroadcastConnectionTarget | null> => {
-      const configKey = phpLaravelBroadcastConnectionConfigKey(connectionName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            connectionName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelQueueConnectionTargets =
-    useCallback(async (): Promise<PhpLaravelQueueConnectionTarget[]> => {
-      const targets = new Map<string, PhpLaravelQueueConnectionTarget>();
-
-      for (const target of await collectPhpLaravelConfigTargets()) {
-        const connectionName = phpLaravelQueueConnectionNameFromConfigKey(
-          target.key,
-        );
-
-        if (!connectionName) {
-          continue;
-        }
-
-        const key = connectionName.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, {
-            ...target,
-            connectionName,
-          });
-        }
-      }
-
-      return Array.from(targets.values()).sort((left, right) =>
-        left.connectionName.localeCompare(right.connectionName),
-      );
-    }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelQueueConnectionTarget = useCallback(
-    async (
-      connectionName: string,
-    ): Promise<PhpLaravelQueueConnectionTarget | null> => {
-      const configKey = phpLaravelQueueConnectionConfigKey(connectionName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            connectionName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelRedisConnectionTargets =
-    useCallback(async (): Promise<PhpLaravelRedisConnectionTarget[]> => {
-      const targets = new Map<string, PhpLaravelRedisConnectionTarget>();
-
-      for (const target of await collectPhpLaravelConfigTargets()) {
-        const connectionName = phpLaravelRedisConnectionNameFromConfigKey(
-          target.key,
-        );
-
-        if (!connectionName) {
-          continue;
-        }
-
-        const key = connectionName.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, {
-            ...target,
-            connectionName,
-          });
-        }
-      }
-
-      return Array.from(targets.values()).sort((left, right) =>
-        left.connectionName.localeCompare(right.connectionName),
-      );
-    }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelRedisConnectionTarget = useCallback(
-    async (
-      connectionName: string,
-    ): Promise<PhpLaravelRedisConnectionTarget | null> => {
-      const configKey = phpLaravelRedisConnectionConfigKey(connectionName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            connectionName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelMailMailerTargets = useCallback(async (): Promise<
-    PhpLaravelMailMailerTarget[]
-  > => {
-    const targets = new Map<string, PhpLaravelMailMailerTarget>();
-
-    for (const target of await collectPhpLaravelConfigTargets()) {
-      const mailerName = phpLaravelMailMailerNameFromConfigKey(target.key);
-
-      if (!mailerName) {
-        continue;
-      }
-
-      const key = mailerName.toLowerCase();
-
-      if (!targets.has(key)) {
-        targets.set(key, {
-          ...target,
-          mailerName,
-        });
-      }
-    }
-
-    return Array.from(targets.values()).sort((left, right) =>
-      left.mailerName.localeCompare(right.mailerName),
-    );
-  }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelMailMailerTarget = useCallback(
-    async (mailerName: string): Promise<PhpLaravelMailMailerTarget | null> => {
-      const configKey = phpLaravelMailMailerConfigKey(mailerName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            mailerName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelPasswordBrokerTargets =
-    useCallback(async (): Promise<PhpLaravelPasswordBrokerTarget[]> => {
-      const targets = new Map<string, PhpLaravelPasswordBrokerTarget>();
-
-      for (const target of await collectPhpLaravelConfigTargets()) {
-        const brokerName = phpLaravelPasswordBrokerNameFromConfigKey(
-          target.key,
-        );
-
-        if (!brokerName) {
-          continue;
-        }
-
-        const key = brokerName.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, {
-            ...target,
-            brokerName,
-          });
-        }
-      }
-
-      return Array.from(targets.values()).sort((left, right) =>
-        left.brokerName.localeCompare(right.brokerName),
-      );
-    }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelPasswordBrokerTarget = useCallback(
-    async (
-      brokerName: string,
-    ): Promise<PhpLaravelPasswordBrokerTarget | null> => {
-      const configKey = phpLaravelPasswordBrokerConfigKey(brokerName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            brokerName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelLogChannelTargets = useCallback(async (): Promise<
-    PhpLaravelLogChannelTarget[]
-  > => {
-    const targets = new Map<string, PhpLaravelLogChannelTarget>();
-
-    for (const target of await collectPhpLaravelConfigTargets()) {
-      const channelName = phpLaravelLogChannelNameFromConfigKey(target.key);
-
-      if (!channelName) {
-        continue;
-      }
-
-      const key = channelName.toLowerCase();
-
-      if (!targets.has(key)) {
-        targets.set(key, {
-          ...target,
-          channelName,
-        });
-      }
-    }
-
-    return Array.from(targets.values()).sort((left, right) =>
-      left.channelName.localeCompare(right.channelName),
-    );
-  }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelLogChannelTarget = useCallback(
-    async (channelName: string): Promise<PhpLaravelLogChannelTarget | null> => {
-      const configKey = phpLaravelLogChannelConfigKey(channelName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            channelName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
-
-  const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
-    PhpLaravelStorageDiskTarget[]
-  > => {
-    const targets = new Map<string, PhpLaravelStorageDiskTarget>();
-
-    for (const target of await collectPhpLaravelConfigTargets()) {
-      const diskName = phpLaravelStorageDiskNameFromConfigKey(target.key);
-
-      if (!diskName) {
-        continue;
-      }
-
-      const key = diskName.toLowerCase();
-
-      if (!targets.has(key)) {
-        targets.set(key, {
-          ...target,
-          diskName,
-        });
-      }
-    }
-
-    return Array.from(targets.values()).sort((left, right) =>
-      left.diskName.localeCompare(right.diskName),
-    );
-  }, [collectPhpLaravelConfigTargets]);
-
-  const findPhpLaravelStorageDiskTarget = useCallback(
-    async (diskName: string): Promise<PhpLaravelStorageDiskTarget | null> => {
-      const configKey = phpLaravelStorageDiskConfigKey(diskName);
-
-      if (!configKey) {
-        return null;
-      }
-
-      const target = await findPhpLaravelConfigTarget(configKey);
-
-      return target
-        ? {
-            ...target,
-            diskName,
-          }
-        : null;
-    },
-    [findPhpLaravelConfigTarget],
-  );
 
   const findPhpLaravelEnvTarget = useCallback(
     async (envName: string): Promise<PhpLaravelEnvNavigationTarget | null> => {

@@ -20,6 +20,9 @@ import { phpFrameworkConfigKeysFromSource } from "../domain/phpFrameworkProvider
 import { phpFrameworkTranslationKeysFromSource } from "../domain/phpFrameworkProviders";
 import { phpFrameworkJsonTranslationKeysFromSource } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
+import { phpLaravelAuthGuardConfigKey } from "../domain/phpLaravelAuth";
+import { phpLaravelDatabaseConnectionConfigKey } from "../domain/phpLaravelDatabase";
+import { phpLaravelStorageDiskConfigKey } from "../domain/phpLaravelStorage";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
@@ -499,8 +502,157 @@ describe("useLaravelTargets", () => {
     expect(await harness.hook().findPhpLaravelViewTarget("a.b")).toBeNull();
     expect(await harness.hook().findPhpLaravelConfigTarget("a.b")).toBeNull();
     expect(await harness.hook().findPhpLaravelTranslationTarget("a.b")).toBeNull();
+    // Config-derived collectors (auth guards, database connections, ...) are
+    // all built on collectPhpLaravelConfigTargets/findPhpLaravelConfigTarget,
+    // so an inactive Laravel framework must starve every one of them too.
+    expect(await harness.hook().collectPhpLaravelAuthGuardTargets()).toEqual([]);
+    expect(await harness.hook().collectPhpLaravelDatabaseConnectionTargets()).toEqual(
+      [],
+    );
+    expect(await harness.hook().collectPhpLaravelStorageDiskTargets()).toEqual([]);
+    expect(await harness.hook().findPhpLaravelAuthGuardTarget("web")).toBeNull();
+    expect(
+      await harness.hook().findPhpLaravelDatabaseConnectionTarget("mysql"),
+    ).toBeNull();
+    expect(await harness.hook().findPhpLaravelStorageDiskTarget("local")).toBeNull();
     expect(readWorkspaceDirectory).not.toHaveBeenCalled();
 
     harness.unmount();
+  });
+
+  describe("config-derived collectors", () => {
+    const configRoot = `${ROOT}/config`;
+    const authSource = `<?php\n\nreturn [\n    'defaults' => [\n        'guard' => 'web',\n    ],\n    'guards' => [\n        'web' => [\n            'driver' => 'session',\n            'provider' => 'users',\n        ],\n        'api' => [\n            'driver' => 'token',\n            'provider' => 'users',\n        ],\n    ],\n];\n`;
+    const databaseSource = `<?php\n\nreturn [\n    'default' => 'mysql',\n    'connections' => [\n        'sqlite' => [\n            'driver' => 'sqlite',\n        ],\n        'mysql' => [\n            'driver' => 'mysql',\n        ],\n    ],\n];\n`;
+    const filesystemsSource = `<?php\n\nreturn [\n    'default' => 'local',\n    'disks' => [\n        'local' => [\n            'driver' => 'local',\n        ],\n        's3' => [\n            'driver' => 's3',\n        ],\n    ],\n];\n`;
+
+    function renderConfigDerivedHarness(): Harness {
+      const readWorkspaceDirectory = vi.fn(async (path: string) =>
+        path === configRoot
+          ? [
+              fileEntry(`${configRoot}/auth.php`),
+              fileEntry(`${configRoot}/database.php`),
+              fileEntry(`${configRoot}/filesystems.php`),
+            ]
+          : [],
+      );
+      const readFileContent = vi.fn(async (path: string) => {
+        if (path === `${configRoot}/auth.php`) {
+          return authSource;
+        }
+        if (path === `${configRoot}/database.php`) {
+          return databaseSource;
+        }
+        if (path === `${configRoot}/filesystems.php`) {
+          return filesystemsSource;
+        }
+        throw new Error(`unexpected read ${path}`);
+      });
+
+      return renderLaravelTargets({
+        readWorkspaceDirectory: readWorkspaceDirectory as never,
+        readNavigationFileContent: readFileContent as never,
+      });
+    }
+
+    it("collects auth guard targets 1:1 from config targets, filtered and sorted by guard name", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const targets = await harness.hook().collectPhpLaravelAuthGuardTargets();
+
+      // Only the two leaf `auth.guards.*` keys become guard targets; deeper
+      // keys like `auth.guards.web.driver` are filtered out because the
+      // remainder after the `auth.guards.` prefix still contains a dot.
+      expect(targets.map((target) => target.guardName)).toEqual(["api", "web"]);
+      expect(targets.every((target) => target.relativePath === "config/auth.php")).toBe(
+        true,
+      );
+      expect(targets.every((target) => target.key.startsWith("auth.guards."))).toBe(
+        true,
+      );
+
+      harness.unmount();
+    });
+
+    it("collects database connection targets sharing the connectionName property, filtered and sorted", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const targets = await harness
+        .hook()
+        .collectPhpLaravelDatabaseConnectionTargets();
+
+      expect(targets.map((target) => target.connectionName)).toEqual([
+        "mysql",
+        "sqlite",
+      ]);
+      expect(
+        targets.every((target) => target.relativePath === "config/database.php"),
+      ).toBe(true);
+
+      harness.unmount();
+    });
+
+    it("collects storage disk targets 1:1, filtered and sorted by disk name", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const targets = await harness.hook().collectPhpLaravelStorageDiskTargets();
+
+      expect(targets.map((target) => target.diskName)).toEqual(["local", "s3"]);
+      expect(
+        targets.every((target) => target.relativePath === "config/filesystems.php"),
+      ).toBe(true);
+
+      harness.unmount();
+    });
+
+    it("finds an auth guard target by name via the underlying config target", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const target = await harness.hook().findPhpLaravelAuthGuardTarget("web");
+
+      expect(target?.guardName).toBe("web");
+      expect(target?.key).toBe(phpLaravelAuthGuardConfigKey("web"));
+      expect(target?.path).toBe(`${configRoot}/auth.php`);
+      expect(target?.relativePath).toBe("config/auth.php");
+
+      harness.unmount();
+    });
+
+    it("finds a database connection target by name via the underlying config target", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const target = await harness
+        .hook()
+        .findPhpLaravelDatabaseConnectionTarget("sqlite");
+
+      expect(target?.connectionName).toBe("sqlite");
+      expect(target?.key).toBe(phpLaravelDatabaseConnectionConfigKey("sqlite"));
+      expect(target?.path).toBe(`${configRoot}/database.php`);
+
+      harness.unmount();
+    });
+
+    it("returns null from find when the name is not a usable config key", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      // A space is not a usable auth guard name, so no config file is ever read.
+      expect(await harness.hook().findPhpLaravelAuthGuardTarget("web guard")).toBeNull();
+      expect(phpLaravelStorageDiskConfigKey("local disk")).toBeNull();
+      expect(harness.readFileContent).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
+
+    it("returns null from find when the config key has no matching target", async () => {
+      const harness = renderConfigDerivedHarness();
+
+      const target = await harness
+        .hook()
+        .findPhpLaravelStorageDiskTarget("does-not-exist");
+
+      expect(target).toBeNull();
+
+      harness.unmount();
+    });
   });
 });

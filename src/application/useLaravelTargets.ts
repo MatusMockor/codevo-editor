@@ -34,6 +34,46 @@ import {
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
 import {
+  phpLaravelAuthGuardConfigKey,
+  phpLaravelAuthGuardNameFromConfigKey,
+} from "../domain/phpLaravelAuth";
+import {
+  phpLaravelCacheStoreConfigKey,
+  phpLaravelCacheStoreNameFromConfigKey,
+} from "../domain/phpLaravelCache";
+import {
+  phpLaravelDatabaseConnectionConfigKey,
+  phpLaravelDatabaseConnectionNameFromConfigKey,
+} from "../domain/phpLaravelDatabase";
+import {
+  phpLaravelBroadcastConnectionConfigKey,
+  phpLaravelBroadcastConnectionNameFromConfigKey,
+} from "../domain/phpLaravelBroadcasting";
+import {
+  phpLaravelQueueConnectionConfigKey,
+  phpLaravelQueueConnectionNameFromConfigKey,
+} from "../domain/phpLaravelQueue";
+import {
+  phpLaravelRedisConnectionConfigKey,
+  phpLaravelRedisConnectionNameFromConfigKey,
+} from "../domain/phpLaravelRedis";
+import {
+  phpLaravelMailMailerConfigKey,
+  phpLaravelMailMailerNameFromConfigKey,
+} from "../domain/phpLaravelMail";
+import {
+  phpLaravelPasswordBrokerConfigKey,
+  phpLaravelPasswordBrokerNameFromConfigKey,
+} from "../domain/phpLaravelPassword";
+import {
+  phpLaravelLogChannelConfigKey,
+  phpLaravelLogChannelNameFromConfigKey,
+} from "../domain/phpLaravelLog";
+import {
+  phpLaravelStorageDiskConfigKey,
+  phpLaravelStorageDiskNameFromConfigKey,
+} from "../domain/phpLaravelStorage";
+import {
   phpLaravelTranslationFileNameFromKey,
   phpLaravelTranslationFileNameFromRelativePath,
   phpLaravelJsonTranslationLocaleFromRelativePath,
@@ -66,6 +106,183 @@ export type PhpLaravelMiddlewareAliasTarget =
  */
 export interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
   position: EditorPosition;
+}
+
+/**
+ * A Laravel config target whose key is one segment of a well-known config
+ * namespace (`auth.guards.*`, `database.connections.*`, ...), plus the
+ * human-facing name extracted from that segment under `property` (e.g.
+ * `guardName`, `connectionName`). Every "config-derived" collector below
+ * shares this shape; only the property name and the name/config-key mapping
+ * functions differ per collector.
+ */
+export type PhpLaravelConfigDerivedTarget<Property extends string> =
+  PhpLaravelConfigTarget & Record<Property, string>;
+
+export type PhpLaravelAuthGuardTarget = PhpLaravelConfigDerivedTarget<"guardName">;
+export type PhpLaravelCacheStoreTarget = PhpLaravelConfigDerivedTarget<"storeName">;
+export type PhpLaravelDatabaseConnectionTarget =
+  PhpLaravelConfigDerivedTarget<"connectionName">;
+export type PhpLaravelBroadcastConnectionTarget =
+  PhpLaravelConfigDerivedTarget<"connectionName">;
+export type PhpLaravelQueueConnectionTarget =
+  PhpLaravelConfigDerivedTarget<"connectionName">;
+export type PhpLaravelRedisConnectionTarget =
+  PhpLaravelConfigDerivedTarget<"connectionName">;
+export type PhpLaravelMailMailerTarget = PhpLaravelConfigDerivedTarget<"mailerName">;
+export type PhpLaravelPasswordBrokerTarget =
+  PhpLaravelConfigDerivedTarget<"brokerName">;
+export type PhpLaravelLogChannelTarget = PhpLaravelConfigDerivedTarget<"channelName">;
+export type PhpLaravelStorageDiskTarget = PhpLaravelConfigDerivedTarget<"diskName">;
+
+interface PhpLaravelConfigDerivedTargetDefinition<Property extends string> {
+  configKeyFromName: (name: string) => string | null;
+  nameFromConfigKey: (configKey: string) => string | null;
+  property: Property;
+}
+
+const phpLaravelAuthGuardTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"guardName"> =
+  {
+    configKeyFromName: phpLaravelAuthGuardConfigKey,
+    nameFromConfigKey: phpLaravelAuthGuardNameFromConfigKey,
+    property: "guardName",
+  };
+
+const phpLaravelCacheStoreTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"storeName"> =
+  {
+    configKeyFromName: phpLaravelCacheStoreConfigKey,
+    nameFromConfigKey: phpLaravelCacheStoreNameFromConfigKey,
+    property: "storeName",
+  };
+
+const phpLaravelDatabaseConnectionTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"connectionName"> =
+  {
+    configKeyFromName: phpLaravelDatabaseConnectionConfigKey,
+    nameFromConfigKey: phpLaravelDatabaseConnectionNameFromConfigKey,
+    property: "connectionName",
+  };
+
+const phpLaravelBroadcastConnectionTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"connectionName"> =
+  {
+    configKeyFromName: phpLaravelBroadcastConnectionConfigKey,
+    nameFromConfigKey: phpLaravelBroadcastConnectionNameFromConfigKey,
+    property: "connectionName",
+  };
+
+const phpLaravelQueueConnectionTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"connectionName"> =
+  {
+    configKeyFromName: phpLaravelQueueConnectionConfigKey,
+    nameFromConfigKey: phpLaravelQueueConnectionNameFromConfigKey,
+    property: "connectionName",
+  };
+
+const phpLaravelRedisConnectionTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"connectionName"> =
+  {
+    configKeyFromName: phpLaravelRedisConnectionConfigKey,
+    nameFromConfigKey: phpLaravelRedisConnectionNameFromConfigKey,
+    property: "connectionName",
+  };
+
+const phpLaravelMailMailerTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"mailerName"> =
+  {
+    configKeyFromName: phpLaravelMailMailerConfigKey,
+    nameFromConfigKey: phpLaravelMailMailerNameFromConfigKey,
+    property: "mailerName",
+  };
+
+const phpLaravelPasswordBrokerTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"brokerName"> =
+  {
+    configKeyFromName: phpLaravelPasswordBrokerConfigKey,
+    nameFromConfigKey: phpLaravelPasswordBrokerNameFromConfigKey,
+    property: "brokerName",
+  };
+
+const phpLaravelLogChannelTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"channelName"> =
+  {
+    configKeyFromName: phpLaravelLogChannelConfigKey,
+    nameFromConfigKey: phpLaravelLogChannelNameFromConfigKey,
+    property: "channelName",
+  };
+
+const phpLaravelStorageDiskTargetDefinition: PhpLaravelConfigDerivedTargetDefinition<"diskName"> =
+  {
+    configKeyFromName: phpLaravelStorageDiskConfigKey,
+    nameFromConfigKey: phpLaravelStorageDiskNameFromConfigKey,
+    property: "diskName",
+  };
+
+/**
+ * Builds the collect/find pair for a single config-derived target kind on top
+ * of the shared `collectPhpLaravelConfigTargets`/`findPhpLaravelConfigTarget`
+ * primitives. Every one of the ten config-derived collectors (auth guards,
+ * cache stores, database/broadcast/queue/redis connections, mail mailers,
+ * password brokers, log channels, storage disks) previously duplicated the
+ * same collect -> map -> dedup -> sort skeleton and the same find -> map
+ * skeleton; only the property name and the name/config-key mapping functions
+ * differed, so those differences are captured declaratively in the
+ * definitions above and this hook does the (identical) collecting/finding
+ * once. Enablement (Laravel active, config supported) is entirely delegated
+ * to `collectConfigTargets`/`findConfigTarget`, which already return an empty
+ * result when disabled - there is nothing extra to gate here.
+ */
+function useConfigDerivedLaravelTarget<Property extends string>(
+  definition: PhpLaravelConfigDerivedTargetDefinition<Property>,
+  collectConfigTargets: () => Promise<PhpLaravelConfigTarget[]>,
+  findConfigTarget: (configKey: string) => Promise<PhpLaravelConfigTarget | null>,
+): {
+  collect: () => Promise<Array<PhpLaravelConfigDerivedTarget<Property>>>;
+  find: (name: string) => Promise<PhpLaravelConfigDerivedTarget<Property> | null>;
+} {
+  const { configKeyFromName, nameFromConfigKey, property } = definition;
+
+  const collect = useCallback(async (): Promise<
+    Array<PhpLaravelConfigDerivedTarget<Property>>
+  > => {
+    const targets = new Map<string, PhpLaravelConfigDerivedTarget<Property>>();
+
+    for (const target of await collectConfigTargets()) {
+      const name = nameFromConfigKey(target.key);
+
+      if (!name) {
+        continue;
+      }
+
+      const key = name.toLowerCase();
+
+      if (!targets.has(key)) {
+        targets.set(key, {
+          ...target,
+          [property]: name,
+        } as PhpLaravelConfigDerivedTarget<Property>);
+      }
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left[property].localeCompare(right[property]),
+    );
+  }, [collectConfigTargets, nameFromConfigKey, property]);
+
+  const find = useCallback(
+    async (name: string): Promise<PhpLaravelConfigDerivedTarget<Property> | null> => {
+      const configKey = configKeyFromName(name);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findConfigTarget(configKey);
+
+      return target
+        ? ({
+            ...target,
+            [property]: name,
+          } as PhpLaravelConfigDerivedTarget<Property>)
+        : null;
+    },
+    [configKeyFromName, findConfigTarget, property],
+  );
+
+  return { collect, find };
 }
 
 // Laravel config/view/translation completions previously triggered a full
@@ -127,6 +344,26 @@ export interface LaravelTargets {
   collectPhpLaravelTranslationTargets: () => Promise<
     PhpLaravelTranslationTarget[]
   >;
+  collectPhpLaravelAuthGuardTargets: () => Promise<PhpLaravelAuthGuardTarget[]>;
+  collectPhpLaravelCacheStoreTargets: () => Promise<PhpLaravelCacheStoreTarget[]>;
+  collectPhpLaravelDatabaseConnectionTargets: () => Promise<
+    PhpLaravelDatabaseConnectionTarget[]
+  >;
+  collectPhpLaravelBroadcastConnectionTargets: () => Promise<
+    PhpLaravelBroadcastConnectionTarget[]
+  >;
+  collectPhpLaravelQueueConnectionTargets: () => Promise<
+    PhpLaravelQueueConnectionTarget[]
+  >;
+  collectPhpLaravelRedisConnectionTargets: () => Promise<
+    PhpLaravelRedisConnectionTarget[]
+  >;
+  collectPhpLaravelMailMailerTargets: () => Promise<PhpLaravelMailMailerTarget[]>;
+  collectPhpLaravelPasswordBrokerTargets: () => Promise<
+    PhpLaravelPasswordBrokerTarget[]
+  >;
+  collectPhpLaravelLogChannelTargets: () => Promise<PhpLaravelLogChannelTarget[]>;
+  collectPhpLaravelStorageDiskTargets: () => Promise<PhpLaravelStorageDiskTarget[]>;
   findPhpLaravelViewTarget: (
     viewName: string,
   ) => Promise<PhpLaravelViewNavigationTarget | null>;
@@ -136,6 +373,36 @@ export interface LaravelTargets {
   findPhpLaravelTranslationTarget: (
     translationKey: string,
   ) => Promise<PhpLaravelTranslationTarget | null>;
+  findPhpLaravelAuthGuardTarget: (
+    guardName: string,
+  ) => Promise<PhpLaravelAuthGuardTarget | null>;
+  findPhpLaravelCacheStoreTarget: (
+    storeName: string,
+  ) => Promise<PhpLaravelCacheStoreTarget | null>;
+  findPhpLaravelDatabaseConnectionTarget: (
+    connectionName: string,
+  ) => Promise<PhpLaravelDatabaseConnectionTarget | null>;
+  findPhpLaravelBroadcastConnectionTarget: (
+    connectionName: string,
+  ) => Promise<PhpLaravelBroadcastConnectionTarget | null>;
+  findPhpLaravelQueueConnectionTarget: (
+    connectionName: string,
+  ) => Promise<PhpLaravelQueueConnectionTarget | null>;
+  findPhpLaravelRedisConnectionTarget: (
+    connectionName: string,
+  ) => Promise<PhpLaravelRedisConnectionTarget | null>;
+  findPhpLaravelMailMailerTarget: (
+    mailerName: string,
+  ) => Promise<PhpLaravelMailMailerTarget | null>;
+  findPhpLaravelPasswordBrokerTarget: (
+    brokerName: string,
+  ) => Promise<PhpLaravelPasswordBrokerTarget | null>;
+  findPhpLaravelLogChannelTarget: (
+    channelName: string,
+  ) => Promise<PhpLaravelLogChannelTarget | null>;
+  findPhpLaravelStorageDiskTarget: (
+    diskName: string,
+  ) => Promise<PhpLaravelStorageDiskTarget | null>;
   invalidatePhpLaravelTargetCache: () => void;
 }
 
@@ -862,6 +1129,62 @@ export function useLaravelTargets(
     ],
   );
 
+  // The ten config-derived collectors below (auth guards, cache stores,
+  // database/broadcast/queue/redis connections, mail mailers, password
+  // brokers, log channels, storage disks) are all thin, declarative wrappers
+  // over collectPhpLaravelConfigTargets/findPhpLaravelConfigTarget - see
+  // useConfigDerivedLaravelTarget for the shared collect/find skeleton.
+  const authGuardTarget = useConfigDerivedLaravelTarget(
+    phpLaravelAuthGuardTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const cacheStoreTarget = useConfigDerivedLaravelTarget(
+    phpLaravelCacheStoreTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const databaseConnectionTarget = useConfigDerivedLaravelTarget(
+    phpLaravelDatabaseConnectionTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const broadcastConnectionTarget = useConfigDerivedLaravelTarget(
+    phpLaravelBroadcastConnectionTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const queueConnectionTarget = useConfigDerivedLaravelTarget(
+    phpLaravelQueueConnectionTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const redisConnectionTarget = useConfigDerivedLaravelTarget(
+    phpLaravelRedisConnectionTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const mailMailerTarget = useConfigDerivedLaravelTarget(
+    phpLaravelMailMailerTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const passwordBrokerTarget = useConfigDerivedLaravelTarget(
+    phpLaravelPasswordBrokerTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const logChannelTarget = useConfigDerivedLaravelTarget(
+    phpLaravelLogChannelTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+  const storageDiskTarget = useConfigDerivedLaravelTarget(
+    phpLaravelStorageDiskTargetDefinition,
+    collectPhpLaravelConfigTargets,
+    findPhpLaravelConfigTarget,
+  );
+
   const findPhpLaravelTranslationTarget = useCallback(
     async (
       translationKey: string,
@@ -988,9 +1311,29 @@ export function useLaravelTargets(
     collectPhpLaravelViewTargets,
     collectPhpLaravelConfigTargets,
     collectPhpLaravelTranslationTargets,
+    collectPhpLaravelAuthGuardTargets: authGuardTarget.collect,
+    collectPhpLaravelCacheStoreTargets: cacheStoreTarget.collect,
+    collectPhpLaravelDatabaseConnectionTargets: databaseConnectionTarget.collect,
+    collectPhpLaravelBroadcastConnectionTargets: broadcastConnectionTarget.collect,
+    collectPhpLaravelQueueConnectionTargets: queueConnectionTarget.collect,
+    collectPhpLaravelRedisConnectionTargets: redisConnectionTarget.collect,
+    collectPhpLaravelMailMailerTargets: mailMailerTarget.collect,
+    collectPhpLaravelPasswordBrokerTargets: passwordBrokerTarget.collect,
+    collectPhpLaravelLogChannelTargets: logChannelTarget.collect,
+    collectPhpLaravelStorageDiskTargets: storageDiskTarget.collect,
     findPhpLaravelViewTarget,
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
+    findPhpLaravelAuthGuardTarget: authGuardTarget.find,
+    findPhpLaravelCacheStoreTarget: cacheStoreTarget.find,
+    findPhpLaravelDatabaseConnectionTarget: databaseConnectionTarget.find,
+    findPhpLaravelBroadcastConnectionTarget: broadcastConnectionTarget.find,
+    findPhpLaravelQueueConnectionTarget: queueConnectionTarget.find,
+    findPhpLaravelRedisConnectionTarget: redisConnectionTarget.find,
+    findPhpLaravelMailMailerTarget: mailMailerTarget.find,
+    findPhpLaravelPasswordBrokerTarget: passwordBrokerTarget.find,
+    findPhpLaravelLogChannelTarget: logChannelTarget.find,
+    findPhpLaravelStorageDiskTarget: storageDiskTarget.find,
     invalidatePhpLaravelTargetCache,
   };
 }
