@@ -117,6 +117,7 @@ import {
 import {
   registerLanguageServerMonacoProviders,
   type BladeCompletion,
+  type LatteCompletion,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
   type PhpCodeActionRange,
@@ -245,6 +246,14 @@ interface EditorSurfaceProps {
     source: string,
     offset: number,
   ): Promise<boolean>;
+  provideLatteCompletions?(
+    source: string,
+    position: EditorPosition,
+  ): Promise<LatteCompletion[]>;
+  provideLatteDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -329,6 +338,8 @@ function EditorSurfaceComponent({
   provideBladeCodeActions = async () => [],
   provideBladeCompletions = async () => [],
   provideBladeDefinition = async () => false,
+  provideLatteCompletions = async () => [],
+  provideLatteDefinition = async () => false,
   providePhpCodeActions = async () => [],
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
@@ -465,6 +476,8 @@ function EditorSurfaceComponent({
   const pendingLocalPhpValidationKeyRef = useRef<string | null>(null);
   const bladeCompletionsRef = useRef(provideBladeCompletions);
   const bladeDefinitionRef = useRef(provideBladeDefinition);
+  const latteCompletionsRef = useRef(provideLatteCompletions);
+  const latteDefinitionRef = useRef(provideLatteDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -664,6 +677,14 @@ function EditorSurfaceComponent({
   }, [provideBladeDefinition]);
 
   useEffect(() => {
+    latteCompletionsRef.current = provideLatteCompletions;
+  }, [provideLatteCompletions]);
+
+  useEffect(() => {
+    latteDefinitionRef.current = provideLatteDefinition;
+  }, [provideLatteDefinition]);
+
+  useEffect(() => {
     phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
   }, [providePhpLaravelDefinition]);
 
@@ -798,6 +819,10 @@ function EditorSurfaceComponent({
         bladeCompletionsRef.current(source, position),
       provideBladeDefinition: (source, offset) =>
         bladeDefinitionRef.current(source, offset),
+      provideLatteCompletions: (source, position) =>
+        latteCompletionsRef.current(source, position),
+      provideLatteDefinition: (source, offset) =>
+        latteDefinitionRef.current(source, offset),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>

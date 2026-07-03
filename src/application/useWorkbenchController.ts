@@ -4,6 +4,7 @@ import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/even
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
+import { useLatteIntelligence } from "./useLatteIntelligence";
 import {
   isPhpLaravelMigrationPath,
   loadPhpLaravelMigrationSources,
@@ -23792,6 +23793,22 @@ export function useWorkbenchController(
     ],
   );
 
+  // Latte navigation + completion lives entirely in `useLatteIntelligence` (the
+  // first strangler-pattern module): this mount only injects the collaborators.
+  const { provideLatteDefinition, provideLatteCompletions } =
+    useLatteIntelligence({
+      currentWorkspaceRootRef,
+      getActiveDocument: () => activeDocumentRef.current,
+      isNetteFrameworkActive,
+      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
+      joinPath: joinWorkspacePath,
+      listDirectory: (path) => workspaceFiles.readDirectory(path),
+      openTarget: openNavigationTarget,
+      readFileContent: readNavigationFileContent,
+      toRelativePath: relativeWorkspacePath,
+      workspaceRoot,
+    });
+
   const goToPhpMethodCallDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "methodCall" }>,
@@ -32178,6 +32195,8 @@ export function useWorkbenchController(
     provideBladeCodeActions,
     provideBladeCompletions,
     provideBladeDefinition,
+    provideLatteCompletions,
+    provideLatteDefinition,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,

@@ -10529,9 +10529,169 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
   });
 });
 
+describe("registerLanguageServerMonacoProviders latte providers", () => {
+  it("registers latte definition and completion providers and disposes them", () => {
+    const registered = createRegisteredProviders();
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext(),
+    );
+
+    expect(registered.latteDefinitionLanguage).toBe("latte");
+    expect(registered.latteCompletionLanguage).toBe("latte");
+    expect(registered.latteCompletionProvider.triggerCharacters).toEqual([
+      "{",
+      "'",
+      "\"",
+      ".",
+      "/",
+    ]);
+
+    disposable.dispose();
+
+    expect(registered.latteDefinitionDispose).toHaveBeenCalled();
+    expect(registered.latteCompletionDispose).toHaveBeenCalled();
+  });
+
+  it("delegates latte go-to-definition to the controller and returns null", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{include 'partials/menu'}\n";
+    const offset = source.indexOf("partials/menu");
+    const provideLatteDefinition = vi.fn(async () => true);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.latteDefinitionProvider.provideDefinition(
+        model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+        { column: offset + 1, lineNumber: 1 },
+      ),
+    ).resolves.toBeNull();
+    expect(provideLatteDefinition).toHaveBeenCalledTimes(1);
+    expect(provideLatteDefinition).toHaveBeenCalledWith(source, offset);
+  });
+
+  it("does not call the latte definition callback for a non-latte active document", async () => {
+    const registered = createRegisteredProviders();
+    const provideLatteDefinition = vi.fn(async () => true);
+    const context = providerContext({
+      activeDocument: document(),
+      provideLatteDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.latteDefinitionProvider.provideDefinition(
+        model({ content: "{include 'x'}", path: "/project/src/User.php" }),
+        { column: 1, lineNumber: 1 },
+      ),
+    ).resolves.toBeNull();
+    expect(provideLatteDefinition).not.toHaveBeenCalled();
+  });
+
+  it("maps latte tag completions to keyword items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{for\n";
+    const provideLatteCompletions = vi.fn(async () => [
+      {
+        detail: "Latte tag",
+        insertText: "foreach",
+        kind: "tag" as const,
+        label: "foreach",
+        replaceEnd: 4,
+        replaceStart: 1,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+      { column: 5, lineNumber: 1 },
+    );
+
+    expect(provideLatteCompletions).toHaveBeenCalledWith(source, {
+      column: 5,
+      lineNumber: 1,
+    });
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "foreach",
+        kind: registered.monaco.languages.CompletionItemKind.Keyword,
+        label: "foreach",
+        range: {
+          endColumn: 5,
+          endLineNumber: 1,
+          startColumn: 2,
+          startLineNumber: 1,
+        },
+      }),
+    );
+  });
+
+  it("maps latte template completions to file items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{include 'par'}\n";
+    const provideLatteCompletions = vi.fn(async () => [
+      {
+        detail: "Latte template",
+        insertText: "partials/menu.latte",
+        kind: "template" as const,
+        label: "partials/menu.latte",
+        replaceEnd: source.indexOf("par") + "par".length,
+        replaceStart: source.indexOf("par"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+      { column: source.indexOf("par") + 1, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "partials/menu.latte",
+        kind: registered.monaco.languages.CompletionItemKind.File,
+        label: "partials/menu.latte",
+      }),
+    );
+  });
+
+  it("does not call latte completions for a non-latte active document", async () => {
+    const registered = createRegisteredProviders();
+    const provideLatteCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: document(),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: "{for", path: "/project/src/User.php" }),
+      { column: 5, lineNumber: 1 },
+    );
+
+    expect(provideLatteCompletions).not.toHaveBeenCalled();
+    expect(result.suggestions).toEqual([]);
+  });
+});
+
 function createRegisteredProviders() {
   const bladeDefinitionDispose = vi.fn();
   const bladeCompletionDispose = vi.fn();
+  const latteDefinitionDispose = vi.fn();
+  const latteCompletionDispose = vi.fn();
   const codeActionDispose = vi.fn();
   const codeLensDispose = vi.fn();
   const commandDispose = vi.fn();
@@ -10568,6 +10728,12 @@ function createRegisteredProviders() {
     bladeDefinitionDispose: ReturnType<typeof vi.fn>;
     bladeDefinitionLanguage: string | null;
     bladeDefinitionProvider: any;
+    latteCompletionDispose: ReturnType<typeof vi.fn>;
+    latteCompletionLanguage: string | null;
+    latteCompletionProvider: any;
+    latteDefinitionDispose: ReturnType<typeof vi.fn>;
+    latteDefinitionLanguage: string | null;
+    latteDefinitionProvider: any;
     codeActionDispose: ReturnType<typeof vi.fn>;
     codeActionLanguage: string | null;
     codeActionMetadata: any;
@@ -10658,6 +10824,12 @@ function createRegisteredProviders() {
     bladeDefinitionDispose,
     bladeDefinitionLanguage: null,
     bladeDefinitionProvider: null,
+    latteCompletionDispose,
+    latteCompletionLanguage: null,
+    latteCompletionProvider: null,
+    latteDefinitionDispose,
+    latteDefinitionLanguage: null,
+    latteDefinitionProvider: null,
     codeActionDispose,
     codeActionLanguage: null,
     codeActionMetadata: null,
@@ -10855,6 +11027,12 @@ function createRegisteredProviders() {
           return { dispose: bladeCompletionDispose };
         }
 
+        if (language === "latte") {
+          registered.latteCompletionLanguage = language;
+          registered.latteCompletionProvider = provider;
+          return { dispose: latteCompletionDispose };
+        }
+
         registered.completionLanguage = language;
         registered.completionProvider = provider;
         return { dispose: completionDispose };
@@ -10869,6 +11047,12 @@ function createRegisteredProviders() {
           registered.bladeDefinitionLanguage = language;
           registered.bladeDefinitionProvider = provider;
           return { dispose: bladeDefinitionDispose };
+        }
+
+        if (language === "latte") {
+          registered.latteDefinitionLanguage = language;
+          registered.latteDefinitionProvider = provider;
+          return { dispose: latteDefinitionDispose };
         }
 
         registered.definitionLanguage = language;
@@ -11021,6 +11205,12 @@ function providerContext(
     provideBladeDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeDefinition"]
     >;
+    provideLatteCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideLatteCompletions"]
+    >;
+    provideLatteDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideLatteDefinition"]
+    >;
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
@@ -11064,6 +11254,8 @@ function providerContext(
     provideBladeCompletions: overrides.provideBladeCompletions,
     provideBladeCodeActions: overrides.provideBladeCodeActions,
     provideBladeDefinition: overrides.provideBladeDefinition,
+    provideLatteCompletions: overrides.provideLatteCompletions,
+    provideLatteDefinition: overrides.provideLatteDefinition,
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
@@ -11372,6 +11564,16 @@ function bladeDocument(content: string): EditorDocument {
     language: "blade",
     name: "show.blade.php",
     path: "/project/resources/views/show.blade.php",
+    savedContent: content,
+  };
+}
+
+function latteDocument(content: string): EditorDocument {
+  return {
+    content,
+    language: "latte",
+    name: "default.latte",
+    path: "/project/app/UI/Home/default.latte",
     savedContent: content,
   };
 }

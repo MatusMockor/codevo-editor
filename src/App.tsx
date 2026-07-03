@@ -1266,6 +1266,8 @@ function App() {
             provideBladeCodeActions={workbench.provideBladeCodeActions}
             provideBladeCompletions={workbench.provideBladeCompletions}
             provideBladeDefinition={workbench.provideBladeDefinition}
+            provideLatteCompletions={workbench.provideLatteCompletions}
+            provideLatteDefinition={workbench.provideLatteDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}

@@ -290,6 +290,34 @@ export interface BladeCompletion {
   replaceEnd?: number;
 }
 
+/**
+ * The Monaco icon bucket a Latte completion maps to: a Latte tag name (`{if}`,
+ * `{include}`, …) is a keyword; a template name inside an `{include '...'}`
+ * literal is a file.
+ */
+export type LatteCompletionKind = "tag" | "template";
+
+/**
+ * A single Latte completion item produced by the controller. Like Blade, Latte
+ * has no managed language server (its syntax is a vendored Shiki grammar), so
+ * completions are pure data the Monaco provider maps to a
+ * `Monaco.languages.CompletionItem`.
+ */
+export interface LatteCompletion {
+  detail?: string;
+  insertText: string;
+  kind: LatteCompletionKind;
+  label: string;
+  /**
+   * Optional 0-based character offset span the item replaces. When omitted the
+   * provider falls back to the word Monaco computed at the cursor. Used so a
+   * `{fore` tag completion replaces the tag-name characters after `{` and an
+   * `{include 'par` template completion replaces the typed path literal.
+   */
+  replaceStart?: number;
+  replaceEnd?: number;
+}
+
 export interface LanguageServerMonacoProviderContext {
   /**
    * Persists a PHP code action's new file (e.g. "Extract interface" writes a
@@ -360,6 +388,26 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
+  /**
+   * Resolves and navigates to the Latte target (a template referenced by
+   * `{include}`/`{layout}`/`{extends}`/… or the `@layout.latte` auto-lookup) at
+   * `offset` inside a `.latte` document. Like {@link provideBladeDefinition}, the
+   * controller performs the navigation itself and resolves `true` when it handled
+   * the request (so the Monaco provider returns `null`); it resolves `false` when
+   * the offset is not a resolvable Latte reference. Per-project isolation lives in
+   * the controller (requested-root capture + re-check after each file read).
+   */
+  provideLatteDefinition?(source: string, offset: number): Promise<boolean>;
+  /**
+   * Produces Latte completions for the cursor at `position` inside a `.latte`
+   * document: Latte tag names after `{`, and workspace template names inside an
+   * `{include '...'}` literal. Re-checks the active workspace after directory
+   * scans (per-project isolation).
+   */
+  provideLatteCompletions?(
+    source: string,
+    position: MonacoPosition,
+  ): Promise<LatteCompletion[]>;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -944,6 +992,27 @@ export function registerLanguageServerMonacoProviders(
         { providedCodeActionKinds: ["quickfix"] },
       )
     : { dispose: () => undefined };
+  // Latte (`.latte`) mirrors Blade: no managed language server (its syntax is a
+  // vendored Shiki grammar), so a small set of Monaco providers delegates the
+  // workspace-aware resolution to controller callbacks carrying the per-project
+  // isolation guards. Slice 4 wires go-to-definition (template navigation) and
+  // completion (tag names + `{include}` template names); code actions land later.
+  const latteDefinition = monaco.languages.registerDefinitionProvider
+    ? monaco.languages.registerDefinitionProvider("latte", {
+        provideDefinition: (model, position) =>
+          provideLatteDefinition(context, model, position),
+      })
+    : { dispose: () => undefined };
+  const latteCompletion = monaco.languages.registerCompletionItemProvider(
+    "latte",
+    {
+      // `{` opens the tag list, `'`/`"` open the `{include '...'}` template list,
+      // and `.`/`/` keep it refreshing as a dotted / nested path is typed.
+      triggerCharacters: ["{", "'", "\"", ".", "/"],
+      provideCompletionItems: (model, position) =>
+        provideLatteCompletionItems(monaco, context, model, position),
+    },
+  );
 
   return {
     dispose: () => {
@@ -982,6 +1051,8 @@ export function registerLanguageServerMonacoProviders(
       bladeDefinition.dispose();
       bladeCompletion.dispose();
       bladeCodeActions.dispose();
+      latteDefinition.dispose();
+      latteCompletion.dispose();
     },
   };
 }
@@ -1202,6 +1273,160 @@ function bladeCompletionFallbackRange(
     startColumn: word.startColumn,
     startLineNumber: position.lineNumber,
   };
+}
+
+/**
+ * Go-to-definition for a `.latte` document: delegates to the controller's Latte
+ * resolver, which navigates to the referenced template and resolves `true` when
+ * it handled the offset (so Monaco does not also navigate). Returns `null` either
+ * way — Latte has no LSP locations to surface. The controller enforces
+ * per-project isolation; this wrapper additionally drops the result if the active
+ * workspace changed during the await. Mirrors {@link provideBladeDefinition}.
+ */
+async function provideLatteDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideLatteDefinition) {
+    return null;
+  }
+
+  const documentContext = activeLatteDocumentContext(context, model);
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideLatteDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideLatteCompletionItems(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideLatteCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeLatteDocumentContext(context, model);
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = bladeCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideLatteCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoLatteCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+function toMonacoLatteCompletion(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  fallbackRange: Monaco.IRange,
+  completion: LatteCompletion,
+  index: number,
+): Monaco.languages.CompletionItem {
+  const range =
+    completion.replaceStart != null && completion.replaceEnd != null
+      ? bladeReplaceRange(
+          monaco,
+          model,
+          source,
+          completion.replaceStart,
+          completion.replaceEnd,
+        )
+      : fallbackRange;
+
+  return {
+    detail: completion.detail,
+    insertText: completion.insertText,
+    kind: monacoLatteCompletionKind(monaco, completion.kind),
+    label: completion.label,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  };
+}
+
+function monacoLatteCompletionKind(
+  monaco: MonacoApi,
+  kind: LatteCompletionKind,
+): Monaco.languages.CompletionItemKind {
+  if (kind === "template") {
+    return monaco.languages.CompletionItemKind.File;
+  }
+
+  return monaco.languages.CompletionItemKind.Keyword;
+}
+
+/**
+ * Mirrors {@link activeBladeDocumentContext} for the "latte" language: the
+ * context only needs the active document, the requested workspace root (for the
+ * post-await isolation re-check), and a confirmed model/document path match.
+ */
+function activeLatteDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+) {
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!activeDocument || !rootPath) {
+    return null;
+  }
+
+  if (activeDocument.language !== "latte") {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path || path !== activeDocument.path) {
+    return null;
+  }
+
+  return { activeDocument, path, rootPath };
 }
 
 /**
