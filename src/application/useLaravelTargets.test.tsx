@@ -15,10 +15,24 @@ import {
 import { phpLaravelGateAbilityDefinitions } from "../domain/phpLaravelAuthorization";
 import { phpLaravelMiddlewareAliasDefinitions } from "../domain/phpLaravelMiddleware";
 import { phpLaravelEnvEntriesFromSource } from "../domain/phpLaravelEnv";
-import type { TextSearchResult } from "../domain/workspace";
+import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
+import { phpFrameworkConfigKeysFromSource } from "../domain/phpFrameworkProviders";
+import { phpFrameworkTranslationKeysFromSource } from "../domain/phpFrameworkProviders";
+import { phpFrameworkJsonTranslationKeysFromSource } from "../domain/phpFrameworkProviders";
+import type { FileEntry, TextSearchResult } from "../domain/workspace";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+
+function fileEntry(path: string): FileEntry {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return { name, path, kind: "file" };
+}
+
+function directoryEntry(path: string): FileEntry {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return { name, path, kind: "directory" };
+}
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -56,6 +70,7 @@ interface Harness {
   ref: { current: string | null };
   searchText: ReturnType<typeof vi.fn>;
   readFileContent: ReturnType<typeof vi.fn>;
+  readWorkspaceDirectory: ReturnType<typeof vi.fn>;
   unmount: () => void;
 }
 
@@ -69,12 +84,14 @@ function renderLaravelTargets(
   const ref: { current: string | null } = { current: ROOT };
   const searchText = vi.fn(async () => [] as TextSearchResult[]);
   const readFileContent = vi.fn(async () => "");
+  const readWorkspaceDirectory = vi.fn(async () => [] as FileEntry[]);
 
   const deps: LaravelTargetsDependencies = {
     currentWorkspaceRootRef: ref,
     workspaceRoot: ROOT,
     textSearch: { searchText } as never,
     readNavigationFileContent: readFileContent as never,
+    readWorkspaceDirectory: readWorkspaceDirectory as never,
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
@@ -102,6 +119,7 @@ function renderLaravelTargets(
     ref,
     searchText,
     readFileContent,
+    readWorkspaceDirectory,
     unmount: () => {
       act(() => {
         root.unmount();
@@ -264,6 +282,224 @@ describe("useLaravelTargets", () => {
     deferred.resolve([]);
 
     expect(await pending).toEqual([]);
+
+    harness.unmount();
+  });
+
+  it("collects view targets by recursively scanning resources/views without reading files", async () => {
+    const viewsRoot = `${ROOT}/resources/views`;
+    const commentsDir = `${viewsRoot}/comments`;
+    const readWorkspaceDirectory = vi.fn(async (path: string) => {
+      if (path === viewsRoot) {
+        return [directoryEntry(commentsDir), fileEntry(`${viewsRoot}/welcome.blade.php`)];
+      }
+      if (path === commentsDir) {
+        return [
+          fileEntry(`${commentsDir}/show.blade.php`),
+          fileEntry(`${commentsDir}/notes.txt`),
+        ];
+      }
+      return [];
+    });
+    const readFileContent = vi.fn(async () => "");
+    const harness = renderLaravelTargets({
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    const targets = await harness.hook().collectPhpLaravelViewTargets();
+
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(targets).toEqual(
+      [
+        {
+          name: phpLaravelViewNameFromRelativePath("resources/views/comments/show.blade.php"),
+          path: `${commentsDir}/show.blade.php`,
+          relativePath: "resources/views/comments/show.blade.php",
+        },
+        {
+          name: phpLaravelViewNameFromRelativePath("resources/views/welcome.blade.php"),
+          path: `${viewsRoot}/welcome.blade.php`,
+          relativePath: "resources/views/welcome.blade.php",
+        },
+      ].sort((left, right) => left.name!.localeCompare(right.name!)),
+    );
+
+    harness.unmount();
+  });
+
+  it("memoizes view targets and rescans after cache invalidation", async () => {
+    const viewsRoot = `${ROOT}/resources/views`;
+    const readWorkspaceDirectory = vi.fn(async (path: string) =>
+      path === viewsRoot ? [fileEntry(`${viewsRoot}/home.blade.php`)] : [],
+    );
+    const harness = renderLaravelTargets({
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+    });
+
+    await harness.hook().collectPhpLaravelViewTargets();
+    const scansAfterFirst = readWorkspaceDirectory.mock.calls.length;
+    expect(scansAfterFirst).toBeGreaterThan(0);
+
+    // Cache hit: no additional directory scans.
+    await harness.hook().collectPhpLaravelViewTargets();
+    expect(readWorkspaceDirectory.mock.calls.length).toBe(scansAfterFirst);
+
+    // Invalidate: the next call rescans.
+    harness.hook().invalidatePhpLaravelTargetCache();
+    await harness.hook().collectPhpLaravelViewTargets();
+    expect(readWorkspaceDirectory.mock.calls.length).toBeGreaterThan(scansAfterFirst);
+
+    harness.unmount();
+  });
+
+  it("collects config targets with a file-level target that survives read failures", async () => {
+    const configRoot = `${ROOT}/config`;
+    const appSource = `<?php\n\nreturn [\n    'name' => 'Codevo',\n];\n`;
+    const readWorkspaceDirectory = vi.fn(async (path: string) =>
+      path === configRoot
+        ? [
+            fileEntry(`${configRoot}/app.php`),
+            fileEntry(`${configRoot}/broken.php`),
+            fileEntry(`${configRoot}/ignored.txt`),
+          ]
+        : [],
+    );
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${configRoot}/app.php`) {
+        return appSource;
+      }
+      throw new Error("read failed");
+    });
+    const harness = renderLaravelTargets({
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    const targets = await harness.hook().collectPhpLaravelConfigTargets();
+    const keys = targets.map((target) => target.key);
+
+    // The `.txt` file is never read.
+    expect(readFileContent).not.toHaveBeenCalledWith(`${configRoot}/ignored.txt`);
+    // File-level targets for both php files (broken.php survives its read failure).
+    expect(keys).toContain("app");
+    expect(keys).toContain("broken");
+    // Content-derived keys from app.php match the domain parser.
+    for (const target of phpFrameworkConfigKeysFromSource(appSource, "app", PROVIDERS)) {
+      expect(keys).toContain(target.key);
+    }
+    // Sorted by key.
+    expect(keys).toEqual([...keys].sort((left, right) => left.localeCompare(right)));
+
+    harness.unmount();
+  });
+
+  it("collects translation targets from php locale files then json, php winning duplicates", async () => {
+    const langRoot = `${ROOT}/lang`;
+    const enDir = `${langRoot}/en`;
+    const phpSource = `<?php\n\nreturn [\n    'welcome' => 'Welcome home',\n];\n`;
+    const jsonSource = `{\n    "welcome": "Welcome json",\n    "Goodbye": "See you"\n}\n`;
+    const readWorkspaceDirectory = vi.fn(async (path: string) => {
+      if (path === langRoot) {
+        return [directoryEntry(enDir), fileEntry(`${langRoot}/en.json`)];
+      }
+      if (path === `${ROOT}/resources/lang`) {
+        return [];
+      }
+      if (path === enDir) {
+        return [fileEntry(`${enDir}/messages.php`)];
+      }
+      return [];
+    });
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${enDir}/messages.php`) {
+        return phpSource;
+      }
+      if (path === `${langRoot}/en.json`) {
+        return jsonSource;
+      }
+      throw new Error(`unexpected read ${path}`);
+    });
+    const harness = renderLaravelTargets({
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    const targets = await harness.hook().collectPhpLaravelTranslationTargets();
+    const byKey = new Map(targets.map((target) => [target.key, target]));
+
+    const phpKeys = phpFrameworkTranslationKeysFromSource(phpSource, "messages", PROVIDERS);
+    const jsonKeys = phpFrameworkJsonTranslationKeysFromSource(jsonSource, PROVIDERS);
+    expect(phpKeys.length).toBeGreaterThan(0);
+    expect(jsonKeys.length).toBeGreaterThan(0);
+
+    // The php-file translation key wins the duplicate over the json one.
+    expect(byKey.get("messages.welcome")?.path).toBe(`${enDir}/messages.php`);
+    // A json-only key is still collected.
+    expect(byKey.get("Goodbye")?.path).toBe(`${langRoot}/en.json`);
+    // Sorted by key.
+    const keys = targets.map((target) => target.key);
+    expect(keys).toEqual([...keys].sort((left, right) => left.localeCompare(right)));
+
+    harness.unmount();
+  });
+
+  it("finds a view target by probing candidate blade paths", async () => {
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/resources/views/comments/show.blade.php`) {
+        return "<div>show</div>";
+      }
+      throw new Error("missing");
+    });
+    const harness = renderLaravelTargets({
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    const target = await harness.hook().findPhpLaravelViewTarget("comments.show");
+
+    expect(target).toEqual({
+      name: "comments.show",
+      path: `${ROOT}/resources/views/comments/show.blade.php`,
+      position: { column: 1, lineNumber: 1 },
+      relativePath: "resources/views/comments/show.blade.php",
+    });
+
+    harness.unmount();
+  });
+
+  it("finds a config target by reading the config file for the key", async () => {
+    const appSource = `<?php\n\nreturn [\n    'name' => 'Codevo',\n];\n`;
+    const readFileContent = vi.fn(async (path: string) =>
+      path === `${ROOT}/config/app.php` ? appSource : Promise.reject(new Error("missing")),
+    );
+    const harness = renderLaravelTargets({
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    const target = await harness.hook().findPhpLaravelConfigTarget("app.name");
+
+    expect(target?.key).toBe("app.name");
+    expect(target?.path).toBe(`${ROOT}/config/app.php`);
+    expect(target?.relativePath).toBe("config/app.php");
+
+    harness.unmount();
+  });
+
+  it("returns empty directory-scan collectors when Laravel is inactive", async () => {
+    const readWorkspaceDirectory = vi.fn(async () => [] as FileEntry[]);
+    const harness = renderLaravelTargets({
+      isLaravelFrameworkActive: false,
+      activePhpFrameworkProviders: [],
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+    });
+
+    expect(await harness.hook().collectPhpLaravelViewTargets()).toEqual([]);
+    expect(await harness.hook().collectPhpLaravelConfigTargets()).toEqual([]);
+    expect(await harness.hook().collectPhpLaravelTranslationTargets()).toEqual([]);
+    expect(await harness.hook().findPhpLaravelViewTarget("a.b")).toBeNull();
+    expect(await harness.hook().findPhpLaravelConfigTarget("a.b")).toBeNull();
+    expect(await harness.hook().findPhpLaravelTranslationTarget("a.b")).toBeNull();
+    expect(readWorkspaceDirectory).not.toHaveBeenCalled();
 
     harness.unmount();
   });

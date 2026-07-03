@@ -385,8 +385,6 @@ import {
 } from "../domain/phpLaravelDatabase";
 import {
   phpLaravelConfigCompletionInsertText,
-  phpLaravelConfigFileNameFromRelativePath,
-  phpLaravelConfigKeyCandidateRelativePath,
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
 import {
@@ -432,19 +430,13 @@ import {
   phpLaravelStorageDiskReferenceContextAt,
 } from "../domain/phpLaravelStorage";
 import {
-  isUsableLaravelTranslationLocale,
   phpLaravelJsonTranslationCompletionInsertText,
-  phpLaravelJsonTranslationLocaleFromRelativePath,
   phpLaravelTranslationCompletionInsertText,
-  phpLaravelTranslationFileNameFromKey,
-  phpLaravelTranslationFileNameFromRelativePath,
   type PhpLaravelTranslationTarget,
 } from "../domain/phpLaravelTranslations";
 import {
   phpLaravelViewCompletionInsertText,
-  phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
-  type PhpLaravelViewTarget,
 } from "../domain/phpLaravelViews";
 import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import {
@@ -482,21 +474,13 @@ import {
 import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
-  phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigReferenceAt,
-  phpFrameworkConfigTargetFromSource,
-  phpFrameworkJsonTranslationKeysFromSource,
-  phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkStringLiteralHelperAt,
-  phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsStringLiterals,
-  phpFrameworkSupportsTranslations,
-  phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
-  phpFrameworkTranslationTargetFromSource,
   phpFrameworkSupportsViewData,
   phpFrameworkSupportsViews,
   phpFrameworkValidationRuleCompletions,
@@ -757,25 +741,6 @@ interface PhpTraitThisCompletionContext {
   memberSource: string;
 }
 
-interface PhpLaravelTargetCacheEntry<T> {
-  expiresAt: number;
-  targets: T[];
-}
-
-interface PhpLaravelTargetCacheBucket {
-  config?: PhpLaravelTargetCacheEntry<PhpLaravelConfigTarget>;
-  translations?: PhpLaravelTargetCacheEntry<PhpLaravelTranslationTarget>;
-  views?: PhpLaravelTargetCacheEntry<PhpLaravelViewTarget>;
-}
-
-// Laravel config/view/translation completions previously triggered a full
-// directory scan on every keystroke (recursive resources/views walk, reads of
-// every config/*.php and lang file). The targets only change when files change,
-// so they are memoized per workspace root with a short TTL. The cache is keyed
-// by workspace root and reset on workspace switch and on index reindex so it
-// can never leak across project tabs or serve stale targets after a reindex.
-const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
-
 // Upper bound on the number of PHP call expressions whose target signature is
 // resolved per inlay-hints viewport request. Keeps a dense file from fanning out
 // an unbounded number of signature resolutions on every scroll; calls beyond the
@@ -871,12 +836,6 @@ interface PhpLaravelNamedRouteTarget extends PhpFrameworkRouteDefinition {
   relativePath: string | null;
 }
 
-interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
-  position: EditorPosition;
-}
-
-type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
-
 interface PhpLaravelAuthGuardTarget extends PhpLaravelConfigTarget {
   guardName: string;
 }
@@ -918,8 +877,6 @@ interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
 }
 
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
-
-type PhpLaravelTranslationNavigationTarget = PhpLaravelTranslationTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
@@ -1592,9 +1549,6 @@ export function useWorkbenchController(
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const phpLaravelMorphMapModelTypeCacheRef = useRef<
     Record<string, string | null>
-  >({});
-  const phpLaravelTargetCacheRef = useRef<
-    Record<string, PhpLaravelTargetCacheBucket>
   >({});
   // Per-root cache of Laravel migration sources fed into model-attribute
   // completions. Keyed by workspace root and reset on workspace switch / reindex
@@ -3552,7 +3506,7 @@ export function useWorkbenchController(
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
-      phpLaravelTargetCacheRef.current = {};
+      invalidatePhpLaravelTargetCache();
       phpLaravelMigrationSourcesByRootRef.current = {};
       phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
       phpLaravelProviderSourcesByRootRef.current = {};
@@ -3678,7 +3632,7 @@ export function useWorkbenchController(
     phpClassMemberCacheRef.current = {};
     phpFrameworkBindingCacheRef.current = {};
     phpLaravelMorphMapModelTypeCacheRef.current = {};
-    phpLaravelTargetCacheRef.current = {};
+    invalidatePhpLaravelTargetCache();
     phpLaravelMigrationSourcesByRootRef.current = {};
     phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
     phpLaravelProviderSourcesByRootRef.current = {};
@@ -5675,7 +5629,7 @@ export function useWorkbenchController(
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
-      phpLaravelTargetCacheRef.current = {};
+      invalidatePhpLaravelTargetCache();
       phpLaravelMigrationSourcesByRootRef.current = {};
       phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
       phpLaravelProviderSourcesByRootRef.current = {};
@@ -12783,388 +12737,35 @@ export function useWorkbenchController(
     ],
   );
 
+  const readWorkspaceDirectory = useCallback(
+    (path: string) => workspaceFiles.readDirectory(path),
+    [workspaceFiles],
+  );
+
   const {
     collectPhpLaravelNamedRouteTargets,
     collectPhpLaravelGateAbilityTargets,
     collectPhpLaravelMiddlewareAliasTargets,
     collectPhpLaravelEnvTargets,
+    collectPhpLaravelViewTargets,
+    collectPhpLaravelConfigTargets,
+    collectPhpLaravelTranslationTargets,
+    findPhpLaravelViewTarget,
+    findPhpLaravelConfigTarget,
+    findPhpLaravelTranslationTarget,
+    invalidatePhpLaravelTargetCache,
   } = useLaravelTargets({
     currentWorkspaceRootRef,
     workspaceRoot,
     textSearch,
     readNavigationFileContent,
+    readWorkspaceDirectory,
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
     activePhpFrameworkProviders,
     isLaravelFrameworkActive,
   });
-
-  const readPhpLaravelTargetCache = useCallback(
-    <Kind extends keyof PhpLaravelTargetCacheBucket>(
-      requestedRoot: string,
-      kind: Kind,
-    ): NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"] | null => {
-      // Only serve cached targets while the requested root is still the active
-      // workspace; never let a stale tab's cache satisfy another tab's request.
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return null;
-      }
-
-      const entry = phpLaravelTargetCacheRef.current[requestedRoot]?.[kind];
-
-      if (!entry || entry.expiresAt <= Date.now()) {
-        return null;
-      }
-
-      return entry.targets as NonNullable<
-        PhpLaravelTargetCacheBucket[Kind]
-      >["targets"];
-    },
-    [],
-  );
-
-  const writePhpLaravelTargetCache = useCallback(
-    <Kind extends keyof PhpLaravelTargetCacheBucket>(
-      requestedRoot: string,
-      kind: Kind,
-      targets: NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"],
-    ): void => {
-      // Drop results computed for a root that is no longer active so the cache
-      // can never be populated with another tab's targets.
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const bucket = phpLaravelTargetCacheRef.current[requestedRoot] ?? {};
-
-      phpLaravelTargetCacheRef.current[requestedRoot] = {
-        ...bucket,
-        [kind]: {
-          expiresAt: Date.now() + PHP_LARAVEL_TARGET_CACHE_TTL_MS,
-          targets,
-        },
-      };
-    },
-    [],
-  );
-
-  const findPhpLaravelViewTarget = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewNavigationTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsViews(activePhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return null;
-      }
-
-      for (const relativePath of phpLaravelViewNameCandidateRelativePaths(viewName)) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
-        try {
-          await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          return {
-            name: viewName,
-            path,
-            position: { column: 1, lineNumber: 1 },
-            relativePath,
-          };
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-        }
-      }
-
-      return null;
-    },
-    [
-      activePhpFrameworkProviders,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
-
-  const collectPhpLaravelViewTargets = useCallback(async (): Promise<
-    PhpLaravelViewTarget[]
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (
-      !phpFrameworkSupportsViews(activePhpFrameworkProviders) ||
-      !requestedRoot
-    ) {
-      return [];
-    }
-
-    const cachedViews = readPhpLaravelTargetCache(requestedRoot, "views");
-
-    if (cachedViews) {
-      return cachedViews;
-    }
-
-    const targets = new Map<string, PhpLaravelViewTarget>();
-    const viewsRoot = joinWorkspacePath(requestedRoot, "resources/views");
-
-    const visitDirectory = async (directory: string): Promise<void> => {
-      let entries: FileEntry[];
-
-      try {
-        entries = await workspaceFiles.readDirectory(directory);
-      } catch {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        return;
-      }
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      for (const entry of entries) {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        if (entry.kind === "directory") {
-          await visitDirectory(entry.path);
-          continue;
-        }
-
-        const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
-        const viewName = phpLaravelViewNameFromRelativePath(relativePath);
-
-        if (!viewName || targets.has(viewName.toLowerCase())) {
-          continue;
-        }
-
-        targets.set(viewName.toLowerCase(), {
-          name: viewName,
-          path: entry.path,
-          relativePath,
-        });
-      }
-    };
-
-    await visitDirectory(viewsRoot);
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    const result = Array.from(targets.values()).sort((left, right) =>
-      left.name.localeCompare(right.name),
-    );
-
-    writePhpLaravelTargetCache(requestedRoot, "views", result);
-
-    return result;
-  }, [
-    activePhpFrameworkProviders,
-    readPhpLaravelTargetCache,
-    workspaceFiles,
-    workspaceRoot,
-    writePhpLaravelTargetCache,
-  ]);
-
-  const findPhpLaravelConfigTarget = useCallback(
-    async (
-      configKey: string,
-    ): Promise<PhpLaravelConfigNavigationTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsConfig(activePhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return null;
-      }
-
-      const relativePath = phpLaravelConfigKeyCandidateRelativePath(configKey);
-
-      if (!relativePath) {
-        return null;
-      }
-
-      const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
-
-      if (!fileName) {
-        return null;
-      }
-
-      const path = joinWorkspacePath(requestedRoot, relativePath);
-
-      try {
-        const content = await readNavigationFileContent(path);
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        const target = phpFrameworkConfigTargetFromSource(
-          content,
-          fileName,
-          configKey,
-          activePhpFrameworkProviders,
-        );
-
-        if (!target) {
-          return null;
-        }
-
-        return {
-          ...target,
-          path,
-          relativePath,
-        };
-      } catch {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        return null;
-      }
-    },
-    [
-      activePhpFrameworkProviders,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
-
-  const collectPhpLaravelConfigTargets = useCallback(async (): Promise<
-    PhpLaravelConfigTarget[]
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (
-      !phpFrameworkSupportsConfig(activePhpFrameworkProviders) ||
-      !requestedRoot
-    ) {
-      return [];
-    }
-
-    const cachedConfig = readPhpLaravelTargetCache(requestedRoot, "config");
-
-    if (cachedConfig) {
-      return cachedConfig;
-    }
-
-    const targets = new Map<string, PhpLaravelConfigTarget>();
-    const configRoot = joinWorkspacePath(requestedRoot, "config");
-
-    let entries: FileEntry[];
-
-    try {
-      entries = await workspaceFiles.readDirectory(configRoot);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      return [];
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    for (const entry of entries) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      if (entry.kind === "directory") {
-        continue;
-      }
-
-      const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
-      const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
-
-      if (!fileName) {
-        continue;
-      }
-
-      const rememberTarget = (target: PhpLaravelConfigTarget) => {
-        const key = target.key.toLowerCase();
-
-        if (!targets.has(key)) {
-          targets.set(key, target);
-        }
-      };
-
-      rememberTarget({
-        key: fileName,
-        path: entry.path,
-        position: { column: 1, lineNumber: 1 },
-        relativePath,
-      });
-
-      try {
-        const content = await readNavigationFileContent(entry.path);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        for (const target of phpFrameworkConfigKeysFromSource(
-          content,
-          fileName,
-          activePhpFrameworkProviders,
-        )) {
-          rememberTarget({
-            ...target,
-            path: entry.path,
-            relativePath,
-          });
-        }
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    const result = Array.from(targets.values()).sort((left, right) =>
-      left.key.localeCompare(right.key),
-    );
-
-    writePhpLaravelTargetCache(requestedRoot, "config", result);
-
-    return result;
-  }, [
-    activePhpFrameworkProviders,
-    readNavigationFileContent,
-    readPhpLaravelTargetCache,
-    workspaceFiles,
-    workspaceRoot,
-    writePhpLaravelTargetCache,
-  ]);
 
   const collectPhpLaravelAuthGuardTargets = useCallback(async (): Promise<
     PhpLaravelAuthGuardTarget[]
@@ -13701,420 +13302,6 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
-
-  const collectPhpLaravelTranslationLocaleRoots = useCallback(async (): Promise<
-    string[]
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
-      !requestedRoot
-    ) {
-      return [];
-    }
-
-    const localeRoots: string[] = [];
-
-    for (const translationBase of ["lang", "resources/lang"]) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      try {
-        const entries = await workspaceFiles.readDirectory(
-          joinWorkspacePath(requestedRoot, translationBase),
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        for (const entry of entries) {
-          if (
-            entry.kind === "directory" &&
-            isUsableLaravelTranslationLocale(entry.name)
-          ) {
-            localeRoots.push(`${translationBase}/${entry.name}`);
-          }
-        }
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-
-    return localeRoots.sort((left, right) => {
-      const leftLocale = getFileName(left);
-      const rightLocale = getFileName(right);
-
-      if (leftLocale === "en" && rightLocale !== "en") {
-        return -1;
-      }
-
-      if (rightLocale === "en" && leftLocale !== "en") {
-        return 1;
-      }
-
-      return left.localeCompare(right);
-    });
-  }, [
-    activePhpFrameworkProviders,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  const collectPhpLaravelJsonTranslationFiles = useCallback(async (): Promise<
-    Array<{ path: string; relativePath: string }>
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
-      !requestedRoot
-    ) {
-      return [];
-    }
-
-    const files = new Map<string, { path: string; relativePath: string }>();
-
-    for (const translationBase of ["lang", "resources/lang"]) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      try {
-        const entries = await workspaceFiles.readDirectory(
-          joinWorkspacePath(requestedRoot, translationBase),
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        for (const entry of entries) {
-          if (entry.kind === "directory") {
-            continue;
-          }
-
-          const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
-
-          if (!phpLaravelJsonTranslationLocaleFromRelativePath(relativePath)) {
-            continue;
-          }
-
-          const key = relativePath.toLowerCase();
-
-          if (!files.has(key)) {
-            files.set(key, {
-              path: entry.path,
-              relativePath,
-            });
-          }
-        }
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-
-    return Array.from(files.values()).sort((left, right) =>
-      left.relativePath.localeCompare(right.relativePath),
-    );
-  }, [
-    activePhpFrameworkProviders,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  const findPhpLaravelTranslationTarget = useCallback(
-    async (
-      translationKey: string,
-    ): Promise<PhpLaravelTranslationNavigationTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return null;
-      }
-
-      const fileName = phpLaravelTranslationFileNameFromKey(translationKey);
-
-      if (fileName) {
-        const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        for (const translationRoot of translationRoots) {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          const relativePath = `${translationRoot}/${fileName}.php`;
-          const path = joinWorkspacePath(requestedRoot, relativePath);
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            const target = phpFrameworkTranslationTargetFromSource(
-              content,
-              fileName,
-              translationKey,
-              activePhpFrameworkProviders,
-            );
-
-            if (!target) {
-              continue;
-            }
-
-            return {
-              key: target.key,
-              path,
-              position: target.position,
-              relativePath,
-            };
-          } catch {
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-          }
-        }
-      }
-
-      const jsonFiles = await collectPhpLaravelJsonTranslationFiles();
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      for (const jsonFile of jsonFiles) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        try {
-          const content = await readNavigationFileContent(jsonFile.path);
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          const target = phpFrameworkJsonTranslationTargetFromSource(
-            content,
-            translationKey,
-            activePhpFrameworkProviders,
-          );
-
-          if (!target) {
-            continue;
-          }
-
-          return {
-            key: target.key,
-            path: jsonFile.path,
-            position: target.position,
-            relativePath: jsonFile.relativePath,
-          };
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-        }
-      }
-
-      return null;
-    },
-    [
-      activePhpFrameworkProviders,
-      collectPhpLaravelJsonTranslationFiles,
-      collectPhpLaravelTranslationLocaleRoots,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
-
-  const collectPhpLaravelTranslationTargets = useCallback(async (): Promise<
-    PhpLaravelTranslationTarget[]
-  > => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
-      !requestedRoot
-    ) {
-      return [];
-    }
-
-    const cachedTranslations = readPhpLaravelTargetCache(
-      requestedRoot,
-      "translations",
-    );
-
-    if (cachedTranslations) {
-      return cachedTranslations;
-    }
-
-    const targets = new Map<string, PhpLaravelTranslationTarget>();
-
-    const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    for (const translationRoot of translationRoots) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const rootPath = joinWorkspacePath(requestedRoot, translationRoot);
-      let entries: FileEntry[];
-
-      try {
-        entries = await workspaceFiles.readDirectory(rootPath);
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        continue;
-      }
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      for (const entry of entries) {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (entry.kind === "directory") {
-          continue;
-        }
-
-        const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
-        const fileName =
-          phpLaravelTranslationFileNameFromRelativePath(relativePath);
-
-        if (!fileName) {
-          continue;
-        }
-
-        try {
-          const content = await readNavigationFileContent(entry.path);
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          for (const target of phpFrameworkTranslationKeysFromSource(
-            content,
-            fileName,
-            activePhpFrameworkProviders,
-          )) {
-            const key = target.key.toLowerCase();
-
-            if (targets.has(key)) {
-              continue;
-            }
-
-            targets.set(key, {
-              key: target.key,
-              path: entry.path,
-              position: target.position,
-              relativePath,
-            });
-          }
-        } catch {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-        }
-      }
-    }
-
-    const jsonFiles = await collectPhpLaravelJsonTranslationFiles();
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    for (const jsonFile of jsonFiles) {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      try {
-        const content = await readNavigationFileContent(jsonFile.path);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        for (const target of phpFrameworkJsonTranslationKeysFromSource(
-          content,
-          activePhpFrameworkProviders,
-        )) {
-          const key = target.key.toLowerCase();
-
-          if (targets.has(key)) {
-            continue;
-          }
-
-          targets.set(key, {
-            key: target.key,
-            path: jsonFile.path,
-            position: target.position,
-            relativePath: jsonFile.relativePath,
-          });
-        }
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    const result = Array.from(targets.values()).sort((left, right) =>
-      left.key.localeCompare(right.key),
-    );
-
-    writePhpLaravelTargetCache(requestedRoot, "translations", result);
-
-    return result;
-  }, [
-    activePhpFrameworkProviders,
-    collectPhpLaravelJsonTranslationFiles,
-    collectPhpLaravelTranslationLocaleRoots,
-    readNavigationFileContent,
-    readPhpLaravelTargetCache,
-    workspaceFiles,
-    workspaceRoot,
-    writePhpLaravelTargetCache,
-  ]);
 
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
