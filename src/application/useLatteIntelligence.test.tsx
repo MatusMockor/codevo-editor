@@ -1682,3 +1682,343 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     ).resolves.toEqual([]);
   });
 });
+
+const COMPONENT_PRESENTER_SOURCE = `<?php
+
+namespace App\\UI\\Home;
+
+use Nette\\Application\\UI\\Presenter;
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter extends Presenter
+{
+    public function renderDefault(): void
+    {
+    }
+
+    protected function createComponentContactForm(): Form
+    {
+        return new Form();
+    }
+
+    protected function createComponentProductList(): ProductListControl
+    {
+        return new ProductListControl();
+    }
+}
+`;
+
+describe("createLatteIntelligence {control} component definition (Fáza 2)", () => {
+  it("navigates {control contactForm} to createComponentContactForm", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control contactForm}";
+    const offset = source.indexOf("contactForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      expect.objectContaining({ lineNumber: 14 }),
+      "contactForm",
+    );
+  });
+
+  it("navigates a <form n:name=\"contactForm\"> the same way", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="contactForm" method="post"></form>';
+    const offset = source.indexOf("contactForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      expect.objectContaining({ lineNumber: 14 }),
+      "contactForm",
+    );
+  });
+
+  it("does not treat an input field's n:name as a component", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<input n:name="email">';
+    const offset = source.indexOf("email") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("returns false when the factory is absent from the presenter (trait/parent case)", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control inheritedWidget}";
+    const offset = source.indexOf("inheritedWidget") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the Nette framework is inactive", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      isNetteFrameworkActive: false,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control contactForm}";
+    const offset = source.indexOf("contactForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("drops the result when the root changes during the presenter read", async () => {
+    const rootRef = { current: ROOT };
+    const openTarget = vi.fn(async () => true);
+    const readFileContent = vi.fn(async () => {
+      rootRef.current = "/other";
+      return COMPONENT_PRESENTER_SOURCE;
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control contactForm}";
+    const offset = source.indexOf("contactForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("createLatteIntelligence createComponent -> {control} reverse (Fáza 2)", () => {
+  it("navigates createComponentContactForm to its first {control} usage", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/default.latte":
+        "<h1>Home</h1>\n{control contactForm}\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Home/HomePresenter.php`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = COMPONENT_PRESENTER_SOURCE;
+    const offset = source.indexOf("createComponentContactForm") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/default.latte",
+      expect.objectContaining({ lineNumber: 2 }),
+      "contactForm",
+    );
+  });
+
+  it("returns false when the component is never used in a template", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/default.latte": "<h1>Home</h1>\n{control productList}\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Home/HomePresenter.php`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = COMPONENT_PRESENTER_SOURCE;
+    const offset = source.indexOf("createComponentContactForm") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("still resolves a $this->link presenter link (existing branch preserved)", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$url = $this->link('Product:show');";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
+  });
+});
+
+describe("createLatteIntelligence {control} completion (Fáza 2)", () => {
+  it("offers the presenter's createComponent* names in a {control } macro", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control }";
+    const offset = source.indexOf("}");
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("contactForm");
+    expect(labels).toContain("productList");
+    expect(
+      completions.every((completion) => completion.kind === "component"),
+    ).toBe(true);
+  });
+
+  it("filters components by the typed prefix", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control contac}";
+    const offset = source.indexOf("}");
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "contactForm",
+    ]);
+  });
+
+  it("caches the presenter component scan across completion requests", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control }";
+    const position = positionAtOffset(source, source.indexOf("}"));
+
+    await latte.provideLatteCompletions(source, position);
+    const callsAfterFirst = readFileContent.mock.calls.length;
+    await latte.provideLatteCompletions(source, position);
+
+    expect(readFileContent.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("returns nothing when the Nette framework is inactive", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      isNetteFrameworkActive: false,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control }";
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, source.indexOf("}"))),
+    ).resolves.toEqual([]);
+    expect(readFileContent).not.toHaveBeenCalled();
+  });
+
+  it("drops component completions when the root changes during the scan", async () => {
+    const rootRef = { current: ROOT };
+    const readFileContent = vi.fn(async () => {
+      rootRef.current = "/other";
+      return COMPONENT_PRESENTER_SOURCE;
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control }";
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, source.indexOf("}"))),
+    ).resolves.toEqual([]);
+  });
+});

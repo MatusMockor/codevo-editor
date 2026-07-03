@@ -48,6 +48,14 @@ import {
 } from "../domain/latteLinkNavigation";
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
 import {
+  detectLatteControlAt,
+  detectLatteFormNameAt,
+  detectNetteCreateComponentAt,
+  netteComponentUsagesInLatte,
+  netteCreateComponentMethodName,
+  nettePresenterLifecycleInfo,
+} from "../domain/netteComponents";
+import {
   LATTE_BUILTIN_FILTERS,
   innermostLatteExpressionSpanAt,
   latteForeachLoopBindingsAt,
@@ -69,6 +77,7 @@ import {
 import {
   latteLayoutCandidatePaths,
   presenterCandidatePathsForTemplate,
+  presenterTemplateCandidatePaths,
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -84,7 +93,8 @@ export type LatteCompletionItemKind =
   | "variable"
   | "member"
   | "filter"
-  | "link";
+  | "link"
+  | "component";
 
 /**
  * A Latte completion the hook hands to the Monaco "latte" provider. Structurally
@@ -251,6 +261,25 @@ export type LattePresenterCache = Record<string, LattePresenterCacheEntry>;
 /** In-flight presenter scans keyed by requested root (concurrent callers join). */
 type LattePresenterInFlight = Map<string, Promise<string[]>>;
 
+interface LatteComponentCacheEntry {
+  /** The `createComponent*` component names of `templateRelativePath`'s presenter. */
+  componentNames: string[];
+  expiresAt: number;
+  /** The active template the entry was scanned for (single active editor). */
+  templateRelativePath: string;
+}
+
+/**
+ * Per-root cache of the CURRENT presenter's `createComponent*` component names,
+ * feeding `{control <name>}` completion (spec §9 / Fáza 2). Hook-owned (the
+ * strangler mount stays thin) and subject to the same TTL + cross-root eviction
+ * the template / view-data / presenter caches use. A single entry per root is
+ * keyed to the active template it was scanned for, so switching the active
+ * template re-scans and switching projects never leaks a previous root's
+ * component list.
+ */
+export type LatteComponentCache = Record<string, LatteComponentCacheEntry>;
+
 /**
  * Everything one expression-completion request carries down the resolution
  * chain: the injected deps, the root captured up front, the live-root guard,
@@ -329,6 +358,15 @@ const PRESENTER_SUFFIX = "Presenter.php";
 const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
 
 /**
+ * TTL for the per-root current-presenter component-name listing (spec §9 / Fáza
+ * 2). Mirrors the other caches: a short TTL bounds staleness after a
+ * `createComponent*` factory is added / renamed, while `evictOtherRootCacheEntries`
+ * bounds cross-root growth. Precise file-change invalidation is the same
+ * documented follow-up as the sibling caches.
+ */
+const LATTE_COMPONENT_CACHE_TTL_MS = 5_000;
+
+/**
  * Directory a Nette project keeps its presenters under - both the classic
  * (`app/Presenters`) and modern (`app/UI/<Name>`) conventions live below `app`,
  * so the link-target discovery scans it alone (never `vendor` / `templates`).
@@ -402,6 +440,7 @@ export function createLatteIntelligence(
   templateCache: LatteTemplateCache = {},
   viewDataCache: LatteViewDataCache = {},
   presenterCache: LattePresenterCache = {},
+  componentCache: LatteComponentCache = {},
 ): LatteIntelligence {
   /**
    * Per-instance in-flight registry for the view-data loads, so concurrent
@@ -426,6 +465,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return false;
@@ -450,6 +490,18 @@ export function createLatteIntelligence(
     );
 
     if (linkHandled) {
+      return true;
+    }
+
+    const controlHandled = await resolveNetteControlDefinition(
+      deps,
+      requestedRoot,
+      isRequestedRootActive,
+      netteControlComponentNameAt(source, offset),
+      currentTemplateRelativePath,
+    );
+
+    if (controlHandled) {
       return true;
     }
 
@@ -500,6 +552,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return [];
@@ -551,6 +604,20 @@ export function createLatteIntelligence(
       );
     }
 
+    const controlCompletion = latteControlCompletionAt(source, offset);
+
+    if (controlCompletion) {
+      return latteControlCompletions(
+        {
+          componentCache,
+          deps,
+          isRequestedRootActive,
+          requestedRoot,
+        },
+        controlCompletion,
+      );
+    }
+
     return latteExpressionCompletions(
       {
         deps,
@@ -572,6 +639,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return false;
@@ -587,17 +655,24 @@ export function createLatteIntelligence(
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
     const detection = detectPhpPresenterLinkAt(source, offset);
 
-    if (!detection) {
-      return false;
+    if (detection) {
+      return resolveNettePresenterLink(
+        deps,
+        requestedRoot,
+        isRequestedRootActive,
+        parseNetteLinkTarget(detection.target),
+        currentTemplatePath(deps, requestedRoot),
+        detection.target,
+      );
     }
 
-    return resolveNettePresenterLink(
+    return resolveNetteCreateComponentReverse(
       deps,
       requestedRoot,
       isRequestedRootActive,
-      parseNetteLinkTarget(detection.target),
+      detectNetteCreateComponentAt(source, offset),
+      source,
       currentTemplatePath(deps, requestedRoot),
-      detection.target,
     );
   };
 
@@ -622,6 +697,7 @@ export function useLatteIntelligence(
   const templateCacheRef = useRef<LatteTemplateCache>({});
   const viewDataCacheRef = useRef<LatteViewDataCache>({});
   const presenterCacheRef = useRef<LattePresenterCache>({});
+  const componentCacheRef = useRef<LatteComponentCache>({});
   const apiRef = useRef<LatteIntelligence | null>(null);
 
   if (!apiRef.current) {
@@ -630,6 +706,7 @@ export function useLatteIntelligence(
       templateCacheRef.current,
       viewDataCacheRef.current,
       presenterCacheRef.current,
+      componentCacheRef.current,
     );
   }
 
@@ -1065,6 +1142,379 @@ function nettePresenterShortNameFromPath(presenterPath: string): string | null {
   const shortName = fileName.slice(0, -PRESENTER_SUFFIX.length);
 
   return shortName.length > 0 ? shortName : null;
+}
+
+// --- {control} component navigation + completion (Fáza 2) ------------------
+
+/** Everything one `{control}` completion request threads down its chain. */
+interface LatteComponentCompletionContext {
+  componentCache: LatteComponentCache;
+  deps: LatteIntelligenceDependencies;
+  isRequestedRootActive: () => boolean;
+  requestedRoot: string;
+}
+
+/** A `{control <name>}` completion cursor: the partial name + its replace span. */
+interface LatteControlCompletion {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+/**
+ * The Nette component name the cursor names, from either a `{control <name>}`
+ * macro or a `<form n:name="<name>">` attribute, or `null`. A form's `n:name`
+ * names a COMPONENT (resolves to `createComponent<Name>`); an input / select /
+ * button field's `n:name` names a form FIELD, not a factory, so only `form`
+ * elements are treated as component references here. A dynamic / masked / non-form
+ * position yields `null` (both detectors are conservative and quote-aware).
+ */
+function netteControlComponentNameAt(
+  source: string,
+  offset: number,
+): string | null {
+  const control = detectLatteControlAt(source, offset);
+
+  if (control) {
+    return control.name;
+  }
+
+  const formName = detectLatteFormNameAt(source, offset);
+
+  if (formName && formName.elementTag === "form") {
+    return formName.name;
+  }
+
+  return null;
+}
+
+/**
+ * Navigates a `{control <name>}` / `<form n:name="<name>">` reference to the
+ * backing `createComponent<Name>` factory method in the current template's
+ * presenter, and opens it at the method name. Conservative: the factory is
+ * resolved ONLY when it is declared DIRECTLY in a candidate presenter file - a
+ * component whose factory lives in a trait or a parent class is intentionally
+ * NOT resolved (a later slice can widen this) and falls through to `false`, so a
+ * missing direct factory never produces a misleading line-1 jump. Every await is
+ * followed by a live-root re-check so a tab switch drops the result.
+ */
+async function resolveNetteControlDefinition(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+  isRequestedRootActive: () => boolean,
+  componentName: string | null,
+  currentRelativePath: string,
+): Promise<boolean> {
+  if (!componentName) {
+    return false;
+  }
+
+  const methodName = netteCreateComponentMethodName(componentName);
+  const candidatePaths = presenterCandidatePathsForTemplate(currentRelativePath);
+
+  for (const relativePath of candidatePaths) {
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const position = phpMethodPositionInSource(content, [methodName]);
+
+    if (!position) {
+      // Presenter exists but the factory is not declared directly here (it may
+      // live in a trait / parent - conservatively unresolved). Try the next
+      // candidate rather than jumping to a misleading line 1.
+      continue;
+    }
+
+    return deps.openTarget(path, position, componentName);
+  }
+
+  return false;
+}
+
+/**
+ * Detects a `{control <prefix>}` completion cursor: the cursor sits inside a
+ * `{control ...}` tag's FIRST (name) argument while a static identifier is being
+ * typed. Returns `null` for the render-variant part (`{control x:<here>}`), a
+ * dynamic `{control $x}`, or any non-`control` tag - so the component list is
+ * only offered where a component name belongs.
+ */
+function latteControlCompletionAt(
+  source: string,
+  offset: number,
+): LatteControlCompletion | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span || span.tagName !== "control" || offset < span.expressionStart) {
+    return null;
+  }
+
+  const typed = source.slice(span.expressionStart, offset);
+
+  // Only while typing the bare name: identifier characters (or nothing yet). A
+  // `:` (render part), `$` (dynamic), space, or filter pipe disqualifies it.
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$|^$/.test(typed)) {
+    return null;
+  }
+
+  return { prefix: typed, replaceEnd: offset, replaceStart: span.expressionStart };
+}
+
+/**
+ * `{control <name>}` completion: the current presenter's `createComponent*`
+ * component names, filtered by the typed prefix. The presenter scan is lazy +
+ * per-root cached (keyed to the active template), and the post-await live-root
+ * re-check drops a switched project's result.
+ */
+async function latteControlCompletions(
+  context: LatteComponentCompletionContext,
+  completion: LatteControlCompletion,
+): Promise<LatteCompletionItem[]> {
+  const names = await loadNettePresenterComponentNames(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return names
+    .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, LATTE_MAX_COMPLETIONS)
+    .map((name) => ({
+      detail: "Nette component",
+      insertText: name,
+      kind: "component" as const,
+      label: name,
+      replaceEnd: completion.replaceEnd,
+      replaceStart: completion.replaceStart,
+    }));
+}
+
+/**
+ * Loads (and per-root caches) the CURRENT presenter's component names for
+ * `{control}` completion. The cache holds one entry per root, keyed to the
+ * active template it was scanned for, so re-typing in the same template reuses
+ * the scan while switching template re-scans. A missing / factory-less presenter
+ * yields `[]` (cached, so the miss is not re-scanned per keystroke).
+ */
+async function loadNettePresenterComponentNames(
+  context: LatteComponentCompletionContext,
+): Promise<string[]> {
+  const { componentCache, deps, isRequestedRootActive, requestedRoot } = context;
+  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const cached = componentCache[requestedRoot];
+
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    cached.templateRelativePath === templateRelativePath
+  ) {
+    return cached.componentNames;
+  }
+
+  const componentNames = await scanNettePresenterComponentNames(
+    deps,
+    requestedRoot,
+    isRequestedRootActive,
+    templateRelativePath,
+  );
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  componentCache[requestedRoot] = {
+    componentNames,
+    expiresAt: Date.now() + LATTE_COMPONENT_CACHE_TTL_MS,
+    templateRelativePath,
+  };
+
+  return componentNames;
+}
+
+/**
+ * Scans the current template's presenter (first candidate that exists) for its
+ * `createComponent*` factories, returning the component names (lower-camel).
+ * Per-project isolation: `requestedRoot` was captured up front and is re-checked
+ * after every await; a stale root drops the result.
+ */
+async function scanNettePresenterComponentNames(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+  isRequestedRootActive: () => boolean,
+  templateRelativePath: string,
+): Promise<string[]> {
+  for (const relativePath of presenterCandidatePathsForTemplate(
+    templateRelativePath,
+  )) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return netteComponentNamesFromPresenter(content);
+  }
+
+  return [];
+}
+
+/** The lower-camel component names of every `createComponent*` factory in a presenter. */
+function netteComponentNamesFromPresenter(source: string): string[] {
+  const names: string[] = [];
+
+  for (const entry of nettePresenterLifecycleInfo(source).lifecycle) {
+    if (entry.kind === "createComponent" && entry.name) {
+      names.push(entry.name);
+    }
+  }
+
+  return Array.from(new Set(names)).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+/**
+ * Reverse of `{control}` navigation (spec §9 / Fáza 2): a cursor on a
+ * `createComponent<Name>` method in a presenter jumps to the FIRST `{control}` /
+ * `n:name` / `$this['name']` usage of that component across the presenter's
+ * templates. Conservative: no usage anywhere resolves to `false`. Templates are
+ * the candidate paths for each of the presenter's views (`render*` / `action*`
+ * plus the default view). Every await is followed by a live-root re-check.
+ */
+async function resolveNetteCreateComponentReverse(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+  isRequestedRootActive: () => boolean,
+  detection: ReturnType<typeof detectNetteCreateComponentAt>,
+  presenterSource: string,
+  presenterRelativePath: string,
+): Promise<boolean> {
+  if (!detection || presenterRelativePath.length === 0) {
+    return false;
+  }
+
+  for (const relativePath of presenterTemplateCandidatesForViews(
+    presenterRelativePath,
+    presenterViewNames(presenterSource),
+  )) {
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const usages = netteComponentUsagesInLatte(content, detection.componentName);
+    const firstUsage = usages[0];
+
+    if (!firstUsage) {
+      continue;
+    }
+
+    return deps.openTarget(
+      path,
+      editorPositionAtOffset(content, firstUsage.start),
+      detection.componentName,
+    );
+  }
+
+  return false;
+}
+
+/**
+ * The view names a presenter renders - each `render*` / `action*` method's view,
+ * plus the Nette default view - so the reverse `{control}` search covers every
+ * template the presenter can render a component into. Derived from the presenter
+ * source's lifecycle classification (bare `render()` / `action()` carry no view
+ * and are already omitted by the classifier).
+ */
+function presenterViewNames(presenterSource: string): string[] {
+  const views = new Set<string>(["default"]);
+
+  for (const entry of nettePresenterLifecycleInfo(presenterSource).lifecycle) {
+    if ((entry.kind === "render" || entry.kind === "action") && entry.name) {
+      views.add(entry.name);
+    }
+  }
+
+  return Array.from(views);
+}
+
+/**
+ * The candidate template relative paths a component usage could live in: for each
+ * of the presenter's `views`, the modern-sibling / classic template candidates,
+ * flattened and de-duplicated in deterministic order.
+ */
+function presenterTemplateCandidatesForViews(
+  presenterRelativePath: string,
+  views: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+
+  for (const view of views) {
+    for (const candidate of presenterTemplateCandidatePaths(
+      presenterRelativePath,
+      view,
+    )) {
+      if (seen.has(candidate)) {
+        continue;
+      }
+
+      seen.add(candidate);
+      paths.push(candidate);
+    }
+  }
+
+  return paths;
 }
 
 function latteTagCompletions(

@@ -10764,6 +10764,39 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
       }),
     );
   });
+
+  it("maps latte {control} component completions to module items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{control }\n";
+    const provideLatteCompletions = vi.fn(async () => [
+      {
+        detail: "Nette component",
+        insertText: "contactForm",
+        kind: "component" as const,
+        label: "contactForm",
+        replaceEnd: source.indexOf("}"),
+        replaceStart: source.indexOf("}"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+      { column: source.indexOf("}") + 1, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "contactForm",
+        kind: registered.monaco.languages.CompletionItemKind.Module,
+        label: "contactForm",
+      }),
+    );
+  });
 });
 
 describe("registerLanguageServerMonacoProviders neon providers", () => {
@@ -10781,6 +10814,8 @@ describe("registerLanguageServerMonacoProviders neon providers", () => {
       ":",
       " ",
       "-",
+      "%",
+      "@",
     ]);
 
     disposable.dispose();
@@ -10856,6 +10891,50 @@ describe("registerLanguageServerMonacoProviders neon providers", () => {
         insertText: "App\\Model\\ProductRepository",
         kind: registered.monaco.languages.CompletionItemKind.Class,
         label: "App\\Model\\ProductRepository",
+      }),
+    );
+  });
+
+  it("maps neon parameter and service completions to their Monaco kinds", async () => {
+    const registered = createRegisteredProviders();
+    const source = "parameters:\n    dsn: %db\n";
+    const provideNeonCompletions = vi.fn(async () => [
+      {
+        detail: "Nette parameter",
+        insertText: "dbHost",
+        kind: "parameter" as const,
+        label: "dbHost",
+      },
+      {
+        detail: "Nette service",
+        insertText: "logger",
+        kind: "service" as const,
+        label: "logger",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: neonDocument(source),
+      provideNeonCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.neonCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/config/services.neon" }),
+      { column: source.indexOf("%db") + 4, lineNumber: 2 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "dbHost",
+        kind: registered.monaco.languages.CompletionItemKind.Variable,
+        label: "dbHost",
+      }),
+    );
+    expect(result.suggestions[1]).toEqual(
+      expect.objectContaining({
+        insertText: "logger",
+        kind: registered.monaco.languages.CompletionItemKind.Value,
+        label: "logger",
       }),
     );
   });

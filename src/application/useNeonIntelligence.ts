@@ -33,10 +33,21 @@ import {
   detectNeonIncludeAt,
   neonServiceClassCompletionContextAt,
 } from "../domain/neonConfig";
+import {
+  detectNeonParameterReferenceAt,
+  detectNeonServiceReferenceAt,
+  neonParameterCompletionContextAt,
+  neonParametersFromSource,
+  neonServiceReferenceCompletionContextAt,
+  neonServicesFromSource,
+} from "../domain/netteDiContainer";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
-/** The Monaco icon bucket a NEON completion maps to (only class names today). */
-export type NeonCompletionItemKind = "class";
+/**
+ * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
+ * `%param%` parameter reference, or an `@service` reference.
+ */
+export type NeonCompletionItemKind = "class" | "parameter" | "service";
 
 /**
  * A NEON completion the hook hands to the Monaco "neon" provider. Structurally
@@ -57,6 +68,12 @@ export interface NeonIntelligenceActiveDocument {
   path: string;
 }
 
+/** A workspace directory entry, narrowed to what the `.neon` config scan needs. */
+export interface NeonDirectoryEntry {
+  kind: "directory" | "file";
+  path: string;
+}
+
 /**
  * The injected surface the hook needs. Every member is a value or a tiny
  * function so the logic can be exercised with plain fakes - no controller, no
@@ -72,6 +89,13 @@ export interface NeonIntelligenceDependencies {
   isNetteFrameworkActive: boolean;
   isSemanticIntelligenceActive: boolean;
   joinPath(rootPath: string, relativePath: string): string;
+  /**
+   * Lists a directory's entries for the cross-file `.neon` config scan (used to
+   * merge `%param%` / `@service` definitions across the project's config files).
+   * A pass-through of the controller's workspace directory reader; an unknown
+   * directory rejects (mirroring the Tauri gateway) and is skipped.
+   */
+  listDirectory(path: string): Promise<NeonDirectoryEntry[]>;
   /**
    * Resolves a PHP class name (a NEON reference is already fully qualified) to
    * its source file and opens it, resolving `true` when it navigated. A
@@ -114,6 +138,59 @@ const NEON_MAX_COMPLETIONS = 100;
 const NEON_EXTENSION = ".neon";
 
 /**
+ * TTL for the per-root project-config listing (parameters + services collected
+ * across the project's `.neon` files). A short TTL bounds staleness after a
+ * config file changes, while `evictOtherRootConfigCacheEntries` bounds cross-root
+ * growth; together they keep a single active project to at most one entry.
+ * Precise file-change invalidation is a documented follow-up.
+ */
+const NEON_CONFIG_CACHE_TTL_MS = 5_000;
+
+/** Hard cap on `.neon` files read in one cross-file scan (hang-safety). */
+const NEON_MAX_CONFIG_FILES = 200;
+
+/**
+ * Workspace-relative directories a Nette project keeps its config `.neon` files
+ * under. The current config file's own directory is always scanned too, so a
+ * non-standard layout still resolves same-directory cross-file definitions.
+ */
+const NEON_CONFIG_SCAN_DIRECTORIES: readonly string[] = ["config", "app/config"];
+
+/** A definition location the cross-file scan resolves a name to. */
+interface NeonDefinitionLocation {
+  path: string;
+  position: EditorPosition;
+}
+
+/** The merged parameters + services of every scanned `.neon` file (per root). */
+interface NeonProjectConfig {
+  parameterNames: string[];
+  parameters: Map<string, NeonDefinitionLocation>;
+  serviceNames: string[];
+  services: Map<string, NeonDefinitionLocation>;
+}
+
+interface NeonConfigCacheEntry {
+  config: NeonProjectConfig;
+  expiresAt: number;
+}
+
+/** Per-root cache of the merged project config (keyed by requested root). */
+export type NeonConfigCache = Record<string, NeonConfigCacheEntry>;
+
+/** In-flight config scans keyed by requested root (concurrent callers join). */
+type NeonConfigInFlight = Map<string, Promise<NeonProjectConfig>>;
+
+/** Everything one NEON navigation / completion request threads down its chain. */
+interface NeonRequestContext {
+  configCache: NeonConfigCache;
+  configInFlight: NeonConfigInFlight;
+  deps: NeonIntelligenceDependencies;
+  isRequestedRootActive: () => boolean;
+  requestedRoot: string;
+}
+
+/**
  * Builds the NEON intelligence API from an accessor to the current dependencies
  * (read fresh on every call so gating flags and the workspace root are always
  * current). Exported for direct unit testing; the React hook is a thin, stable
@@ -121,12 +198,21 @@ const NEON_EXTENSION = ".neon";
  */
 export function createNeonIntelligence(
   getDependencies: () => NeonIntelligenceDependencies,
+  configCache: NeonConfigCache = {},
 ): NeonIntelligence {
+  /**
+   * Per-instance in-flight registry for the cross-file config scan, so concurrent
+   * completion requests (Monaco fires one per keystroke) share ONE scan per root
+   * instead of launching parallel directory reads (mirrors the Latte loaders).
+   */
+  const configInFlight: NeonConfigInFlight = new Map();
+
   const provideNeonDefinition = async (
     source: string,
     offset: number,
   ): Promise<boolean> => {
     const deps = getDependencies();
+    evictOtherRootConfigCacheEntries(configCache, deps.workspaceRoot);
 
     if (!isNeonSemanticActive(deps)) {
       return false;
@@ -140,10 +226,29 @@ export function createNeonIntelligence(
 
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const context: NeonRequestContext = {
+      configCache,
+      configInFlight,
+      deps,
+      isRequestedRootActive,
+      requestedRoot,
+    };
     const classReference = detectNeonClassReferenceAt(source, offset);
 
     if (classReference) {
       return deps.openClassTarget(classReference.className);
+    }
+
+    const parameterReference = detectNeonParameterReferenceAt(source, offset);
+
+    if (parameterReference) {
+      return resolveNeonParameterDefinition(context, source, parameterReference.name);
+    }
+
+    const serviceReference = detectNeonServiceReferenceAt(source, offset);
+
+    if (serviceReference) {
+      return resolveNeonServiceDefinition(context, source, serviceReference.name);
     }
 
     const include = detectNeonIncludeAt(source, offset);
@@ -165,6 +270,7 @@ export function createNeonIntelligence(
     position: EditorPosition,
   ): Promise<NeonCompletionItem[]> => {
     const deps = getDependencies();
+    evictOtherRootConfigCacheEntries(configCache, deps.workspaceRoot);
 
     if (!isNeonSemanticActive(deps)) {
       return [];
@@ -179,15 +285,38 @@ export function createNeonIntelligence(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
     const offset = offsetAtEditorPosition(source, position);
-    const context = neonServiceClassCompletionContextAt(source, offset);
+    const context: NeonRequestContext = {
+      configCache,
+      configInFlight,
+      deps,
+      isRequestedRootActive,
+      requestedRoot,
+    };
 
-    if (!context) {
+    const parameterCompletion = neonParameterCompletionContextAt(source, offset);
+
+    if (parameterCompletion) {
+      return neonParameterCompletions(context, source, parameterCompletion);
+    }
+
+    const serviceCompletion = neonServiceReferenceCompletionContextAt(
+      source,
+      offset,
+    );
+
+    if (serviceCompletion) {
+      return neonServiceReferenceCompletions(context, source, serviceCompletion);
+    }
+
+    const classContext = neonServiceClassCompletionContextAt(source, offset);
+
+    if (!classContext) {
       return [];
     }
 
     const names = await deps.searchClassNames(
       requestedRoot,
-      context.prefix,
+      classContext.prefix,
       NEON_MAX_COMPLETIONS,
     );
 
@@ -200,8 +329,8 @@ export function createNeonIntelligence(
       insertText: name,
       kind: "class" as const,
       label: name,
-      replaceEnd: context.span.end,
-      replaceStart: context.span.start,
+      replaceEnd: classContext.span.end,
+      replaceStart: classContext.span.start,
     }));
   };
 
@@ -218,10 +347,14 @@ export function useNeonIntelligence(
 ): NeonIntelligence {
   const dependenciesRef = useRef(dependencies);
   dependenciesRef.current = dependencies;
+  const configCacheRef = useRef<NeonConfigCache>({});
   const apiRef = useRef<NeonIntelligence | null>(null);
 
   if (!apiRef.current) {
-    apiRef.current = createNeonIntelligence(() => dependenciesRef.current);
+    apiRef.current = createNeonIntelligence(
+      () => dependenciesRef.current,
+      configCacheRef.current,
+    );
   }
 
   return apiRef.current;
@@ -229,6 +362,454 @@ export function useNeonIntelligence(
 
 function isNeonSemanticActive(deps: NeonIntelligenceDependencies): boolean {
   return deps.isNetteFrameworkActive && deps.isSemanticIntelligenceActive;
+}
+
+/**
+ * Evicts every cached root except `requestedRoot` (spec §6b cache lifecycle):
+ * with a single active project tab the per-root config cache holds at most one
+ * entry, so switching projects - or closing the active one - never leaves a
+ * previous root's config cached forever. Called synchronously at the top of each
+ * async flow, before its first `await`, so it runs against a fresh
+ * `requestedRoot`.
+ */
+function evictOtherRootConfigCacheEntries(
+  cache: NeonConfigCache,
+  requestedRoot: string | null,
+): void {
+  for (const cachedRoot of Object.keys(cache)) {
+    if (workspaceRootKeysEqual(cachedRoot, requestedRoot)) {
+      continue;
+    }
+
+    delete cache[cachedRoot];
+  }
+}
+
+/**
+ * Navigates a `%param%` reference to its definition: the CURRENT file's
+ * `parameters:` leaf first (no I/O), then the merged cross-file project config.
+ * Conservative: an unknown parameter resolves to `false`. The post-await
+ * live-root re-check drops a switched project's result.
+ */
+async function resolveNeonParameterDefinition(
+  context: NeonRequestContext,
+  source: string,
+  name: string,
+): Promise<boolean> {
+  const { deps, isRequestedRootActive } = context;
+  const currentPath = deps.getActiveDocument()?.path ?? null;
+  const sameFileOffset = neonParameterOffsetInSource(source, name);
+
+  if (sameFileOffset !== null && currentPath) {
+    return deps.openTarget(
+      currentPath,
+      editorPositionAtOffset(source, sameFileOffset),
+      `%${name}%`,
+    );
+  }
+
+  const config = await loadNeonProjectConfig(context);
+
+  if (!isRequestedRootActive()) {
+    return false;
+  }
+
+  const location = config.parameters.get(name);
+
+  if (!location) {
+    return false;
+  }
+
+  return deps.openTarget(location.path, location.position, `%${name}%`);
+}
+
+/**
+ * Navigates an `@service` reference to its definition: a class-typed reference
+ * (`@\App\Class`, `@Foo\Bar`) resolves through the class index (autowiring by
+ * type); a named `@service` resolves to the CURRENT file's `services:` entry
+ * first (no I/O), then the merged cross-file project config. Conservative: an
+ * unknown named service resolves to `false`.
+ */
+async function resolveNeonServiceDefinition(
+  context: NeonRequestContext,
+  source: string,
+  name: string,
+): Promise<boolean> {
+  const { deps, isRequestedRootActive } = context;
+
+  if (name.includes("\\")) {
+    return deps.openClassTarget(name.replace(/^\\+/, ""));
+  }
+
+  const currentPath = deps.getActiveDocument()?.path ?? null;
+  const sameFileOffset = neonServiceOffsetInSource(source, name);
+
+  if (sameFileOffset !== null && currentPath) {
+    return deps.openTarget(
+      currentPath,
+      editorPositionAtOffset(source, sameFileOffset),
+      `@${name}`,
+    );
+  }
+
+  const config = await loadNeonProjectConfig(context);
+
+  if (!isRequestedRootActive()) {
+    return false;
+  }
+
+  const location = config.services.get(name);
+
+  if (!location) {
+    return false;
+  }
+
+  return deps.openTarget(location.path, location.position, `@${name}`);
+}
+
+/** The offset of the first `parameters:` leaf named `name` in `source`, or `null`. */
+function neonParameterOffsetInSource(source: string, name: string): number | null {
+  for (const parameter of neonParametersFromSource(source)) {
+    if (parameter.name === name) {
+      return parameter.offset;
+    }
+  }
+
+  return null;
+}
+
+/** The offset of the first named service `name` in `source`, or `null`. */
+function neonServiceOffsetInSource(source: string, name: string): number | null {
+  for (const service of neonServicesFromSource(source)) {
+    if (service.serviceName === name) {
+      return service.offset;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * `%param%` completion: the merged parameter names (current file + cross-file
+ * project config), filtered by the typed prefix. The post-await live-root
+ * re-check drops a switched project's result.
+ */
+async function neonParameterCompletions(
+  context: NeonRequestContext,
+  source: string,
+  completion: { prefix: string; span: { end: number; start: number } },
+): Promise<NeonCompletionItem[]> {
+  const names = await collectNeonParameterNames(context, source);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return names
+    .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, NEON_MAX_COMPLETIONS)
+    .map((name) => ({
+      detail: "Nette parameter",
+      insertText: name,
+      kind: "parameter" as const,
+      label: name,
+      replaceEnd: completion.span.end,
+      replaceStart: completion.span.start,
+    }));
+}
+
+/**
+ * `@service` completion: the merged service names (current file + cross-file
+ * project config), filtered by the typed prefix.
+ */
+async function neonServiceReferenceCompletions(
+  context: NeonRequestContext,
+  source: string,
+  completion: { prefix: string; span: { end: number; start: number } },
+): Promise<NeonCompletionItem[]> {
+  const names = await collectNeonServiceNames(context, source);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return names
+    .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, NEON_MAX_COMPLETIONS)
+    .map((name) => ({
+      detail: "Nette service",
+      insertText: name,
+      kind: "service" as const,
+      label: name,
+      replaceEnd: completion.span.end,
+      replaceStart: completion.span.start,
+    }));
+}
+
+/** Merged parameter names: current file (no I/O) unioned with the project config. */
+async function collectNeonParameterNames(
+  context: NeonRequestContext,
+  source: string,
+): Promise<string[]> {
+  const names = new Set<string>();
+
+  for (const parameter of neonParametersFromSource(source)) {
+    names.add(parameter.name);
+  }
+
+  const config = await loadNeonProjectConfig(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  for (const name of config.parameterNames) {
+    names.add(name);
+  }
+
+  return Array.from(names).sort((left, right) => left.localeCompare(right));
+}
+
+/** Merged service names: current file (no I/O) unioned with the project config. */
+async function collectNeonServiceNames(
+  context: NeonRequestContext,
+  source: string,
+): Promise<string[]> {
+  const names = new Set<string>();
+
+  for (const service of neonServicesFromSource(source)) {
+    if (service.serviceName) {
+      names.add(service.serviceName);
+    }
+  }
+
+  const config = await loadNeonProjectConfig(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  for (const name of config.serviceNames) {
+    names.add(name);
+  }
+
+  return Array.from(names).sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Loads (and per-root caches) the merged project config. Concurrent callers for
+ * the same root share one in-flight scan (Monaco fires a completion per
+ * keystroke), mirroring the Latte loaders.
+ */
+async function loadNeonProjectConfig(
+  context: NeonRequestContext,
+): Promise<NeonProjectConfig> {
+  const { configCache, configInFlight, requestedRoot } = context;
+  const cached = configCache[requestedRoot];
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.config;
+  }
+
+  const existing = configInFlight.get(requestedRoot);
+
+  if (existing) {
+    return existing;
+  }
+
+  const load = scanNeonProjectConfig(context).finally(() => {
+    if (configInFlight.get(requestedRoot) === load) {
+      configInFlight.delete(requestedRoot);
+    }
+  });
+
+  configInFlight.set(requestedRoot, load);
+
+  return load;
+}
+
+function emptyNeonProjectConfig(): NeonProjectConfig {
+  return {
+    parameterNames: [],
+    parameters: new Map(),
+    serviceNames: [],
+    services: new Map(),
+  };
+}
+
+/**
+ * The actual cross-file scan: collect the project's `.neon` files, read each
+ * once, and merge their `parameters:` / named `services:` definitions (first
+ * definition of a name wins). Per-project isolation: `requestedRoot` was captured
+ * by the caller and re-checked after EVERY await; a stale root drops the result
+ * without writing the cache.
+ */
+async function scanNeonProjectConfig(
+  context: NeonRequestContext,
+): Promise<NeonProjectConfig> {
+  const { configCache, deps, isRequestedRootActive, requestedRoot } = context;
+  const filePaths = await collectNeonFilePaths(context);
+
+  if (!isRequestedRootActive()) {
+    return emptyNeonProjectConfig();
+  }
+
+  const parameters = new Map<string, NeonDefinitionLocation>();
+  const services = new Map<string, NeonDefinitionLocation>();
+
+  for (const path of filePaths) {
+    if (!isRequestedRootActive()) {
+      return emptyNeonProjectConfig();
+    }
+
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return emptyNeonProjectConfig();
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return emptyNeonProjectConfig();
+    }
+
+    for (const parameter of neonParametersFromSource(content)) {
+      if (!parameters.has(parameter.name)) {
+        parameters.set(parameter.name, {
+          path,
+          position: editorPositionAtOffset(content, parameter.offset),
+        });
+      }
+    }
+
+    for (const service of neonServicesFromSource(content)) {
+      if (service.serviceName && !services.has(service.serviceName)) {
+        services.set(service.serviceName, {
+          path,
+          position: editorPositionAtOffset(content, service.offset),
+        });
+      }
+    }
+  }
+
+  if (!isRequestedRootActive()) {
+    return emptyNeonProjectConfig();
+  }
+
+  const config: NeonProjectConfig = {
+    parameterNames: Array.from(parameters.keys()).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    parameters,
+    serviceNames: Array.from(services.keys()).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+    services,
+  };
+  configCache[requestedRoot] = {
+    config,
+    expiresAt: Date.now() + NEON_CONFIG_CACHE_TTL_MS,
+  };
+
+  return config;
+}
+
+/**
+ * Collects the workspace `.neon` config file paths from the candidate scan
+ * directories (the current config's own directory plus the conventional
+ * `config` / `app/config`), non-recursively, bounded by `NEON_MAX_CONFIG_FILES`.
+ * Per-project isolation: re-checks the live root after every directory read.
+ */
+async function collectNeonFilePaths(
+  context: NeonRequestContext,
+): Promise<string[]> {
+  const { deps, isRequestedRootActive, requestedRoot } = context;
+  const paths = new Set<string>();
+
+  for (const directory of neonScanDirectories(deps, requestedRoot)) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (paths.size >= NEON_MAX_CONFIG_FILES) {
+      break;
+    }
+
+    let entries: NeonDirectoryEntry[];
+
+    try {
+      entries = await deps.listDirectory(directory);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const entry of entries) {
+      if (paths.size >= NEON_MAX_CONFIG_FILES) {
+        break;
+      }
+
+      if (entry.kind === "file" && entry.path.endsWith(NEON_EXTENSION)) {
+        paths.add(entry.path);
+      }
+    }
+  }
+
+  return Array.from(paths);
+}
+
+/**
+ * The absolute directories the `.neon` config scan visits: the current config
+ * file's own directory (so a non-standard layout still resolves), plus the
+ * conventional `config` / `app/config` directories. De-duplicated.
+ */
+function neonScanDirectories(
+  deps: NeonIntelligenceDependencies,
+  requestedRoot: string,
+): string[] {
+  const directories = new Set<string>();
+  const currentPath = deps.getActiveDocument()?.path ?? null;
+
+  if (currentPath) {
+    const directory = dirnameOf(currentPath);
+
+    if (directory.length > 0) {
+      directories.add(directory);
+    }
+  }
+
+  for (const relative of NEON_CONFIG_SCAN_DIRECTORIES) {
+    directories.add(deps.joinPath(requestedRoot, relative));
+  }
+
+  return Array.from(directories);
+}
+
+function editorPositionAtOffset(source: string, offset: number): EditorPosition {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, clamped);
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return {
+    column: clamped - lineStart + 1,
+    lineNumber: before.split("\n").length,
+  };
 }
 
 /**

@@ -302,7 +302,8 @@ export type LatteCompletionKind =
   | "variable"
   | "member"
   | "filter"
-  | "link";
+  | "link"
+  | "component";
 
 /**
  * A single Latte completion item produced by the controller. Like Blade, Latte
@@ -325,8 +326,11 @@ export interface LatteCompletion {
   replaceEnd?: number;
 }
 
-/** The Monaco icon bucket a NEON completion maps to (only class names today). */
-export type NeonCompletionKind = "class";
+/**
+ * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
+ * `%param%` parameter reference, or an `@service` reference.
+ */
+export type NeonCompletionKind = "class" | "parameter" | "service";
 
 /**
  * A single NEON completion item produced by the controller. Like Latte, NEON has
@@ -1082,9 +1086,10 @@ export function registerLanguageServerMonacoProviders(
     {
       // `\` refreshes as a namespaced FQN is typed, `-` / `:` / ` ` open the
       // class-name list right after a `- ` anonymous-service marker or a
-      // `key:` / `factory:` value colon (completion is gated to `services:`
-      // value positions, so an off-position trigger simply yields nothing).
-      triggerCharacters: ["\\", ":", " ", "-"],
+      // `key:` / `factory:` value colon; `%` opens the `%param%` list and `@`
+      // opens the `@service` list (completion is gated to the matching context,
+      // so an off-position trigger simply yields nothing).
+      triggerCharacters: ["\\", ":", " ", "-", "%", "@"],
       provideCompletionItems: (model, position) =>
         provideNeonCompletionItems(monaco, context, model, position),
     },
@@ -1491,6 +1496,10 @@ function monacoLatteCompletionKind(
     return monaco.languages.CompletionItemKind.Method;
   }
 
+  if (kind === "component") {
+    return monaco.languages.CompletionItemKind.Module;
+  }
+
   return monaco.languages.CompletionItemKind.Keyword;
 }
 
@@ -1644,8 +1653,16 @@ function toMonacoNeonCompletion(
 
 function monacoNeonCompletionKind(
   monaco: MonacoApi,
-  _kind: NeonCompletionKind,
+  kind: NeonCompletionKind,
 ): Monaco.languages.CompletionItemKind {
+  if (kind === "parameter") {
+    return monaco.languages.CompletionItemKind.Variable;
+  }
+
+  if (kind === "service") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
   return monaco.languages.CompletionItemKind.Class;
 }
 

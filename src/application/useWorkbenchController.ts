@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
+import { useGitWorkspace } from "./useGitWorkspace";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import {
@@ -42,10 +43,8 @@ import {
 } from "../domain/intelligence";
 import {
   emptyGitStatus,
-  gitChangeKey,
   type GitBlameLine,
   type GitChangedFile,
-  type GitDiffHunk,
   type GitFileDiff,
   type GitFileHistoryEntry,
   type GitGateway,
@@ -1237,11 +1236,6 @@ export function useWorkbenchController(
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
   const [gitLoading, setGitLoading] = useState(false);
-  const [gitOperationLoading, setGitOperationLoading] = useState(false);
-  const [gitCommitMessage, setGitCommitMessage] = useState("");
-  const [includedGitChangePaths, setIncludedGitChangePaths] = useState<Set<string>>(
-    new Set(),
-  );
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
   const [selectedGitChange, setSelectedGitChange] =
     useState<GitChangedFile | null>(null);
@@ -7258,318 +7252,30 @@ export function useWorkbenchController(
     [closeGitDiffPreview, selectedGitChange],
   );
 
-  const toggleGitChangeIncluded = useCallback((change: GitChangedFile) => {
-    setIncludedGitChangePaths((current) => {
-      const next = new Set(current);
-
-      const changeKey = gitChangeKey(change);
-
-      if (next.has(changeKey)) {
-        next.delete(changeKey);
-      } else {
-        next.add(changeKey);
-      }
-
-      return next;
-    });
-  }, []);
-
-  const stageGitChanges = useCallback(
-    async (changes: GitChangedFile[]) => {
-      if (!workspaceRoot || changes.length === 0) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        const status = await gitGateway.stageFiles(requestedRoot, changes);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(status);
-        setMessage(null);
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
-  );
-
-  const unstageGitChanges = useCallback(
-    async (changes: GitChangedFile[]) => {
-      if (!workspaceRoot || changes.length === 0) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        const status = await gitGateway.unstageFiles(requestedRoot, changes);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(status);
-        setMessage(null);
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
-  );
-
-  const loadGitFileHunks = useCallback(
-    async (relativePath: string, staged: boolean): Promise<GitDiffHunk[]> => {
-      if (!workspaceRoot) {
-        return [];
-      }
-
-      const requestedRoot = workspaceRoot;
-
-      try {
-        const hunks = await gitGateway.getFileHunks(
-          requestedRoot,
-          relativePath,
-          staged,
-        );
-
-        // Drop stale results: the active workspace may have changed while the
-        // diff resolved (per-tab isolation).
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return [];
-        }
-
-        return hunks;
-      } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          reportError("Git", error);
-        }
-
-        return [];
-      }
-    },
-    [gitGateway, reportError, workspaceRoot],
-  );
-
-  const stageGitHunk = useCallback(
-    async (relativePath: string, hunkIndex: number) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        const status = await gitGateway.stageHunk(
-          requestedRoot,
-          relativePath,
-          hunkIndex,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(status);
-        setMessage(`Staged hunk in ${relativePath}`);
-      } catch (error) {
-        // A rejected patch (stale hunk / already staged) fails atomically on
-        // the Rust side - the index is untouched, so this is a safe no-op.
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
-  );
-
-  const unstageGitHunk = useCallback(
-    async (relativePath: string, hunkIndex: number) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        const status = await gitGateway.unstageHunk(
-          requestedRoot,
-          relativePath,
-          hunkIndex,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(status);
-        setMessage(`Unstaged hunk in ${relativePath}`);
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
-  );
-
-  const revertGitChanges = useCallback(
-    async (changes: GitChangedFile[]) => {
-      if (!workspaceRoot || changes.length === 0) {
-        return;
-      }
-
-      if (!prompter.confirm("Revert selected Git changes? This discards local changes.")) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        const status = await gitGateway.revertFiles(requestedRoot, changes);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(status);
-        setMessage(null);
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [applyGitOperationStatus, gitGateway, prompter, reportError, workspaceRoot],
-  );
-
-  const runGitCommit = useCallback(
-    async ({ pushAfterCommit }: { pushAfterCommit: boolean }) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      const message = gitCommitMessage.trim();
-      const changesToCommit = gitStatus.changes.filter((change) =>
-        includedGitChangePaths.has(gitChangeKey(change)),
-      );
-
-      if (!message || changesToCommit.length === 0) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setGitOperationLoading(true);
-
-      try {
-        if (changesToCommit.some((change) => !change.isStaged)) {
-          await gitGateway.stageFiles(requestedRoot, changesToCommit);
-
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-            return;
-          }
-        }
-
-        const commitStatus = await gitGateway.commit(
-          requestedRoot,
-          message,
-          changesToCommit,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        applyGitOperationStatus(commitStatus);
-        setIncludedGitChangePaths(new Set());
-        setGitCommitMessage("");
-        setMessage(pushAfterCommit ? "Commit created. Pushing..." : null);
-
-        if (!pushAfterCommit) {
-          return;
-        }
-
-        try {
-          const pushStatus = await gitGateway.push(requestedRoot);
-
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-            return;
-          }
-
-          applyGitOperationStatus(pushStatus);
-          setMessage("Pushed current branch");
-        } catch (error) {
-          if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-            reportError("Git Push", error);
-          }
-        }
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          reportError("Git", error);
-        }
-      } finally {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          setGitOperationLoading(false);
-        }
-      }
-    },
-    [
-      applyGitOperationStatus,
-      gitCommitMessage,
-      gitGateway,
-      gitStatus.changes,
-      includedGitChangePaths,
-      reportError,
-      workspaceRoot,
-    ],
-  );
-
-  const commitGitChanges = useCallback(
-    async () => runGitCommit({ pushAfterCommit: false }),
-    [runGitCommit],
-  );
-
-  const commitAndPushGitChanges = useCallback(
-    async () => runGitCommit({ pushAfterCommit: true }),
-    [runGitCommit],
-  );
+  const {
+    gitCommitMessage,
+    includedGitChangePaths,
+    gitOperationLoading,
+    setGitCommitMessage,
+    toggleGitChangeIncluded,
+    stageGitChanges,
+    unstageGitChanges,
+    loadGitFileHunks,
+    stageGitHunk,
+    unstageGitHunk,
+    revertGitChanges,
+    commitGitChanges,
+    commitAndPushGitChanges,
+  } = useGitWorkspace({
+    gitGateway,
+    currentWorkspaceRootRef,
+    workspaceRoot,
+    gitStatus,
+    applyGitOperationStatus,
+    reportError,
+    setMessage,
+    prompter,
+  });
 
   const refreshPhpTree = useCallback(async () => {
     if (!workspaceRoot) {
@@ -23393,6 +23099,7 @@ export function useWorkbenchController(
     isNetteFrameworkActive,
     isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
     joinPath: joinWorkspacePath,
+    listDirectory: (path) => workspaceFiles.readDirectory(path),
     openClassTarget: (className) =>
       openPhpClassTarget(className, className.split("\\").pop() ?? className),
     openTarget: openNavigationTarget,
@@ -29779,42 +29486,6 @@ export function useWorkbenchController(
 
     void refreshGitStatus();
   }, [refreshGitStatus, sidebarView, workspaceRoot]);
-
-  useEffect(() => {
-    setIncludedGitChangePaths((current) => {
-      const validKeys = new Set(gitStatus.changes.map(gitChangeKey));
-      const next = new Set<string>();
-
-      gitStatus.changes.forEach((change) => {
-        const changeKey = gitChangeKey(change);
-
-        if (change.isStaged || current.has(changeKey)) {
-          next.add(changeKey);
-        }
-      });
-
-      current.forEach((changeKey) => {
-        if (validKeys.has(changeKey)) {
-          next.add(changeKey);
-        }
-      });
-
-      if (
-        next.size === current.size &&
-        [...next].every((path) => current.has(path))
-      ) {
-        return current;
-      }
-
-      return next;
-    });
-  }, [gitStatus.changes]);
-
-  useEffect(() => {
-    setGitOperationLoading(false);
-    setGitCommitMessage("");
-    setIncludedGitChangePaths(new Set());
-  }, [workspaceRoot]);
 
   useEffect(() => {
     if (!workspaceRoot) {

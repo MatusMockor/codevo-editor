@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createNeonIntelligence,
   useNeonIntelligence,
+  type NeonConfigCache,
+  type NeonDirectoryEntry,
   type NeonIntelligence,
   type NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
@@ -21,6 +23,9 @@ function makeDeps(
     isNetteFrameworkActive: true,
     isSemanticIntelligenceActive: true,
     joinPath: (root, relativePath) => `${root}/${relativePath}`,
+    listDirectory: vi.fn(async () => {
+      throw new Error("no directory");
+    }),
     openClassTarget: vi.fn(async () => true),
     openTarget: vi.fn(async () => true),
     readFileContent: vi.fn(async () => {
@@ -32,6 +37,70 @@ function makeDeps(
     workspaceRoot: ROOT,
     ...overrides,
   };
+}
+
+/**
+ * Fakes the workspace directory reader + file reader over a set of `.neon`
+ * sources so the cross-file config scan behaves like the real gateways (unknown
+ * directories / files reject). Directories are derived from the file paths.
+ */
+function buildNeonWorkspace(
+  sources: Record<string, string>,
+  root: string = ROOT,
+) {
+  const fileContents = new Map<string, string>();
+  const directories = new Map<string, Map<string, NeonDirectoryEntry>>();
+
+  const ensureDirectory = (directory: string): void => {
+    if (!directories.has(directory)) {
+      directories.set(directory, new Map());
+    }
+  };
+
+  for (const [relativePath, content] of Object.entries(sources)) {
+    const absolute = `${root}/${relativePath}`;
+    fileContents.set(absolute, content);
+
+    const segments = relativePath.split("/");
+    let directory = root;
+    ensureDirectory(directory);
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const isFile = index === segments.length - 1;
+      const childPath = `${directory}/${segments[index]}`;
+      ensureDirectory(directory);
+      directories.get(directory)?.set(childPath, {
+        kind: isFile ? "file" : "directory",
+        path: childPath,
+      });
+      directory = childPath;
+
+      if (!isFile) {
+        ensureDirectory(directory);
+      }
+    }
+  }
+
+  const listDirectory = vi.fn(async (path: string): Promise<NeonDirectoryEntry[]> => {
+    const entries = directories.get(path);
+
+    if (!entries) {
+      throw new Error(`no such directory: ${path}`);
+    }
+
+    return Array.from(entries.values());
+  });
+  const readFileContent = vi.fn(async (path: string): Promise<string> => {
+    const content = fileContents.get(path);
+
+    if (content === undefined) {
+      throw new Error(`no such file: ${path}`);
+    }
+
+    return content;
+  });
+
+  return { listDirectory, readFileContent };
 }
 
 function positionAtOffset(source: string, offset: number) {
@@ -326,5 +395,259 @@ describe("useNeonIntelligence hook mount", () => {
     expect(harness.captured.api).toBe(firstApi);
 
     harness.unmount();
+  });
+});
+
+describe("createNeonIntelligence %param% definition (Fáza 3)", () => {
+  it("navigates a %param% to its same-file parameters: leaf without any I/O", async () => {
+    const openTarget = vi.fn(async () => true);
+    const listDirectory = vi.fn(async () => {
+      throw new Error("should not scan for a same-file hit");
+    });
+    const deps = makeDeps({ listDirectory, openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dbHost: localhost\n    dsn: %dbHost%\n";
+    const offset = source.indexOf("%dbHost%") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "%dbHost%",
+    );
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("navigates a %param% defined in another config file (cross-file)", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon": "parameters:\n    dsn: %dbHost%\n",
+      "config/parameters.neon": "parameters:\n    dbHost: localhost\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dsn: %dbHost%\n";
+    const offset = source.indexOf("%dbHost%") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/parameters.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "%dbHost%",
+    );
+  });
+
+  it("returns false for a %param% defined nowhere", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon": "parameters:\n    dsn: %missing%\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dsn: %missing%\n";
+    const offset = source.indexOf("%missing%") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the Nette framework is inactive", async () => {
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ isNetteFrameworkActive: false, openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dbHost: localhost\n    dsn: %dbHost%\n";
+    const offset = source.indexOf("%dbHost%") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("createNeonIntelligence @service definition (Fáza 3)", () => {
+  it("navigates a named @service to its same-file services: entry", async () => {
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    logger: Monolog\\Logger\n    app:\n        arguments: [@logger]\n";
+    const offset = source.indexOf("[@logger]") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@logger",
+    );
+  });
+
+  it("navigates a class-typed @\\App\\Class reference via the class index", async () => {
+    const openClassTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openClassTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    app:\n        arguments: [@\\App\\Model\\Foo]\n";
+    const offset = source.indexOf("@\\App\\Model\\Foo") + 3;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openClassTarget).toHaveBeenCalledWith("App\\Model\\Foo");
+  });
+
+  it("navigates a named @service defined in another config file (cross-file)", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    app:\n        arguments: [@logger]\n",
+      "config/services.neon": "services:\n    logger: Monolog\\Logger\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "services:\n    app:\n        arguments: [@logger]\n";
+    const offset = source.indexOf("[@logger]") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/services.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@logger",
+    );
+  });
+});
+
+describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () => {
+  it("offers merged same-file + cross-file parameter names after %", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon": "parameters:\n    dbHost: localhost\n    dsn: %db\n",
+      "config/params.neon": "parameters:\n    dbPassword: secret\n",
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dbHost: localhost\n    dsn: %db\n";
+    const offset = source.indexOf("%db") + 3;
+    const completions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("dbHost");
+    expect(labels).toContain("dbPassword");
+    expect(
+      completions.every((completion) => completion.kind === "parameter"),
+    ).toBe(true);
+  });
+
+  it("offers merged same-file + cross-file service names after @", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    app:\n        arguments: [@lo]\n",
+      "config/services.neon": "services:\n    logger: Monolog\\Logger\n",
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "services:\n    app:\n        arguments: [@lo]\n";
+    const offset = source.indexOf("[@lo]") + 4;
+    const completions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toContain(
+      "logger",
+    );
+    expect(
+      completions.every((completion) => completion.kind === "service"),
+    ).toBe(true);
+  });
+
+  it("returns nothing for %param% completion when Nette is inactive", async () => {
+    const listDirectory = vi.fn(async () => {
+      throw new Error("no directory");
+    });
+    const deps = makeDeps({ isNetteFrameworkActive: false, listDirectory });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dsn: %db\n";
+    const offset = source.indexOf("%db") + 3;
+
+    await expect(
+      neon.provideNeonCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("drops %param% completions when the root changes during the scan", async () => {
+    const rootRef = { current: ROOT };
+    const built = buildNeonWorkspace({
+      "config/config.neon": "parameters:\n    dsn: %db\n",
+      "config/params.neon": "parameters:\n    dbPassword: secret\n",
+    });
+    const listDirectory = vi.fn(async (path: string) => {
+      rootRef.current = "/other";
+      return built.listDirectory(path);
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      listDirectory,
+      readFileContent: built.readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dsn: %db\n";
+    const offset = source.indexOf("%db") + 3;
+
+    await expect(
+      neon.provideNeonCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("createNeonIntelligence config cache lifecycle (Fáza 3)", () => {
+  it("evicts another root's cached config once a different root becomes active", async () => {
+    const cache: NeonConfigCache = {};
+    const rootA = "/ws-a";
+    const rootB = "/ws-b";
+    const source = "parameters:\n    dsn: %db\n";
+    const offset = source.indexOf("%db") + 3;
+
+    const workspaceA = buildNeonWorkspace(
+      {
+        "config/config.neon": source,
+        "config/params.neon": "parameters:\n    dbHost: a\n",
+      },
+      rootA,
+    );
+    const depsA = makeDeps({
+      currentWorkspaceRootRef: { current: rootA },
+      getActiveDocument: () => ({ path: `${rootA}/config/config.neon` }),
+      listDirectory: workspaceA.listDirectory,
+      readFileContent: workspaceA.readFileContent,
+      workspaceRoot: rootA,
+    });
+    const neonA = createNeonIntelligence(() => depsA, cache);
+
+    await neonA.provideNeonCompletions(source, positionAtOffset(source, offset));
+    expect(Object.keys(cache)).toEqual([rootA]);
+
+    const workspaceB = buildNeonWorkspace(
+      {
+        "config/config.neon": source,
+        "config/params.neon": "parameters:\n    dbHost: b\n",
+      },
+      rootB,
+    );
+    const depsB = makeDeps({
+      currentWorkspaceRootRef: { current: rootB },
+      getActiveDocument: () => ({ path: `${rootB}/config/config.neon` }),
+      listDirectory: workspaceB.listDirectory,
+      readFileContent: workspaceB.readFileContent,
+      workspaceRoot: rootB,
+    });
+    const neonB = createNeonIntelligence(() => depsB, cache);
+
+    await neonB.provideNeonCompletions(source, positionAtOffset(source, offset));
+
+    expect(Object.keys(cache)).toEqual([rootB]);
   });
 });
