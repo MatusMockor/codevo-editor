@@ -301,7 +301,8 @@ export type LatteCompletionKind =
   | "template"
   | "variable"
   | "member"
-  | "filter";
+  | "filter"
+  | "link";
 
 /**
  * A single Latte completion item produced by the controller. Like Blade, Latte
@@ -320,6 +321,25 @@ export interface LatteCompletion {
    * `{fore` tag completion replaces the tag-name characters after `{` and an
    * `{include 'par` template completion replaces the typed path literal.
    */
+  replaceStart?: number;
+  replaceEnd?: number;
+}
+
+/** The Monaco icon bucket a NEON completion maps to (only class names today). */
+export type NeonCompletionKind = "class";
+
+/**
+ * A single NEON completion item produced by the controller. Like Latte, NEON has
+ * no managed language server (its syntax is a vendored Shiki grammar), so
+ * completions are pure data the Monaco provider maps to a
+ * `Monaco.languages.CompletionItem`.
+ */
+export interface NeonCompletion {
+  detail?: string;
+  insertText: string;
+  kind: NeonCompletionKind;
+  label: string;
+  /** Optional 0-based character offset span the item replaces (the partial FQN). */
   replaceStart?: number;
   replaceEnd?: number;
 }
@@ -414,6 +434,35 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<LatteCompletion[]>;
+  /**
+   * Resolves and navigates to a NEON construct at `offset` inside a `.neon`
+   * document: a service-class reference (to its PHP file) or an `includes:`
+   * entry (to the referenced `.neon` file). Like {@link provideLatteDefinition},
+   * the controller performs the navigation itself and resolves `true` when it
+   * handled the request (so the Monaco provider returns `null`); `false`
+   * otherwise. Per-project isolation lives in the controller.
+   */
+  provideNeonDefinition?(source: string, offset: number): Promise<boolean>;
+  /**
+   * Produces NEON completions for the cursor at `position` inside a `.neon`
+   * document: workspace class names in a `services:` value position.
+   */
+  provideNeonCompletions?(
+    source: string,
+    position: MonacoPosition,
+  ): Promise<NeonCompletion[]>;
+  /**
+   * Resolves and navigates to the Nette presenter action behind a PHP presenter
+   * link (`$this->link('Presenter:action')`, `->redirect(...)`, ...) at `offset`
+   * inside a `.php` document. Like {@link provideLatteDefinition}, the controller
+   * performs the navigation itself and resolves `true` when it handled the
+   * request (so the Monaco definition provider returns `null` and does not also
+   * consult phpactor); `false` otherwise. Inert outside a Nette semantic project.
+   */
+  provideNettePhpLinkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -1022,6 +1071,24 @@ export function registerLanguageServerMonacoProviders(
         provideLatteCompletionItems(monaco, context, model, position),
     },
   );
+  const neonDefinition = monaco.languages.registerDefinitionProvider
+    ? monaco.languages.registerDefinitionProvider("neon", {
+        provideDefinition: (model, position) =>
+          provideNeonDefinition(context, model, position),
+      })
+    : { dispose: () => undefined };
+  const neonCompletion = monaco.languages.registerCompletionItemProvider(
+    "neon",
+    {
+      // `\` refreshes as a namespaced FQN is typed, `-` / `:` / ` ` open the
+      // class-name list right after a `- ` anonymous-service marker or a
+      // `key:` / `factory:` value colon (completion is gated to `services:`
+      // value positions, so an off-position trigger simply yields nothing).
+      triggerCharacters: ["\\", ":", " ", "-"],
+      provideCompletionItems: (model, position) =>
+        provideNeonCompletionItems(monaco, context, model, position),
+    },
+  );
 
   return {
     dispose: () => {
@@ -1062,6 +1129,8 @@ export function registerLanguageServerMonacoProviders(
       bladeCodeActions.dispose();
       latteDefinition.dispose();
       latteCompletion.dispose();
+      neonDefinition.dispose();
+      neonCompletion.dispose();
     },
   };
 }
@@ -1418,6 +1487,10 @@ function monacoLatteCompletionKind(
     return monaco.languages.CompletionItemKind.Function;
   }
 
+  if (kind === "link") {
+    return monaco.languages.CompletionItemKind.Method;
+  }
+
   return monaco.languages.CompletionItemKind.Keyword;
 }
 
@@ -1438,6 +1511,159 @@ function activeLatteDocumentContext(
   }
 
   if (activeDocument.language !== "latte") {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path || path !== activeDocument.path) {
+    return null;
+  }
+
+  return { activeDocument, path, rootPath };
+}
+
+/**
+ * Go-to-definition for a `.neon` document: delegates to the controller's NEON
+ * resolver, which navigates to the referenced PHP class / `.neon` include and
+ * resolves `true` when it handled the offset (so Monaco does not also navigate).
+ * Returns `null` either way - NEON has no LSP locations to surface. The
+ * controller enforces per-project isolation; this wrapper drops the result if
+ * the active workspace changed during the await.
+ */
+async function provideNeonDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideNeonDefinition) {
+    return null;
+  }
+
+  const documentContext = activeNeonDocumentContext(context, model);
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideNeonDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * NEON completion provider callback: resolves the active document, calls the
+ * controller's `provideNeonCompletions`, re-checks per-project isolation, then
+ * maps each item to a Monaco completion (mirrors {@link provideLatteCompletionItems}).
+ */
+async function provideNeonCompletionItems(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideNeonCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeNeonDocumentContext(context, model);
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = bladeCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideNeonCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoNeonCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+function toMonacoNeonCompletion(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  fallbackRange: Monaco.IRange,
+  completion: NeonCompletion,
+  index: number,
+): Monaco.languages.CompletionItem {
+  const range =
+    completion.replaceStart != null && completion.replaceEnd != null
+      ? bladeReplaceRange(
+          monaco,
+          model,
+          source,
+          completion.replaceStart,
+          completion.replaceEnd,
+        )
+      : fallbackRange;
+
+  return {
+    detail: completion.detail,
+    insertText: completion.insertText,
+    kind: monacoNeonCompletionKind(monaco, completion.kind),
+    label: completion.label,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  };
+}
+
+function monacoNeonCompletionKind(
+  monaco: MonacoApi,
+  _kind: NeonCompletionKind,
+): Monaco.languages.CompletionItemKind {
+  return monaco.languages.CompletionItemKind.Class;
+}
+
+/**
+ * Mirrors {@link activeLatteDocumentContext} for the "neon" language.
+ */
+function activeNeonDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+) {
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!activeDocument || !rootPath) {
+    return null;
+  }
+
+  if (activeDocument.language !== "neon") {
     return null;
   }
 
@@ -1713,6 +1939,13 @@ async function provideDefinition(
   position: MonacoPosition,
   token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
+  if (
+    context.provideNettePhpLinkDefinition &&
+    (await provideNettePhpPresenterLinkDefinition(context, model, position))
+  ) {
+    return null;
+  }
+
   if (await provideLaravelStringLiteralDefinition(context, model, position)) {
     return null;
   }
@@ -1756,6 +1989,44 @@ async function provideLaravelStringLiteralDefinition(
 
   try {
     return await context.providePhpLaravelDefinition(source, offset);
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
+      context.reportError(error);
+    }
+
+    return false;
+  }
+}
+
+/**
+ * Attempts Nette presenter-link navigation (`$this->link('Presenter:action')`,
+ * `->redirect(...)`, ...) for a PHP document, ahead of the Laravel string-literal
+ * / phpactor resolvers. Returns `true` when the request was handled (the
+ * controller opened the presenter at its action method), so the caller stops and
+ * Monaco does not navigate. Inert outside a Nette semantic project (the
+ * controller callback gates on the framework profile + tier). Per-project
+ * isolation is enforced inside the controller callback.
+ */
+async function provideNettePhpPresenterLinkDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<boolean> {
+  if (!context.provideNettePhpLinkDefinition) {
+    return false;
+  }
+
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return false;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    return await context.provideNettePhpLinkDefinition(source, offset);
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);

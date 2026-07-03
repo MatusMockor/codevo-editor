@@ -10731,13 +10731,197 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
     expect(provideLatteCompletions).not.toHaveBeenCalled();
     expect(result.suggestions).toEqual([]);
   });
+
+  it("maps latte presenter-link completions to method items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{link P}\n";
+    const provideLatteCompletions = vi.fn(async () => [
+      {
+        detail: "Nette presenter action",
+        insertText: "Product:show",
+        kind: "link" as const,
+        label: "Product:show",
+        replaceEnd: source.indexOf("P") + 1,
+        replaceStart: source.indexOf("P"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+      { column: source.indexOf("P") + 2, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "Product:show",
+        kind: registered.monaco.languages.CompletionItemKind.Method,
+        label: "Product:show",
+      }),
+    );
+  });
 });
+
+describe("registerLanguageServerMonacoProviders neon providers", () => {
+  it("registers neon definition and completion providers and disposes them", () => {
+    const registered = createRegisteredProviders();
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext(),
+    );
+
+    expect(registered.neonDefinitionLanguage).toBe("neon");
+    expect(registered.neonCompletionLanguage).toBe("neon");
+    expect(registered.neonCompletionProvider.triggerCharacters).toEqual([
+      "\\",
+      ":",
+      " ",
+      "-",
+    ]);
+
+    disposable.dispose();
+
+    expect(registered.neonDefinitionDispose).toHaveBeenCalled();
+    expect(registered.neonCompletionDispose).toHaveBeenCalled();
+  });
+
+  it("delegates neon go-to-definition to the controller and returns null", async () => {
+    const registered = createRegisteredProviders();
+    const source = "services:\n    router: App\\Router\\RouterFactory\n";
+    const offset = source.indexOf("App\\Router\\RouterFactory") + 2;
+    const provideNeonDefinition = vi.fn(async () => true);
+    const context = providerContext({
+      activeDocument: neonDocument(source),
+      provideNeonDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.neonDefinitionProvider.provideDefinition(
+        model({ content: source, path: "/project/config/services.neon" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toBeNull();
+    expect(provideNeonDefinition).toHaveBeenCalledWith(source, offset);
+  });
+
+  it("does not call neon completions for a non-neon active document", async () => {
+    const registered = createRegisteredProviders();
+    const provideNeonCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: document(),
+      provideNeonCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.neonCompletionProvider.provideCompletionItems(
+      model({ content: "services:\n    - App\\", path: "/project/src/User.php" }),
+      { column: 10, lineNumber: 2 },
+    );
+
+    expect(provideNeonCompletions).not.toHaveBeenCalled();
+    expect(result.suggestions).toEqual([]);
+  });
+
+  it("maps neon class completions to class items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "services:\n    - App\\";
+    const provideNeonCompletions = vi.fn(async () => [
+      {
+        detail: "Nette service class",
+        insertText: "App\\Model\\ProductRepository",
+        kind: "class" as const,
+        label: "App\\Model\\ProductRepository",
+        replaceEnd: source.length,
+        replaceStart: source.indexOf("App\\"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: neonDocument(source),
+      provideNeonCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.neonCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/config/services.neon" }),
+      { column: source.length + 1, lineNumber: 2 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "App\\Model\\ProductRepository",
+        kind: registered.monaco.languages.CompletionItemKind.Class,
+        label: "App\\Model\\ProductRepository",
+      }),
+    );
+  });
+});
+
+describe("registerLanguageServerMonacoProviders nette php link definition", () => {
+  it("delegates a PHP presenter link to the controller and skips phpactor", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Product:show');\n";
+    const offset = source.indexOf("Product:show") + 2;
+    const provideNettePhpLinkDefinition = vi.fn(async () => true);
+    const definitionGateway = featuresGateway();
+    const context = providerContext({
+      activeDocument: document(),
+      featuresGateway: definitionGateway,
+      provideNettePhpLinkDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.definitionProvider.provideDefinition(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toBeNull();
+    expect(provideNettePhpLinkDefinition).toHaveBeenCalledWith(source, offset);
+    expect(definitionGateway.definition).not.toHaveBeenCalled();
+  });
+
+  it("falls through to phpactor when the link callback does not handle the offset", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->products->get(1);\n";
+    const provideNettePhpLinkDefinition = vi.fn(async () => false);
+    const definitionGateway = featuresGateway({ definition: [] });
+    const context = providerContext({
+      activeDocument: document(),
+      featuresGateway: definitionGateway,
+      provideNettePhpLinkDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.definitionProvider.provideDefinition(
+      model({ content: source, path: "/project/src/User.php" }),
+      { column: 1, lineNumber: 2 },
+    );
+
+    expect(provideNettePhpLinkDefinition).toHaveBeenCalled();
+    expect(definitionGateway.definition).toHaveBeenCalled();
+  });
+});
+
+function positionForOffset(source: string, offset: number) {
+  const before = source.slice(0, offset);
+  const lineNumber = before.split("\n").length;
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return { column: offset - lineStart + 1, lineNumber };
+}
 
 function createRegisteredProviders() {
   const bladeDefinitionDispose = vi.fn();
   const bladeCompletionDispose = vi.fn();
   const latteDefinitionDispose = vi.fn();
   const latteCompletionDispose = vi.fn();
+  const neonDefinitionDispose = vi.fn();
+  const neonCompletionDispose = vi.fn();
   const codeActionDispose = vi.fn();
   const codeLensDispose = vi.fn();
   const commandDispose = vi.fn();
@@ -10780,6 +10964,12 @@ function createRegisteredProviders() {
     latteDefinitionDispose: ReturnType<typeof vi.fn>;
     latteDefinitionLanguage: string | null;
     latteDefinitionProvider: any;
+    neonCompletionDispose: ReturnType<typeof vi.fn>;
+    neonCompletionLanguage: string | null;
+    neonCompletionProvider: any;
+    neonDefinitionDispose: ReturnType<typeof vi.fn>;
+    neonDefinitionLanguage: string | null;
+    neonDefinitionProvider: any;
     codeActionDispose: ReturnType<typeof vi.fn>;
     codeActionLanguage: string | null;
     codeActionMetadata: any;
@@ -10876,6 +11066,12 @@ function createRegisteredProviders() {
     latteDefinitionDispose,
     latteDefinitionLanguage: null,
     latteDefinitionProvider: null,
+    neonCompletionDispose,
+    neonCompletionLanguage: null,
+    neonCompletionProvider: null,
+    neonDefinitionDispose,
+    neonDefinitionLanguage: null,
+    neonDefinitionProvider: null,
     codeActionDispose,
     codeActionLanguage: null,
     codeActionMetadata: null,
@@ -11079,6 +11275,12 @@ function createRegisteredProviders() {
           return { dispose: latteCompletionDispose };
         }
 
+        if (language === "neon") {
+          registered.neonCompletionLanguage = language;
+          registered.neonCompletionProvider = provider;
+          return { dispose: neonCompletionDispose };
+        }
+
         registered.completionLanguage = language;
         registered.completionProvider = provider;
         return { dispose: completionDispose };
@@ -11099,6 +11301,12 @@ function createRegisteredProviders() {
           registered.latteDefinitionLanguage = language;
           registered.latteDefinitionProvider = provider;
           return { dispose: latteDefinitionDispose };
+        }
+
+        if (language === "neon") {
+          registered.neonDefinitionLanguage = language;
+          registered.neonDefinitionProvider = provider;
+          return { dispose: neonDefinitionDispose };
         }
 
         registered.definitionLanguage = language;
@@ -11257,6 +11465,15 @@ function providerContext(
     provideLatteDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideLatteDefinition"]
     >;
+    provideNeonCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonCompletions"]
+    >;
+    provideNeonDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonDefinition"]
+    >;
+    provideNettePhpLinkDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkDefinition"]
+    >;
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
@@ -11302,6 +11519,9 @@ function providerContext(
     provideBladeDefinition: overrides.provideBladeDefinition,
     provideLatteCompletions: overrides.provideLatteCompletions,
     provideLatteDefinition: overrides.provideLatteDefinition,
+    provideNeonCompletions: overrides.provideNeonCompletions,
+    provideNeonDefinition: overrides.provideNeonDefinition,
+    provideNettePhpLinkDefinition: overrides.provideNettePhpLinkDefinition,
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
@@ -11620,6 +11840,16 @@ function latteDocument(content: string): EditorDocument {
     language: "latte",
     name: "default.latte",
     path: "/project/app/UI/Home/default.latte",
+    savedContent: content,
+  };
+}
+
+function neonDocument(content: string): EditorDocument {
+  return {
+    content,
+    language: "neon",
+    name: "services.neon",
+    path: "/project/config/services.neon",
     savedContent: content,
   };
 }

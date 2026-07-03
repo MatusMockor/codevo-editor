@@ -118,6 +118,7 @@ import {
   registerLanguageServerMonacoProviders,
   type BladeCompletion,
   type LatteCompletion,
+  type NeonCompletion,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
   type PhpCodeActionRange,
@@ -254,6 +255,18 @@ interface EditorSurfaceProps {
     source: string,
     offset: number,
   ): Promise<boolean>;
+  provideNeonCompletions?(
+    source: string,
+    position: EditorPosition,
+  ): Promise<NeonCompletion[]>;
+  provideNeonDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  provideNettePhpLinkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -340,6 +353,9 @@ function EditorSurfaceComponent({
   provideBladeDefinition = async () => false,
   provideLatteCompletions = async () => [],
   provideLatteDefinition = async () => false,
+  provideNeonCompletions = async () => [],
+  provideNeonDefinition = async () => false,
+  provideNettePhpLinkDefinition = async () => false,
   providePhpCodeActions = async () => [],
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
@@ -478,6 +494,9 @@ function EditorSurfaceComponent({
   const bladeDefinitionRef = useRef(provideBladeDefinition);
   const latteCompletionsRef = useRef(provideLatteCompletions);
   const latteDefinitionRef = useRef(provideLatteDefinition);
+  const neonCompletionsRef = useRef(provideNeonCompletions);
+  const neonDefinitionRef = useRef(provideNeonDefinition);
+  const nettePhpLinkDefinitionRef = useRef(provideNettePhpLinkDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -685,6 +704,18 @@ function EditorSurfaceComponent({
   }, [provideLatteDefinition]);
 
   useEffect(() => {
+    neonCompletionsRef.current = provideNeonCompletions;
+  }, [provideNeonCompletions]);
+
+  useEffect(() => {
+    neonDefinitionRef.current = provideNeonDefinition;
+  }, [provideNeonDefinition]);
+
+  useEffect(() => {
+    nettePhpLinkDefinitionRef.current = provideNettePhpLinkDefinition;
+  }, [provideNettePhpLinkDefinition]);
+
+  useEffect(() => {
     phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
   }, [providePhpLaravelDefinition]);
 
@@ -823,6 +854,12 @@ function EditorSurfaceComponent({
         latteCompletionsRef.current(source, position),
       provideLatteDefinition: (source, offset) =>
         latteDefinitionRef.current(source, offset),
+      provideNeonCompletions: (source, position) =>
+        neonCompletionsRef.current(source, position),
+      provideNeonDefinition: (source, offset) =>
+        neonDefinitionRef.current(source, offset),
+      provideNettePhpLinkDefinition: (source, offset) =>
+        nettePhpLinkDefinitionRef.current(source, offset),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>

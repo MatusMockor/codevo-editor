@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import { useLatteIntelligence } from "./useLatteIntelligence";
+import { useNeonIntelligence } from "./useNeonIntelligence";
 import {
   isPhpLaravelMigrationPath,
   loadPhpLaravelMigrationSources,
@@ -23795,25 +23796,57 @@ export function useWorkbenchController(
 
   // Latte navigation + completion lives entirely in `useLatteIntelligence` (the
   // first strangler-pattern module): this mount only injects the collaborators.
-  const { provideLatteDefinition, provideLatteCompletions } =
-    useLatteIntelligence({
-      currentWorkspaceRootRef,
-      getActiveDocument: () => activeDocumentRef.current,
-      isNetteFrameworkActive,
-      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
-      joinPath: joinWorkspacePath,
-      listDirectory: (path) => workspaceFiles.readDirectory(path),
-      openTarget: openNavigationTarget,
-      readFileContent: readNavigationFileContent,
-      resolveDeclaredType: resolvePhpDeclaredType,
-      resolveExpressionType: resolvePhpExpressionType,
-      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
-      searchText: (root, query, maxResults) =>
-        textSearch.searchText(root, query, maxResults),
-      synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
-      toRelativePath: relativeWorkspacePath,
-      workspaceRoot,
-    });
+  const {
+    provideLatteDefinition,
+    provideLatteCompletions,
+    provideNettePhpLinkDefinition,
+  } = useLatteIntelligence({
+    currentWorkspaceRootRef,
+    getActiveDocument: () => activeDocumentRef.current,
+    isNetteFrameworkActive,
+    isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
+    joinPath: joinWorkspacePath,
+    listDirectory: (path) => workspaceFiles.readDirectory(path),
+    openTarget: openNavigationTarget,
+    readFileContent: readNavigationFileContent,
+    resolveDeclaredType: resolvePhpDeclaredType,
+    resolveExpressionType: resolvePhpExpressionType,
+    resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
+    searchText: (root, query, maxResults) =>
+      textSearch.searchText(root, query, maxResults),
+    synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
+    toRelativePath: relativeWorkspacePath,
+    workspaceRoot,
+  });
+
+  // NEON config navigation + completion lives in `useNeonIntelligence` (a sibling
+  // strangler module): this mount only injects the collaborators. Class
+  // resolution reuses `openPhpClassTarget` (the same index + PSR-4 resolver a PHP
+  // class jump uses); completion class names come from the project symbol index.
+  const { provideNeonDefinition, provideNeonCompletions } = useNeonIntelligence({
+    currentWorkspaceRootRef,
+    getActiveDocument: () => activeDocumentRef.current,
+    isNetteFrameworkActive,
+    isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
+    joinPath: joinWorkspacePath,
+    openClassTarget: (className) =>
+      openPhpClassTarget(className, className.split("\\").pop() ?? className),
+    openTarget: openNavigationTarget,
+    readFileContent: readNavigationFileContent,
+    searchClassNames: async (root, prefix, maxResults) => {
+      const symbols = await projectSymbolSearch.searchProjectSymbols(
+        root,
+        prefix,
+        maxResults,
+      );
+
+      return symbols
+        .filter(isTypeProjectSymbol)
+        .map((symbol) => symbol.fullyQualifiedName);
+    },
+    toRelativePath: relativeWorkspacePath,
+    workspaceRoot,
+  });
 
   const goToPhpMethodCallDefinition = useCallback(
     async (
@@ -32203,6 +32236,9 @@ export function useWorkbenchController(
     provideBladeDefinition,
     provideLatteCompletions,
     provideLatteDefinition,
+    provideNeonCompletions,
+    provideNeonDefinition,
+    provideNettePhpLinkDefinition,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,

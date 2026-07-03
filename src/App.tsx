@@ -1268,6 +1268,9 @@ function App() {
             provideBladeDefinition={workbench.provideBladeDefinition}
             provideLatteCompletions={workbench.provideLatteCompletions}
             provideLatteDefinition={workbench.provideLatteDefinition}
+            provideNeonCompletions={workbench.provideNeonCompletions}
+            provideNeonDefinition={workbench.provideNeonDefinition}
+            provideNettePhpLinkDefinition={workbench.provideNettePhpLinkDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}

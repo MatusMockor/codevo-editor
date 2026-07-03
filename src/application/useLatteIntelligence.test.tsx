@@ -1181,3 +1181,504 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
     ).resolves.toEqual([]);
   });
 });
+
+/**
+ * Builds an in-memory FS (listDirectory + content-returning readFileContent)
+ * from a map of workspace-relative paths to their file contents, so the
+ * presenter-link flows behave like the real Tauri gateways (unknown dirs /
+ * files throw).
+ */
+function buildContentWorkspace(
+  sources: Record<string, string>,
+  root: string = ROOT,
+) {
+  const fileContents = new Map<string, string>();
+  const directories = new Map<string, Map<string, LatteDirectoryEntry>>();
+  const ensureDirectory = (directory: string): void => {
+    if (!directories.has(directory)) {
+      directories.set(directory, new Map());
+    }
+  };
+
+  for (const [relativePath, content] of Object.entries(sources)) {
+    const absolute = `${root}/${relativePath}`;
+    fileContents.set(absolute, content);
+
+    const segments = relativePath.split("/");
+    let directory = root;
+    ensureDirectory(directory);
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const isFile = index === segments.length - 1;
+      const childPath = `${directory}/${segments[index]}`;
+      ensureDirectory(directory);
+      directories.get(directory)?.set(childPath, {
+        kind: isFile ? "file" : "directory",
+        path: childPath,
+      });
+      directory = childPath;
+
+      if (!isFile) {
+        ensureDirectory(directory);
+      }
+    }
+  }
+
+  const listDirectory = vi.fn(async (path: string): Promise<LatteDirectoryEntry[]> => {
+    const entries = directories.get(path);
+
+    if (!entries) {
+      throw new Error(`no such directory: ${path}`);
+    }
+
+    return Array.from(entries.values());
+  });
+  const readFileContent = vi.fn(async (path: string): Promise<string> => {
+    const content = fileContents.get(path);
+
+    if (content === undefined) {
+      throw new Error(`no such file: ${path}`);
+    }
+
+    return content;
+  });
+
+  return { listDirectory, readFileContent };
+}
+
+const PRODUCT_PRESENTER_SOURCE = `<?php
+
+namespace App\\UI\\Product;
+
+use Nette\\Application\\UI\\Presenter;
+
+class ProductPresenter extends Presenter
+{
+    public function renderShow(): void
+    {
+    }
+
+    public function actionEdit(): void
+    {
+    }
+
+    public function handleDelete(): void
+    {
+    }
+}
+`;
+
+describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
+  it("navigates a {link Product:show} to the presenter renderShow method", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "<a n:href=x>{link Product:show}</a>";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
+  });
+
+  it("navigates an n:href=\"Product:show\" the same way", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<a n:href="Product:show $id">Go</a>';
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
+  });
+
+  it("falls back to the classic presenter when only it exists", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/Presenters/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:show}";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/Presenters/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
+  });
+
+  it("navigates a signal target (delete!) to the handleDelete method", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:delete!}";
+    const offset = source.indexOf("Product:delete") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 17 }),
+      "Product:delete!",
+    );
+  });
+
+  it("resolves a relative action to the current template's presenter", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Product/show.latte` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link edit}";
+    const offset = source.indexOf("edit") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 13 }),
+      "edit",
+    );
+  });
+
+  it("opens at line 1 when the presenter exists but the method is absent", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ listDirectory, openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:missing}";
+    const offset = source.indexOf("Product:missing") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      { column: 1, lineNumber: 1 },
+      "Product:missing",
+    );
+  });
+
+  it("returns false for a dynamic {link $dest}", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link $dest}";
+    const offset = source.indexOf("$dest") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("returns false for a {link this} current-action marker", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link this}";
+    const offset = source.indexOf("this") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the Nette framework is inactive", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      isNetteFrameworkActive: false,
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:show}";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("drops the result when the root changes during the presenter read", async () => {
+    const rootRef = { current: ROOT };
+    const openTarget = vi.fn(async () => true);
+    const readFileContent = vi.fn(async () => {
+      rootRef.current = "/other";
+      return PRODUCT_PRESENTER_SOURCE;
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:show}";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () => {
+  it("navigates $this->link('Product:show') to the presenter method", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$url = $this->link('Product:show', $id);";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
+  });
+
+  it("navigates a relative $this->redirect('edit') to the current presenter", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Product/ProductPresenter.php`,
+      }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->redirect('edit');";
+    const offset = source.indexOf("edit") + 1;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 13 }),
+      "edit",
+    );
+  });
+
+  it("returns false for a dynamic PHP link argument", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link($destination);";
+    const offset = source.indexOf("$destination") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the Nette framework is inactive", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      isNetteFrameworkActive: false,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('Product:show');";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("createLatteIntelligence presenter link completion (S7)", () => {
+  const PRESENTERS = {
+    "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    "app/UI/Home/HomePresenter.php": `<?php
+namespace App\\UI\\Home;
+class HomePresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderDefault(): void {}
+}
+`,
+  };
+
+  it("offers Presenter:action targets in a {link} macro", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link P}";
+    const offset = source.indexOf("P") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("Product:show");
+    expect(labels).toContain("Product:edit");
+    expect(labels).toContain("Product:delete!");
+    expect(completions.every((completion) => completion.kind === "link")).toBe(
+      true,
+    );
+  });
+
+  it("filters targets by the typed prefix", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link Product:s}";
+    const offset = source.indexOf("Product:s") + "Product:s".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "Product:show",
+    ]);
+  });
+
+  it("offers targets inside an n:href attribute", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<a n:href="Home">';
+    const offset = source.indexOf("Home") + "Home".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toContain(
+      "Home:default",
+    );
+  });
+
+  it("caches presenter discovery across completion requests", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link P}";
+    const position = positionAtOffset(source, source.indexOf("P") + 1);
+
+    await latte.provideLatteCompletions(source, position);
+    const callsAfterFirst = listDirectory.mock.calls.length;
+    await latte.provideLatteCompletions(source, position);
+
+    expect(listDirectory.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("returns nothing when the Nette framework is inactive", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({
+      isNetteFrameworkActive: false,
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link P}";
+    const position = positionAtOffset(source, source.indexOf("P") + 1);
+
+    await expect(
+      latte.provideLatteCompletions(source, position),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("drops link completions when the root changes during discovery", async () => {
+    const rootRef = { current: ROOT };
+    const built = buildContentWorkspace(PRESENTERS);
+    const listDirectory = vi.fn(async (path: string) => {
+      rootRef.current = "/other";
+      return built.listDirectory(path);
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      listDirectory,
+      readFileContent: built.readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link P}";
+    const position = positionAtOffset(source, source.indexOf("P") + 1);
+
+    await expect(
+      latte.provideLatteCompletions(source, position),
+    ).resolves.toEqual([]);
+  });
+});

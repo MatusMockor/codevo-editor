@@ -39,6 +39,15 @@ import {
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
 import {
+  detectLatteLinkAt,
+  detectPhpPresenterLinkAt,
+  nettePresenterActionMethodCandidates,
+  nettePresenterClassCandidatePathsForLink,
+  nettePresenterLinkCompletionContextAt,
+  parseNetteLinkTarget,
+} from "../domain/latteLinkNavigation";
+import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
+import {
   LATTE_BUILTIN_FILTERS,
   innermostLatteExpressionSpanAt,
   latteForeachLoopBindingsAt,
@@ -74,7 +83,8 @@ export type LatteCompletionItemKind =
   | "template"
   | "variable"
   | "member"
-  | "filter";
+  | "filter"
+  | "link";
 
 /**
  * A Latte completion the hook hands to the Monaco "latte" provider. Structurally
@@ -185,6 +195,17 @@ export interface LatteIntelligence {
     position: EditorPosition,
   ): Promise<LatteCompletionItem[]>;
   provideLatteDefinition(source: string, offset: number): Promise<boolean>;
+  /**
+   * Cmd+B on a PHP presenter link (`$this->link('Product:show')`,
+   * `->redirect(...)`, `->forward(...)`, ...): resolves the target the same way
+   * as the Latte `{link}` / `n:href` navigation and opens the presenter at its
+   * action / render / handle method. Wired into the Monaco `php` definition
+   * chain by the controller mount; inert outside a Nette semantic project.
+   */
+  provideNettePhpLinkDefinition(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
 }
 
 interface LatteTemplateCacheEntry {
@@ -211,6 +232,24 @@ export type LatteViewDataCache = Record<string, LatteViewDataCacheEntry>;
 
 /** In-flight view-data loads keyed by requested root (concurrent callers join). */
 type LatteViewDataInFlight = Map<string, Promise<PhpFrameworkViewDataEntry[]>>;
+
+interface LattePresenterCacheEntry {
+  expiresAt: number;
+  /** `Presenter:action` targets discovered under the workspace, sorted. */
+  targets: string[];
+}
+
+/**
+ * Per-root cache of the discovered `Presenter:action` link targets (keyed by
+ * requested root). Hook-owned (the strangler mount stays thin) and subject to
+ * the same TTL + cross-root eviction the template / view-data caches use, so a
+ * single active project holds at most one entry and switching projects never
+ * leaks a previous root's presenter list.
+ */
+export type LattePresenterCache = Record<string, LattePresenterCacheEntry>;
+
+/** In-flight presenter scans keyed by requested root (concurrent callers join). */
+type LattePresenterInFlight = Map<string, Promise<string[]>>;
 
 /**
  * Everything one expression-completion request carries down the resolution
@@ -280,6 +319,38 @@ const MAX_LATTE_TYPE_RESOLUTION_DEPTH = 8;
 const PHP_EXTENSION = ".php";
 const PRESENTER_SUFFIX = "Presenter.php";
 
+/**
+ * TTL for the per-root discovered `Presenter:action` link-target listing (spec
+ * §6b). Mirrors the template / view-data caches: a short TTL bounds staleness
+ * after a presenter is added / changed, while `evictOtherRootCacheEntries`
+ * bounds cross-root growth. Precise file-change invalidation is the same
+ * documented follow-up.
+ */
+const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
+
+/**
+ * Directory a Nette project keeps its presenters under - both the classic
+ * (`app/Presenters`) and modern (`app/UI/<Name>`) conventions live below `app`,
+ * so the link-target discovery scans it alone (never `vendor` / `templates`).
+ */
+const LATTE_PRESENTER_SCAN_DIRECTORIES: readonly string[] = ["app"];
+
+/**
+ * The Nette current-action marker (`{link this}`): a destination that reloads
+ * the current presenter/action and so cannot be resolved to a named method
+ * statically. Navigation is declined for it (spec §4.7).
+ */
+const NETTE_THIS_ACTION = "this";
+
+/**
+ * A presenter action / render / signal method declaration. The `[A-Z]` after
+ * the prefix rejects a bare `render()` / `action()` (whose concrete action is
+ * unknowable), so only named `renderShow` / `actionEdit` / `handleDelete`
+ * methods become concrete link targets.
+ */
+const PRESENTER_LINK_METHOD =
+  /\bfunction\s+&?(action|render|handle)([A-Z][A-Za-z0-9_]*)\s*\(/g;
+
 /** Bound for the backward scan that finds a bare `{layout}` macro before a cursor. */
 const MAX_BARE_LAYOUT_SCAN = 2_000;
 
@@ -330,6 +401,7 @@ export function createLatteIntelligence(
   getDependencies: () => LatteIntelligenceDependencies,
   templateCache: LatteTemplateCache = {},
   viewDataCache: LatteViewDataCache = {},
+  presenterCache: LattePresenterCache = {},
 ): LatteIntelligence {
   /**
    * Per-instance in-flight registry for the view-data loads, so concurrent
@@ -339,6 +411,12 @@ export function createLatteIntelligence(
    * only by requests for that same root) so no eviction pass is needed.
    */
   const viewDataInFlight: LatteViewDataInFlight = new Map();
+  /**
+   * Per-instance in-flight registry for the presenter link-target discovery,
+   * collapsing the completion-per-keystroke storm into one scan per root
+   * (mirrors `viewDataInFlight`).
+   */
+  const presenterInFlight: LattePresenterInFlight = new Map();
 
   const provideLatteDefinition = async (
     source: string,
@@ -347,6 +425,7 @@ export function createLatteIntelligence(
     const deps = getDependencies();
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return false;
@@ -361,6 +440,19 @@ export function createLatteIntelligence(
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
     const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
+
+    const linkHandled = await resolveNetteLinkDefinition(
+      deps,
+      requestedRoot,
+      isRequestedRootActive,
+      detectLatteLinkAt(source, offset),
+      currentTemplateRelativePath,
+    );
+
+    if (linkHandled) {
+      return true;
+    }
+
     const reference = detectLatteReferenceAt(source, offset);
 
     if (reference && reference.kind !== "template") {
@@ -407,6 +499,7 @@ export function createLatteIntelligence(
     const deps = getDependencies();
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return [];
@@ -439,6 +532,25 @@ export function createLatteIntelligence(
       return latteTagCompletions(tagCompletion.prefix, tagCompletion.start, offset);
     }
 
+    const linkCompletion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset,
+      "latte",
+    );
+
+    if (linkCompletion) {
+      return lattePresenterLinkCompletions(
+        {
+          cache: presenterCache,
+          deps,
+          inFlight: presenterInFlight,
+          isRequestedRootActive,
+          requestedRoot,
+        },
+        linkCompletion,
+      );
+    }
+
     return latteExpressionCompletions(
       {
         deps,
@@ -452,7 +564,48 @@ export function createLatteIntelligence(
     );
   };
 
-  return { provideLatteCompletions, provideLatteDefinition };
+  const provideNettePhpLinkDefinition = async (
+    source: string,
+    offset: number,
+  ): Promise<boolean> => {
+    const deps = getDependencies();
+    evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
+
+    if (!isLatteSemanticActive(deps)) {
+      return false;
+    }
+
+    const requestedRoot = deps.workspaceRoot;
+
+    if (!requestedRoot) {
+      return false;
+    }
+
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const detection = detectPhpPresenterLinkAt(source, offset);
+
+    if (!detection) {
+      return false;
+    }
+
+    return resolveNettePresenterLink(
+      deps,
+      requestedRoot,
+      isRequestedRootActive,
+      parseNetteLinkTarget(detection.target),
+      currentTemplatePath(deps, requestedRoot),
+      detection.target,
+    );
+  };
+
+  return {
+    provideLatteCompletions,
+    provideLatteDefinition,
+    provideNettePhpLinkDefinition,
+  };
 }
 
 /**
@@ -468,6 +621,7 @@ export function useLatteIntelligence(
   dependenciesRef.current = dependencies;
   const templateCacheRef = useRef<LatteTemplateCache>({});
   const viewDataCacheRef = useRef<LatteViewDataCache>({});
+  const presenterCacheRef = useRef<LattePresenterCache>({});
   const apiRef = useRef<LatteIntelligence | null>(null);
 
   if (!apiRef.current) {
@@ -475,6 +629,7 @@ export function useLatteIntelligence(
       () => dependenciesRef.current,
       templateCacheRef.current,
       viewDataCacheRef.current,
+      presenterCacheRef.current,
     );
   }
 
@@ -519,6 +674,397 @@ async function fileExists(
   } catch {
     return false;
   }
+}
+
+// --- presenter link navigation + completion (S7) ---------------------------
+
+/** Everything one presenter link-target discovery pass threads down its chain. */
+interface LattePresenterDiscoveryContext {
+  cache: LattePresenterCache;
+  deps: LatteIntelligenceDependencies;
+  inFlight: LattePresenterInFlight;
+  isRequestedRootActive: () => boolean;
+  requestedRoot: string;
+}
+
+/**
+ * Resolves a detected Latte `{link}` / `{plink}` / `n:href` target to its
+ * presenter action / render / handle method and opens it. Returns `false` (so
+ * the caller can fall through to template navigation) when the cursor is not on
+ * a link target or the target is dynamic / `this` / unresolvable.
+ */
+async function resolveNetteLinkDefinition(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+  isRequestedRootActive: () => boolean,
+  detection: ReturnType<typeof detectLatteLinkAt>,
+  currentRelativePath: string,
+): Promise<boolean> {
+  if (!detection) {
+    return false;
+  }
+
+  return resolveNettePresenterLink(
+    deps,
+    requestedRoot,
+    isRequestedRootActive,
+    parseNetteLinkTarget(detection.target),
+    currentRelativePath,
+    detection.target,
+  );
+}
+
+/**
+ * Shared resolution behind BOTH the Latte-link and PHP-link definition: maps a
+ * parsed link target to its presenter class candidates (module-aware, both Nette
+ * conventions), opens the FIRST that exists, and lands the cursor on the
+ * matching `action*` / `render*` / `handle*` method (falling back to line 1 when
+ * the presenter exists but the method is absent). Conservative: a dynamic /
+ * `this` / method-less target opens nothing. Every await is followed by a
+ * live-root re-check so a tab switch drops the result.
+ */
+async function resolveNettePresenterLink(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+  isRequestedRootActive: () => boolean,
+  parsed: NetteLinkTarget | null,
+  currentRelativePath: string,
+  label: string,
+): Promise<boolean> {
+  if (!parsed || parsed.action === NETTE_THIS_ACTION) {
+    return false;
+  }
+
+  const methodNames = nettePresenterActionMethodCandidates(
+    parsed.action,
+    parsed.isSignal,
+  );
+
+  if (methodNames.length === 0) {
+    return false;
+  }
+
+  const candidatePaths = nettePresenterClassCandidatePathsForLink(
+    parsed,
+    currentRelativePath,
+  );
+
+  for (const relativePath of candidatePaths) {
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const position = phpMethodPositionInSource(content, methodNames) ?? {
+      column: 1,
+      lineNumber: 1,
+    };
+
+    return deps.openTarget(path, position, label);
+  }
+
+  return false;
+}
+
+/**
+ * The editor position of the FIRST of `methodNames` declared in `source`
+ * (candidates arrive in Nette lifecycle order - `action*` before `render*`), or
+ * `null` when none is present. A single non-backtracking regex per name; the
+ * cursor lands on the method name itself.
+ */
+function phpMethodPositionInSource(
+  source: string,
+  methodNames: readonly string[],
+): EditorPosition | null {
+  for (const name of methodNames) {
+    const pattern = new RegExp(`\\bfunction\\s+&?${name}\\b`);
+    const match = pattern.exec(source);
+
+    if (match) {
+      const nameOffset = match.index + match[0].length - name.length;
+      return editorPositionAtOffset(source, nameOffset);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * `Presenter:action` link-target completions from the per-root presenter
+ * discovery, filtered by the typed prefix. The discovery is lazy + cached +
+ * in-flight-collapsed (spec §6b), and the post-await live-root re-check drops a
+ * switched project's result.
+ */
+async function lattePresenterLinkCompletions(
+  context: LattePresenterDiscoveryContext,
+  completion: { prefix: string; replaceEnd: number; replaceStart: number },
+): Promise<LatteCompletionItem[]> {
+  const targets = await loadNettePresenterLinkTargets(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return targets
+    .filter((target) => target.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, LATTE_MAX_COMPLETIONS)
+    .map((target) => ({
+      detail: "Nette presenter action",
+      insertText: target,
+      kind: "link" as const,
+      label: target,
+      replaceEnd: completion.replaceEnd,
+      replaceStart: completion.replaceStart,
+    }));
+}
+
+/**
+ * Loads (and per-root caches) the discovered `Presenter:action` targets.
+ * Concurrent callers for the same root share one in-flight scan (Monaco fires a
+ * completion per keystroke), mirroring the view-data loader.
+ */
+async function loadNettePresenterLinkTargets(
+  context: LattePresenterDiscoveryContext,
+): Promise<string[]> {
+  const { cache, inFlight, requestedRoot } = context;
+  const cached = cache[requestedRoot];
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.targets;
+  }
+
+  const existing = inFlight.get(requestedRoot);
+
+  if (existing) {
+    return existing;
+  }
+
+  const load = scanNettePresenterLinkTargets(context).finally(() => {
+    if (inFlight.get(requestedRoot) === load) {
+      inFlight.delete(requestedRoot);
+    }
+  });
+
+  inFlight.set(requestedRoot, load);
+
+  return load;
+}
+
+/**
+ * The presenter discovery scan: a bounded walk of `app` collecting
+ * `*Presenter.php` files (reusing the template scan's depth / count / skip-list
+ * bounds), then a cheap per-file regex extracting each presenter's
+ * `Presenter:action` targets. Per-project isolation: `requestedRoot` was
+ * captured by the caller and is re-checked after EVERY await; a stale root drops
+ * the result without writing the cache.
+ */
+async function scanNettePresenterLinkTargets(
+  context: LattePresenterDiscoveryContext,
+): Promise<string[]> {
+  const { cache, deps, isRequestedRootActive, requestedRoot } = context;
+  const presenterPaths = new Set<string>();
+  const scanState: LatteTemplateScanState = {
+    templatesFound: 0,
+    visitedDirectories: new Set<string>(),
+  };
+
+  for (const directory of LATTE_PRESENTER_SCAN_DIRECTORIES) {
+    await collectNettePresenterPaths(
+      deps,
+      deps.joinPath(requestedRoot, directory),
+      presenterPaths,
+      isRequestedRootActive,
+      0,
+      scanState,
+    );
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
+      break;
+    }
+  }
+
+  const targets = new Set<string>();
+
+  for (const path of presenterPaths) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const target of nettePresenterLinkTargetsFromSource(path, content)) {
+      targets.add(target);
+    }
+  }
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  const sorted = Array.from(targets).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  cache[requestedRoot] = {
+    expiresAt: Date.now() + LATTE_PRESENTER_CACHE_TTL_MS,
+    targets: sorted,
+  };
+
+  return sorted;
+}
+
+/**
+ * Recursively walks one scan-root directory collecting `*Presenter.php` file
+ * paths, bounded on the same three axes as the template scan (spec §6b): depth,
+ * total count, and a visited-directory set. Deterministic: exceeding a bound
+ * stops that branch and returns whatever was already collected.
+ */
+async function collectNettePresenterPaths(
+  deps: LatteIntelligenceDependencies,
+  directory: string,
+  into: Set<string>,
+  isRequestedRootActive: () => boolean,
+  depth: number,
+  scanState: LatteTemplateScanState,
+): Promise<void> {
+  if (depth > MAX_LATTE_SCAN_DEPTH) {
+    return;
+  }
+
+  if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
+    return;
+  }
+
+  if (scanState.visitedDirectories.has(directory)) {
+    return;
+  }
+
+  scanState.visitedDirectories.add(directory);
+
+  let entries: LatteDirectoryEntry[];
+
+  try {
+    entries = await deps.listDirectory(directory);
+  } catch {
+    return;
+  }
+
+  if (!isRequestedRootActive()) {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!isRequestedRootActive()) {
+      return;
+    }
+
+    if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
+      return;
+    }
+
+    if (entry.kind === "directory") {
+      if (isLatteScanSkippedDirectory(entry.path)) {
+        continue;
+      }
+
+      await collectNettePresenterPaths(
+        deps,
+        entry.path,
+        into,
+        isRequestedRootActive,
+        depth + 1,
+        scanState,
+      );
+      continue;
+    }
+
+    if (!entry.path.endsWith(PRESENTER_SUFFIX)) {
+      continue;
+    }
+
+    into.add(entry.path);
+    scanState.templatesFound += 1;
+  }
+}
+
+/**
+ * The concrete `Presenter:action` link targets declared by one presenter source:
+ * `render*` / `action*` yield `<Short>:<action>`, `handle*` yields the signal
+ * form `<Short>:<action>!`. Bare `render()` / `action()` are skipped (their
+ * action is unknowable). `<Short>` is the file's presenter short name.
+ */
+function nettePresenterLinkTargetsFromSource(
+  presenterPath: string,
+  source: string,
+): string[] {
+  const shortName = nettePresenterShortNameFromPath(presenterPath);
+
+  if (!shortName) {
+    return [];
+  }
+
+  const targets: string[] = [];
+
+  for (const match of source.matchAll(PRESENTER_LINK_METHOD)) {
+    const kind = match[1] ?? "";
+    const rest = match[2] ?? "";
+    const action = rest.charAt(0).toLowerCase() + rest.slice(1);
+
+    targets.push(
+      kind === "handle"
+        ? `${shortName}:${action}!`
+        : `${shortName}:${action}`,
+    );
+  }
+
+  return targets;
+}
+
+function nettePresenterShortNameFromPath(presenterPath: string): string | null {
+  const fileName = presenterPath.split("/").pop() ?? "";
+
+  if (!fileName.endsWith(PRESENTER_SUFFIX)) {
+    return null;
+  }
+
+  const shortName = fileName.slice(0, -PRESENTER_SUFFIX.length);
+
+  return shortName.length > 0 ? shortName : null;
 }
 
 function latteTagCompletions(
