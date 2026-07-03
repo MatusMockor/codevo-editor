@@ -1804,6 +1804,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
     expect(getWorkbench().openDocuments).toEqual([]);
     expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().previewPath).toBeNull();
   });
 
   it("ignores inactive workspace runtime dispose errors after switching project tabs", async () => {

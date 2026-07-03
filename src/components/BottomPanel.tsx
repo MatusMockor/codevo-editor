@@ -16,7 +16,7 @@ import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { GitHistoryPanel } from "./GitHistoryPanel";
 import { RuntimeObservabilityPanel } from "./RuntimeObservabilityPanel";
-import type { GitHistoryGateway } from "../domain/git";
+import type { FileChange, GitHistoryGateway } from "../domain/git";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 
@@ -43,6 +43,7 @@ interface BottomPanelProps {
     commitHash: string,
     path: string,
     oldPath: string | null,
+    files?: FileChange[],
   ): Promise<void> | void;
   terminalGateway: TerminalGateway;
   terminalTheme: TerminalTheme;
