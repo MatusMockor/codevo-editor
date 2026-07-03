@@ -39,9 +39,11 @@ import {
   phpFrameworkViewReferenceAt,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
+  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
   resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import { NETTE_VIEW_DATA_SEARCH_QUERIES } from "./netteViewData";
 import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
 import {
   phpLaravelNamedRouteDefinitions,
@@ -1249,7 +1251,7 @@ return new class extends Migration
       ]);
     });
 
-    it("is a safe no-op through every dispatcher (no capabilities yet)", () => {
+    it("stays inert through the dispatchers it does not implement", () => {
       const providers = [phpNetteFrameworkProvider];
 
       expect(
@@ -1258,6 +1260,8 @@ return new class extends Migration
       expect(
         isKnownPhpFrameworkStaticMethod("<?php", "Article", "render", providers),
       ).toBe(false);
+      // No presenter/control context in a bare source, so magic suppression is
+      // conservatively off (never a false positive).
       expect(
         isKnownPhpFrameworkMemberMethod("<?php", "$this", "render", providers),
       ).toBe(false);
@@ -1279,6 +1283,93 @@ return new class extends Migration
       expect(
         phpFrameworkContainerBindingsFromSource("<?php", providers),
       ).toEqual([]);
+    });
+  });
+
+  describe("phpNetteFrameworkProvider wired capabilities (S5/S6)", () => {
+    const providers = [phpNetteFrameworkProvider];
+    const presenterSource = `<?php
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        /** @var \\App\\Model\\Product $product */
+        $product = $this->products->get(1);
+        $this->template->product = $product;
+    }
+}
+`;
+
+    it("exposes the Nette view-data capability through the dispatch (1:1 with the extractor)", () => {
+      expect(phpFrameworkSupportsViewData(providers)).toBe(true);
+      expect(phpFrameworkViewDataSearchQueries(providers)).toEqual(
+        NETTE_VIEW_DATA_SEARCH_QUERIES,
+      );
+
+      const entry = phpFrameworkViewDataEntryFromSource(
+        presenterSource,
+        providers,
+      );
+
+      expect(entry?.bindings).toEqual([
+        {
+          viewName: "Product:show",
+          variables: [
+            expect.objectContaining({ name: "$product" }),
+          ],
+        },
+      ]);
+    });
+
+    it("downgrades a call on $this->template to a nette-magic hint (methods only)", () => {
+      const magicSource = `<?php
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        $this->template->renderInvoice();
+    }
+}
+`;
+
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          magicSource,
+          "$this->template",
+          "renderInvoice",
+          providers,
+        ),
+      ).toBe(true);
+      expect(phpNetteFrameworkProvider.diagnostics?.magicSource).toBe(
+        NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+      );
+      // Nette has no static magic to suppress.
+      expect(
+        isKnownPhpFrameworkStaticMethod(
+          magicSource,
+          "Product",
+          "renderInvoice",
+          providers,
+        ),
+      ).toBe(false);
+    });
+
+    it("leaves Laravel dispatch untouched (exclusive resolution, no blend)", () => {
+      const laravelOnly = [phpLaravelFrameworkProvider];
+
+      expect(phpFrameworkViewDataSearchQueries(laravelOnly)).not.toEqual(
+        NETTE_VIEW_DATA_SEARCH_QUERIES,
+      );
+      // A Nette presenter idiom is NOT recognised as Laravel magic.
+      expect(
+        isKnownPhpFrameworkMemberMethod(
+          presenterSource,
+          "$this->template",
+          "product",
+          laravelOnly,
+        ),
+      ).toBe(false);
+      expect(phpLaravelFrameworkProvider.diagnostics?.magicSource).toBeUndefined();
     });
   });
 
@@ -1720,23 +1811,28 @@ return new class extends Migration
     });
 
     it("reports view-data support only for providers shipping the capability", () => {
+      const capabilitylessProvider: PhpFrameworkProvider = { id: "bare" };
+
       expect(phpFrameworkSupportsViewData([phpLaravelFrameworkProvider])).toBe(
         true,
       );
       expect(phpFrameworkSupportsViewData([phpNetteFrameworkProvider])).toBe(
-        false,
+        true,
       );
+      expect(phpFrameworkSupportsViewData([capabilitylessProvider])).toBe(false);
       expect(phpFrameworkSupportsViewData([])).toBe(false);
     });
 
     it("stays a safe no-op for providers without the viewData capability", () => {
+      const capabilitylessProvider: PhpFrameworkProvider = { id: "bare" };
+
       expect(
         phpFrameworkViewDataEntryFromSource(viewDataSource, [
-          phpNetteFrameworkProvider,
+          capabilitylessProvider,
         ]),
       ).toBeNull();
       expect(
-        phpFrameworkViewDataSearchQueries([phpNetteFrameworkProvider]),
+        phpFrameworkViewDataSearchQueries([capabilitylessProvider]),
       ).toEqual([]);
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(phpFrameworkViewDataEntryFromSource(viewDataSource, [])).toBeNull();

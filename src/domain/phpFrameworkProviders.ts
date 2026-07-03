@@ -38,6 +38,14 @@ import {
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import {
+  NETTE_VIEW_DATA_SEARCH_QUERIES,
+  netteViewDataEntryFromSource,
+} from "./netteViewData";
+import {
+  isNetteComponentAccess,
+  isNetteTemplateMagicMember,
+} from "./netteMagicDiagnostics";
+import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
@@ -331,6 +339,17 @@ export interface PhpFrameworkProvider {
   diagnostics?: {
     isKnownMemberMethod?: (context: PhpFrameworkMemberMethodContext) => boolean;
     isKnownStaticMethod?: (context: PhpFrameworkStaticMethodContext) => boolean;
+    /**
+     * Optional diagnostic `source` label stamped on a framework-magic hint when
+     * THIS provider's magic classification fires (spec §4.6). Absent → the
+     * shared `laravel-magic` marker, so Laravel output stays byte-identical; the
+     * Nette provider overrides it to `nette-magic` so a Nette project's
+     * downgraded hints are not mislabelled as Laravel. Read once per filter pass
+     * by `phpLanguageServerDiagnosticFilters`; it never affects severity or
+     * WHICH diagnostics are downgraded (that is driven purely by the predicates
+     * above), only the label a user sees on the resulting soft hint.
+     */
+    magicSource?: string;
   };
   routes?: {
     referenceAt?: (
@@ -606,16 +625,59 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
 };
 
 /**
- * Nette provider skeleton. Detection is wired today so the framework profile and
- * per-workspace exclusivity resolve correctly; the capabilities (templating,
- * viewData, routes, diagnostics, config) arrive in later slices. Until then this
- * provider carries no capability objects, and every dispatcher treats it as a
- * safe no-op via optional chaining - it can never crash the completion/diagnostic
- * hot path.
+ * Diagnostic `source` label stamped on downgraded Nette framework-magic hints
+ * (a call on `$this->template`, a magically-obtained component) so they read as
+ * "nette-magic" rather than the shared Laravel marker. See
+ * `PhpFrameworkProvider.diagnostics.magicSource`.
+ */
+export const NETTE_MAGIC_DIAGNOSTIC_SOURCE = "nette-magic";
+
+/**
+ * Nette provider. Detection resolves the framework profile + per-workspace
+ * exclusivity; the wired capabilities (S5/S6) are:
+ *   - `viewData`: presenter/control -> Latte template variables, so the generic
+ *     controller view-data loader and the Latte intelligence hook surface
+ *     `{$product->}` completions through the SAME provider dispatch Laravel uses
+ *     for Blade (no framework-specific branch in the controller).
+ *   - `diagnostics`: METHOD-level Nette magic suppression (spec §4.6), labelled
+ *     `nette-magic`.
+ * Other capabilities (templating references, routes, config) land in later
+ * slices; every dispatcher treats an absent capability as a safe no-op via
+ * optional chaining, so this provider can never crash a hot path.
  */
 export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   id: "nette",
   appliesTo: (php) => isNettePhpProject(php),
+  diagnostics: {
+    // Method-level Nette magic suppression (spec §4.6): a call on the Latte
+    // template object (`$this->template->foo()`) or on a magically-obtained
+    // component (`$this->getComponent('x')->bar()`, `$this['x']->bar()`) is
+    // framework-provided at runtime, so phpactor's "does not exist" is a false
+    // positive - downgraded to a soft `nette-magic` hint, never dropped. The
+    // predicates default to false whenever the source lacks a
+    // presenter/control/component context, so a plain service is untouched.
+    // Bare magic PROPERTIES (`$this->template->invoice`) need the known-PROPERTY
+    // provider seam (a documented follow-up per the netteMagicDiagnostics
+    // header), and Nette has no static magic to suppress, so
+    // `isKnownStaticMethod` is intentionally absent.
+    isKnownMemberMethod: ({
+      methodName,
+      receiverClassName,
+      receiverExpression,
+      source,
+    }) =>
+      isNetteComponentAccess(source, { methodName, receiverExpression }) ||
+      isNetteTemplateMagicMember(source, {
+        memberName: methodName,
+        receiverClassName,
+        receiverExpression,
+      }),
+    magicSource: NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+  },
+  viewData: {
+    entryFromSource: ({ source }) => netteViewDataEntryFromSource(source),
+    searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
+  },
 };
 
 export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [];

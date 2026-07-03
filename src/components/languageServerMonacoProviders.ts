@@ -293,9 +293,15 @@ export interface BladeCompletion {
 /**
  * The Monaco icon bucket a Latte completion maps to: a Latte tag name (`{if}`,
  * `{include}`, …) is a keyword; a template name inside an `{include '...'}`
- * literal is a file.
+ * literal is a file; a `{$var}` template variable is a variable; a `{$var->}`
+ * member is a field; a `|filter` name is a function.
  */
-export type LatteCompletionKind = "tag" | "template";
+export type LatteCompletionKind =
+  | "tag"
+  | "template"
+  | "variable"
+  | "member"
+  | "filter";
 
 /**
  * A single Latte completion item produced by the controller. Like Blade, Latte
@@ -1007,8 +1013,11 @@ export function registerLanguageServerMonacoProviders(
     "latte",
     {
       // `{` opens the tag list, `'`/`"` open the `{include '...'}` template list,
-      // and `.`/`/` keep it refreshing as a dotted / nested path is typed.
-      triggerCharacters: ["{", "'", "\"", ".", "/"],
+      // `.`/`/` keep it refreshing as a dotted / nested path is typed, `$` opens
+      // the `{$var}` variable list, `>` opens `{$var->}` member completion (the
+      // `-` before it is already a word char Monaco keeps typing through), and
+      // `|` opens the filter list.
+      triggerCharacters: ["{", "$", ">", "|", "'", "\"", ".", "/"],
       provideCompletionItems: (model, position) =>
         provideLatteCompletionItems(monaco, context, model, position),
     },
@@ -1395,6 +1404,18 @@ function monacoLatteCompletionKind(
 ): Monaco.languages.CompletionItemKind {
   if (kind === "template") {
     return monaco.languages.CompletionItemKind.File;
+  }
+
+  if (kind === "variable") {
+    return monaco.languages.CompletionItemKind.Variable;
+  }
+
+  if (kind === "member") {
+    return monaco.languages.CompletionItemKind.Field;
+  }
+
+  if (kind === "filter") {
+    return monaco.languages.CompletionItemKind.Function;
   }
 
   return monaco.languages.CompletionItemKind.Keyword;

@@ -124,12 +124,38 @@ export function filterPhpLanguageServerDiagnostics(
   diagnostics: LanguageServerDiagnostic[],
   options: PhpLanguageServerDiagnosticFilterOptions = {},
 ): LanguageServerDiagnostic[] {
+  const magicSource = frameworkMagicDiagnosticSource(
+    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+  );
+
   return diagnostics.flatMap((diagnostic) =>
     applyPhpDiagnosticClassification(
       diagnostic,
       classifyPhpLanguageServerDiagnostic(source, diagnostic, options),
+      magicSource,
     ),
   );
+}
+
+/**
+ * The diagnostic `source` label to stamp on a downgraded framework-magic hint:
+ * the first active provider's own `diagnostics.magicSource`, else the shared
+ * `laravel-magic` marker. Framework resolution is EXCLUSIVE (at most one active
+ * provider), so the label is unambiguous - a Nette project yields `nette-magic`,
+ * a Laravel project (no override) keeps `laravel-magic` byte-for-byte.
+ */
+function frameworkMagicDiagnosticSource(
+  providers: readonly PhpFrameworkProvider[],
+): string {
+  for (const provider of providers) {
+    const magicSource = provider.diagnostics?.magicSource;
+
+    if (magicSource) {
+      return magicSource;
+    }
+  }
+
+  return LARAVEL_MAGIC_DIAGNOSTIC_SOURCE;
 }
 
 /**
@@ -249,6 +275,7 @@ export function classifyPhpLanguageServerDiagnostic(
 function applyPhpDiagnosticClassification(
   diagnostic: LanguageServerDiagnostic,
   reason: PhpDiagnosticClassificationReason | null,
+  magicSource: string,
 ): LanguageServerDiagnostic[] {
   if (reason === "parse-artifact") {
     return [];
@@ -259,7 +286,7 @@ function applyPhpDiagnosticClassification(
   }
 
   if (reason === "framework-magic") {
-    return [downgradePhpDiagnosticToFrameworkMagicHint(diagnostic)];
+    return [downgradePhpDiagnosticToFrameworkMagicHint(diagnostic, magicSource)];
   }
 
   return [diagnostic];
@@ -267,11 +294,12 @@ function applyPhpDiagnosticClassification(
 
 function downgradePhpDiagnosticToFrameworkMagicHint(
   diagnostic: LanguageServerDiagnostic,
+  magicSource: string,
 ): LanguageServerDiagnostic {
   return {
     ...diagnostic,
     severity: "hint",
-    source: LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+    source: magicSource,
   };
 }
 

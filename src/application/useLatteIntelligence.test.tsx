@@ -10,6 +10,7 @@ import {
   type LatteIntelligence,
   type LatteIntelligenceDependencies,
   type LatteTemplateCache,
+  type LatteViewDataCache,
 } from "./useLatteIntelligence";
 
 const ROOT = "/ws";
@@ -89,6 +90,17 @@ function makeDeps(
     openTarget: vi.fn(async () => true),
     readFileContent: vi.fn(async () => {
       throw new Error("missing");
+    }),
+    // Identity resolution: the fixture presenters carry FQN `@var` docblocks,
+    // so the declared hint is already fully qualified. The FQN-resolution
+    // behavior itself is pinned by a dedicated test below.
+    resolveDeclaredType: (_source, typeHint) => typeHint,
+    resolveExpressionType: vi.fn(async () => null),
+    resolvePhpReceiverCompletions: vi.fn(async () => []),
+    searchText: vi.fn(async () => []),
+    synthesizeTypedReceiverSource: (variableName, typeName) => ({
+      position: { column: 1, lineNumber: 3 },
+      source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
     }),
     toRelativePath: (root, path) =>
       path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path,
@@ -617,5 +629,555 @@ describe("createLatteIntelligence workspace template scan bounds (F2)", () => {
     );
 
     expect(sharedListingCalls.length).toBe(1);
+  });
+});
+
+const HOME_PRESENTER_SOURCE = `<?php
+
+namespace App\\UI\\Home;
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+    public function renderDefault(): void
+    {
+        /** @var \\App\\Model\\Invoice $invoice */
+        $invoice = $this->invoices->get(1);
+        $this->template->invoice = $invoice;
+    }
+
+    public function beforeRender(): void
+    {
+        /** @var \\App\\Model\\Menu $menu */
+        $menu = $this->menuFactory->create();
+        $this->template->menu = $menu;
+    }
+}
+`;
+
+/**
+ * Fakes the workspace text search + file reader over a set of presenter sources,
+ * so the presenter view-data flow behaves like the real controller gateways
+ * (every anchor query returns the presenter paths; unknown files throw).
+ */
+function buildNettePresenterWorkspace(
+  sources: Record<string, string>,
+  root: string = ROOT,
+) {
+  const absoluteSources = new Map<string, string>();
+
+  for (const [relativePath, source] of Object.entries(sources)) {
+    absoluteSources.set(`${root}/${relativePath}`, source);
+  }
+
+  const searchText = vi.fn(async () =>
+    Array.from(absoluteSources.keys()).map((path) => ({ path })),
+  );
+  const readFileContent = vi.fn(async (path: string) => {
+    const source = absoluteSources.get(path);
+
+    if (source === undefined) {
+      throw new Error(`no such file: ${path}`);
+    }
+
+    return source;
+  });
+
+  return { readFileContent, searchText };
+}
+
+describe("createLatteIntelligence member completion ({$var->})", () => {
+  it("resolves a presenter variable's type and dispatches member completion via the dep", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Invoice",
+        name: "getTotal",
+        parameters: "",
+        returnType: "float",
+      },
+    ]);
+    const deps = makeDeps({
+      readFileContent,
+      resolvePhpReceiverCompletions,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "invoice",
+      "\\App\\Model\\Invoice",
+    );
+    expect(completions.map((completion) => completion.label)).toContain(
+      "getTotal",
+    );
+    expect(completions.every((completion) => completion.kind === "member")).toBe(
+      true,
+    );
+  });
+
+  it("matches a wildcard presenter binding (beforeRender applies to every action)", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$menu->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "menu",
+      "\\App\\Model\\Menu",
+    );
+  });
+
+  it("prefers a {varType} declaration over presenter view-data (and never loads presenters)", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{varType App\\Model\\Product $invoice}\n{$invoice->}";
+    const offset = source.lastIndexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "invoice",
+      "App\\Model\\Product",
+    );
+    // The inline type short-circuits the priority chain before any presenter
+    // text search (spec §6b lazy).
+    expect(searchText).not.toHaveBeenCalled();
+  });
+
+  it("types a {foreach} loop element from its collection's element type", async () => {
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{varType App\\Model\\Product[] $products}\n" +
+      "{foreach $products as $product}\n{$product->}\n{/foreach}";
+    const offset = source.indexOf("$product->") + "$product->".length;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "App\\Model\\Product",
+    );
+  });
+
+  it("returns nothing and never dispatches when Nette is inactive", async () => {
+    const synthesizeTypedReceiverSource = vi.fn(() => ({
+      position: { column: 1, lineNumber: 3 },
+      source: "",
+    }));
+    const deps = makeDeps({
+      isNetteFrameworkActive: false,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{varType App\\Model\\Product $invoice}\n{$invoice->}";
+    const offset = source.lastIndexOf("->") + 2;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(synthesizeTypedReceiverSource).not.toHaveBeenCalled();
+  });
+
+  it("drops member completions when the root changes during member resolution", async () => {
+    const rootRef = { current: ROOT };
+    const resolvePhpReceiverCompletions = vi.fn(async () => {
+      rootRef.current = "/other";
+      return [
+        {
+          declaringClassName: "Product",
+          name: "getName",
+          parameters: "",
+          returnType: "string",
+        },
+      ];
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      resolvePhpReceiverCompletions,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{varType App\\Model\\Product $invoice}\n{$invoice->}";
+    const offset = source.lastIndexOf("->") + 2;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("createLatteIntelligence variable + filter completion", () => {
+  it("lists in-scope variables from varType, {foreach} and presenter data", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({ readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{varType App\\Model\\Product $product}\n" +
+      "{foreach $items as $row}\n{$}\n{/foreach}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("$product");
+    expect(labels).toContain("$row");
+    expect(labels).toContain("$invoice");
+    expect(completions.every((completion) => completion.kind === "variable")).toBe(
+      true,
+    );
+  });
+
+  it("offers Latte built-in filters after a | in an expression", async () => {
+    const deps = makeDeps();
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|up}";
+    const offset = source.indexOf("up") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toContain("upper");
+    expect(completions.every((completion) => completion.kind === "filter")).toBe(
+      true,
+    );
+  });
+
+  it("does not offer filters after a || logical or", async () => {
+    const deps = makeDeps();
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{if $a || }";
+    const offset = source.indexOf("|| ") + 3;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("createLatteIntelligence view-data cache lifecycle", () => {
+  it("evicts another root's cached presenter entries once a different root becomes active", async () => {
+    const viewDataCache: LatteViewDataCache = {};
+    const rootA = "/ws-a";
+    const rootB = "/ws-b";
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+    const position = positionAtOffset(source, offset);
+
+    const workspaceA = buildNettePresenterWorkspace(
+      { "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE },
+      rootA,
+    );
+    const depsA = makeDeps({
+      currentWorkspaceRootRef: { current: rootA },
+      getActiveDocument: () => ({ path: `${rootA}/app/UI/Home/default.latte` }),
+      readFileContent: workspaceA.readFileContent,
+      searchText: workspaceA.searchText,
+      workspaceRoot: rootA,
+    });
+    const latteA = createLatteIntelligence(() => depsA, {}, viewDataCache);
+
+    await latteA.provideLatteCompletions(source, position);
+    expect(Object.keys(viewDataCache)).toEqual([rootA]);
+
+    const workspaceB = buildNettePresenterWorkspace(
+      { "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE },
+      rootB,
+    );
+    const depsB = makeDeps({
+      currentWorkspaceRootRef: { current: rootB },
+      getActiveDocument: () => ({ path: `${rootB}/app/UI/Home/default.latte` }),
+      readFileContent: workspaceB.readFileContent,
+      searchText: workspaceB.searchText,
+      workspaceRoot: rootB,
+    });
+    const latteB = createLatteIntelligence(() => depsB, {}, viewDataCache);
+
+    await latteB.provideLatteCompletions(source, position);
+
+    expect(Object.keys(viewDataCache)).toEqual([rootB]);
+  });
+
+  it("caches presenter entries per root across completion requests", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({ readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+    const position = positionAtOffset(source, offset);
+
+    await latte.provideLatteCompletions(source, position);
+    const callsAfterFirst = searchText.mock.calls.length;
+    await latte.provideLatteCompletions(source, position);
+
+    expect(searchText.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("shares one in-flight presenter scan across concurrent completion requests", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({ readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+    const position = positionAtOffset(source, offset);
+
+    // Both requests start before either scan resolves (Monaco fires a request
+    // per keystroke) - the in-flight registry must collapse them to ONE scan.
+    await Promise.all([
+      latte.provideLatteCompletions(source, position),
+      latte.provideLatteCompletions(source, position),
+    ]);
+
+    // One call per search anchor, not one per anchor per request.
+    expect(searchText.mock.calls.length).toBe(2);
+  });
+});
+
+describe("createLatteIntelligence type-resolution edge cases", () => {
+  function trackingSynthesize() {
+    return vi.fn((variableName: string, typeName: string) => ({
+      position: { column: 1, lineNumber: 3 },
+      source: `${variableName}:${typeName}`,
+    }));
+  }
+
+  it("yields no completions when presenter sightings conflict on the type", async () => {
+    const conflictingPresenter = HOME_PRESENTER_SOURCE.replace(
+      "@var \\App\\Model\\Invoice $invoice",
+      "@var \\App\\Model\\Order $invoice",
+    );
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+      "modules/admin/app/UI/Home/HomePresenter.php": conflictingPresenter,
+    });
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const deps = makeDeps({
+      readFileContent,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    // Conservative merge: Invoice vs Order disagree -> null -> no dispatch.
+    expect(synthesizeTypedReceiverSource).not.toHaveBeenCalled();
+  });
+
+  it("resolves the presenter's short type hint against its source (FQN resolution)", async () => {
+    const shortHintPresenter = HOME_PRESENTER_SOURCE.replace(
+      "@var \\App\\Model\\Invoice $invoice",
+      "@var Invoice $invoice",
+    );
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": shortHintPresenter,
+    });
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const resolveDeclaredType = vi.fn(
+      (source: string, typeHint: string | null) =>
+        typeHint === "Invoice" && source.includes("namespace App\\UI\\Home")
+          ? "App\\Model\\Invoice"
+          : null,
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolveDeclaredType,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$invoice->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(resolveDeclaredType).toHaveBeenCalledWith(
+      expect.stringContaining("class HomePresenter"),
+      "Invoice",
+    );
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "invoice",
+      "App\\Model\\Invoice",
+    );
+  });
+
+  it("terminates a self-referential foreach without dispatching", async () => {
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const deps = makeDeps({ synthesizeTypedReceiverSource });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{foreach $x as $x}\n{$x->}\n{/foreach}";
+    const offset = source.indexOf("$x->") + "$x->".length;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(synthesizeTypedReceiverSource).not.toHaveBeenCalled();
+  });
+
+  it("terminates mutually-referential foreach loops via the depth bound", async () => {
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const deps = makeDeps({ synthesizeTypedReceiverSource });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{foreach $a as $b}\n{foreach $b as $a}\n{$a->}\n{/foreach}\n{/foreach}";
+    const offset = source.indexOf("$a->") + "$a->".length;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(synthesizeTypedReceiverSource).not.toHaveBeenCalled();
+  });
+
+  it("resolves a {var} local through the expression engine, with {varType} winning over it", async () => {
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const resolveExpressionType = vi.fn(
+      async (_source: string, _position: unknown, expression: string) =>
+        expression === "new Product()" ? "App\\Model\\Product" : null,
+    );
+    const deps = makeDeps({
+      resolveExpressionType,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+
+    const localSource = "{var $p = new Product()}\n{$p->}";
+    const localOffset = localSource.indexOf("$p->") + "$p->".length;
+    await latte.provideLatteCompletions(
+      localSource,
+      positionAtOffset(localSource, localOffset),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenLastCalledWith(
+      "p",
+      "App\\Model\\Product",
+    );
+
+    const prioritySource =
+      "{varType App\\Model\\Order $p}\n{var $p = new Product()}\n{$p->}";
+    const priorityOffset = prioritySource.indexOf("$p->") + "$p->".length;
+    await latte.provideLatteCompletions(
+      prioritySource,
+      positionAtOffset(prioritySource, priorityOffset),
+    );
+
+    // Priority 1 ({varType}) wins over the {var} expression inference.
+    expect(synthesizeTypedReceiverSource).toHaveBeenLastCalledWith(
+      "p",
+      "App\\Model\\Order",
+    );
+  });
+
+  it("matches a classic dotted template (Product.show.latte) to Presenter:action", async () => {
+    const productPresenter = `<?php
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        /** @var \\App\\Model\\Product $product */
+        $product = $this->products->get(1);
+        $this->template->product = $product;
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/Presenters/ProductPresenter.php": productPresenter,
+    });
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/Presenters/templates/Product.show.latte`,
+      }),
+      readFileContent,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$product->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "\\App\\Model\\Product",
+    );
+  });
+
+  it("offers nothing inside a string literal within an expression tag", async () => {
+    const deps = makeDeps();
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{var $a = 'x|'}";
+    const offset = source.indexOf("x|") + 2;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
   });
 });

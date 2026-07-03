@@ -16,7 +16,11 @@ import {
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
-import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
+import {
+  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "./phpFrameworkProviders";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
   it("downgrades unresolved global Laravel Eloquent static builder methods to soft hints", () => {
@@ -66,6 +70,32 @@ $queryBuilder = Album::whereNull('parent_id');
     expect(classified?.severity).toBe("hint");
     expect(classified?.source).toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
     expect(classified?.message).toBe(magic.message);
+  });
+
+  it("stamps a Nette template magic call with the nette-magic source label", () => {
+    const source = `<?php
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        $this->template->renderInvoice();
+    }
+}
+`;
+    const magic = diagnosticAt(source, "renderInvoice", {
+      message: "Method 'renderInvoice' does not exist",
+    });
+
+    const [classified, ...rest] = filterPhpLanguageServerDiagnostics(
+      source,
+      [magic],
+      { frameworkProviders: [phpNetteFrameworkProvider] },
+    );
+
+    expect(rest).toEqual([]);
+    expect(classified?.severity).toBe("hint");
+    expect(classified?.source).toBe(NETTE_MAGIC_DIAGNOSTIC_SOURCE);
+    expect(classified?.source).not.toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
   });
 
   it("keeps a real unresolved error as an error alongside downgraded framework magic", () => {

@@ -10541,6 +10541,9 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
     expect(registered.latteCompletionLanguage).toBe("latte");
     expect(registered.latteCompletionProvider.triggerCharacters).toEqual([
       "{",
+      "$",
+      ">",
+      "|",
       "'",
       "\"",
       ".",
@@ -10666,6 +10669,49 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
         label: "partials/menu.latte",
       }),
     );
+  });
+
+  it("maps latte variable, member and filter completions to their Monaco kinds", async () => {
+    const registered = createRegisteredProviders();
+    const source = "{$invoice->}\n";
+    const provideLatteCompletions = vi.fn(async () => [
+      {
+        detail: "presenter data",
+        insertText: "$invoice",
+        kind: "variable" as const,
+        label: "$invoice",
+      },
+      {
+        detail: "Invoice::getTotal(): float",
+        insertText: "getTotal()",
+        kind: "member" as const,
+        label: "getTotal",
+      },
+      {
+        detail: "Latte filter",
+        insertText: "upper",
+        kind: "filter" as const,
+        label: "upper",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: latteDocument(source),
+      provideLatteCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.latteCompletionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/app/UI/Home/default.latte" }),
+      { column: source.indexOf("->") + 3, lineNumber: 1 },
+    );
+
+    expect(
+      result.suggestions.map((suggestion: { kind: number }) => suggestion.kind),
+    ).toEqual([
+      registered.monaco.languages.CompletionItemKind.Variable,
+      registered.monaco.languages.CompletionItemKind.Field,
+      registered.monaco.languages.CompletionItemKind.Function,
+    ]);
   });
 
   it("does not call latte completions for a non-latte active document", async () => {

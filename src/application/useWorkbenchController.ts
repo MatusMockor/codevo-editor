@@ -23805,6 +23805,12 @@ export function useWorkbenchController(
       listDirectory: (path) => workspaceFiles.readDirectory(path),
       openTarget: openNavigationTarget,
       readFileContent: readNavigationFileContent,
+      resolveDeclaredType: resolvePhpDeclaredType,
+      resolveExpressionType: resolvePhpExpressionType,
+      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
+      searchText: (root, query, maxResults) =>
+        textSearch.searchText(root, query, maxResults),
+      synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
       toRelativePath: relativeWorkspacePath,
       workspaceRoot,
     });
