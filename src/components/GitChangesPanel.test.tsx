@@ -4,7 +4,13 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as gitDomain from "../domain/git";
-import { gitChangeKey, type GitChangedFile, type GitStatus } from "../domain/git";
+import {
+  gitChangeKey,
+  gitChangeKeyForRepository,
+  type GitChangedFile,
+  type GitStatus,
+} from "../domain/git";
+import type { GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import { GitChangesPanel } from "./GitChangesPanel";
 
 describe("GitChangesPanel", () => {
@@ -628,6 +634,156 @@ describe("GitChangesPanel", () => {
     titleSpy.mockRestore();
   });
 
+  it("groups changes by repository with a header per repo when several repos change", async () => {
+    const primary = gitChange("modified", "app/Kernel.php", true);
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "src/Attendance.php",
+      true,
+    );
+
+    await renderPanel({
+      repositoryStatuses: [
+        repositoryStatus("", "main", [primary]),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested]),
+      ],
+      status: gitStatus([primary]),
+    });
+
+    const headers = host.querySelectorAll(".git-repository-header");
+    expect(headers).toHaveLength(2);
+
+    const names = Array.from(
+      host.querySelectorAll(".git-repository-name"),
+    ).map((node) => node.textContent);
+    // Primary repo shows the workspace base name; nested shows its relative path.
+    expect(names).toContain("workspace");
+    expect(names).toContain("workbench/lcsk/attendance");
+
+    // Each repo header carries its own branch.
+    expect(host.textContent).toContain("main");
+    expect(host.textContent).toContain("develop");
+
+    // Both repos' files are listed.
+    expect(host.textContent).toContain("Kernel.php");
+    expect(host.textContent).toContain("Attendance.php");
+  });
+
+  it("shows no repository headers for a single repository (unchanged single-repo look)", async () => {
+    const primary = gitChange("modified", "app/Kernel.php", true);
+
+    await renderPanel({
+      repositoryStatuses: [repositoryStatus("", "main", [primary])],
+      status: gitStatus([primary]),
+    });
+
+    expect(host.querySelector(".git-repository-header")).toBeNull();
+    expect(host.textContent).toContain("Kernel.php");
+  });
+
+  it("renders a single nested repository's changes without a header", async () => {
+    // Only a nested repo changed; the primary is clean. The panel must show the
+    // nested repo's changes (not "No changes") and, being a single repo, no
+    // header.
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "src/Attendance.php",
+      true,
+    );
+
+    await renderPanel({
+      repositoryStatuses: [
+        repositoryStatus("", "main", []),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested]),
+      ],
+      status: gitStatus([]),
+    });
+
+    expect(host.querySelector(".git-repository-header")).toBeNull();
+    expect(host.textContent).toContain("Attendance.php");
+    expect(host.textContent).not.toContain("No changes");
+  });
+
+  it("toggles a nested change with its repository-qualified key", async () => {
+    const primary = gitChange("modified", "app/Kernel.php", true);
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "src/Attendance.php",
+      true,
+    );
+    const onToggleChangeIncluded = vi.fn();
+
+    await renderPanel({
+      onToggleChangeIncluded,
+      repositoryStatuses: [
+        repositoryStatus("", "main", [primary]),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested]),
+      ],
+      status: gitStatus([primary]),
+    });
+
+    const checkbox = Array.from(
+      host.querySelectorAll<HTMLInputElement>(".git-change-checkbox input"),
+    ).find((input) =>
+      input.getAttribute("aria-label")?.includes("src/Attendance.php"),
+    );
+    expect(checkbox).toBeTruthy();
+
+    act(() => {
+      checkbox?.click();
+    });
+
+    expect(onToggleChangeIncluded).toHaveBeenCalledWith(
+      nested,
+      "workbench/lcsk/attendance",
+    );
+  });
+
+  it("reflects a repository-qualified included key in the nested repo's checkbox", async () => {
+    const primary = gitChange("modified", "README.md", true);
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "README.md",
+      true,
+    );
+
+    // Only the nested README is included (qualified key); the primary README of
+    // the same relative path must stay unchecked.
+    await renderPanel({
+      includedChangePaths: new Set([
+        gitChangeKeyForRepository("workbench/lcsk/attendance", nested),
+      ]),
+      repositoryStatuses: [
+        repositoryStatus("", "main", [primary]),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested]),
+      ],
+      status: gitStatus([primary]),
+    });
+
+    // Both READMEs share the same repo-relative aria-label, so distinguish them
+    // by their repository section (primary first, nested second).
+    const sectionEls = host.querySelectorAll(".git-repository-section");
+    expect(sectionEls).toHaveLength(2);
+    const primaryBox = sectionEls[0].querySelector<HTMLInputElement>(
+      ".git-change-checkbox input",
+    );
+    const nestedBox = sectionEls[1].querySelector<HTMLInputElement>(
+      ".git-change-checkbox input",
+    );
+
+    // Only the nested README is checked; the colliding primary README is not.
+    expect(nestedBox?.checked).toBe(true);
+    expect(primaryBox?.checked).toBe(false);
+    const allBoxes = Array.from(
+      host.querySelectorAll<HTMLInputElement>(".git-change-checkbox input"),
+    );
+    expect(allBoxes.filter((input) => input.checked)).toHaveLength(1);
+  });
+
   async function renderPanel(
     props: Partial<React.ComponentProps<typeof GitChangesPanel>> = {},
   ) {
@@ -652,8 +808,10 @@ describe("GitChangesPanel", () => {
           onRevertChanges={props.onRevertChanges ?? vi.fn()}
           onStageChanges={props.onStageChanges ?? vi.fn()}
           onUnstageChanges={props.onUnstageChanges ?? vi.fn()}
+          repositoryStatuses={props.repositoryStatuses}
           rootPath={props.rootPath ?? "/workspace"}
           status={props.status ?? gitStatus([])}
+          workspaceRoot={props.workspaceRoot ?? "/workspace"}
         />,
       );
       await Promise.resolve();
@@ -684,5 +842,41 @@ function gitChange(
     path: `/workspace/${relativePath}`,
     relativePath,
     status,
+  };
+}
+
+function nestedGitChange(
+  repoRootRelative: string,
+  status: GitChangedFile["status"],
+  relativePath: string,
+  isStaged: boolean,
+  isUnversioned = status === "untracked",
+): GitChangedFile {
+  return {
+    isStaged,
+    isUnversioned,
+    oldPath: null,
+    oldRelativePath: null,
+    path: `/workspace/${repoRootRelative}/${relativePath}`,
+    relativePath,
+    status,
+  };
+}
+
+function repositoryStatus(
+  rootRelativePath: string,
+  branch: string,
+  changes: GitChangedFile[],
+): GitRepositoryStatus {
+  const root =
+    rootRelativePath === ""
+      ? "/workspace"
+      : `/workspace/${rootRelativePath}`;
+
+  return {
+    mapping: { rootRelativePath },
+    root,
+    status: { branch, changes, isRepository: true, rootPath: root },
+    failed: false,
   };
 }

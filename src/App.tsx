@@ -1016,8 +1016,10 @@ function App() {
             onStageChanges={workbench.stageGitChanges}
             onToggleChangeIncluded={workbench.toggleGitChangeIncluded}
             onUnstageChanges={workbench.unstageGitChanges}
+            repositoryStatuses={workbench.gitRepositoryStatuses}
             rootPath={workbench.workspaceRoot}
             status={workbench.gitStatus}
+            workspaceRoot={workbench.workspaceRoot}
           />
         ) : workbench.sidebarView === "php" ? (
           <PhpTreePanel
@@ -1318,7 +1320,8 @@ function App() {
         cursorPosition={workbench.activeEditorPosition}
         dirtyCount={workbench.dirtyCount}
         errorCount={workbench.diagnosticsSummary.errors}
-        gitBranch={workbench.gitStatus?.branch ?? null}
+        gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch ?? null}
+        gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
@@ -1566,6 +1569,9 @@ function App() {
 
       <SettingsDialog
         appSettings={workbench.appSettings}
+        gitDetectedRepositoryMappings={workbench.gitRepositoryMappings
+          .map((mapping) => mapping.rootRelativePath)
+          .filter((path) => path !== "")}
         initialSection={workbench.settingsInitialSection}
         isOpen={workbench.settingsOpen}
         onClose={() => workbench.setSettingsOpen(false)}

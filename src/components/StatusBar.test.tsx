@@ -410,6 +410,38 @@ describe("StatusBar", () => {
     expect(onShowGitBranches).toHaveBeenCalledTimes(1);
   });
 
+  it("prefixes the git branch with a compact repository label for a nested-repo file", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/workbench/lcsk/attendance/src/A.php"
+          cursorPosition={null}
+          dirtyCount={0}
+          gitBranch="develop"
+          gitBranchRepositoryLabel="lcsk/attendance"
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onShowGitBranches={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const branch = host.querySelector<HTMLButtonElement>(".status-git-branch");
+
+    expect(branch?.textContent).toContain("lcsk/attendance");
+    expect(branch?.textContent).toContain("develop");
+    expect(branch?.title).toContain("lcsk/attendance");
+    expect(branch?.title).toContain("develop");
+  });
+
   it("hides the git branch when no branch is known", async () => {
     await act(async () => {
       root.render(

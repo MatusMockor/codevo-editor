@@ -51,10 +51,12 @@ import {
   type GitStatus,
 } from "../domain/git";
 import {
+  activeFileGitBranchInfo,
   fanOutGitRepositoryStatuses,
   mergeGitRepositoryStatuses,
   primaryGitStatus,
   resolveEffectiveGitRepositoryMappings,
+  resolveGitRepositoryForPath,
   WORKSPACE_ROOT_MAPPING,
   type GitRepositoryMapping,
   type GitRepositoryStatus,
@@ -1499,6 +1501,10 @@ export function useWorkbenchController(
   // selectFileHistoryCommit so a commit click always targets the panel's live
   // file (not a stale state closure), keeping the diff request per-file isolated.
   const fileHistoryRelativePathRef = useRef<string | null>(null);
+  // The git repository root that owns the history panel's file (its nested repo
+  // for a directory-mapping file, else the workspace root). Read by
+  // selectFileHistoryCommit so a commit diff runs against the file's own repo.
+  const fileHistoryRepositoryRootRef = useRef<string | null>(null);
   const localHistoryRequestTokenRef = useRef(0);
   const localHistoryDiffRequestTokenRef = useRef(0);
   // Mirrors the file currently shown in the local-history panel, for the same
@@ -6932,6 +6938,46 @@ export function useWorkbenchController(
     setMessage(null);
   }, []);
 
+  // Resolves the git repository (and in-repo path) that owns an absolute file
+  // path: a file in a nested repository (directory mapping) routes to that repo
+  // root + its repo-relative path, so its gutter diff, blame and file history
+  // run against the correct repository. Falls back to the workspace root (the
+  // pre-multi-repo behaviour) for primary-repo files and any path the resolver
+  // declines. `null` only when there is no workspace or the path is outside it.
+  const resolveGitRepositoryTarget = useCallback(
+    (
+      absolutePath: string,
+    ): { repositoryRoot: string; relativePath: string } | null => {
+      const root = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (!root) {
+        return null;
+      }
+
+      const resolved = resolveGitRepositoryForPath(
+        gitRepositoryMappings,
+        root,
+        absolutePath,
+      );
+
+      if (resolved && resolved.repositoryRelativePath !== "") {
+        return {
+          repositoryRoot: resolved.repositoryRoot,
+          relativePath: resolved.repositoryRelativePath,
+        };
+      }
+
+      const relativePath = workspaceRelativePath(root, absolutePath);
+
+      if (!relativePath) {
+        return null;
+      }
+
+      return { repositoryRoot: root, relativePath };
+    },
+    [gitRepositoryMappings, workspaceRoot],
+  );
+
   const refreshGitStatus = useCallback(async () => {
     if (!workspaceRoot) {
       setGitStatus(emptyGitStatus());
@@ -7041,12 +7087,24 @@ export function useWorkbenchController(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = activeDocument.path;
+    // Route the gutter baseline into the repository that owns the active file: a
+    // nested-repo file diffs against its own repository. The primary status is
+    // published only for a primary-repo file so a nested file's status never
+    // overwrites the primary Changes panel view.
+    const baselineTarget = resolveGitRepositoryTarget(requestedPath);
+    const baselineRepoRoot = baselineTarget
+      ? baselineTarget.repositoryRoot
+      : requestedRoot;
+    const isPrimaryRepo = workspaceRootKeysEqual(
+      baselineRepoRoot,
+      requestedRoot,
+    );
     const token = (editorGitBaselineRequestTokenRef.current += 1);
     let active = true;
 
     const loadGitBaseline = async () => {
       try {
-        const status = await gitGateway.getStatus(requestedRoot);
+        const status = await gitGateway.getStatus(baselineRepoRoot);
 
         if (
           !active ||
@@ -7056,7 +7114,9 @@ export function useWorkbenchController(
           return;
         }
 
-        setGitStatus(status);
+        if (isPrimaryRepo) {
+          setGitStatus(status);
+        }
 
         const change = status.changes.find(
           (candidate) =>
@@ -7072,7 +7132,7 @@ export function useWorkbenchController(
           return;
         }
 
-        const diff = await gitGateway.getDiff(requestedRoot, change);
+        const diff = await gitGateway.getDiff(baselineRepoRoot, change);
 
         if (
           !active ||
@@ -7107,7 +7167,13 @@ export function useWorkbenchController(
     return () => {
       active = false;
     };
-  }, [activeDocument?.path, activeDocument?.savedContent, gitGateway, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    activeDocument?.savedContent,
+    gitGateway,
+    resolveGitRepositoryTarget,
+    workspaceRoot,
+  ]);
 
   const previewGitChange = useCallback(
     async (change: GitChangedFile, options: OpenGitChangeOptions = {}) => {
@@ -7333,6 +7399,29 @@ export function useWorkbenchController(
       );
     },
     [],
+  );
+
+  // The status-bar git branch follows the active file: a file in a nested
+  // repository (directory mapping) shows that repository's branch plus a compact
+  // repo label; a file in the primary/single repository keeps the pre-multi-repo
+  // behaviour (primary branch, no label). Non-file active paths (e.g. a git diff
+  // pseudo-path) resolve to no repository and fall back to the primary branch.
+  const gitActiveFileBranch = useMemo(
+    () =>
+      activeFileGitBranchInfo({
+        mappings: gitRepositoryMappings,
+        workspaceRoot,
+        activeFilePath: activePath,
+        repositoryStatuses: gitRepositoryStatuses,
+        primaryBranch: gitStatus.branch,
+      }),
+    [
+      activePath,
+      gitRepositoryMappings,
+      gitRepositoryStatuses,
+      gitStatus.branch,
+      workspaceRoot,
+    ],
   );
 
   const {
@@ -11021,21 +11110,17 @@ export function useWorkbenchController(
   // before rendering, so a stale result from a switched-away tab is dropped.
   const provideGitBlame = useCallback(
     async (path: string): Promise<GitBlameLine[]> => {
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      // Route blame into the repository that owns the file so a nested-repo file
+      // is blamed against its own repository, not the workspace root.
+      const target = resolveGitRepositoryTarget(path);
 
-      if (!requestedRoot) {
+      if (!target) {
         return [];
       }
 
-      const relativePath = workspaceRelativePath(requestedRoot, path);
-
-      if (!relativePath) {
-        return [];
-      }
-
-      return gitGateway.blame(requestedRoot, relativePath);
+      return gitGateway.blame(target.repositoryRoot, target.relativePath);
     },
-    [gitGateway, workspaceRoot],
+    [gitGateway, resolveGitRepositoryTarget],
   );
 
   // Reads an arbitrary file's text from disk by absolute path. Used to load
@@ -11056,6 +11141,7 @@ export function useWorkbenchController(
     fileHistoryRequestTokenRef.current += 1;
     fileHistoryDiffRequestTokenRef.current += 1;
     fileHistoryRelativePathRef.current = null;
+    fileHistoryRepositoryRootRef.current = null;
     setFileHistoryPanelOpen(false);
     setFileHistoryCommits([]);
     setFileHistoryLoading(false);
@@ -11349,8 +11435,11 @@ export function useWorkbenchController(
       setFileHistoryDiffLoading(true);
 
       try {
+        // Run the commit diff against the file's owning repository (its nested
+        // repo for a directory-mapping file); the workspace-root re-checks below
+        // keep per-tab isolation intact.
         const diff = await gitGateway.fileCommitDiff(
-          requestedRoot,
+          fileHistoryRepositoryRootRef.current ?? requestedRoot,
           relativePath,
           sha,
         );
@@ -11407,20 +11496,24 @@ export function useWorkbenchController(
     }
 
     const requestedDocumentPath = document.path;
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocumentPath,
-    );
+    // Route file history into the repository that owns the file (its nested repo
+    // for a directory-mapping file), so both the history list and per-commit
+    // diffs run against the correct repository.
+    const target = resolveGitRepositoryTarget(requestedDocumentPath);
 
-    if (!relativePath) {
+    if (!target) {
       return;
     }
+
+    const relativePath = target.relativePath;
+    const repositoryRoot = target.repositoryRoot;
 
     const requestToken = fileHistoryRequestTokenRef.current + 1;
     fileHistoryRequestTokenRef.current = requestToken;
     // Reset any previously selected commit/diff for the new file.
     fileHistoryDiffRequestTokenRef.current += 1;
     fileHistoryRelativePathRef.current = relativePath;
+    fileHistoryRepositoryRootRef.current = repositoryRoot;
     setFileHistoryRelativePath(relativePath);
     setFileHistorySelectedSha(null);
     setFileHistoryDiff(null);
@@ -11438,7 +11531,7 @@ export function useWorkbenchController(
       fileHistoryRequestTokenRef.current === requestToken;
 
     try {
-      const commits = await gitGateway.fileHistory(requestedRoot, relativePath);
+      const commits = await gitGateway.fileHistory(repositoryRoot, relativePath);
 
       if (!isCurrentRequest()) {
         return;
@@ -11457,7 +11550,7 @@ export function useWorkbenchController(
         setFileHistoryLoading(false);
       }
     }
-  }, [gitGateway, reportError, workspaceRoot]);
+  }, [gitGateway, reportError, resolveGitRepositoryTarget, workspaceRoot]);
 
   const {
     gitStashPanelOpen,
@@ -31502,6 +31595,9 @@ export function useWorkbenchController(
     gitOperationLoading,
     gitStatus,
     gitRepositoryStatuses,
+    gitRepositoryMappings,
+    gitBranch: gitActiveFileBranch.branch,
+    gitBranchRepositoryLabel: gitActiveFileBranch.repositoryLabel,
     indexHealthLogs,
     indexProgress,
     intelligenceMode,

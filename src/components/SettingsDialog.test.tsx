@@ -353,6 +353,149 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("renders the Directory Mappings section with auto-detected and manual repositories", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          gitDetectedRepositoryMappings={["workbench/lcsk/attendance"]}
+          initialSection="git"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={{
+            ...defaultWorkspaceSettings(),
+            gitDirectoryMappings: ["packages/lib"],
+          }}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("Directory Mappings");
+    // Auto-detected repository is listed and marked as auto-detected.
+    expect(host.textContent).toContain("workbench/lcsk/attendance");
+    expect(host.textContent).toContain("Auto-detected");
+    // Manual mapping is listed and removable.
+    expect(host.textContent).toContain("packages/lib");
+    expect(
+      checkboxWithLabel("Detect repositories automatically").checked,
+    ).toBe(true);
+  });
+
+  it("persists disabling automatic repository detection", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="git"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      checkboxWithLabel("Detect repositories automatically").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappingsAuto: false,
+      },
+    });
+  });
+
+  it("adds and removes a manual repository directory mapping", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="git"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const addInput = inputWithLabel("Add repository directory");
+
+    await act(async () => {
+      changeInputValue(addInput, "workbench/lcsk/x");
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Add").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: ["workbench/lcsk/x"],
+      },
+    });
+
+    // Now remove it.
+    const removeButton = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.getAttribute("title") === "Remove mapping");
+    expect(removeButton).toBeTruthy();
+
+    await act(async () => {
+      removeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [],
+      },
+    });
+  });
+
   it("persists JavaScript and TypeScript service mode changes", async () => {
     const onSave = vi.fn(async () => undefined);
 

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeFileGitBranchInfo,
   aggregateGitChanges,
+  compactGitRepositoryLabel,
   fanOutGitRepositoryStatuses,
   gitDirectoryMappingPaths,
   gitMappingCandidatesFromDirectoryListing,
+  gitRepositoryDisplayName,
   groupGitChangesByRepository,
   mergeGitRepositoryStatuses,
   normalizeGitDirectoryMappings,
@@ -576,5 +579,112 @@ describe("mergeGitRepositoryStatuses", () => {
         failed: false,
       },
     ]);
+  });
+});
+
+describe("gitRepositoryDisplayName", () => {
+  it("labels the primary repository with the workspace base directory name", () => {
+    expect(gitRepositoryDisplayName("", "/Users/me/attendancer")).toBe(
+      "attendancer",
+    );
+  });
+
+  it("tolerates a trailing slash and Windows separators for the primary repo", () => {
+    expect(gitRepositoryDisplayName("", "C:\\code\\attendancer\\")).toBe(
+      "attendancer",
+    );
+  });
+
+  it("labels a nested repository with its workspace-root-relative path", () => {
+    expect(
+      gitRepositoryDisplayName("workbench/lcsk/attendance", "/ws"),
+    ).toBe("workbench/lcsk/attendance");
+  });
+});
+
+describe("compactGitRepositoryLabel", () => {
+  it("returns null for the primary repository (branch shown bare)", () => {
+    expect(compactGitRepositoryLabel("")).toBeNull();
+  });
+
+  it("keeps the last two segments of a deep nested repository", () => {
+    expect(compactGitRepositoryLabel("workbench/lcsk/attendance")).toBe(
+      "lcsk/attendance",
+    );
+  });
+
+  it("returns a single-segment repository as-is", () => {
+    expect(compactGitRepositoryLabel("packages")).toBe("packages");
+  });
+});
+
+describe("activeFileGitBranchInfo", () => {
+  const mappings = [mapping(""), mapping("workbench/lcsk/attendance")];
+  const statuses: GitRepositoryStatus[] = [
+    {
+      mapping: mapping(""),
+      root: ROOT,
+      status: statusWith(ROOT),
+      failed: false,
+    },
+    {
+      mapping: mapping("workbench/lcsk/attendance"),
+      root: `${ROOT}/workbench/lcsk/attendance`,
+      status: {
+        branch: "feature/nested",
+        changes: [],
+        isRepository: true,
+        rootPath: `${ROOT}/workbench/lcsk/attendance`,
+      },
+      failed: false,
+    },
+  ];
+
+  it("shows the nested repository's branch and a compact label for a nested file", () => {
+    expect(
+      activeFileGitBranchInfo({
+        mappings,
+        workspaceRoot: ROOT,
+        activeFilePath: `${ROOT}/workbench/lcsk/attendance/src/A.php`,
+        repositoryStatuses: statuses,
+        primaryBranch: "main",
+      }),
+    ).toEqual({ branch: "feature/nested", repositoryLabel: "lcsk/attendance" });
+  });
+
+  it("keeps the primary branch and no label for a file in the primary repo", () => {
+    expect(
+      activeFileGitBranchInfo({
+        mappings,
+        workspaceRoot: ROOT,
+        activeFilePath: `${ROOT}/app/Service.php`,
+        repositoryStatuses: statuses,
+        primaryBranch: "main",
+      }),
+    ).toEqual({ branch: "main", repositoryLabel: null });
+  });
+
+  it("falls back to the primary branch when the nested repo has no status yet", () => {
+    expect(
+      activeFileGitBranchInfo({
+        mappings,
+        workspaceRoot: ROOT,
+        activeFilePath: `${ROOT}/workbench/lcsk/attendance/src/A.php`,
+        repositoryStatuses: [statuses[0]],
+        primaryBranch: "main",
+      }),
+    ).toEqual({ branch: "main", repositoryLabel: null });
+  });
+
+  it("falls back to the primary branch when there is no active file", () => {
+    expect(
+      activeFileGitBranchInfo({
+        mappings,
+        workspaceRoot: ROOT,
+        activeFilePath: null,
+        repositoryStatuses: statuses,
+        primaryBranch: "main",
+      }),
+    ).toEqual({ branch: "main", repositoryLabel: null });
   });
 });

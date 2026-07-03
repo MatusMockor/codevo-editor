@@ -9,7 +9,6 @@ import {
 } from "react";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
-  gitChangeKey,
   gitChangeKeyForRepository,
   type GitChangedFile,
   type GitDiffHunk,
@@ -286,12 +285,12 @@ export interface GitWorkspaceDependencies {
   // Effective repository mappings (manual + auto-detected, always incl. `""`).
   // Defaults to `[""]` (single-repo / workspace root) when omitted.
   gitRepositoryMappings?: GitRepositoryMapping[];
-  // Whole-map status view (every repository's status). Reserved for G5: the
-  // commit panel is PRIMARY-only for now, so runGitCommit and the reconciling
-  // effect are scoped to `gitStatus.changes` (the visible primary repo) and this
-  // whole-map view is not read here yet. TODO(G5): when the panel switches to the
-  // aggregate grouped view, widen `committableChanges` (below) to derive from
-  // this - the keys are already repo-qualified, so no cross-repo key collision.
+  // Whole-map status view (every repository's status). The Changes panel now
+  // shows the aggregate grouped view (PhpStorm multi-repo), so `committableChanges`
+  // (below) derives from every entry here: the user can commit/reconcile across
+  // the whole visible set. Keys are repo-qualified (`gitChangeKeyForRepository`),
+  // so two repos holding the same relative path never collide. Defaults to the
+  // primary-only `gitStatus.changes` when omitted (single-repo / hook tests).
   gitRepositoryStatuses?: GitRepositoryStatus[];
   // Publishes fresh per-repository statuses after a multi-repo operation so the
   // shell can update the whole-map view. Optional: when omitted only the
@@ -304,7 +303,10 @@ export interface GitWorkspace {
   includedGitChangePaths: Set<string>;
   gitOperationLoading: boolean;
   setGitCommitMessage: Dispatch<SetStateAction<string>>;
-  toggleGitChangeIncluded: (change: GitChangedFile) => void;
+  toggleGitChangeIncluded: (
+    change: GitChangedFile,
+    repositoryRootRelative?: string,
+  ) => void;
   stageGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   unstageGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   loadGitFileHunks: (
@@ -332,6 +334,7 @@ export function useGitWorkspace(
     setMessage,
     prompter,
     gitRepositoryMappings,
+    gitRepositoryStatuses,
     applyRepositoryOperationStatuses,
   } = dependencies;
 
@@ -341,27 +344,34 @@ export function useGitWorkspace(
   // carrying the workspace-root-relative directory of its owning repository so
   // its inclusion key can be qualified (see `gitChangeKeyForRepository`).
   //
-  // Scoped to the VISIBLE set: the panel shows only the PRIMARY (workspace-root)
-  // repository, so this is `gitStatus.changes` with the empty ("") repo prefix.
-  // That deliberately excludes nested repositories' changes so a user can never
-  // commit - or have auto-included - a change the panel never showed. For the
-  // default single-repo mapping every key is `gitChangeKey(change)`, so the
-  // behaviour is byte-identical to the pre-multi-repo one.
+  // The panel shows the aggregate grouped view (every repository the whole-map
+  // status surfaces), so this spans every `gitRepositoryStatuses` entry - the
+  // primary ("") repo plus each nested one, each change tagged with its owning
+  // repository's directory. Two repositories that each hold the same relative
+  // path (a primary `README.md` and a nested `workbench/lcsk/x/README.md`) key
+  // distinctly, so selecting one never sweeps in the other.
   //
-  // TODO(G5): when the panel switches to the aggregate grouped view, derive this
-  // from every `gitRepositoryStatuses` entry, each item carrying its
-  // `mapping.rootRelativePath`. The keys are already repo-qualified here, so
-  // widening the input introduces no cross-repo key collision.
+  // Falls back to the primary-only `gitStatus.changes` (empty "" prefix) when no
+  // whole-map view is wired (single-repo / hook tests); the primary entry's
+  // changes are `gitStatus.changes`, so every primary key stays byte-identical
+  // to the pre-multi-repo `gitChangeKey(change)`.
   const committableChanges = useMemo<
     Array<{ repositoryRootRelative: string; change: GitChangedFile }>
-  >(
-    () =>
-      gitStatus.changes.map((change) => ({
-        repositoryRootRelative: "",
-        change,
-      })),
-    [gitStatus.changes],
-  );
+  >(() => {
+    if (gitRepositoryStatuses && gitRepositoryStatuses.length > 0) {
+      return gitRepositoryStatuses.flatMap((entry) =>
+        entry.status.changes.map((change) => ({
+          repositoryRootRelative: entry.mapping.rootRelativePath,
+          change,
+        })),
+      );
+    }
+
+    return gitStatus.changes.map((change) => ({
+      repositoryRootRelative: "",
+      change,
+    }));
+  }, [gitRepositoryStatuses, gitStatus.changes]);
 
   const [gitOperationLoading, setGitOperationLoading] = useState(false);
   const [gitCommitMessage, setGitCommitMessage] = useState("");
@@ -467,25 +477,31 @@ export function useGitWorkspace(
     [isActiveRoot, mappings, publishStatuses, reportError, setMessage, workspaceRoot],
   );
 
-  const toggleGitChangeIncluded = useCallback((change: GitChangedFile) => {
-    setIncludedGitChangePaths((current) => {
-      const next = new Set(current);
+  const toggleGitChangeIncluded = useCallback(
+    (change: GitChangedFile, repositoryRootRelative = "") => {
+      setIncludedGitChangePaths((current) => {
+        const next = new Set(current);
 
-      // The panel only surfaces the PRIMARY (workspace-root) repo, so the
-      // unqualified key here equals `gitChangeKeyForRepository("", change)` used
-      // by the commit / reconcile paths. TODO(G5): thread the owning repo here
-      // when the panel shows the aggregate grouped view.
-      const changeKey = gitChangeKey(change);
+        // Qualified with the owning repository's directory so the aggregate
+        // grouped panel keys each repo's changes distinctly. The primary ("")
+        // repo yields the same key as `gitChangeKey(change)`, so single-repo
+        // toggling stays byte-identical to the pre-multi-repo behaviour.
+        const changeKey = gitChangeKeyForRepository(
+          repositoryRootRelative,
+          change,
+        );
 
-      if (next.has(changeKey)) {
-        next.delete(changeKey);
-      } else {
-        next.add(changeKey);
-      }
+        if (next.has(changeKey)) {
+          next.delete(changeKey);
+        } else {
+          next.add(changeKey);
+        }
 
-      return next;
-    });
-  }, []);
+        return next;
+      });
+    },
+    [],
+  );
 
   const stageGitChanges = useCallback(
     async (changes: GitChangedFile[]) =>

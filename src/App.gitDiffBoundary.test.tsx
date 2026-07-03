@@ -143,6 +143,22 @@ function createWorkbench() {
         isRepository: true,
         rootPath: "/workspace",
       },
+      gitRepositoryMappings: [{ rootRelativePath: "" }],
+      gitRepositoryStatuses: [
+        {
+          mapping: { rootRelativePath: "" },
+          root: "/workspace",
+          status: {
+            branch: "main",
+            changes: [diff.change],
+            isRepository: true,
+            rootPath: "/workspace",
+          },
+          failed: false,
+        },
+      ],
+      gitBranch: "main",
+      gitBranchRepositoryLabel: null,
       closeGitDiffPreview: gitDiffBoundaryMockState.closeGitDiffPreview,
       includedGitChangePaths: new Set<string>(),
       indexProgress: { phase: "idle", scanned: 0, total: 0 },

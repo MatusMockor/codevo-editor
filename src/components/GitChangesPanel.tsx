@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
-  gitChangeKey,
+  gitChangeKeyForRepository,
   groupGitChanges,
   gitStatusLabel,
   gitStatusTitle,
@@ -26,6 +26,10 @@ import {
   type GitChangeStatus,
   type GitStatus,
 } from "../domain/git";
+import {
+  gitRepositoryDisplayName,
+  type GitRepositoryStatus,
+} from "../domain/gitRepositoryMapping";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 
 interface GitChangesPanelProps {
@@ -34,8 +38,17 @@ interface GitChangesPanelProps {
   gitOperationLoading: boolean;
   includedChangePaths: Set<string>;
   isLoading: boolean;
+  /**
+   * Whole-map status view (PhpStorm directory mappings): one entry per mapped
+   * repository. When two or more repositories have changes the panel groups them
+   * under a per-repo header; a single repository keeps the pre-multi-repo look
+   * (no header). Omitted / empty falls back to {@link status} (single-repo).
+   */
+  repositoryStatuses?: GitRepositoryStatus[];
   rootPath: string | null;
   status: GitStatus;
+  /** Workspace root, used to label the primary repository's section header. */
+  workspaceRoot?: string | null;
   onCommit(): void;
   onCommitAndPush(): void;
   onCommitMessageChange(message: string): void;
@@ -44,8 +57,77 @@ interface GitChangesPanelProps {
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
   onStageChanges(changes: GitChangedFile[]): void;
-  onToggleChangeIncluded(change: GitChangedFile): void;
+  onToggleChangeIncluded(
+    change: GitChangedFile,
+    repositoryRootRelative?: string,
+  ): void;
   onUnstageChanges(changes: GitChangedFile[]): void;
+}
+
+/** One repository's changes, resolved for a section header in the panel. */
+interface RepositorySection {
+  rootRelativePath: string;
+  label: string;
+  branch: string | null;
+  changes: GitChangedFile[];
+}
+
+/**
+ * The repositories to show as grouped sections: every mapped repository that is
+ * a git repository and currently has changes, labelled for its header. Repos
+ * with no changes are omitted so the panel mirrors PhpStorm (only repositories
+ * with pending changes appear).
+ */
+function buildRepositorySections(
+  repositoryStatuses: GitRepositoryStatus[],
+  workspaceRoot: string,
+): RepositorySection[] {
+  return repositoryStatuses
+    .filter(
+      (entry) => entry.status.isRepository && entry.status.changes.length > 0,
+    )
+    .map((entry) => ({
+      rootRelativePath: entry.mapping.rootRelativePath,
+      label: gitRepositoryDisplayName(
+        entry.mapping.rootRelativePath,
+        workspaceRoot,
+      ),
+      branch: entry.status.branch,
+      changes: entry.status.changes,
+    }));
+}
+
+function selectedChangesForRepository(
+  changes: GitChangedFile[],
+  repositoryRootRelative: string,
+  includedChangePaths: Set<string>,
+): GitChangedFile[] {
+  return changes.filter((change) =>
+    includedChangePaths.has(
+      gitChangeKeyForRepository(repositoryRootRelative, change),
+    ),
+  );
+}
+
+/**
+ * Binds a repository to the include-toggle so the change groups/rows stay
+ * repo-agnostic. The primary ("") repository invokes the callback with a single
+ * argument - byte-identical to the pre-multi-repo call - so its inclusion key
+ * matches `gitChangeKey`; a nested repository passes its directory so the key is
+ * qualified (`gitChangeKeyForRepository`).
+ */
+function bindRepositoryToggle(
+  onToggleChangeIncluded: (
+    change: GitChangedFile,
+    repositoryRootRelative?: string,
+  ) => void,
+  repositoryRootRelative: string,
+): (change: GitChangedFile) => void {
+  if (repositoryRootRelative === "") {
+    return (change) => onToggleChangeIncluded(change);
+  }
+
+  return (change) => onToggleChangeIncluded(change, repositoryRootRelative);
 }
 
 function GitChangesPanelComponent({
@@ -64,39 +146,67 @@ function GitChangesPanelComponent({
   onStageChanges,
   onToggleChangeIncluded,
   onUnstageChanges,
+  repositoryStatuses,
   rootPath,
   status,
+  workspaceRoot,
 }: GitChangesPanelProps) {
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<
-    Set<GitChangeGroup["id"]>
-  >(new Set());
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
+    new Set(),
+  );
 
-  const changes = status.changes;
-  const groups = useMemo(() => groupGitChanges(changes), [changes]);
-  const selectedChanges = useMemo(
+  const sections = useMemo(
     () =>
-      changes.filter((change) =>
-        includedChangePaths.has(gitChangeKey(change)),
+      buildRepositorySections(
+        repositoryStatuses ?? [],
+        workspaceRoot ?? status.rootPath ?? "",
       ),
-    [changes, includedChangePaths],
+    [repositoryStatuses, status.rootPath, workspaceRoot],
   );
 
-  const onToggleGroupCollapsed = useCallback(
-    (groupId: GitChangeGroup["id"]) => {
-      setCollapsedGroupIds((current) => {
-        const next = new Set(current);
+  // Single-repo view source: an explicit single section (nested-only or the
+  // primary with changes when the whole-map view is wired), else the primary
+  // `status` prop (pre-multi-repo path / single-repo tests). The repo prefix
+  // stays "" for the primary so every key is byte-identical to `gitChangeKey`.
+  const singleSection = sections.length === 1 ? sections[0] : null;
+  const singleBranch = singleSection ? singleSection.branch : status.branch;
+  const singleChanges = singleSection ? singleSection.changes : status.changes;
+  const singleRepoRootRelative = singleSection
+    ? singleSection.rootRelativePath
+    : "";
+  const singleIsRepository = singleSection ? true : status.isRepository;
 
-        if (next.has(groupId)) {
-          next.delete(groupId);
-          return next;
-        }
+  const singleGroups = useMemo(
+    () => groupGitChanges(singleChanges),
+    [singleChanges],
+  );
+  const singleSelectedChanges = useMemo(
+    () =>
+      selectedChangesForRepository(
+        singleChanges,
+        singleRepoRootRelative,
+        includedChangePaths,
+      ),
+    [includedChangePaths, singleChanges, singleRepoRootRelative],
+  );
+  const singleToggleChangeIncluded = useMemo(
+    () => bindRepositoryToggle(onToggleChangeIncluded, singleRepoRootRelative),
+    [onToggleChangeIncluded, singleRepoRootRelative],
+  );
 
-        next.add(groupId);
+  const onToggleGroupCollapsed = useCallback((collapseKey: string) => {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(collapseKey)) {
+        next.delete(collapseKey);
         return next;
-      });
-    },
-    [],
-  );
+      }
+
+      next.add(collapseKey);
+      return next;
+    });
+  }, []);
 
   if (!rootPath) {
     return (
@@ -114,7 +224,67 @@ function GitChangesPanelComponent({
     );
   }
 
-  if (!status.isRepository) {
+  // Multi-repo grouped view (PhpStorm directory mappings): two or more
+  // repositories have changes, each under its own header.
+  if (sections.length >= 2) {
+    const selectedChanges = sections.flatMap((section) =>
+      selectedChangesForRepository(
+        section.changes,
+        section.rootRelativePath,
+        includedChangePaths,
+      ),
+    );
+    const totalChangeCount = sections.reduce(
+      (total, section) => total + section.changes.length,
+      0,
+    );
+
+    return (
+      <section aria-label="Commit" className="git-commit-panel">
+        <GitCommitHeader
+          branch={null}
+          changeCount={totalChangeCount}
+          disabled={gitOperationLoading}
+          hideBranch
+          onRefresh={onRefresh}
+          onRevertChanges={onRevertChanges}
+          onStageChanges={onStageChanges}
+          onUnstageChanges={onUnstageChanges}
+          selectedChanges={selectedChanges}
+        />
+        <nav aria-label="Git changes" className="git-changes">
+          {sections.map((section) => (
+            <GitRepositorySectionView
+              activeChange={activeChange}
+              collapsedGroupIds={collapsedGroupIds}
+              disabled={gitOperationLoading}
+              includedChangePaths={includedChangePaths}
+              key={section.rootRelativePath || "/primary"}
+              onOpenChange={onOpenChange}
+              onPreviewChange={onPreviewChange}
+              onToggleChangeIncluded={onToggleChangeIncluded}
+              onToggleCollapsed={onToggleGroupCollapsed}
+              section={section}
+            />
+          ))}
+        </nav>
+        <GitCommitFooter
+          canCommit={
+            selectedChanges.length > 0 &&
+            commitMessage.trim().length > 0 &&
+            !gitOperationLoading
+          }
+          commitMessage={commitMessage}
+          disabled={gitOperationLoading}
+          onCommit={onCommit}
+          onCommitAndPush={onCommitAndPush}
+          onCommitMessageChange={onCommitMessageChange}
+        />
+      </section>
+    );
+  }
+
+  if (!singleIsRepository) {
     return (
       <div className="empty-tree">
         <p>No Git repository</p>
@@ -122,11 +292,11 @@ function GitChangesPanelComponent({
     );
   }
 
-  if (status.changes.length === 0) {
+  if (singleChanges.length === 0) {
     return (
       <section aria-label="Commit" className="git-commit-panel">
         <GitCommitHeader
-          branch={status.branch}
+          branch={singleBranch}
           changeCount={0}
           disabled={gitOperationLoading}
           onRefresh={onRefresh}
@@ -143,78 +313,193 @@ function GitChangesPanelComponent({
   }
 
   const canCommit =
-    selectedChanges.length > 0 &&
+    singleSelectedChanges.length > 0 &&
     commitMessage.trim().length > 0 &&
     !gitOperationLoading;
 
   return (
     <section aria-label="Commit" className="git-commit-panel">
       <GitCommitHeader
-        branch={status.branch}
-        changeCount={changes.length}
+        branch={singleBranch}
+        changeCount={singleChanges.length}
         disabled={gitOperationLoading}
         onRefresh={onRefresh}
         onRevertChanges={onRevertChanges}
         onStageChanges={onStageChanges}
         onUnstageChanges={onUnstageChanges}
-        selectedChanges={selectedChanges}
+        selectedChanges={singleSelectedChanges}
       />
       <nav aria-label="Git changes" className="git-changes">
-        {groups.map((group) => (
+        {singleGroups.map((group) => (
           <GitChangeGroupView
             activeChange={activeChange}
+            collapseKey={`${singleRepoRootRelative}:${group.id}`}
             disabled={gitOperationLoading}
             group={group}
+            includedChangePaths={includedChangePaths}
+            isCollapsed={collapsedGroupIds.has(
+              `${singleRepoRootRelative}:${group.id}`,
+            )}
             key={group.id}
             onOpenChange={onOpenChange}
             onPreviewChange={onPreviewChange}
-            onToggleChangeIncluded={onToggleChangeIncluded}
-            includedChangePaths={includedChangePaths}
-            isCollapsed={collapsedGroupIds.has(group.id)}
+            onToggleChangeIncluded={singleToggleChangeIncluded}
             onToggleCollapsed={onToggleGroupCollapsed}
+            repositoryRootRelative={singleRepoRootRelative}
           />
         ))}
       </nav>
-      <footer className="git-commit-footer">
-        <textarea
-          aria-label="Commit message"
-          className="git-commit-message"
-          disabled={gitOperationLoading}
-          onInput={(event) =>
-            onCommitMessageChange(event.currentTarget.value)
-          }
-          placeholder="Commit message"
-          value={commitMessage}
-        />
-        <div className="git-commit-actions">
-          <button
-            className="git-commit-button"
-            disabled={!canCommit}
-            onClick={onCommit}
-            type="button"
-          >
-            Commit
-          </button>
-          <button
-            className="git-commit-button git-commit-push-button"
-            disabled={!canCommit}
-            onClick={onCommitAndPush}
-            type="button"
-          >
-            Commit and Push
-          </button>
-        </div>
-      </footer>
+      <GitCommitFooter
+        canCommit={canCommit}
+        commitMessage={commitMessage}
+        disabled={gitOperationLoading}
+        onCommit={onCommit}
+        onCommitAndPush={onCommitAndPush}
+        onCommitMessageChange={onCommitMessageChange}
+      />
     </section>
   );
 }
 
 export const GitChangesPanel = memo(GitChangesPanelComponent);
 
+interface GitCommitFooterProps {
+  canCommit: boolean;
+  commitMessage: string;
+  disabled: boolean;
+  onCommit(): void;
+  onCommitAndPush(): void;
+  onCommitMessageChange(message: string): void;
+}
+
+function GitCommitFooter({
+  canCommit,
+  commitMessage,
+  disabled,
+  onCommit,
+  onCommitAndPush,
+  onCommitMessageChange,
+}: GitCommitFooterProps) {
+  return (
+    <footer className="git-commit-footer">
+      <textarea
+        aria-label="Commit message"
+        className="git-commit-message"
+        disabled={disabled}
+        onInput={(event) => onCommitMessageChange(event.currentTarget.value)}
+        placeholder="Commit message"
+        value={commitMessage}
+      />
+      <div className="git-commit-actions">
+        <button
+          className="git-commit-button"
+          disabled={!canCommit}
+          onClick={onCommit}
+          type="button"
+        >
+          Commit
+        </button>
+        <button
+          className="git-commit-button git-commit-push-button"
+          disabled={!canCommit}
+          onClick={onCommitAndPush}
+          type="button"
+        >
+          Commit and Push
+        </button>
+      </div>
+    </footer>
+  );
+}
+
+interface GitRepositorySectionViewProps {
+  activeChange: GitChangedFile | null;
+  collapsedGroupIds: Set<string>;
+  disabled: boolean;
+  includedChangePaths: Set<string>;
+  section: RepositorySection;
+  onOpenChange(change: GitChangedFile): void;
+  onPreviewChange(change: GitChangedFile): void;
+  onToggleChangeIncluded(
+    change: GitChangedFile,
+    repositoryRootRelative?: string,
+  ): void;
+  onToggleCollapsed(collapseKey: string): void;
+}
+
+// A single repository's changes under a PhpStorm-style repo header (name +
+// branch + change count), each of its Changes/Unversioned groups rendered with
+// the repository's directory so inclusion keys stay repo-qualified.
+function GitRepositorySectionViewComponent({
+  activeChange,
+  collapsedGroupIds,
+  disabled,
+  includedChangePaths,
+  onOpenChange,
+  onPreviewChange,
+  onToggleChangeIncluded,
+  onToggleCollapsed,
+  section,
+}: GitRepositorySectionViewProps) {
+  const groups = useMemo(
+    () => groupGitChanges(section.changes),
+    [section.changes],
+  );
+  const toggleChangeIncluded = useMemo(
+    () => bindRepositoryToggle(onToggleChangeIncluded, section.rootRelativePath),
+    [onToggleChangeIncluded, section.rootRelativePath],
+  );
+
+  return (
+    <section className="git-repository-section">
+      <header className="git-repository-header">
+        <span className="git-repository-name">{section.label}</span>
+        <small className="git-repository-branch">
+          <GitBranch aria-hidden="true" size={12} />
+          {section.branch || "detached"}
+        </small>
+        <span
+          aria-label={changeCountLabel(section.changes.length)}
+          className="git-repository-count"
+        >
+          {section.changes.length}
+        </span>
+      </header>
+      {groups.map((group) => {
+        const collapseKey = `${section.rootRelativePath}:${group.id}`;
+
+        return (
+          <GitChangeGroupView
+            activeChange={activeChange}
+            collapseKey={collapseKey}
+            disabled={disabled}
+            group={group}
+            includedChangePaths={includedChangePaths}
+            isCollapsed={collapsedGroupIds.has(collapseKey)}
+            key={collapseKey}
+            onOpenChange={onOpenChange}
+            onPreviewChange={onPreviewChange}
+            onToggleChangeIncluded={toggleChangeIncluded}
+            onToggleCollapsed={onToggleCollapsed}
+            repositoryRootRelative={section.rootRelativePath}
+          />
+        );
+      })}
+    </section>
+  );
+}
+
+const GitRepositorySectionView = memo(GitRepositorySectionViewComponent);
+
 interface GitCommitHeaderProps {
   branch: string | null;
   changeCount: number;
   disabled: boolean;
+  /**
+   * Hides the single-branch line. In the multi-repo grouped view each repo shows
+   * its own branch in its section header, so the top header omits it.
+   */
+  hideBranch?: boolean;
   selectedChanges: GitChangedFile[];
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
@@ -226,6 +511,7 @@ function GitCommitHeader({
   branch,
   changeCount,
   disabled,
+  hideBranch = false,
   onRefresh,
   onRevertChanges,
   onStageChanges,
@@ -248,10 +534,12 @@ function GitCommitHeader({
             </span>
           ) : null}
         </span>
-        <small>
-          <GitBranch aria-hidden="true" size={13} />
-          {branch || "detached"}
-        </small>
+        {hideBranch ? null : (
+          <small>
+            <GitBranch aria-hidden="true" size={13} />
+            {branch || "detached"}
+          </small>
+        )}
       </div>
       <div className="git-commit-toolbar" aria-label="Git actions">
         <button
@@ -293,18 +581,26 @@ function GitCommitHeader({
 
 interface GitChangeGroupViewProps {
   activeChange: GitChangedFile | null;
+  collapseKey: string;
   disabled: boolean;
   group: GitChangeGroup;
   includedChangePaths: Set<string>;
   isCollapsed: boolean;
+  /**
+   * Owning repository's workspace-root-relative directory ("" for primary),
+   * used only to compute inclusion keys. The toggle callback is already bound to
+   * this repository (see {@link bindRepositoryToggle}).
+   */
+  repositoryRootRelative: string;
   onOpenChange(change: GitChangedFile): void;
   onPreviewChange(change: GitChangedFile): void;
   onToggleChangeIncluded(change: GitChangedFile): void;
-  onToggleCollapsed(groupId: GitChangeGroup["id"]): void;
+  onToggleCollapsed(collapseKey: string): void;
 }
 
 function GitChangeGroupViewComponent({
   activeChange,
+  collapseKey,
   disabled,
   group,
   includedChangePaths,
@@ -313,15 +609,16 @@ function GitChangeGroupViewComponent({
   onPreviewChange,
   onToggleChangeIncluded,
   onToggleCollapsed,
+  repositoryRootRelative,
 }: GitChangeGroupViewProps) {
-  const activeChangeKey = activeChange ? gitChangeKey(activeChange) : null;
-
   const selectedChanges = useMemo(
     () =>
       group.changes.filter((change) =>
-        includedChangePaths.has(gitChangeKey(change)),
+        includedChangePaths.has(
+          gitChangeKeyForRepository(repositoryRootRelative, change),
+        ),
       ),
-    [group.changes, includedChangePaths],
+    [group.changes, includedChangePaths, repositoryRootRelative],
   );
   const allIncluded = selectedChanges.length === group.changes.length;
 
@@ -332,7 +629,12 @@ function GitChangeGroupViewComponent({
     }
 
     group.changes
-      .filter((change) => !includedChangePaths.has(gitChangeKey(change)))
+      .filter(
+        (change) =>
+          !includedChangePaths.has(
+            gitChangeKeyForRepository(repositoryRootRelative, change),
+          ),
+      )
       .forEach(onToggleChangeIncluded);
   };
 
@@ -345,7 +647,7 @@ function GitChangeGroupViewComponent({
           disabled={disabled}
           onClick={() => {
             if (!disabled) {
-              onToggleCollapsed(group.id);
+              onToggleCollapsed(collapseKey);
             }
           }}
           type="button"
@@ -368,27 +670,40 @@ function GitChangeGroupViewComponent({
       </div>
       {isCollapsed
         ? null
-        : group.changes.map((change) => {
-            const changeKey = gitChangeKey(change);
-
-            return (
-              <GitChangeRow
-                change={change}
-                disabled={disabled}
-                isActive={activeChangeKey === changeKey}
-                isIncluded={includedChangePaths.has(changeKey)}
-                key={`${change.status}:${change.path}:${change.oldPath || ""}:${change.isStaged}`}
-                onOpenChange={onOpenChange}
-                onPreviewChange={onPreviewChange}
-                onToggleChangeIncluded={onToggleChangeIncluded}
-              />
-            );
-          })}
+        : group.changes.map((change) => (
+            <GitChangeRow
+              change={change}
+              disabled={disabled}
+              isActive={isSameActiveChange(activeChange, change)}
+              isIncluded={includedChangePaths.has(
+                gitChangeKeyForRepository(repositoryRootRelative, change),
+              )}
+              key={`${change.status}:${change.path}:${change.oldPath || ""}:${change.isStaged}`}
+              onOpenChange={onOpenChange}
+              onPreviewChange={onPreviewChange}
+              onToggleChangeIncluded={onToggleChangeIncluded}
+            />
+          ))}
     </section>
   );
 }
 
 const GitChangeGroupView = memo(GitChangeGroupViewComponent);
+
+// Active-row match by absolute path (unique across repositories), so a nested
+// repo's active diff highlights the right row and never a same-named sibling in
+// another repository.
+function isSameActiveChange(
+  activeChange: GitChangedFile | null,
+  change: GitChangedFile,
+): boolean {
+  return (
+    activeChange !== null &&
+    activeChange.path === change.path &&
+    activeChange.oldPath === change.oldPath &&
+    activeChange.isStaged === change.isStaged
+  );
+}
 
 interface GitChangeRowProps {
   change: GitChangedFile;

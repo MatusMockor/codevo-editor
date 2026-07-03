@@ -66,6 +66,7 @@ export type SettingsSection =
   | "general"
   | "keymap"
   | "php"
+  | "git"
   | "index"
   | "snippets"
   | "appearance";

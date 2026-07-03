@@ -29,6 +29,10 @@ import {
   type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
+import {
+  gitDirectoryMappingPaths,
+  normalizeGitDirectoryMappings,
+} from "../domain/gitRepositoryMapping";
 import type { UserSnippet } from "../domain/snippets";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
@@ -47,6 +51,12 @@ export interface SettingsSaveInput {
 
 interface SettingsDialogProps {
   appSettings: AppSettings;
+  /**
+   * Auto-detected git repository directories (workspace-root-relative, excluding
+   * the root), shown as read-only, "Auto-detected"-marked entries in the
+   * Directory Mappings section alongside the editable manual mappings.
+   */
+  gitDetectedRepositoryMappings?: string[];
   initialSection?: SettingsSection;
   isOpen: boolean;
   phpTools: PhpToolAvailability | null;
@@ -69,6 +79,7 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "general", label: "General" },
   { id: "keymap", label: "Keymap" },
   { id: "php", label: "PHP" },
+  { id: "git", label: "Directory Mappings" },
   { id: "index", label: "Index" },
   { id: "snippets", label: "Snippets" },
   { id: "appearance", label: "Appearance" },
@@ -83,6 +94,7 @@ const newUserSnippet = (): UserSnippet => ({
 
 export function SettingsDialog({
   appSettings,
+  gitDetectedRepositoryMappings = [],
   initialSection = "general",
   isOpen,
   onClose,
@@ -486,6 +498,33 @@ export function SettingsDialog({
                   phpTools={phpTools}
                   workspaceDescriptor={workspaceDescriptor}
                   workspaceSettings={draftWorkspaceSettings}
+                />
+              ) : null}
+
+              {activeSection === "git" ? (
+                <GitMappingsSettings
+                  detectedMappings={gitDetectedRepositoryMappings}
+                  gitDirectoryMappings={
+                    draftWorkspaceSettings.gitDirectoryMappings
+                  }
+                  gitDirectoryMappingsAuto={
+                    draftWorkspaceSettings.gitDirectoryMappingsAuto
+                  }
+                  hasWorkspace={hasWorkspace}
+                  onChangeGitDirectoryMappings={(gitDirectoryMappings) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      gitDirectoryMappings,
+                    })
+                  }
+                  onChangeGitDirectoryMappingsAuto={(
+                    gitDirectoryMappingsAuto,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      gitDirectoryMappingsAuto,
+                    })
+                  }
                 />
               ) : null}
 
@@ -1311,6 +1350,128 @@ function detectedComposerPhpVersion(
   }
 
   return php.phpPlatformVersion || php.phpVersionConstraint || null;
+}
+
+interface GitMappingsSettingsProps {
+  detectedMappings: string[];
+  gitDirectoryMappings: string[];
+  gitDirectoryMappingsAuto: boolean;
+  hasWorkspace: boolean;
+  onChangeGitDirectoryMappings(mappings: string[]): void;
+  onChangeGitDirectoryMappingsAuto(auto: boolean): void;
+}
+
+// PhpStorm-style Git "Directory Mappings": the workspace's main repository plus
+// nested package repositories. Auto-detected repositories are shown read-only
+// (marked "Auto-detected"); manual mappings are editable. A file's git
+// operations route into the repository that owns it.
+function GitMappingsSettings({
+  detectedMappings,
+  gitDirectoryMappings,
+  gitDirectoryMappingsAuto,
+  hasWorkspace,
+  onChangeGitDirectoryMappings,
+  onChangeGitDirectoryMappingsAuto,
+}: GitMappingsSettingsProps) {
+  const [draftPath, setDraftPath] = useState("");
+  const manualByKey = new Set(
+    gitDirectoryMappings.map((path) => path.toLowerCase()),
+  );
+  const autoOnlyMappings = detectedMappings.filter(
+    (path) => path !== "" && !manualByKey.has(path.toLowerCase()),
+  );
+
+  const addMapping = () => {
+    const nextMappings = gitDirectoryMappingPaths(
+      normalizeGitDirectoryMappings([...gitDirectoryMappings, draftPath]),
+    ).filter((path) => path !== "");
+
+    onChangeGitDirectoryMappings(nextMappings);
+    setDraftPath("");
+  };
+
+  const removeMapping = (path: string) => {
+    onChangeGitDirectoryMappings(
+      gitDirectoryMappings.filter((mapping) => mapping !== path),
+    );
+  };
+
+  return (
+    <div className="settings-group">
+      <p className="settings-hint">
+        Route git operations per directory: a workspace can hold a main
+        repository at its root plus nested package repositories (for example{" "}
+        <code>workbench/lcsk/*</code>). Each file commits and pushes into the
+        repository that owns it.
+      </p>
+
+      <label className="settings-toggle">
+        <input
+          checked={gitDirectoryMappingsAuto}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeGitDirectoryMappingsAuto(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Detect repositories automatically</span>
+      </label>
+
+      {gitDirectoryMappingsAuto && autoOnlyMappings.length > 0 ? (
+        <div className="settings-subgroup">
+          <span>Detected repositories</span>
+          {autoOnlyMappings.map((path) => (
+            <div className="git-mapping-row" key={path}>
+              <code className="git-mapping-path">{path}</code>
+              <span className="git-mapping-badge">Auto-detected</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="settings-subgroup">
+        <span>Manual repositories</span>
+        {gitDirectoryMappings.length === 0 ? (
+          <div className="settings-readout">
+            <span>No manual mappings</span>
+          </div>
+        ) : null}
+        {gitDirectoryMappings.map((path) => (
+          <div className="git-mapping-row" key={path}>
+            <code className="git-mapping-path">{path}</code>
+            <button
+              disabled={!hasWorkspace}
+              onClick={() => removeMapping(path)}
+              title="Remove mapping"
+              type="button"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
+        <label className="settings-field">
+          <span>Add repository directory</span>
+          <input
+            disabled={!hasWorkspace}
+            onChange={(event) => setDraftPath(event.currentTarget.value)}
+            placeholder="workbench/lcsk/attendance"
+            spellCheck={false}
+            value={draftPath}
+          />
+        </label>
+        <div className="settings-actions">
+          <button
+            disabled={!hasWorkspace || draftPath.trim() === ""}
+            onClick={addMapping}
+            type="button"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface IndexSettingsProps {

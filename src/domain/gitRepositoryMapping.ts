@@ -433,6 +433,104 @@ export function mergeGitRepositoryStatuses(
   return merged;
 }
 
+/**
+ * Display name for a repository section header in the Changes panel. A nested
+ * repository shows its workspace-root-relative path (`workbench/lcsk/attendance`);
+ * the primary (workspace-root) repository shows the workspace's base directory
+ * name (PhpStorm labels the root repo with the project name, e.g. `attendancer`).
+ */
+export function gitRepositoryDisplayName(
+  rootRelativePath: string,
+  workspaceRoot: string,
+): string {
+  if (rootRelativePath !== "") {
+    return rootRelativePath;
+  }
+
+  const normalized = normalizeAbsolutePath(workspaceRoot);
+  const segments = normalized.split("/").filter((segment) => segment !== "");
+
+  return segments[segments.length - 1] || normalized || "workspace root";
+}
+
+/**
+ * A compact status-bar label for a nested repository: its last two path segments
+ * (`lcsk/attendance` for `workbench/lcsk/attendance`), enough to name the repo
+ * without flooding the recently-decluttered status bar. The primary repository
+ * returns `null` so its branch is shown bare, exactly as before multi-repo.
+ */
+export function compactGitRepositoryLabel(
+  rootRelativePath: string,
+): string | null {
+  if (rootRelativePath === "") {
+    return null;
+  }
+
+  const segments = rootRelativePath
+    .split("/")
+    .filter((segment) => segment !== "");
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  return segments.slice(-2).join("/");
+}
+
+/**
+ * The branch and compact repository label to show in the status bar for the
+ * active file. When the file lives in a nested repository (a directory mapping)
+ * the branch is that repository's branch and the label names it; a file in the
+ * primary/single repository keeps the pre-multi-repo behaviour (primary branch,
+ * no label). Falls back to the primary branch (no label) when the file resolves
+ * to no repository or its repository has no published status yet, so a nested
+ * repo whose status is still loading never shows a wrong branch.
+ */
+export function activeFileGitBranchInfo(options: {
+  mappings: GitRepositoryMapping[];
+  workspaceRoot: string | null;
+  activeFilePath: string | null;
+  repositoryStatuses: GitRepositoryStatus[];
+  primaryBranch: string | null;
+}): { branch: string | null; repositoryLabel: string | null } {
+  const {
+    mappings,
+    workspaceRoot,
+    activeFilePath,
+    repositoryStatuses,
+    primaryBranch,
+  } = options;
+
+  if (!workspaceRoot || !activeFilePath) {
+    return { branch: primaryBranch, repositoryLabel: null };
+  }
+
+  const resolved = resolveGitRepositoryForPath(
+    mappings,
+    workspaceRoot,
+    activeFilePath,
+  );
+
+  if (!resolved || resolved.mapping.rootRelativePath === "") {
+    return { branch: primaryBranch, repositoryLabel: null };
+  }
+
+  const entry = repositoryStatuses.find(
+    (candidate) =>
+      normalizeAbsolutePath(candidate.root) ===
+      normalizeAbsolutePath(resolved.repositoryRoot),
+  );
+
+  if (!entry || !entry.status.isRepository) {
+    return { branch: primaryBranch, repositoryLabel: null };
+  }
+
+  return {
+    branch: entry.status.branch,
+    repositoryLabel: compactGitRepositoryLabel(resolved.mapping.rootRelativePath),
+  };
+}
+
 function rawMappingRootRelativePath(entry: unknown): string | null {
   if (typeof entry === "string") {
     return entry;

@@ -14,6 +14,12 @@ interface StatusBarProps {
   dirtyCount: number;
   errorCount?: number;
   gitBranch?: string | null;
+  /**
+   * Compact label naming the repository whose branch is shown, when the active
+   * file lives in a nested repository (PhpStorm directory mapping). `null` for
+   * the primary/single repository, which shows the branch bare, as before.
+   */
+  gitBranchRepositoryLabel?: string | null;
   ideActivityDetail?: string | null;
   ideActivityLabel: string | null;
   ideActivityState: IdeActivityState | null;
@@ -83,6 +89,7 @@ function StatusBarComponent({
   dirtyCount,
   errorCount = 0,
   gitBranch = null,
+  gitBranchRepositoryLabel = null,
   ideActivityDetail = null,
   ideActivityLabel,
   ideActivityState,
@@ -176,15 +183,15 @@ function StatusBarComponent({
       </button>
       {statusBar.gitBranch && gitBranch ? (
         <button
-          aria-label={`Git branch: ${gitBranch}`}
+          aria-label={gitBranchTitle(gitBranch, gitBranchRepositoryLabel)}
           className="status-git-branch"
           onClick={onShowGitBranches}
           style={statusButtonStyle}
-          title={`Git branch: ${gitBranch}`}
+          title={gitBranchTitle(gitBranch, gitBranchRepositoryLabel)}
           type="button"
         >
           <GitBranch aria-hidden="true" size={13} />
-          {gitBranch}
+          {gitBranchLabel(gitBranch, gitBranchRepositoryLabel)}
         </button>
       ) : null}
       {statusBar.activePath ? (
@@ -285,6 +292,32 @@ function ideActivityTitle(
 
 function pluralize(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
+}
+
+// A file in a nested repository (directory mapping) shows a compact
+// `repo: branch` label so the branch is unambiguous; the primary/single repo
+// shows the branch bare (pre-multi-repo look). The full context stays in the
+// tooltip either way.
+function gitBranchLabel(
+  branch: string,
+  repositoryLabel: string | null,
+): string {
+  if (!repositoryLabel) {
+    return branch;
+  }
+
+  return `${repositoryLabel}: ${branch}`;
+}
+
+function gitBranchTitle(
+  branch: string,
+  repositoryLabel: string | null,
+): string {
+  if (!repositoryLabel) {
+    return `Git branch: ${branch}`;
+  }
+
+  return `Git branch: ${branch} (${repositoryLabel})`;
 }
 
 function cursorPositionLabel(position: EditorPosition): string {
