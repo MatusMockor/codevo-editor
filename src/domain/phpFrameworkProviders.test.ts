@@ -13,12 +13,20 @@ import {
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkPropertyTypeFromSource,
   phpFrameworkProvidersForProject,
+  phpFrameworkRouteDefinitionsFromSource,
+  phpFrameworkRouteReferenceAt,
+  phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsRoutes,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
   resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
 import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
+import {
+  phpLaravelNamedRouteDefinitions,
+  phpLaravelNamedRouteReferenceContextAt,
+} from "./phpLaravelRoutes";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -1320,6 +1328,82 @@ return new class extends Migration
           }),
         ).matchedProviderIds,
       ).toEqual(["nette"]);
+    });
+  });
+
+  describe("routes capability", () => {
+    const referenceSource = "<?php\nroute('comments.show');\n";
+    const referencePosition = { column: 12, lineNumber: 2 };
+    const definitionSource =
+      "<?php\nRoute::get('/comments')->name('comments.definition');\n";
+
+    it("dispatches Laravel route references 1:1 through the provider", () => {
+      const direct = phpLaravelNamedRouteReferenceContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkRouteReferenceAt(referenceSource, referencePosition, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel route definitions 1:1 through the provider", () => {
+      const direct = phpLaravelNamedRouteDefinitions(definitionSource);
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkRouteDefinitionsFromSource(definitionSource, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("exposes the Laravel route search anchors through the provider", () => {
+      const queries = phpFrameworkRouteSearchQueries([
+        phpLaravelFrameworkProvider,
+      ]);
+
+      expect(queries).toContain("->name(");
+      expect(queries).toContain("Route::resource");
+      expect(queries).toContain("Route::apiResources");
+    });
+
+    it("reports route support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsRoutes([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsRoutes([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
+      expect(phpFrameworkSupportsRoutes([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the routes capability", () => {
+      expect(
+        phpFrameworkRouteReferenceAt(referenceSource, referencePosition, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkRouteDefinitionsFromSource(definitionSource, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(
+        phpFrameworkRouteSearchQueries([phpNetteFrameworkProvider]),
+      ).toEqual([]);
+      // Empty provider set: dispatchers stay inert (no active framework).
+      expect(
+        phpFrameworkRouteReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+      expect(
+        phpFrameworkRouteDefinitionsFromSource(definitionSource, []),
+      ).toEqual([]);
+      expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
     });
   });
 });

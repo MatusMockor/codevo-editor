@@ -340,11 +340,6 @@ import {
   type BladeLaravelHelperCompletionContext,
 } from "../domain/bladeLaravelHelperCompletions";
 import {
-  phpLaravelNamedRouteDefinitions,
-  phpLaravelNamedRouteReferenceContextAt,
-  type PhpLaravelNamedRouteDefinition,
-} from "../domain/phpLaravelRoutes";
-import {
   phpLaravelAuthGuardCompletionInsertText,
   phpLaravelAuthGuardConfigKey,
   phpLaravelAuthGuardNameFromConfigKey,
@@ -495,9 +490,14 @@ import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
+  phpFrameworkRouteDefinitionsFromSource,
+  phpFrameworkRouteReferenceAt,
+  phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsRoutes,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
+  type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
 import {
   phpClassConstantPositionOrNull,
@@ -859,7 +859,7 @@ export interface BladeCompletionItem {
   replaceEnd?: number;
 }
 
-interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
+interface PhpLaravelNamedRouteTarget extends PhpFrameworkRouteDefinition {
   path: string;
   relativePath: string | null;
 }
@@ -13636,7 +13636,10 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (
+        !phpFrameworkSupportsRoutes(activePhpFrameworkProviders) ||
+        !requestedRoot
+      ) {
         return [];
       }
 
@@ -13646,7 +13649,10 @@ export function useWorkbenchController(
         relativePath: string | null,
         source: string,
       ) => {
-        for (const definition of phpLaravelNamedRouteDefinitions(source)) {
+        for (const definition of phpFrameworkRouteDefinitionsFromSource(
+          source,
+          activePhpFrameworkProviders,
+        )) {
           const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
 
           if (targets.has(key)) {
@@ -13668,18 +13674,9 @@ export function useWorkbenchController(
       );
 
       const searchResults = await Promise.all(
-        [
-          "->name(",
-          "'as' =>",
-          "\"as\" =>",
-          "Route::resource",
-          "Route::apiResource",
-          "Route::singleton",
-          "Route::apiSingleton",
-          "Route::resources",
-          "Route::apiResources",
-          "Route::softDeletableResources",
-        ].map((query) => textSearch.searchText(requestedRoot, query, 200)),
+        phpFrameworkRouteSearchQueries(activePhpFrameworkProviders).map(
+          (query) => textSearch.searchText(requestedRoot, query, 200),
+        ),
       );
 
       if (!isRequestedRootActive()) {
@@ -13735,7 +13732,7 @@ export function useWorkbenchController(
       });
     },
     [
-      isLaravelFrameworkActive,
+      activePhpFrameworkProviders,
       readNavigationFileContent,
       textSearch,
       workspaceRoot,
@@ -19448,12 +19445,13 @@ export function useWorkbenchController(
         return [];
       }
 
-      const namedRouteContext = phpLaravelNamedRouteReferenceContextAt(
+      const namedRouteContext = phpFrameworkRouteReferenceAt(
         source,
         position,
+        activePhpFrameworkProviders,
       );
 
-      if (isLaravelFrameworkActive && namedRouteContext && activeDocument) {
+      if (namedRouteContext && activeDocument) {
         const normalizedPrefix = namedRouteContext.prefix.toLowerCase();
         const routes = await collectPhpLaravelNamedRouteTargets(
           source,
@@ -20185,6 +20183,7 @@ export function useWorkbenchController(
       collectPhpLaravelViewTargets,
       collectPhpMethodsForClass,
       activeDocument,
+      activePhpFrameworkProviders,
       ensurePhpLaravelMigrationSourcesLoaded,
       ensurePhpLaravelProviderSourcesLoaded,
       isLaravelFrameworkActive,
@@ -24266,7 +24265,11 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+      if (
+        !requestedRoot ||
+        !activeDocument ||
+        !phpFrameworkSupportsRoutes(activePhpFrameworkProviders)
+      ) {
         return false;
       }
 
@@ -24296,8 +24299,8 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      activePhpFrameworkProviders,
       collectPhpLaravelNamedRouteTargets,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
     ],

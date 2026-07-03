@@ -17,7 +17,12 @@ import {
   phpLaravelModelPropertyClassTypeFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
 } from "./phpFrameworkLaravel";
+import type { EditorPosition } from "./languageServerFeatures";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
+import {
+  phpLaravelNamedRouteDefinitions,
+  phpLaravelNamedRouteReferenceContextAt,
+} from "./phpLaravelRoutes";
 import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
@@ -73,6 +78,33 @@ export interface PhpFrameworkSourceContext {
   workspaceSources?: readonly string[];
 }
 
+/**
+ * A named-route reference detected at the cursor (e.g. the `route('x')`
+ * argument). Framework-agnostic mirror of the Laravel route reference so the
+ * controller's completion path never binds to one framework's parser.
+ */
+export interface PhpFrameworkRouteReference {
+  call: string;
+  name: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+/** A named-route definition (its name + declaration position). */
+export interface PhpFrameworkRouteDefinition {
+  name: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkRouteReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkRouteDefinitionsContext {
+  source: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   /**
@@ -91,6 +123,21 @@ export interface PhpFrameworkProvider {
     isKnownMemberMethod?: (context: PhpFrameworkMemberMethodContext) => boolean;
     isKnownStaticMethod?: (context: PhpFrameworkStaticMethodContext) => boolean;
   };
+  routes?: {
+    referenceAt?: (
+      context: PhpFrameworkRouteReferenceContext,
+    ) => PhpFrameworkRouteReference | null;
+    definitionsFromSource?: (
+      context: PhpFrameworkRouteDefinitionsContext,
+    ) => PhpFrameworkRouteDefinition[];
+    /**
+     * Text-search anchors that surface files declaring named routes outside the
+     * active document (route files, `->name(...)` chains, resource
+     * registrations). Owned by the provider so the controller's route collector
+     * is framework-agnostic.
+     */
+    searchQueries?: readonly string[];
+  };
   semantics?: {
     propertyTypeFromSource?: (
       context: PhpFrameworkPropertyTypeContext,
@@ -106,6 +153,24 @@ export interface PhpFrameworkProvider {
     ) => PhpFrameworkContainerBinding[];
   };
 }
+
+/**
+ * Text-search anchors for Laravel named routes declared outside the active
+ * document. Kept beside the provider (not the controller) so route knowledge
+ * stays framework-owned; a future provider ships its own anchors.
+ */
+const laravelRouteSearchQueries: readonly string[] = [
+  "->name(",
+  "'as' =>",
+  "\"as\" =>",
+  "Route::resource",
+  "Route::apiResource",
+  "Route::singleton",
+  "Route::apiSingleton",
+  "Route::resources",
+  "Route::apiResources",
+  "Route::softDeletableResources",
+];
 
 export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   id: "laravel",
@@ -180,6 +245,13 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         isLaravelEloquentStaticBuilderReceiver(source, className)) ||
       isLaravelEloquentLocalScopeStaticMethod(source, className, methodName) ||
       isLaravelApiResourceStaticMethod(source, className, methodName),
+  },
+  routes: {
+    definitionsFromSource: ({ source }) =>
+      phpLaravelNamedRouteDefinitions(source),
+    referenceAt: ({ position, source }) =>
+      phpLaravelNamedRouteReferenceContextAt(source, position),
+    searchQueries: laravelRouteSearchQueries,
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -317,6 +389,60 @@ export function isKnownPhpFrameworkMemberMethod(
         sourceContext,
       }) ?? false,
   );
+}
+
+/**
+ * First named-route reference detected at the cursor across the active
+ * providers. Exclusive resolution keeps this to at most one provider today, so
+ * the first non-null match wins and non-route providers are inert.
+ */
+export function phpFrameworkRouteReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkRouteReference | null {
+  for (const provider of providers) {
+    const reference = provider.routes?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Named-route definitions declared in a single source, aggregated across the
+ * active providers. Providers without a routes capability contribute nothing.
+ */
+export function phpFrameworkRouteDefinitionsFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkRouteDefinition[] {
+  return providers.flatMap(
+    (provider) => provider.routes?.definitionsFromSource?.({ source }) ?? [],
+  );
+}
+
+/**
+ * Text-search anchors the active providers use to surface route declarations in
+ * other files. Empty when no active provider ships routes.
+ */
+export function phpFrameworkRouteSearchQueries(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap((provider) => provider.routes?.searchQueries ?? []);
+}
+
+/**
+ * Whether any active provider ships a routes capability - the framework-agnostic
+ * gate that replaces the hardcoded `isLaravelFrameworkActive` route checks.
+ */
+export function phpFrameworkSupportsRoutes(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.routes !== undefined);
 }
 
 export function phpFrameworkPropertyTypeFromSource(
