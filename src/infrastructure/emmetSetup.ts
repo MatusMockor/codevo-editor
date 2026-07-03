@@ -9,9 +9,10 @@ import { emmetCSS, emmetHTML, emmetJSX } from "emmet-monaco-es";
 // expansion works regardless of the active grammar.
 const EMMET_OPTIONS = { tokenizer: "standard" } as const;
 
-// HTML-compatible languages. PHP and Blade are HTML-like host languages, so the
-// HTML Emmet provider handles their markup context.
-const HTML_LANGUAGES = ["html", "php", "blade"];
+// HTML-compatible languages. PHP, Blade and Latte are HTML-like host languages,
+// so the HTML Emmet provider handles their markup context. (NEON is not markup,
+// so it is intentionally excluded.)
+const HTML_LANGUAGES = ["html", "php", "blade", "latte"];
 
 // CSS-compatible languages.
 const CSS_LANGUAGES = ["css", "scss"];

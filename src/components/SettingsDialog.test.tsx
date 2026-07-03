@@ -6,7 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { defaultKeymapSettings } from "../domain/keymap";
 import type { SystemFontGateway } from "../domain/systemFonts";
-import { SettingsDialog } from "./SettingsDialog";
+import { SettingsDialog, snippetLanguageOptions } from "./SettingsDialog";
+
+describe("snippetLanguageOptions", () => {
+  it("offers Latte and NEON alongside the existing snippet languages", () => {
+    const ids = snippetLanguageOptions.map((option) => option.id);
+    expect(ids).toContain("php");
+    expect(ids).toContain("blade");
+    expect(ids).toContain("latte");
+    expect(ids).toContain("neon");
+    const latte = snippetLanguageOptions.find((option) => option.id === "latte");
+    const neon = snippetLanguageOptions.find((option) => option.id === "neon");
+    expect(latte?.label).toBe("Latte");
+    expect(neon?.label).toBe("NEON");
+  });
+});
 
 describe("SettingsDialog", () => {
   let host: HTMLDivElement;

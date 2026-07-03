@@ -3709,6 +3709,7 @@ function isSmartBlankLineIndentDocument(document: EditorDocument): boolean {
   return (
     document.language === "php" ||
     document.language === "blade" ||
+    document.language === "latte" ||
     document.language === "javascript" ||
     document.language === "typescript"
   );

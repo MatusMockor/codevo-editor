@@ -313,6 +313,12 @@ export const SHIKI_LANGS = [
   "markdown",
   "sql",
   "vue",
+  // Nette highlighting tier (runs in every mode, no framework gating). Both
+  // grammars are self-authored (no Shiki bundle grammar exists for them) and
+  // loaded via the same dynamic-import / code-split path as the bundled langs,
+  // so ne-Nette users pay no extra startup bundle for them.
+  "latte",
+  "neon",
 ] as const;
 
 export const APP_SHIKI_THEMES = [
@@ -405,6 +411,12 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       // sub-grammars), so no extra imports are needed. Highlighting only; .vue
       // does not get LSP/Volar completions or diagnostics in this slice.
       import("shiki/langs/vue.mjs"),
+      // Self-authored Latte + NEON grammars (no Shiki bundle equivalent). The
+      // Latte grammar layers its macros on top of the bundled `html` grammar via
+      // a scope injection, so `html` must stay in this list. Dynamic imports keep
+      // both grammars in their own code-split chunks (lazy, no startup cost).
+      import("./grammars/latteGrammar"),
+      import("./grammars/neonGrammar"),
     ],
   });
 
@@ -566,6 +578,77 @@ const PHP_LIKE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
   ],
 };
 
+/**
+ * Latte is HTML with `{...}` macros, so it reuses HTML-style bracket / quote
+ * pairs and swaps the comment style for Latte's `{* ... *}` block comment. It
+ * intentionally omits the PHP indentation rules: a `.latte` file is markup, not
+ * a braced C-like language, so bracket-driven auto-indent would misfire.
+ */
+const LATTE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
+  comments: {
+    blockComment: ["{*", "*}"],
+  },
+  brackets: [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+  ],
+  autoClosingPairs: [
+    { open: "{", close: "}" },
+    { open: "[", close: "]" },
+    { open: "(", close: ")" },
+    { open: "'", close: "'", notIn: ["string", "comment"] },
+    { open: '"', close: '"', notIn: ["string", "comment"] },
+  ],
+  surroundingPairs: [
+    { open: "{", close: "}" },
+    { open: "[", close: "]" },
+    { open: "(", close: ")" },
+    { open: "'", close: "'" },
+    { open: '"', close: '"' },
+    { open: "<", close: ">" },
+  ],
+};
+
+/**
+ * NEON is a YAML-like, indentation-based config format: `#` line comments, no
+ * block comment, and bracket / quote pairs for its inline lists and maps. No
+ * bracket indentation rules - indentation is significant and driven by the user.
+ */
+const NEON_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
+  comments: {
+    lineComment: "#",
+  },
+  brackets: [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+  ],
+  autoClosingPairs: [
+    { open: "{", close: "}" },
+    { open: "[", close: "]" },
+    { open: "(", close: ")" },
+    { open: "'", close: "'", notIn: ["string", "comment"] },
+    { open: '"', close: '"', notIn: ["string", "comment"] },
+  ],
+  surroundingPairs: [
+    { open: "{", close: "}" },
+    { open: "[", close: "]" },
+    { open: "(", close: ")" },
+    { open: "'", close: "'" },
+    { open: '"', close: '"' },
+  ],
+};
+
+const SHIKI_LANGUAGE_CONFIGURATIONS: Array<
+  [string, MonacoLanguageConfiguration]
+> = [
+  ["php", PHP_LIKE_LANGUAGE_CONFIGURATION],
+  ["blade", PHP_LIKE_LANGUAGE_CONFIGURATION],
+  ["latte", LATTE_LANGUAGE_CONFIGURATION],
+  ["neon", NEON_LANGUAGE_CONFIGURATION],
+];
+
 export function configureShikiLanguageFeatures(
   monaco: MonacoLanguageHost,
 ): void {
@@ -575,16 +658,13 @@ export function configureShikiLanguageFeatures(
       .map((language: { id: string }) => language.id),
   );
 
-  for (const languageId of ["php", "blade"]) {
+  for (const [languageId, configuration] of SHIKI_LANGUAGE_CONFIGURATIONS) {
     if (!registered.has(languageId)) {
       monaco.languages.register({ id: languageId });
       registered.add(languageId);
     }
 
-    monaco.languages.setLanguageConfiguration?.(
-      languageId,
-      PHP_LIKE_LANGUAGE_CONFIGURATION,
-    );
+    monaco.languages.setLanguageConfiguration?.(languageId, configuration);
   }
 }
 

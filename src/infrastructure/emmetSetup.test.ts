@@ -33,7 +33,7 @@ describe("setupEmmet", () => {
 
     expect(emmetHTML).toHaveBeenCalledWith(
       monaco,
-      ["html", "php", "blade"],
+      ["html", "php", "blade", "latte"],
       { tokenizer: "standard" },
     );
   });
@@ -95,13 +95,13 @@ describe("setupEmmet", () => {
     expect(emmetHTML).toHaveBeenNthCalledWith(
       1,
       monaco,
-      ["html", "php", "blade"],
+      ["html", "php", "blade", "latte"],
       { tokenizer: "standard" },
     );
     expect(emmetHTML).toHaveBeenNthCalledWith(
       2,
       otherMonaco,
-      ["html", "php", "blade"],
+      ["html", "php", "blade", "latte"],
       { tokenizer: "standard" },
     );
   });

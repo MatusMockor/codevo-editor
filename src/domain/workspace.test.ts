@@ -42,6 +42,24 @@ describe("workspace path helpers", () => {
     expect(detectLanguage("/project.v1/src/HelloWorld.vue")).toBe("vue");
   });
 
+  it("detects Nette Latte templates and NEON config files", () => {
+    expect(detectLanguage("/project/app/UI/Product/show.latte")).toBe("latte");
+    expect(detectLanguage("/project/app/Presenters/templates/@layout.latte")).toBe(
+      "latte",
+    );
+    expect(detectLanguage("/project/config/services.neon")).toBe("neon");
+    expect(detectLanguage("/project.v1/config/common.neon")).toBe("neon");
+  });
+
+  it("does not let Latte/NEON detection disturb neighbouring languages", () => {
+    expect(detectLanguage("/project/resources/views/show.blade.php")).toBe(
+      "blade",
+    );
+    expect(detectLanguage("/project/app/Product.php")).toBe("php");
+    expect(detectLanguage("/project/config/app.yaml")).toBe("yaml");
+    expect(detectLanguage("/project/config/app.yml")).toBe("yaml");
+  });
+
   it("normalizes parent and joined paths", () => {
     expect(getParentPath("C:\\project\\src\\User.php")).toBe("C:/project/src");
     expect(joinWorkspacePath("C:\\project\\", "\\src\\User.php")).toBe(

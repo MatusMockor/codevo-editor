@@ -1,4 +1,4 @@
-import { EncodedTokenMetadata } from "@shikijs/vscode-textmate";
+import { EncodedTokenMetadata, INITIAL, type IToken } from "@shikijs/vscode-textmate";
 import { describe, expect, it, vi } from "vitest";
 import {
   APP_SHIKI_THEMES,
@@ -312,6 +312,121 @@ describe("createAppHighlighter", () => {
   });
 });
 
+/**
+ * Regression coverage for the Latte / NEON grammar review findings. These run
+ * the *real* TextMate tokenizer (`IGrammar.tokenizeLine`, not the encoded
+ * Monaco path) so assertions can check exact scope names rather than only
+ * "was something colored" - the leak/false-positive bugs here would still
+ * produce *a* colored token, just the wrong one.
+ */
+describe("Latte / NEON grammar fixes (real TextMate scopes)", () => {
+  async function tokenizeLatteLines(lines: string[]) {
+    const highlighter = await createAppHighlighter();
+    const grammar = highlighter.getLanguage("latte");
+    let state = INITIAL;
+    const results: Array<{ line: string; tokens: IToken[] }> = [];
+    for (const line of lines) {
+      const result = grammar.tokenizeLine(line, state);
+      results.push({ line, tokens: result.tokens });
+      state = result.ruleStack;
+    }
+    return results;
+  }
+
+  /** Union of every scope touching the given (exact) substring of `line`. */
+  function scopesAtWord(tokens: IToken[], line: string, word: string): string[] {
+    const start = line.indexOf(word);
+    expect(start, `"${word}" not found in line: ${line}`).toBeGreaterThanOrEqual(0);
+    const end = start + word.length;
+    const scopes = new Set<string>();
+    for (const token of tokens) {
+      if (token.startIndex < end && token.endIndex > start) {
+        for (const scope of token.scopes) {
+          scopes.add(scope);
+        }
+      }
+    }
+    return [...scopes];
+  }
+
+  // Any scope other than the grammar's own always-present root scope counts as
+  // "Latte lit this token up".
+  const hasLatteScope = (scopes: string[]) =>
+    scopes.some((scope) => scope.includes("latte") && scope !== "text.html.latte");
+
+  it("does not leak an unclosed Latte tag scope onto the following line (#1 scope leak)", async () => {
+    const [, second] = await tokenizeLatteLines([
+      "{foreach $items as $item",
+      "<p>Hello</p>",
+    ]);
+
+    const leaked = second.tokens.some((token) => hasLatteScope(token.scopes));
+    expect(leaked).toBe(false);
+  });
+
+  it("still highlights the opening keyword on the line an unclosed tag was typed on", async () => {
+    const [first] = await tokenizeLatteLines(["{foreach $items as $item"]);
+    const scopes = scopesAtWord(first.tokens, first.line, "foreach");
+    expect(scopes.some((scope) => scope.includes("keyword.control.latte"))).toBe(true);
+  });
+
+  it("does not highlight a plain JS object literal inside <script> as a Latte macro (#2 false positive)", async () => {
+    const [result] = await tokenizeLatteLines([
+      '<script>var config = {enabled: true, retries: 3};</script>',
+    ]);
+
+    for (const word of ["enabled", "retries"]) {
+      const scopes = scopesAtWord(result.tokens, result.line, word);
+      expect(hasLatteScope(scopes), `"${word}" scopes: ${scopes.join(", ")}`).toBe(false);
+    }
+  });
+
+  it("does not highlight Latte tag syntax written inside a {* comment *} (#3 comment leak)", async () => {
+    const [result] = await tokenizeLatteLines(["{* nieco {if $x} vnutri *}"]);
+    const scopes = scopesAtWord(result.tokens, result.line, "if");
+
+    expect(scopes).toContain("comment.block.latte");
+    expect(
+      scopes.some(
+        (scope) => scope.includes("meta.tag.latte") || scope.includes("keyword.control.latte"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps highlighting real Latte tags (allowlist does not regress known macros)", async () => {
+    const cases: Array<{ line: string; word: string; scope: string }> = [
+      { line: "{if $x}", word: "if", scope: "keyword.control.latte" },
+      { line: "{foreach $a as $b}", word: "foreach", scope: "keyword.control.latte" },
+      { line: "{$var|upper}", word: "var", scope: "variable.other.latte" },
+      { line: "{/foreach}", word: "foreach", scope: "keyword.control.latte" },
+      { line: "{include 'x.latte'}", word: "include", scope: "keyword.control.latte" },
+    ];
+
+    for (const { line, word, scope } of cases) {
+      const [result] = await tokenizeLatteLines([line]);
+      const scopes = scopesAtWord(result.tokens, result.line, word);
+      expect(
+        scopes.some((s) => s.includes(scope)),
+        `${line}: expected "${word}" to include ${scope}, got [${scopes.join(", ")}]`,
+      ).toBe(true);
+      expect(scopes.some((s) => s.includes("meta.tag.latte"))).toBe(true);
+    }
+  });
+
+  it("does not tag a method name after :: as a NEON class entity (#4)", async () => {
+    const highlighter = await createAppHighlighter();
+    const grammar = highlighter.getLanguage("neon");
+    const line = "factory: App\\X::create()";
+    const result = grammar.tokenizeLine(line, INITIAL);
+
+    const methodScopes = scopesAtWord(result.tokens, line, "create");
+    expect(methodScopes.some((scope) => scope.includes("entity.name.class.neon"))).toBe(false);
+
+    const classScopes = scopesAtWord(result.tokens, line, "App\\X");
+    expect(classScopes.some((scope) => scope.includes("entity.name.class.neon"))).toBe(true);
+  });
+});
+
 describe("configureShikiLanguageFeatures", () => {
   it("keeps PHP-like indentation and bracket behavior after Shiki registration", () => {
     interface TestLanguageConfiguration {
@@ -343,8 +458,13 @@ describe("configureShikiLanguageFeatures", () => {
       },
     });
 
-    expect(registrations).toEqual(["php", "blade"]);
-    expect(calls.map(([languageId]) => languageId)).toEqual(["php", "blade"]);
+    expect(registrations).toEqual(["php", "blade", "latte", "neon"]);
+    expect(calls.map(([languageId]) => languageId)).toEqual([
+      "php",
+      "blade",
+      "latte",
+      "neon",
+    ]);
 
     const [, phpConfiguration] = calls[0];
     expect(phpConfiguration.brackets).toContainEqual(["{", "}"]);
@@ -394,12 +514,67 @@ describe("configureShikiLanguageFeatures", () => {
         register(language) {
           registrations.push(language.id);
         },
-        getLanguages: () => [{ id: "php" }, { id: "blade" }],
+        getLanguages: () => [
+          { id: "php" },
+          { id: "blade" },
+          { id: "latte" },
+          { id: "neon" },
+        ],
         setLanguageConfiguration() {},
       },
     });
 
     expect(registrations).toEqual([]);
+  });
+
+  it("registers Latte with HTML-style brackets and the Latte block comment", () => {
+    interface TestLanguageConfiguration {
+      autoClosingPairs?: Array<{ open: string; close: string }>;
+      brackets?: Array<[string, string]>;
+      comments?: { lineComment?: string; blockComment?: [string, string] };
+    }
+
+    const calls: Array<[string, TestLanguageConfiguration]> = [];
+
+    configureShikiLanguageFeatures({
+      languages: {
+        register() {},
+        getLanguages: () => [],
+        setLanguageConfiguration: (languageId, configuration) => {
+          calls.push([languageId, configuration]);
+        },
+      },
+    });
+
+    const latte = calls.find(([languageId]) => languageId === "latte")?.[1];
+    expect(latte).toBeDefined();
+    expect(latte?.brackets).toContainEqual(["{", "}"]);
+    expect(latte?.autoClosingPairs).toContainEqual({ open: "{", close: "}" });
+    // Latte's `{* ... *}` block comment, so Cmd+/ comments a Latte template.
+    expect(latte?.comments?.blockComment).toEqual(["{*", "*}"]);
+  });
+
+  it("registers NEON with a hash line comment for its YAML-like syntax", () => {
+    interface TestLanguageConfiguration {
+      comments?: { lineComment?: string; blockComment?: [string, string] };
+      brackets?: Array<[string, string]>;
+    }
+
+    const calls: Array<[string, TestLanguageConfiguration]> = [];
+
+    configureShikiLanguageFeatures({
+      languages: {
+        register() {},
+        getLanguages: () => [],
+        setLanguageConfiguration: (languageId, configuration) => {
+          calls.push([languageId, configuration]);
+        },
+      },
+    });
+
+    const neon = calls.find(([languageId]) => languageId === "neon")?.[1];
+    expect(neon).toBeDefined();
+    expect(neon?.comments?.lineComment).toBe("#");
   });
 });
 
@@ -488,6 +663,121 @@ describe("setupShikiTokenization", () => {
     );
     expect(result.tokens).toBeInstanceOf(Uint32Array);
     expect(result.tokens.length).toBeGreaterThan(0);
+  });
+
+  it("produces encoded tokens for a Latte template, including inside HTML tags", async () => {
+    const { monaco, providers, getColorMap } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const latte = providers.get("latte");
+    expect(latte).toBeDefined();
+    const colorMap = getColorMap();
+
+    const sawColoredTokens = (line: string, state: unknown) => {
+      const result = latte!.tokenizeEncoded(line, state);
+      expect(result.tokens).toBeInstanceOf(Uint32Array);
+      let colored = false;
+      for (let i = 0; i < result.tokens.length; i += 2) {
+        const foreground = EncodedTokenMetadata.getForeground(
+          result.tokens[i + 1],
+        );
+        expect(foreground).toBeLessThan(colorMap.length);
+        if (foreground > 0) {
+          colored = true;
+        }
+      }
+      return { colored, endState: result.endState };
+    };
+
+    let state = latte!.getInitialState();
+    // A Latte macro echo inside HTML markup must resolve to a real palette color,
+    // proving the macro injection layers on top of the embedded HTML grammar.
+    const macroLine = sawColoredTokens(
+      "    <a n:href=\"Product:show\">{$product->name|upper}</a>",
+      state,
+    );
+    expect(macroLine.colored).toBe(true);
+    state = macroLine.endState;
+
+    // The rest of a realistic template must not throw as state threads across it.
+    expect(() => {
+      for (const line of [
+        "{* greeting template *}",
+        "{varType App\\Model\\Product $product}",
+        "<ul n:if=\"$products\">",
+        "  <li n:foreach=\"$products as $product\">{$product->title}</li>",
+        "</ul>",
+        "{if $total > 0}{$total}{/if}",
+      ]) {
+        state = sawColoredTokens(line, state).endState;
+      }
+    }).not.toThrow();
+  });
+
+  it("does not hang or throw on malformed Latte input", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const latte = providers.get("latte");
+    expect(latte).toBeDefined();
+    const lines = [
+      "{foreach $items as $item",
+      "{$unterminated 'string",
+      "<div class=\"{ not a tag }\">",
+      "<style>body { color: red }</style>",
+      "{{{{{{",
+      "}}}}}}",
+    ];
+    let state = latte!.getInitialState();
+    expect(() => {
+      for (const line of lines) {
+        const result = latte!.tokenizeEncoded(line, state);
+        state = result.endState;
+      }
+    }).not.toThrow();
+  });
+
+  it("produces encoded tokens for a NEON config file", async () => {
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    const neon = providers.get("neon");
+    expect(neon).toBeDefined();
+    const lines = [
+      "# application services",
+      "parameters:",
+      "  appDir: %rootDir%/app",
+      "services:",
+      "  - App\\Model\\ProductRepository(@database.default)",
+      "  router: App\\Router\\RouterFactory::createRouter()",
+      "includes:",
+      "  - services.neon",
+    ];
+    let state = neon!.getInitialState();
+    let sawTokens = false;
+    expect(() => {
+      for (const line of lines) {
+        const result = neon!.tokenizeEncoded(line, state);
+        expect(result.tokens).toBeInstanceOf(Uint32Array);
+        if (result.tokens.length > 0) {
+          sawTokens = true;
+        }
+        state = result.endState;
+      }
+    }).not.toThrow();
+    expect(sawTokens).toBe(true);
   });
 
   it("produces non-empty encoded tokens for TypeScript", async () => {
