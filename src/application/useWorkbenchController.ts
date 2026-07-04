@@ -14,6 +14,7 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentSync } from "./useDocumentSync";
+import { useDiagnostics } from "./useDiagnostics";
 import {
   useNavigationHistory,
   useRecentNavigation,
@@ -98,9 +99,7 @@ import {
   languageServerDiagnosticNoticeGroup,
   languageServerDiagnosticNoticeMessage,
   languageServerDiagnosticNoticeSeverity,
-  shouldApplyLanguageServerDiagnostics,
   type LanguageServerDiagnostic,
-  type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import { phpInspectionDiagnostics } from "../domain/phpInspections";
@@ -775,6 +774,9 @@ const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 // never hides a squiggle — it only bounds the textual notices list. When the
 // cap trims notices, an `info` indicator carrying the truthful hidden count is
 // appended so diagnostics are never dropped silently.
+// KEEP IN SYNC: duplicated verbatim in useDiagnostics.ts (see the FOLLOW-UP
+// note there) until the shared diagnostic-notice helpers move into their own
+// module. Any edit to the caps or notice helpers below must land in BOTH files.
 const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
 // Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
 // this to tell the user when the previewed count is a lower bound (the backend
@@ -1989,481 +1991,6 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
   });
 
-  const clearLanguageServerDiagnostics = useCallback(() => {
-    setLanguageServerDiagnosticsByPath({});
-    setNotices((current) =>
-      current.filter(
-        (notice) => !notice.groupKey?.startsWith("language-server-diagnostics:"),
-      ),
-    );
-  }, []);
-
-  const restoreLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const cachedDiagnostics = rootKey
-        ? languageServerDiagnosticsByRootRef.current[rootKey] ?? {}
-        : {};
-      setLanguageServerDiagnosticsByPath({ ...cachedDiagnostics });
-    },
-    [],
-  );
-
-  const updateLanguageServerDiagnosticsForRoot = useCallback(
-    (
-      rootPath: string,
-      diagnosticPath: string,
-      diagnostics: LanguageServerDiagnostic[],
-    ) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const currentByPath =
-        languageServerDiagnosticsByRootRef.current[rootKey] ?? {};
-      const nextByPath = {
-        ...currentByPath,
-        [diagnosticPath]: diagnostics,
-      };
-
-      languageServerDiagnosticsByRootRef.current[rootKey] = nextByPath;
-
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        setLanguageServerDiagnosticsByPath(nextByPath);
-      }
-    },
-    [],
-  );
-
-  const clearLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-
-      if (rootKey) {
-        delete languageServerDiagnosticsByRootRef.current[rootKey];
-      }
-
-      languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
-
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        clearLanguageServerDiagnostics();
-      }
-    },
-    [clearLanguageServerDiagnostics],
-  );
-
-  const clearJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(() => {
-    setJavaScriptTypeScriptDiagnosticsByPath({});
-    setNotices((current) =>
-      current.filter(
-        (notice) =>
-          !notice.groupKey?.startsWith("javascript-typescript-diagnostics:"),
-      ),
-    );
-  }, []);
-
-  const clearPhpLocalDiagnostics = useCallback(() => {
-    setPhpLocalDiagnosticsByPath({});
-    setNotices((current) =>
-      current.filter(
-        (notice) =>
-          !notice.groupKey?.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX),
-      ),
-    );
-  }, []);
-
-  const restoreJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const cachedDiagnostics = rootKey
-        ? javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {}
-        : {};
-      setJavaScriptTypeScriptDiagnosticsByPath({ ...cachedDiagnostics });
-    },
-    [],
-  );
-
-  const updateJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
-    (
-      rootPath: string,
-      diagnosticPath: string,
-      diagnostics: LanguageServerDiagnostic[],
-    ) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const currentByPath =
-        javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {};
-      const nextByPath = { ...currentByPath };
-
-      if (diagnostics.length > 0) {
-        nextByPath[diagnosticPath] = diagnostics;
-      } else {
-        delete nextByPath[diagnosticPath];
-      }
-
-      if (Object.keys(nextByPath).length > 0) {
-        javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] = nextByPath;
-      } else {
-        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
-      }
-
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        setJavaScriptTypeScriptDiagnosticsByPath(nextByPath);
-      }
-    },
-    [],
-  );
-
-  const clearJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-
-      if (rootKey) {
-        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
-      }
-
-      javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
-
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        clearJavaScriptTypeScriptLanguageServerDiagnostics();
-      }
-    },
-    [clearJavaScriptTypeScriptLanguageServerDiagnostics],
-  );
-
-  const clearPhpLocalDiagnosticsForPath = useCallback((diagnosticPath: string) => {
-    setPhpLocalDiagnosticsByPath((current) => {
-      if (!(diagnosticPath in current)) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[diagnosticPath];
-      return next;
-    });
-
-    const phpLocalGroupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
-    setNotices((current) =>
-      current.filter((notice) => notice.groupKey !== phpLocalGroupKey),
-    );
-  }, []);
-
-  const clearLanguageServerDiagnosticsForPath = useCallback(
-    (rootPath: string | null | undefined, diagnosticPath: string) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
-        rootPath,
-      );
-
-      const removePathFromRootCache = (
-        cache: Record<string, Record<string, LanguageServerDiagnostic[]>>,
-      ) => {
-        const currentByPath = rootKey ? cache[rootKey] : undefined;
-
-        if (!currentByPath || !(diagnosticPath in currentByPath)) {
-          return false;
-        }
-
-        const nextByPath = { ...currentByPath };
-        delete nextByPath[diagnosticPath];
-
-        if (Object.keys(nextByPath).length === 0) {
-          delete cache[rootKey];
-          return true;
-        }
-
-        cache[rootKey] = nextByPath;
-        return true;
-      };
-
-      const phpChanged = removePathFromRootCache(
-        languageServerDiagnosticsByRootRef.current,
-      );
-      const javaScriptTypeScriptChanged = removePathFromRootCache(
-        javaScriptTypeScriptDiagnosticsByRootRef.current,
-      );
-
-      if (!isActiveRoot) {
-        return;
-      }
-
-      if (phpChanged) {
-        setLanguageServerDiagnosticsByPath((current) => {
-          if (!(diagnosticPath in current)) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[diagnosticPath];
-          return next;
-        });
-      }
-
-      if (javaScriptTypeScriptChanged) {
-        setJavaScriptTypeScriptDiagnosticsByPath((current) => {
-          if (!(diagnosticPath in current)) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[diagnosticPath];
-          return next;
-        });
-      }
-
-      setLaravelDiagnosticsByPath((current) => {
-        if (!(diagnosticPath in current)) {
-          return current;
-        }
-
-        const next = { ...current };
-        delete next[diagnosticPath];
-        return next;
-      });
-      clearPhpLocalDiagnosticsForPath(diagnosticPath);
-
-      const uri = fileUriFromPath(diagnosticPath);
-      const phpGroupKey = languageServerDiagnosticNoticeGroup(uri);
-      const javaScriptTypeScriptGroupKey =
-        javaScriptTypeScriptDiagnosticNoticeGroup(uri);
-
-      setNotices((current) =>
-        current.filter(
-          (notice) =>
-            notice.groupKey !== phpGroupKey &&
-            notice.groupKey !== javaScriptTypeScriptGroupKey,
-        ),
-      );
-    },
-    [clearPhpLocalDiagnosticsForPath],
-  );
-
-  const updateLocalPhpDiagnostics = useCallback(
-    (diagnosticPath: string, diagnostics: LanguageServerDiagnostic[]) => {
-      // Local PHP diagnostics are emitted only by the mounted EditorSurface for
-      // the active document. Do not re-guard by workspaceRelativePath here:
-      // reopened projects can hand the editor a canonicalized model path while
-      // the persisted workspace root is still the user-selected alias, and that
-      // would drop visible local markers from Problems/status.
-      if (isExternallyRemovedDocumentPath(diagnosticPath)) {
-        clearLanguageServerDiagnosticsForPath(
-          currentWorkspaceRootRef.current,
-          diagnosticPath,
-        );
-        return;
-      }
-
-      setPhpLocalDiagnosticsByPath((current) => {
-        const hasCurrent = diagnosticPath in current;
-
-        if (diagnostics.length === 0) {
-          if (!hasCurrent) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[diagnosticPath];
-          return next;
-        }
-
-        return {
-          ...current,
-          [diagnosticPath]: diagnostics,
-        };
-      });
-
-      const uri = fileUriFromPath(diagnosticPath);
-      const groupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
-      const diagnosticNotices = capDiagnosticNotices(
-        diagnostics.map((diagnostic) =>
-          createWorkbenchNotice(
-            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-            diagnostic.source || "PHP",
-            languageServerDiagnosticNoticeMessage(diagnostic, uri),
-            groupKey,
-            diagnosticNoticeNavigationTarget(uri, diagnostic),
-          ),
-        ),
-        DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-        (hiddenCount) =>
-          buildDiagnosticOverflowNotice("PHP", groupKey, hiddenCount),
-      );
-
-      setNotices((current) =>
-        capWorkbenchNotices(
-          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
-          GLOBAL_NOTICE_LIMIT,
-          isCappableDiagnosticNotice,
-        ),
-      );
-    },
-    [clearLanguageServerDiagnosticsForPath, isExternallyRemovedDocumentPath],
-  );
-
-  useEffect(() => {
-    phpLocalDiagnosticRetryTimersRef.current.forEach((timer) =>
-      clearTimeout(timer),
-    );
-    phpLocalDiagnosticRetryTimersRef.current = [];
-
-    const document = activeDocument;
-    const generation = phpLocalDiagnosticValidationGenerationRef.current + 1;
-    phpLocalDiagnosticValidationGenerationRef.current = generation;
-
-    if (!document || document.language !== "php") {
-      if (document?.path) {
-        updateLocalPhpDiagnostics(document.path, []);
-      }
-
-      return;
-    }
-
-    let disposed = false;
-    let applied = false;
-    const validateActivePhpDocument = () => {
-      if (disposed || applied) {
-        return;
-      }
-
-      const currentDocument = activeDocumentRef.current;
-
-      if (
-        phpLocalDiagnosticValidationGenerationRef.current !== generation ||
-        currentDocument?.path !== document.path ||
-        currentDocument.content !== document.content ||
-        currentDocument.language !== "php"
-      ) {
-        return;
-      }
-
-      updateLocalPhpDiagnostics(
-        document.path,
-        localPhpDiagnosticsFromSource(currentDocument.content, []),
-      );
-
-      void (async () => {
-        const latestBeforeRead = activeDocumentRef.current;
-
-        if (
-          disposed ||
-          applied ||
-          phpLocalDiagnosticValidationGenerationRef.current !== generation ||
-          latestBeforeRead?.path !== document.path ||
-          latestBeforeRead.language !== "php"
-        ) {
-          return;
-        }
-
-        const source = latestBeforeRead.content;
-
-        const latestBeforeValidate = activeDocumentRef.current;
-
-        if (
-          disposed ||
-          applied ||
-          phpLocalDiagnosticValidationGenerationRef.current !== generation ||
-          latestBeforeValidate?.path !== document.path ||
-          latestBeforeValidate.language !== "php"
-        ) {
-          return;
-        }
-
-        return {
-          source,
-          syntaxDiagnostics: await phpLocalSyntaxDiagnosticsGateway.validate(source),
-        };
-      })()
-        .then((syntaxDiagnostics) => {
-          if (!syntaxDiagnostics) {
-            return;
-          }
-
-          const latestDocument = activeDocumentRef.current;
-
-          if (
-            disposed ||
-            applied ||
-            phpLocalDiagnosticValidationGenerationRef.current !== generation ||
-            latestDocument?.path !== document.path ||
-            latestDocument.language !== "php"
-          ) {
-            return;
-          }
-
-          applied = true;
-          updateLocalPhpDiagnostics(
-            document.path,
-            localPhpDiagnosticsFromSource(
-              syntaxDiagnostics.source,
-              syntaxDiagnostics.syntaxDiagnostics,
-            ),
-          );
-        })
-        .catch(() => {
-          // Local syntax parsing is best-effort. Startup races are covered by the
-          // scheduled retries below; a failed parse must never surface an error
-          // toast or block PHPactor diagnostics.
-          if (
-            phpLocalDiagnosticValidationGenerationRef.current === generation &&
-            activeDocumentRef.current?.path === document.path
-          ) {
-            applied = false;
-          }
-        });
-    };
-
-    validateActivePhpDocument();
-    phpLocalDiagnosticRetryTimersRef.current = [120, 360].map((delay) =>
-      setTimeout(validateActivePhpDocument, delay),
-    );
-
-    return () => {
-      disposed = true;
-      phpLocalDiagnosticRetryTimersRef.current.forEach((timer) =>
-        clearTimeout(timer),
-      );
-      phpLocalDiagnosticRetryTimersRef.current = [];
-    };
-  }, [
-    activeDocument?.content,
-    activeDocument?.language,
-    activeDocument?.path,
-    updateLocalPhpDiagnostics,
-  ]);
-
-  const refreshLocalPhpDiagnosticsForContent = useCallback(
-    (path: string, content: string, language: string) => {
-      if (language !== "php") {
-        updateLocalPhpDiagnostics(path, []);
-        return;
-      }
-
-      updateLocalPhpDiagnostics(path, localPhpDiagnosticsFromSource(content, []));
-
-      void phpLocalSyntaxDiagnosticsGateway
-        .validate(content)
-        .then((syntaxDiagnostics) => {
-          const currentDocument = documentsRef.current[path];
-
-          if (
-            activeDocumentRef.current?.path !== path ||
-            !currentDocument ||
-            currentDocument.content !== content ||
-            currentDocument.language !== "php"
-          ) {
-            return;
-          }
-
-          updateLocalPhpDiagnostics(
-            path,
-            localPhpDiagnosticsFromSource(content, syntaxDiagnostics),
-          );
-        })
-        .catch(() => {
-          // Local PHP diagnostics are best-effort; PHPactor diagnostics continue
-          // to own language-server failures.
-        });
-    },
-    [updateLocalPhpDiagnostics],
-  );
-
   const isLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) => {
       const currentRuntimeStatus =
@@ -2489,295 +2016,48 @@ export function useWorkbenchController(
     [],
   );
 
-  const applyLanguageServerDiagnostics = useCallback(
-    (event: LanguageServerDiagnosticEvent) => {
-      if (!event.rootPath) {
-        return;
-      }
-
-      const diagnosticsRootPath = event.rootPath;
-
-      if (
-        !workspaceRootKeysEqual(
-          diagnosticsRootPath,
-          currentWorkspaceRootRef.current,
-        ) &&
-        !appSettingsRef.current.workspaceTabs.some((tabPath) =>
-          workspaceRootKeysEqual(tabPath, diagnosticsRootPath),
-        )
-      ) {
-        return;
-      }
-
-      const runtimeStatus = cachedLanguageServerRuntimeStatusForRoot(
-        languageServerRuntimeStatusByRootRef.current,
-        diagnosticsRootPath,
-      );
-      const currentSessionId =
-        runtimeStatus?.kind === "running" ? runtimeStatus.sessionId : null;
-
-      if (event.sessionId !== currentSessionId) {
-        return;
-      }
-
-      const diagnosticUriSyncKey = languageServerUriSyncKey(
-        diagnosticsRootPath,
-        event.uri,
-      );
-      const lastAppliedDiagnosticVersion =
-        lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
-
-      if (
-        !shouldApplyLanguageServerDiagnostics(
-          event,
-          currentSessionId,
-          lastAppliedDiagnosticVersion,
-          diagnosticsRootPath,
-        )
-      ) {
-        return;
-      }
-
-      const groupKey = languageServerDiagnosticNoticeGroup(event.uri);
-      const diagnosticPath = pathFromLanguageServerUri(event.uri);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
-        diagnosticsRootPath,
-      );
-
-      if (diagnosticPath && isExternallyRemovedDocumentPath(diagnosticPath)) {
-        clearLanguageServerDiagnosticsForPath(diagnosticsRootPath, diagnosticPath);
-        return;
-      }
-
-      void (async () => {
-        const diagnostics =
-          diagnosticPath && isActiveRoot
-            ? await contextualDiagnosticsFilterRef.current(
-                diagnosticPath,
-                event.diagnostics,
-              )
-            : event.diagnostics;
-        const latestAppliedDiagnosticVersion =
-          lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
-
-        if (
-          !shouldApplyLanguageServerDiagnostics(
-            event,
-            currentSessionId,
-            latestAppliedDiagnosticVersion,
-            diagnosticsRootPath,
-          )
-        ) {
-          return;
-        }
-
-        const isLatestActiveRoot = workspaceRootKeysEqual(
-          diagnosticsRootPath,
-          currentWorkspaceRootRef.current,
-        );
-        if (
-          !isLatestActiveRoot &&
-          !appSettingsRef.current.workspaceTabs.some((tabPath) =>
-            workspaceRootKeysEqual(tabPath, diagnosticsRootPath),
-          )
-        ) {
-          return;
-        }
-
-        if (diagnosticPath && isExternallyRemovedDocumentPath(diagnosticPath)) {
-          clearLanguageServerDiagnosticsForPath(
-            diagnosticsRootPath,
-            diagnosticPath,
-          );
-          return;
-        }
-
-        if (typeof event.version === "number") {
-          lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey] =
-            event.version;
-        }
-
-        const diagnosticNotices = capDiagnosticNotices(
-          diagnostics.map((diagnostic) =>
-            createWorkbenchNotice(
-              languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-              diagnostic.source || "Language Server",
-              languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
-              groupKey,
-              diagnosticNoticeNavigationTarget(event.uri, diagnostic),
-            ),
-          ),
-          DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-          (hiddenCount) =>
-            buildDiagnosticOverflowNotice(
-              "Language Server",
-              groupKey,
-              hiddenCount,
-            ),
-        );
-
-        if (isLatestActiveRoot) {
-          setNotices((current) =>
-            capWorkbenchNotices(
-              replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
-              GLOBAL_NOTICE_LIMIT,
-              isCappableDiagnosticNotice,
-            ),
-          );
-        }
-
-        if (diagnosticPath) {
-          updateLanguageServerDiagnosticsForRoot(
-            diagnosticsRootPath,
-            diagnosticPath,
-            diagnostics,
-          );
-        }
-      })().catch((error) => {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, diagnosticsRootPath)) {
-          return;
-        }
-
-        if (
-          currentSessionId !== null &&
-          !isLanguageServerSessionCurrentForRoot(
-            diagnosticsRootPath,
-            currentSessionId,
-          )
-        ) {
-          return;
-        }
-
-        reportLanguageServerErrorForActiveWorkspaceRoot(
-          diagnosticsRootPath,
-          error,
-        );
-      });
-    },
-    [
-      clearLanguageServerDiagnosticsForPath,
-      isLanguageServerSessionCurrentForRoot,
-      isExternallyRemovedDocumentPath,
-      reportLanguageServerErrorForActiveWorkspaceRoot,
-      updateLanguageServerDiagnosticsForRoot,
-    ],
-  );
-
-  const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
-    (event: LanguageServerDiagnosticEvent) => {
-      if (!event.rootPath) {
-        return;
-      }
-
-      const diagnosticsRootPath = event.rootPath;
-
-      if (
-        !workspaceRootKeysEqual(diagnosticsRootPath, currentWorkspaceRootRef.current) &&
-        !appSettingsRef.current.workspaceTabs.some((tabPath) =>
-          workspaceRootKeysEqual(tabPath, diagnosticsRootPath),
-        )
-      ) {
-        return;
-      }
-
-      const runtimeStatus = cachedLanguageServerRuntimeStatusForRoot(
-        javaScriptTypeScriptRuntimeStatusByRootRef.current,
-        diagnosticsRootPath,
-      );
-      const currentSessionId =
-        runtimeStatus?.kind === "running" ? runtimeStatus.sessionId : null;
-
-      if (event.sessionId !== currentSessionId) {
-        return;
-      }
-
-      const diagnosticUriSyncKey = languageServerUriSyncKey(
-        diagnosticsRootPath,
-        event.uri,
-      );
-      const lastAppliedDiagnosticVersion =
-        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
-          diagnosticUriSyncKey
-        ];
-
-      if (
-        !shouldApplyLanguageServerDiagnostics(
-          event,
-          currentSessionId,
-          lastAppliedDiagnosticVersion,
-          diagnosticsRootPath,
-        )
-      ) {
-        return;
-      }
-
-      if (typeof event.version === "number") {
-        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
-          diagnosticUriSyncKey
-        ] = event.version;
-      }
-
-      const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
-      const diagnosticPath = pathFromLanguageServerUri(event.uri);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
-        diagnosticsRootPath,
-      );
-
-      if (!workspaceSettingsRef.current.javaScriptTypeScriptValidation) {
-        if (isActiveRoot) {
-          setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, groupKey, []),
-          );
-        }
-
-        if (diagnosticPath) {
-          updateJavaScriptTypeScriptDiagnosticsForRoot(
-            diagnosticsRootPath,
-            diagnosticPath,
-            [],
-          );
-        }
-
-        return;
-      }
-
-      const diagnosticNotices = capDiagnosticNotices(
-        event.diagnostics.map((diagnostic) =>
-          createWorkbenchNotice(
-            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-            diagnostic.source || "TypeScript",
-            languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
-            groupKey,
-            diagnosticNoticeNavigationTarget(event.uri, diagnostic),
-          ),
-        ),
-        DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-        (hiddenCount) =>
-          buildDiagnosticOverflowNotice("TypeScript", groupKey, hiddenCount),
-      );
-
-      if (isActiveRoot) {
-        setNotices((current) =>
-          capWorkbenchNotices(
-            replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
-            GLOBAL_NOTICE_LIMIT,
-            isCappableDiagnosticNotice,
-          ),
-        );
-      }
-
-      if (diagnosticPath) {
-        updateJavaScriptTypeScriptDiagnosticsForRoot(
-          diagnosticsRootPath,
-          diagnosticPath,
-          event.diagnostics,
-        );
-      }
-    },
-    [updateJavaScriptTypeScriptDiagnosticsForRoot],
-  );
+  const {
+    clearLanguageServerDiagnostics,
+    restoreLanguageServerDiagnosticsForRoot,
+    clearLanguageServerDiagnosticsForRoot,
+    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    clearPhpLocalDiagnostics,
+    restoreJavaScriptTypeScriptDiagnosticsForRoot,
+    clearJavaScriptTypeScriptDiagnosticsForRoot,
+    clearPhpLocalDiagnosticsForPath,
+    clearLanguageServerDiagnosticsForPath,
+    updateLocalPhpDiagnostics,
+    refreshLocalPhpDiagnosticsForContent,
+    applyLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnostics,
+  } = useDiagnostics({
+    currentWorkspaceRootRef,
+    activeDocumentRef,
+    documentsRef,
+    activeDocument,
+    appSettingsRef,
+    workspaceSettingsRef,
+    setLanguageServerDiagnosticsByPath,
+    setJavaScriptTypeScriptDiagnosticsByPath,
+    setPhpLocalDiagnosticsByPath,
+    setLaravelDiagnosticsByPath,
+    setNotices,
+    languageServerDiagnosticsByRootRef,
+    javaScriptTypeScriptDiagnosticsByRootRef,
+    languageServerDiagnosticsCoalescerRef,
+    javaScriptTypeScriptDiagnosticsCoalescerRef,
+    lastAppliedDiagnosticVersionByUriRef,
+    javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+    languageServerRuntimeStatusByRootRef,
+    javaScriptTypeScriptRuntimeStatusByRootRef,
+    contextualDiagnosticsFilterRef,
+    phpLocalDiagnosticValidationGenerationRef,
+    phpLocalDiagnosticRetryTimersRef,
+    phpLocalSyntaxDiagnosticsGateway,
+    isExternallyRemovedDocumentPath,
+    isLanguageServerSessionCurrentForRoot,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
+  });
 
   const refreshLanguageServerPlan = useCallback(
     async (rootPath: string) => {
@@ -26632,10 +25912,9 @@ function uniqueProjectSymbols(
   return unique;
 }
 
-function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {
-  return `javascript-typescript-diagnostics:${uri}`;
-}
-
+// KEEP IN SYNC: this helper cluster is duplicated verbatim in useDiagnostics.ts
+// (see the FOLLOW-UP note there). Any change here must land in BOTH files until
+// the helpers move into a shared module.
 function phpLocalDiagnosticNoticeGroup(path: string): string {
   return `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`;
 }
