@@ -6,15 +6,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
+import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { useGitWorkspace } from "./useGitWorkspace";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useLaravelTargets } from "./useLaravelTargets";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
+import {
+  useNavigationHistory,
+  useRecentNavigation,
+} from "./useNavigationHistory";
+import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
+import { usePhpOutline } from "./usePhpOutline";
 import {
   isPhpLaravelMigrationPath,
   loadPhpLaravelMigrationSources,
@@ -245,11 +252,7 @@ import {
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import {
   createNavigationHistory,
-  navigateBack,
-  navigateForward,
-  recordNavigationLocation,
   type NavigationHistory,
-  type NavigationLocation,
 } from "../domain/navigation";
 import {
   emptyPhpFileOutline,
@@ -262,7 +265,6 @@ import {
   emptyPhpTree,
   type PhpTree,
   type PhpTreeGateway,
-  type PhpTreeNode,
 } from "../domain/phpTree";
 import {
   phpMemberAccessCompletionContextAt,
@@ -472,16 +474,6 @@ import {
   phpTestNavigationTargets,
   type PhpTestNavigationDirection,
 } from "../domain/phpTestNavigation";
-import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
-import {
-  phpTestGutterTargets,
-  runAllTestsTarget,
-} from "../domain/phpTestGutterTargets";
-import {
-  phpTestRunCommand,
-  type PhpTestRunCommandInput,
-  type PhpTestRunner,
-} from "../domain/phpTestCommand";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
 import {
@@ -568,19 +560,10 @@ import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import {
-  pushRecentFile,
   recentFilesForSwitcher,
-  removeRecentFile,
-  renameRecentFile,
   type RecentFileEntry,
 } from "../domain/recentFiles";
-import {
-  buildRecentLocation,
-  pushRecentLocation,
-  removeRecentLocationsForPath,
-  renameRecentLocationsPath,
-  type RecentLocation,
-} from "../domain/recentLocations";
+import { type RecentLocation } from "../domain/recentLocations";
 import {
   removeBookmarksForPath,
   renameBookmarksForPath,
@@ -1417,23 +1400,9 @@ export function useWorkbenchController(
   const doubleShiftDetectorRef = useRef(
     createDoubleShiftDetector({ windowMs: 300 }),
   );
-  // The backend session id of the project terminal currently mounted in the
-  // bottom panel, tagged with the workspace root it belongs to. The terminal
-  // panel reports this; "run test from gutter" writes into it. Tagging by root
-  // keeps the per-tab isolation invariant: a session reported for one project
-  // can never be addressed while a different project tab is active.
-  const activeTerminalSessionRef = useRef<{
-    rootPath: string;
-    sessionId: number;
-  } | null>(null);
-  // A test-run command staged while the terminal session for the active root is
-  // not yet ready (e.g. the panel was just revealed). It is flushed exactly once
-  // when a matching-root session registers, then cleared. A workspace switch
-  // before the session arrives discards it (root mismatch on flush).
-  const pendingTerminalCommandRef = useRef<{
-    command: string;
-    rootPath: string;
-  } | null>(null);
+  // The active terminal session tracking and staged-command refs used by
+  // "run in terminal" / "run PHP test" now live inside `useTerminalTestRunner`
+  // (they are exclusively consumed there).
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
   >({});
@@ -1995,126 +1964,31 @@ export function useWorkbenchController(
     [],
   );
 
-  // Records a file at the head of the per-workspace MRU buffer. Called whenever a
-  // document is opened or activated so the Cmd+E switcher always reflects the
-  // user's most recent navigation order.
-  const recordRecentFile = useCallback((entry: RecentFileEntry) => {
-    setRecentFiles((current) => pushRecentFile(current, entry));
-  }, []);
-
-  const forgetRecentFile = useCallback((path: string) => {
-    setRecentFiles((current) => removeRecentFile(current, path));
-  }, []);
-
-  const remapRecentFile = useCallback(
-    (oldPath: string, entry: RecentFileEntry) => {
-      setRecentFiles((current) => renameRecentFile(current, oldPath, entry));
-    },
-    [],
-  );
-
-  const openRecentFilesSwitcher = useCallback(() => {
-    if (!currentWorkspaceRootRef.current) {
-      return;
-    }
-
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setRecentLocationsPanelOpen(false);
-    setRecentFilesSwitcherOpen(true);
-  }, []);
-
-  const forgetRecentLocationsForPath = useCallback((path: string) => {
-    setRecentLocations((current) =>
-      removeRecentLocationsForPath(current, path),
-    );
-  }, []);
-
-  const remapRecentLocations = useCallback(
-    (oldPath: string, next: { name: string; path: string; relativePath: string }) => {
-      setRecentLocations((current) =>
-        renameRecentLocationsPath(current, oldPath, next),
-      );
-    },
-    [],
-  );
-
-  const openRecentLocationsPanel = useCallback(() => {
-    if (!currentWorkspaceRootRef.current) {
-      return;
-    }
-
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setRecentFilesSwitcherOpen(false);
-    setRecentLocationsPanelOpen(true);
-  }, []);
-
-  const currentNavigationLocation =
-    useCallback((): NavigationLocation | null => {
-      if (!activeDocument) {
-        return null;
-      }
-
-      return {
-        path: activeDocument.path,
-        position: activeEditorPositionRef.current || {
-          column: 1,
-          lineNumber: 1,
-        },
-      };
-    }, [activeDocument]);
-
-  const recordNavigationLocationSnapshot = useCallback((
-    location: NavigationLocation | null,
-  ) => {
-    setNavigationHistory((current) =>
-      recordNavigationLocation(current, location),
-    );
-  }, []);
-
-  // Records a visited/edited POSITION in the per-workspace Recent Locations
-  // history. Reads documents + workspace root from refs (so it stays stable on
-  // the navigation hot path) and delegates snippet/relative-path extraction to
-  // the pure domain helper. Targets outside the workspace yield a null location
-  // and are dropped. Isolation: the requested root is captured by the ref read,
-  // so a navigation in the active tab never appends to another tab's history.
-  const recordRecentLocationSnapshot = useCallback(
-    (location: NavigationLocation | null) => {
-      const root = currentWorkspaceRootRef.current;
-
-      if (!location || !root) {
-        return;
-      }
-
-      const document = documentsRef.current[location.path];
-      const built = buildRecentLocation({
-        content: document?.content ?? null,
-        name: document?.name ?? null,
-        navigation: location,
-        relativePath: workspaceRelativePath(root, location.path),
-      });
-
-      if (!built) {
-        return;
-      }
-
-      setRecentLocations((current) => pushRecentLocation(current, built));
-    },
-    [],
-  );
-
-  const recordCurrentNavigationLocation = useCallback(() => {
-    const location = currentNavigationLocation();
-    recordNavigationLocationSnapshot(location);
-    recordRecentLocationSnapshot(location);
-  }, [
+  const {
+    recordRecentFile,
+    forgetRecentFile,
+    remapRecentFile,
+    openRecentFilesSwitcher,
+    forgetRecentLocationsForPath,
+    remapRecentLocations,
+    openRecentLocationsPanel,
     currentNavigationLocation,
     recordNavigationLocationSnapshot,
-    recordRecentLocationSnapshot,
-  ]);
+    recordCurrentNavigationLocation,
+  } = useRecentNavigation({
+    activeDocument,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
+    documentsRef,
+    setClassOpenOpen,
+    setNavigationHistory,
+    setQuickOpenOpen,
+    setRecentFiles,
+    setRecentFilesSwitcherOpen,
+    setRecentLocations,
+    setRecentLocationsPanelOpen,
+    setWorkspaceSymbolsOpen,
+  });
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -7160,167 +7034,47 @@ export function useWorkbenchController(
     applyRepositoryOperationStatuses,
   });
 
-  const refreshPhpTree = useCallback(async () => {
-    if (!workspaceRoot) {
-      setPhpTree(emptyPhpTree());
-      setPhpTreeExpandedNodeIds(new Set());
-      setPhpTreeLoading(false);
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    setPhpTreeLoading(true);
-
-    try {
-      const tree = await phpTreeGateway.getPhpTree(requestedRoot);
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setPhpTree(tree);
-      setMessage(null);
-    } catch (error) {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setPhpTree(emptyPhpTree());
-      reportError("PHP Tree", error);
-    } finally {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setPhpTreeLoading(false);
-    }
-  }, [phpTreeGateway, reportError, workspaceRoot]);
-
-  const togglePhpTreeNode = useCallback((id: string) => {
-    setPhpTreeExpandedNodeIds((current) => {
-      const next = new Set(current);
-
-      if (next.has(id)) {
-        next.delete(id);
-        return next;
-      }
-
-      next.add(id);
-      return next;
-    });
-  }, []);
-
-  const openPhpTreeNode = useCallback(
-    async (node: PhpTreeNode) => {
-      if (!node.path) {
-        return;
-      }
-
-      const opened = await openFile({
-        kind: "file",
-        name: getFileName(node.path),
-        path: node.path,
-      });
-
-      if (!opened || !node.lineNumber || !node.column) {
-        return;
-      }
-
-      setEditorRevealTarget({
-        path: node.path,
-        position: {
-          column: node.column,
-          lineNumber: node.lineNumber,
-        },
-      });
-    },
-    [openFile],
-  );
-
-  const readPhpFileOutlineSource = useCallback(
-    async (path: string): Promise<string> => {
-      const openDocument = documents[path];
-
-      if (openDocument) {
-        return openDocument.content;
-      }
-
-      return workspaceFiles.readTextFile(path);
-    },
-    [documents, workspaceFiles],
-  );
-
-  // Always live-parse the single active PHP file (instant tree-sitter parse) so
-  // the structure carries fresh signature metadata (visibility, parameters,
-  // return type) that the SQLite project index does not store. The index only
-  // serves non-PHP paths defensively. The caller re-checks the active root
-  // after this resolves, so no shared state is mutated for a stale workspace.
-  const loadActivePhpFileOutline = useCallback(
-    async (requestedRoot: string, path: string): Promise<PhpFileOutline> => {
-      if (isPhpPath(path)) {
-        const source = await readPhpFileOutlineSource(path);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return emptyPhpFileOutline();
-        }
-
-        return phpFileOutlineGateway.parsePhpFileOutline(path, source);
-      }
-
-      return phpFileOutlineGateway.getPhpFileOutline(requestedRoot, path);
-    },
-    [phpFileOutlineGateway, readPhpFileOutlineSource],
-  );
-
-  const loadPhpFileOutline = useCallback(
-    async (path: string) => {
-      if (!workspaceRoot) {
-        setPhpFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      setLoadingPhpFileOutlinePaths((current) => new Set(current).add(path));
-
-      try {
-        const outline = await loadActivePhpFileOutline(requestedRoot, path);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        setPhpFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: outline,
-        }));
-        setMessage(null);
-      } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        setPhpFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        reportError("PHP File Outline", error);
-      } finally {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        setLoadingPhpFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
-      }
-    },
-    [loadActivePhpFileOutline, reportError, workspaceRoot],
-  );
+  // PHP project tree + PHP file structure (outline) intelligence lives in a
+  // sibling strangler hook (see usePhpOutline). The React state slices stay here
+  // (reset by the workspace-lifecycle clear-blocks above, which run before
+  // `openFile` is defined) and are wired in as dependencies; the callbacks are
+  // extracted VERBATIM and consumed 1:1 below. The two refresh EFFECTS stay in
+  // the controller so their registration order and controller-owned triggers
+  // (`sidebarView` / `indexProgress`) are preserved.
+  const {
+    refreshPhpTree,
+    togglePhpTreeNode,
+    openPhpTreeNode,
+    loadPhpFileOutline,
+    loadInheritedPhpFileOutline,
+    togglePhpFileOutline,
+    togglePhpFileOutlineNode,
+    openPhpFileOutlineNode,
+  } = usePhpOutline({
+    workspaceRoot,
+    workspaceDescriptor,
+    currentWorkspaceRootRef,
+    documents,
+    workspaceFiles,
+    phpTreeGateway,
+    phpFileOutlineGateway,
+    reportError,
+    setMessage,
+    openFile,
+    setEditorRevealTarget,
+    setPhpTree,
+    setPhpTreeExpandedNodeIds,
+    setPhpTreeLoading,
+    phpFileOutlinesByPath,
+    setPhpFileOutlinesByPath,
+    setPhpInheritedFileOutlinesByPath,
+    expandedPhpFilePaths,
+    setExpandedPhpFilePaths,
+    loadingPhpFileOutlinePaths,
+    setLoadingPhpFileOutlinePaths,
+    setLoadingInheritedPhpFileOutlinePaths,
+    setPhpFileOutlineExpandedNodeIds,
+  });
 
   const loadJavaScriptTypeScriptFileOutline = useCallback(
     async (path: string) => {
@@ -7405,167 +7159,6 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
-
-  const loadInheritedPhpFileOutline = useCallback(
-    async (path: string) => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
-        setPhpInheritedFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      setLoadingInheritedPhpFileOutlinePaths((current) =>
-        new Set(current).add(path),
-      );
-
-      try {
-        const source = await readPhpFileOutlineSource(path);
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        const parentClassName = phpExtendsClassName(source);
-        const resolvedParentClassName = parentClassName
-          ? resolvePhpClassName(source, parentClassName)
-          : null;
-
-        if (!resolvedParentClassName) {
-          if (!isRequestedRootActive()) {
-            return;
-          }
-
-          setPhpInheritedFileOutlinesByPath((current) => ({
-            ...current,
-            [path]: emptyPhpFileOutline(),
-          }));
-          return;
-        }
-
-        for (const parentPath of phpClassPathCandidates(
-          requestedRoot,
-          workspaceDescriptor.php,
-          resolvedParentClassName,
-        )) {
-          if (!isRequestedRootActive()) {
-            return;
-          }
-
-          try {
-            const parentSource = await readPhpFileOutlineSource(parentPath);
-
-            if (!isRequestedRootActive()) {
-              return;
-            }
-
-            const outline = await phpFileOutlineGateway.parsePhpFileOutline(
-              parentPath,
-              parentSource,
-            );
-
-            if (!isRequestedRootActive()) {
-              return;
-            }
-
-            setPhpInheritedFileOutlinesByPath((current) => ({
-              ...current,
-              [path]: outline,
-            }));
-            setMessage(null);
-            return;
-          } catch {
-            if (!isRequestedRootActive()) {
-              return;
-            }
-
-            continue;
-          }
-        }
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        setPhpInheritedFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-      } catch (error) {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        setPhpInheritedFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        reportError("PHP Inherited Structure", error);
-      } finally {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        setLoadingInheritedPhpFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
-      }
-    },
-    [
-      phpFileOutlineGateway,
-      readPhpFileOutlineSource,
-      reportError,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
-
-  const togglePhpFileOutline = useCallback(
-    (path: string) => {
-      if (expandedPhpFilePaths.has(path)) {
-        setExpandedPhpFilePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
-        return;
-      }
-
-      setExpandedPhpFilePaths((current) => new Set(current).add(path));
-
-      if (phpFileOutlinesByPath[path] || loadingPhpFileOutlinePaths.has(path)) {
-        return;
-      }
-
-      void loadPhpFileOutline(path);
-    },
-    [
-      expandedPhpFilePaths,
-      loadPhpFileOutline,
-      loadingPhpFileOutlinePaths,
-      phpFileOutlinesByPath,
-    ],
-  );
-
-  const togglePhpFileOutlineNode = useCallback((id: string) => {
-    setPhpFileOutlineExpandedNodeIds((current) => {
-      const next = new Set(current);
-
-      if (next.has(id)) {
-        next.delete(id);
-        return next;
-      }
-
-      next.add(id);
-      return next;
-    });
-  }, []);
 
   const setFileStructureScopeMode = useCallback(
     (scope: PhpFileStructureScope) => {
@@ -7673,33 +7266,6 @@ export function useWorkbenchController(
     phpFileOutlinesByPath,
     setFileStructureScopeMode,
   ]);
-
-  const openPhpFileOutlineNode = useCallback(
-    async (node: PhpFileOutlineNode) => {
-      if (!node.path) {
-        return;
-      }
-
-      const opened = await openFile({
-        kind: "file",
-        name: getFileName(node.path),
-        path: node.path,
-      });
-
-      if (!opened || !node.lineNumber || !node.column) {
-        return;
-      }
-
-      setEditorRevealTarget({
-        path: node.path,
-        position: {
-          column: node.column,
-          lineNumber: node.lineNumber,
-        },
-      });
-    },
-    [openFile],
-  );
 
   const applyWorkspaceEditToOpenDocuments = useCallback(
     (
@@ -10190,260 +9756,27 @@ export function useWorkbenchController(
     setActiveEditorPosition(null);
   }, [activeDocument]);
 
-  const showBottomPanelView = useCallback((view: BottomPanelView) => {
-    setBottomPanelView(view);
-    setBottomPanelVisible(true);
-  }, []);
-
-  const hideBottomPanel = useCallback(() => {
-    setBottomPanelVisible(false);
-  }, []);
-
-  const toggleBottomPanel = useCallback(() => {
-    setBottomPanelVisible((visible) => !visible);
-  }, []);
-
-  // Picks the test runner for a workspace: Laravel `php artisan test` when an
-  // `artisan` console binary exists at the project root, otherwise the generic
-  // `vendor/bin/phpunit`. Probing the file (rather than guessing from the
-  // descriptor) keeps non-Laravel PHP projects working.
-  const detectPhpTestRunner = useCallback(
-    async (rootPath: string): Promise<PhpTestRunner> => {
-      const artisanPath = joinWorkspacePath(rootPath, "artisan");
-      const artisan = await readTestFileIfExists(artisanPath);
-
-      return artisan === null ? "phpunit" : "artisan";
-    },
-    [readTestFileIfExists],
-  );
-
-  // Writes a single command line into the active project terminal. The command
-  // string is built by the caller from a STATIC prefix + sanitized filter, so
-  // nothing here can introduce shell metacharacters. Isolation: the requested
-  // root is captured up front; the write only happens when a terminal session
-  // for that exact root is active. When no session is ready yet, the command is
-  // staged and flushed by `registerActiveTerminalSession` once a matching-root
-  // session arrives (a tab switch in between discards it on root mismatch).
-  const runInActiveTerminal = useCallback(
-    (command: string) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      if (!requestedRoot) {
-        return;
-      }
-
-      // Reveal the terminal so the panel mounts (and reports its session id) and
-      // the user sees the run.
-      showBottomPanelView("terminal");
-
-      const active = activeTerminalSessionRef.current;
-
-      if (active && workspaceRootKeysEqual(active.rootPath, requestedRoot)) {
-        void terminalGateway
-          .writeInput(active.sessionId, `${command}\r`)
-          .catch((error) =>
-            reportErrorForActiveWorkspaceRoot(requestedRoot, "Run Test", error),
-          );
-        return;
-      }
-
-      pendingTerminalCommandRef.current = { command, rootPath: requestedRoot };
-    },
-    [reportErrorForActiveWorkspaceRoot, showBottomPanelView, terminalGateway],
-  );
-
-  // Receives the backend session id of the terminal panel for the active
-  // workspace (or `null` when it tears down). Tags it with the current root so
-  // later writes can re-check isolation, and flushes a pending test-run command
-  // when the session belongs to the same root the command was requested for.
-  const registerActiveTerminalSession = useCallback(
-    (sessionId: number | null) => {
-      const rootPath = currentWorkspaceRootRef.current;
-
-      if (sessionId === null || !rootPath) {
-        activeTerminalSessionRef.current = null;
-        return;
-      }
-
-      activeTerminalSessionRef.current = { rootPath, sessionId };
-
-      const pending = pendingTerminalCommandRef.current;
-
-      if (!pending) {
-        return;
-      }
-
-      pendingTerminalCommandRef.current = null;
-
-      if (!workspaceRootKeysEqual(pending.rootPath, rootPath)) {
-        return;
-      }
-
-      void terminalGateway
-        .writeInput(sessionId, `${pending.command}\r`)
-        .catch((error) =>
-          reportErrorForActiveWorkspaceRoot(rootPath, "Run Test", error),
-        );
-    },
-    [reportErrorForActiveWorkspaceRoot, terminalGateway],
-  );
-
-  // PhpStorm-style "Run test from gutter": builds and writes the test command
-  // for a parsed gutter target into the active project terminal. The runner is
-  // auto-detected (Laravel `php artisan test` when an `artisan` binary exists,
-  // otherwise `vendor/bin/phpunit`). Per-workspace isolation: the requested root
-  // is captured up front and re-checked after the artisan probe await before any
-  // terminal write. The command's filter is strictly sanitized in
-  // `phpTestRunCommand`; a name that is not a safe identifier yields no command
-  // (no write), so no file content can ever inject shell input.
-  // Shared per-workspace-isolated core for every "run test in terminal" action.
-  // It captures the requested root up front, probes the runner, re-checks the
-  // active root AFTER the await before any terminal write (so a mid-flight
-  // workspace switch drops the run), and builds the command via the strictly
-  // sanitizing `phpTestRunCommand`. A `null` filter runs the whole suite/class
-  // with no `--filter`. Returning the runner-built command unchanged means no
-  // value derived from file content can introduce shell metacharacters.
-  const runPhpTestCommand = useCallback(
-    async (
-      input: Omit<PhpTestRunCommandInput, "runner">,
-    ): Promise<PhpTestRunOutcome> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return "dropped";
-      }
-
-      const runner = await detectPhpTestRunner(requestedRoot);
-
-      if (!isRequestedRootActive()) {
-        return "dropped";
-      }
-
-      const command = phpTestRunCommand({ ...input, runner });
-
-      if (!command) {
-        return "rejected";
-      }
-
-      runInActiveTerminal(command);
-      return "ran";
-    },
-    [
-      detectPhpTestRunner,
-      runInActiveTerminal,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
-
-  const runTestAt = useCallback(
-    async (target: PhpTestGutterTarget) => {
-      const outcome = await runPhpTestCommand({
-        filter: target.filter,
-        match: target.match,
-      });
-
-      if (outcome !== "rejected") {
-        return;
-      }
-
-      setMessage(runTestRejectionNotice(target));
-    },
-    [runPhpTestCommand],
-  );
-
-  // Keymap entry point for "Run Test Under Cursor": parses the active PHP test
-  // file, selects the test that owns the cursor line (the nearest test target at
-  // or above the caret, falling back to the class target), and runs it. Gated to
-  // PHP test files so it is a no-op on production code or non-PHP documents.
-  const runTestForActiveDocument = useCallback(async () => {
-    const requestedRoot = workspaceRoot;
-    const requestedDescriptor = workspaceDescriptor;
-    const requestedDocument = activeDocumentRef.current;
-
-    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
-      return;
-    }
-
-    if (requestedDocument.language !== "php") {
-      return;
-    }
-
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocument.path,
-    );
-
-    if (
-      !relativePath ||
-      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
-    ) {
-      return;
-    }
-
-    const targets = phpTestGutterTargets(requestedDocument.content);
-    const cursorLine = activeEditorPositionRef.current?.lineNumber ?? 1;
-    const target = testTargetForCursorLine(targets, cursorLine);
-
-    if (!target) {
-      setMessage("Run test: no test found at the cursor.");
-      return;
-    }
-
-    await runTestAt(target);
-  }, [runTestAt, workspaceDescriptor, workspaceRoot]);
-
-  // Keymap / palette entry point for "Run All Tests in File": runs the whole
-  // active test file rather than a single test. For a pure PHPUnit file we run
-  // the class target (its `--filter <ClassName>` runs every method in the
-  // class). For a Pest file - or a mixed file that declares a concrete `*Test`
-  // class AND Pest `it()` / `test()` calls - we fall back to running the whole
-  // suite with no `--filter`: a `--filter <ClassName>` would skip the Pest
-  // tests, and a file-path argument cannot pass the identifier allow-list (and
-  // quoting an arbitrary path into the terminal is a needless injection
-  // surface), so the conservative whole-suite run is preferred. The selection is
-  // owned by `runAllTestsTarget`. Gated to PHP test files; per-workspace
-  // isolation is inherited from `runTestAt` / `runPhpTestCommand` (requested
-  // root captured up front, re-checked after the runner probe before any
-  // terminal write).
-  const runAllTestsForActiveDocument = useCallback(async () => {
-    const requestedRoot = workspaceRoot;
-    const requestedDescriptor = workspaceDescriptor;
-    const requestedDocument = activeDocumentRef.current;
-
-    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
-      return;
-    }
-
-    if (requestedDocument.language !== "php") {
-      return;
-    }
-
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocument.path,
-    );
-
-    if (
-      !relativePath ||
-      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
-    ) {
-      return;
-    }
-
-    const targets = phpTestGutterTargets(requestedDocument.content);
-    const target = runAllTestsTarget(targets);
-
-    if (target) {
-      await runTestAt(target);
-      return;
-    }
-
-    await runPhpTestCommand({ filter: null });
-  }, [runPhpTestCommand, runTestAt, workspaceDescriptor, workspaceRoot]);
+  const {
+    hideBottomPanel,
+    registerActiveTerminalSession,
+    runAllTestsForActiveDocument,
+    runTestAt,
+    runTestForActiveDocument,
+    showBottomPanelView,
+    toggleBottomPanel,
+  } = useTerminalTestRunner({
+    activeDocumentRef,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
+    readTestFileIfExists,
+    reportErrorForActiveWorkspaceRoot,
+    setBottomPanelView,
+    setBottomPanelVisible,
+    setMessage,
+    terminalGateway,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   const openPathForNavigation = useCallback(
     async (
@@ -22849,97 +22182,21 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  const applyNavigationLocation = useCallback(
-    async (location: NavigationLocation) => {
-      const opened = await openPathForNavigation(location.path, {
-        readOnly: workspaceRoot
-          ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-              workspaceRoot,
-              location.path,
-            )
-          : false,
-      });
-
-      if (!opened) {
-        return;
-      }
-
-      setEditorRevealTarget(location);
-    },
-    [openPathForNavigation, workspaceRoot],
-  );
-
-  const navigateBackward = useCallback(async () => {
-    const next = navigateBack(navigationHistory, currentNavigationLocation());
-
-    if (!next.target) {
-      return;
-    }
-
-    setNavigationHistory(next.history);
-    await applyNavigationLocation(next.target);
-  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
-
-  const navigateForwardInHistory = useCallback(async () => {
-    const next = navigateForward(navigationHistory, currentNavigationLocation());
-
-    if (!next.target) {
-      return;
-    }
-
-    setNavigationHistory(next.history);
-    await applyNavigationLocation(next.target);
-  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
-
-  // Jumps to a recent location from the panel. Mirrors the navigation flow:
-  // snapshot where we were (so Back works and the spot stays in history), then
-  // reveal the target. Isolation: the requested root is captured up front and
-  // re-checked after the await, so a workspace switch mid-jump drops the stale
-  // result (no reveal, no panel mutation) for another tab.
-  const openRecentLocation = useCallback(
-    async (location: RecentLocation) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      if (!requestedRoot) {
-        return;
-      }
-
-      recordCurrentNavigationLocation();
-
-      const target: NavigationLocation = {
-        path: location.path,
-        position: { column: location.column, lineNumber: location.line },
-      };
-      const opened = await openPathForNavigation(target.path, {
-        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-          requestedRoot,
-          target.path,
-        ),
-      });
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return;
-      }
-
-      if (!opened) {
-        // The file vanished out from under the panel (deleted/moved outside the
-        // editor). Drop every dead position so it stops being offered.
-        forgetRecentLocationsForPath(location.path);
-        setRecentLocationsPanelOpen(false);
-        return;
-      }
-
-      setEditorRevealTarget(target);
-      setRecentLocationsPanelOpen(false);
-    },
-    [
+  const { navigateBackward, navigateForwardInHistory, openRecentLocation } =
+    useNavigationHistory({
+      currentNavigationLocation,
+      currentWorkspaceRootRef,
       forgetRecentLocationsForPath,
+      navigationHistory,
       openPathForNavigation,
       recordCurrentNavigationLocation,
-    ],
-  );
+      setEditorRevealTarget,
+      setNavigationHistory,
+      setRecentLocationsPanelOpen,
+      shouldOpenNavigationTargetReadOnly:
+        shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
+      workspaceRoot,
+    });
 
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
@@ -24320,42 +23577,51 @@ export function useWorkbenchController(
     await startReindex("hard");
   }, [startReindex]);
 
-  const openSettingsSection = useCallback(
-    (section: SettingsSection) => {
-      setSettingsInitialSection(section);
-      setPaletteOpen(false);
-      setQuickOpenOpen(false);
-      setClassOpenOpen(false);
-      setWorkspaceSymbolsOpen(false);
-      setTextSearchOpen(false);
-      setLanguageServerSetupOpen(false);
-      setFileStructureOpen(false);
-      setCallHierarchyView(null);
-      setTypeHierarchyView(null);
-      setReferencesView(null);
-      setSettingsOpen(true);
-    },
-    [],
-  );
-
-  const openSettingsPanel = useCallback(() => {
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setLanguageServerSetupOpen(false);
-    setFileStructureOpen(false);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setReferencesView(null);
-    setSettingsOpen(true);
-    openSettingsSection("general");
-  }, [openSettingsSection]);
-
-  const openAppearanceSettingsPanel = useCallback(() => {
-    openSettingsSection("appearance");
-  }, [openSettingsSection]);
+  const {
+    openSettingsPanel,
+    openAppearanceSettingsPanel,
+    closeFloatingSurface,
+    openWorkspaceSymbols,
+    openSearchEverywhere,
+  } = useFloatingSurfaces({
+    paletteOpen,
+    setPaletteOpen,
+    quickOpenOpen,
+    setQuickOpenOpen,
+    classOpenOpen,
+    setClassOpenOpen,
+    workspaceSymbolsOpen,
+    setWorkspaceSymbolsOpen,
+    searchEverywhereOpen,
+    setSearchEverywhereOpen,
+    setSearchEverywhereQuery,
+    setSearchEverywhereFiles,
+    setSearchEverywhereSymbols,
+    textSearchOpen,
+    setTextSearchOpen,
+    languageServerSetupOpen,
+    setLanguageServerSetupOpen,
+    fileStructureOpen,
+    setFileStructureOpen,
+    recentFilesSwitcherOpen,
+    setRecentFilesSwitcherOpen,
+    recentLocationsPanelOpen,
+    setRecentLocationsPanelOpen,
+    callHierarchyView,
+    setCallHierarchyView,
+    typeHierarchyView,
+    setTypeHierarchyView,
+    referencesView,
+    setReferencesView,
+    implementationChooser,
+    setImplementationChooser,
+    selectedGitChange,
+    gitDiffLoading,
+    closeGitDiffPreview,
+    settingsOpen,
+    setSettingsOpen,
+    setSettingsInitialSection,
+  });
 
   useEffect(() => {
     if (!isTauri()) {
@@ -24398,109 +23664,6 @@ export function useWorkbenchController(
     zoomEditorFontOut,
   ]);
 
-  const closeFloatingSurface = useCallback((): boolean => {
-    if (searchEverywhereOpen) {
-      setSearchEverywhereOpen(false);
-      return true;
-    }
-
-    if (referencesView) {
-      setReferencesView(null);
-      return true;
-    }
-
-    if (typeHierarchyView) {
-      setTypeHierarchyView(null);
-      return true;
-    }
-
-    if (callHierarchyView) {
-      setCallHierarchyView(null);
-      return true;
-    }
-
-    if (implementationChooser) {
-      setImplementationChooser(null);
-      return true;
-    }
-
-    if (languageServerSetupOpen) {
-      setLanguageServerSetupOpen(false);
-      return true;
-    }
-
-    if (settingsOpen) {
-      setSettingsOpen(false);
-      return true;
-    }
-
-    if (fileStructureOpen) {
-      setFileStructureOpen(false);
-      return true;
-    }
-
-    if (textSearchOpen) {
-      setTextSearchOpen(false);
-      return true;
-    }
-
-    if (workspaceSymbolsOpen) {
-      setWorkspaceSymbolsOpen(false);
-      return true;
-    }
-
-    if (classOpenOpen) {
-      setClassOpenOpen(false);
-      return true;
-    }
-
-    if (quickOpenOpen) {
-      setQuickOpenOpen(false);
-      return true;
-    }
-
-    if (recentFilesSwitcherOpen) {
-      setRecentFilesSwitcherOpen(false);
-      return true;
-    }
-
-    if (recentLocationsPanelOpen) {
-      setRecentLocationsPanelOpen(false);
-      return true;
-    }
-
-    if (paletteOpen) {
-      setPaletteOpen(false);
-      return true;
-    }
-
-    if (selectedGitChange || gitDiffLoading) {
-      closeGitDiffPreview();
-      return true;
-    }
-
-    return false;
-  }, [
-    callHierarchyView,
-    classOpenOpen,
-    closeGitDiffPreview,
-    fileStructureOpen,
-    gitDiffLoading,
-    implementationChooser,
-    languageServerSetupOpen,
-    paletteOpen,
-    quickOpenOpen,
-    searchEverywhereOpen,
-    recentFilesSwitcherOpen,
-    recentLocationsPanelOpen,
-    referencesView,
-    selectedGitChange,
-    settingsOpen,
-    textSearchOpen,
-    typeHierarchyView,
-    workspaceSymbolsOpen,
-  ]);
-
   const canSearchClassOpenSymbols = Boolean(
     shouldIndexWorkspace(intelligenceMode) ||
       (isRunningLanguageServerForWorkspace(
@@ -24522,35 +23685,6 @@ export function useWorkbenchController(
           "workspaceSymbol",
         )),
   );
-
-  const openWorkspaceSymbols = useCallback(() => {
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setRecentFilesSwitcherOpen(false);
-    setRecentLocationsPanelOpen(false);
-    setTextSearchOpen(false);
-    setWorkspaceSymbolsOpen(true);
-  }, []);
-
-  // Search Everywhere is additive: opening it closes the four separate dialogs
-  // it aggregates so only one search surface is ever visible, exactly like the
-  // other openers above. It works without a workspace too (commands/actions are
-  // always searchable); file/symbol sources simply stay empty until a root is
-  // open.
-  const openSearchEverywhere = useCallback(() => {
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setRecentFilesSwitcherOpen(false);
-    setRecentLocationsPanelOpen(false);
-    setTextSearchOpen(false);
-    setSearchEverywhereQuery("");
-    setSearchEverywhereFiles([]);
-    setSearchEverywhereSymbols([]);
-    setSearchEverywhereOpen(true);
-  }, []);
 
   const activateSearchEverywhereItem = useCallback(
     async (item: SearchEverywhereItem) => {
@@ -32084,45 +31218,4 @@ function missingTestPartnerMessage(
   }
 
   return "No test found for this class. Run Generate Test to create one.";
-}
-
-// Result of a single isolated "run test in terminal" attempt: `ran` wrote the
-// command, `dropped` short-circuited on a workspace guard (no root / stale root
-// after the runner probe), `rejected` means the sanitizer refused the filter.
-type PhpTestRunOutcome = "ran" | "dropped" | "rejected";
-
-// Notice shown when a parsed test target cannot be turned into a safe command.
-// PHPUnit identifiers are rejected only when they fall outside the word-character
-// allow-list; Pest descriptions are rejected only when they carry a newline or
-// other control character (the one input we refuse to quote into the terminal).
-function runTestRejectionNotice(target: PhpTestGutterTarget): string {
-  if (target.match === "description") {
-    return `Run test: "${target.filter}" contains a line break or control character and cannot be run safely.`;
-  }
-
-  return `Run test: "${target.filter}" can only run by name (letters, digits, underscore).`;
-}
-
-// Chooses the gutter test target that owns a cursor line: the nearest target at
-// or above the caret. Method targets are preferred so a caret inside a test
-// method body runs that method; with the caret above the first method (e.g. on
-// the class line) the class target is selected. Returns `null` when there are no
-// targets at or above the caret.
-function testTargetForCursorLine(
-  targets: readonly PhpTestGutterTarget[],
-  cursorLine: number,
-): PhpTestGutterTarget | null {
-  let chosen: PhpTestGutterTarget | null = null;
-
-  for (const target of targets) {
-    if (target.position.lineNumber > cursorLine) {
-      continue;
-    }
-
-    if (!chosen || target.position.lineNumber >= chosen.position.lineNumber) {
-      chosen = target;
-    }
-  }
-
-  return chosen;
 }
