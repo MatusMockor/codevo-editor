@@ -1,7 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import { useGitStashPanel } from "./useGitStashPanel";
@@ -13,6 +12,7 @@ import { useLaravelTargets } from "./useLaravelTargets";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
+import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import {
@@ -45,8 +45,16 @@ import {
   languageServerCrashNoticeGroupKey,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
-  type WorkbenchNoticeNavigationTarget,
 } from "./workbenchNotice";
+import {
+  buildDiagnosticOverflowNotice,
+  DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+  diagnosticNoticeNavigationTarget,
+  GLOBAL_NOTICE_LIMIT,
+  isCappableDiagnosticNotice,
+  localPhpDiagnosticsFromSource,
+  phpLocalDiagnosticNoticeGroup,
+} from "./diagnosticNotices";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { CallHierarchyRow, CallHierarchyView } from "../domain/callHierarchy";
 import type { TypeHierarchyRow, TypeHierarchyView } from "../domain/typeHierarchy";
@@ -102,11 +110,6 @@ import {
   type LanguageServerDiagnostic,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
-import { phpInspectionDiagnostics } from "../domain/phpInspections";
-import {
-  structuralPhpSyntaxDiagnostics,
-  suspiciousPhpBareIdentifierDiagnostics,
-} from "../domain/phpSyntaxDiagnostics";
 import {
   bladeLaravelReferenceDiagnostics,
   missingLaravelViewReferenceAt,
@@ -181,7 +184,6 @@ import {
 } from "../domain/organizeImportsOnSave";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
-  applyEditorConfigOnSave,
   editorConfigDirectoriesForFile,
   editorConfigFormattingOptions,
   editorConfigPathForDirectory,
@@ -758,7 +760,6 @@ interface CachedWorkspaceWorkbenchState {
   sidebarView: SidebarView;
 }
 
-const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 const FONT_ZOOM_IN_EVENT = "mockor-editor-font-zoom-in";
 const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
 const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
@@ -767,63 +768,10 @@ const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
-// A single Laravel file can publish hundreds of diagnostics. Mapping every one
-// to a notice and re-rendering the notices panel freezes the main thread, so we
-// cap how many diagnostic notices a document contributes. Editor markers
-// (Monaco `setModelMarkers`) come from a separate, uncapped source, so this cap
-// never hides a squiggle — it only bounds the textual notices list. When the
-// cap trims notices, an `info` indicator carrying the truthful hidden count is
-// appended so diagnostics are never dropped silently.
-// KEEP IN SYNC: duplicated verbatim in useDiagnostics.ts (see the FOLLOW-UP
-// note there) until the shared diagnostic-notice helpers move into their own
-// module. Any edit to the caps or notice helpers below must land in BOTH files.
-const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
 // Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
 // this to tell the user when the previewed count is a lower bound (the backend
 // replace itself is NOT capped to this; it rewrites every matching file).
 const TEXT_SEARCH_RESULT_LIMIT = 100;
-
-// Global ceiling on the total diagnostic notices retained in state. The
-// per-document cap above bounds a single file's contribution, but a large
-// project with diagnostics across thousands of files would still grow the list
-// without bound — and each publishDiagnostics runs an O(total) group replace.
-// This caps the head (newest groups are prepended) and appends one truthful
-// overflow indicator. Editor markers come from a separate, uncapped source.
-const GLOBAL_NOTICE_LIMIT = 2000;
-
-// Only diagnostic notices are subject to the global cap; errors, setup prompts
-// and other non-diagnostic notices are always retained so important messages are
-// never silently dropped when a large project floods the list with diagnostics.
-function isCappableDiagnosticNotice(notice: WorkbenchNotice): boolean {
-  const groupKey = notice.groupKey;
-
-  if (!groupKey) {
-    return false;
-  }
-
-  return (
-    groupKey.startsWith("language-server-diagnostics:") ||
-    groupKey.startsWith("javascript-typescript-diagnostics:") ||
-    groupKey.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX)
-  );
-}
-
-function buildDiagnosticOverflowNotice(
-  source: string,
-  groupKey: string,
-  hiddenCount: number,
-): WorkbenchNotice {
-  const shownCount = DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT;
-  const totalCount = shownCount + hiddenCount;
-  return createWorkbenchNotice(
-    "info",
-    source,
-    `Showing ${shownCount} of ${totalCount} diagnostics — ${hiddenCount} more hidden. Open the file to see all markers.`,
-    groupKey,
-    undefined,
-    "overflow",
-  );
-}
 
 function languageServerDiagnosticsEqual(
   left: readonly LanguageServerDiagnostic[],
@@ -849,7 +797,6 @@ function languageServerDiagnosticsEqual(
   });
 }
 
-const PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX = "php-local-diagnostics:";
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 
 export type SidebarView = "files" | "git" | "php";
@@ -6789,177 +6736,56 @@ export function useWorkbenchController(
     ],
   );
 
-  // Records a Local History snapshot for a saved document, scoped to the
-  // workspace root captured by the caller. Best-effort: a snapshot failure must
-  // never surface as a save error, so it is swallowed (logged) rather than
-  // thrown. The absolute path is converted to a workspace-relative path so the
-  // snapshot lands in the requested workspace's bucket only.
-  const captureLocalHistorySnapshot = useCallback(
-    async (
-      requestedRoot: string,
-      absolutePath: string,
-      content: string,
-    ): Promise<void> => {
-      const relativePath = workspaceRelativePath(requestedRoot, absolutePath);
-
-      if (!relativePath) {
-        return;
-      }
-
-      try {
-        await localHistoryGateway.recordSnapshot(
-          requestedRoot,
-          relativePath,
-          content,
-        );
-      } catch (error) {
-        console.error("Local History snapshot failed", error);
-      }
-    },
-    [localHistoryGateway],
-  );
-
-  const saveActiveDocument = useCallback(async () => {
-    const documentToFormat = activeDocumentRef.current;
-    if (!documentToFormat || documentToFormat.readOnly) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    if (!requestedRoot) {
-      return;
-    }
-
-    try {
-      const formattedContent = await formattedContentForSave(
-        documentToFormat,
-        requestedRoot,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      // Optimize imports AFTER formatting and AFTER the root re-check, on the
-      // formatted content, so the two save-time fixers compose (format then
-      // organize imports) and never act on a stale or cross-tab document. PHP
-      // uses a synchronous reorganizer; this is a no-op for any other language.
-      const phpOptimizedContent = optimizedImportsContentForSave(
-        documentToFormat,
-        formattedContent,
-      );
-
-      // JavaScript/TypeScript organize-imports goes through the language server
-      // (`source.organizeImports`). It is async, so it is given the upfront
-      // requested root (which it uses for every LSP call and re-checks after its
-      // await), and the workspace root is re-checked again here before writing.
-      // It is a no-op for non-JS/TS documents.
-      const contentToSave = await organizedImportsContentForSave(
-        documentToFormat,
-        phpOptimizedContent,
-        requestedRoot,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      // EditorConfig on-save transforms (trim trailing whitespace, insert final
-      // newline, normalize EOL) run LAST so they compose over the formatted +
-      // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
-      // saved document's own path through the per-workspace cascade. A no-op when
-      // no `.editorconfig` enables any on-save behaviour.
-      const editorConfigForSave = await resolveEditorConfigForFile(
-        requestedRoot,
-        documentToFormat.path,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const editorConfiguredContent = applyEditorConfigOnSave(
-        contentToSave,
-        editorConfigForSave,
-      );
-
-      const documentToSave: EditorDocument = {
-        ...documentToFormat,
-        content: editorConfiguredContent,
-      };
-
-      await workspaceFiles.writeTextFile(
-        documentToSave.path,
-        documentToSave.content,
-      );
-      filePrefetchCacheRef.current.invalidate(documentToSave.path);
-      // Capture a Local History snapshot of the just-saved content, scoped to
-      // the workspace root that was active when the save began. The gateway
-      // dedupes identical content and the storage is per-workspace, so this is
-      // a no-op when nothing changed and never leaks across tabs.
-      void captureLocalHistorySnapshot(
-        requestedRoot,
-        documentToSave.path,
-        documentToSave.content,
-      );
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setDocuments((current) => {
-        const existing = current[documentToSave.path];
-
-        if (!existing) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [documentToSave.path]: {
-            ...existing,
-            content: documentToSave.content,
-            savedContent: documentToSave.content,
-          },
-        };
-      });
-      await syncSavedDocument(documentToSave);
-      await syncSavedJavaScriptTypeScriptDocument(documentToSave);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Saved ${documentToSave.name}`);
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
-    }
-  }, [
+  const {
     captureLocalHistorySnapshot,
+    saveActiveDocument,
+    closeDocument,
+    closeActiveSurface,
+  } = useDocumentLifecycle({
+    workspaceRoot,
+    activeDocument,
+    documents,
+    openPaths,
+    activePath,
+    previewPath,
+    gitStatus,
+    selectedGitChange,
+    gitDiffLoading,
+    workspaceSettings,
+    currentWorkspaceRootRef,
+    activeDocumentRef,
+    filePrefetchCacheRef,
+    externallyRemovedDocumentRootByPathRef,
+    gitDiffRequestTokenRef,
+    selectedGitChangeRef,
+    setDocuments,
+    setPreviewPath,
+    setOpenPaths,
+    setActivePath,
+    setGitDiffLoading,
+    setSelectedGitChange,
+    setGitDiffPreview,
+    setMessage,
+    localHistoryGateway,
+    workspaceFiles,
+    prompter,
     formattedContentForSave,
     optimizedImportsContentForSave,
     organizedImportsContentForSave,
-    reportErrorForActiveWorkspaceRoot,
     resolveEditorConfigForFile,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!workspaceSettings.autoSave) {
-      return;
-    }
-
-    if (!activeDocument || activeDocument.readOnly || !isDirty(activeDocument)) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void saveActiveDocument();
-    }, 900);
-
-    return () => window.clearTimeout(timer);
-  }, [activeDocument, saveActiveDocument, workspaceSettings.autoSave]);
+    syncClosedDocument,
+    syncClosedJavaScriptTypeScriptDocument,
+    clearPhpLocalDiagnosticsForPath,
+    clearLanguageServerDiagnosticsForPath,
+    loadGitDiffDocument,
+    closeGitDiffPreview,
+    isGitDiffDocumentPath,
+    gitChangeForDiffDocumentPath,
+    reportError,
+    reportErrorForActiveWorkspaceRoot,
+  });
 
   const setStatusBarItemVisibility = useCallback(
     async (key: keyof StatusBarItemVisibility, visible: boolean) => {
@@ -7070,88 +6896,6 @@ export function useWorkbenchController(
     ],
   );
 
-  const closeDocument = useCallback(
-    (path: string) => {
-      const document = documents[path];
-      const externallyRemovedRoot =
-        externallyRemovedDocumentRootByPathRef.current[path];
-
-      if (
-        document &&
-        isDirty(document) &&
-        !prompter.confirm("Discard changes?")
-      ) {
-        return;
-      }
-
-      if (document) {
-        void syncClosedDocument(document);
-        void syncClosedJavaScriptTypeScriptDocument(document);
-        clearPhpLocalDiagnosticsForPath(path);
-      }
-
-      if (externallyRemovedRoot) {
-        clearLanguageServerDiagnosticsForPath(externallyRemovedRoot, path);
-      }
-
-      if (isGitDiffDocumentPath(path)) {
-        gitDiffRequestTokenRef.current += 1;
-        setGitDiffLoading(false);
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
-        setMessage(null);
-      }
-
-      const nextActivePath =
-        activePath === path
-          ? nextActiveEditorPathAfterClose(path, openPaths, previewPath)
-          : null;
-      const nextGitChange = nextActivePath
-        ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
-        : null;
-
-      setDocuments((current) => {
-        const next = { ...current };
-        delete next[path];
-        return next;
-      });
-      setPreviewPath((current) => (current === path ? null : current));
-      setOpenPaths((current) => current.filter((item) => item !== path));
-
-      if (activePath === path) {
-        if (nextActivePath && nextGitChange) {
-          loadGitDiffDocument(nextActivePath, nextGitChange);
-        } else {
-          setActivePath(nextActivePath);
-        }
-      }
-    },
-    [
-      activePath,
-      clearLanguageServerDiagnosticsForPath,
-      clearPhpLocalDiagnosticsForPath,
-      documents,
-      gitStatus.changes,
-      loadGitDiffDocument,
-      openPaths,
-      previewPath,
-      prompter,
-      syncClosedDocument,
-      syncClosedJavaScriptTypeScriptDocument,
-    ],
-  );
-
-  const closeApplicationWindow = useCallback(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    void getCurrentWindow()
-      .close()
-      .catch((error) => reportError("Window", error));
-  }, [reportError]);
-
   const quitApplication = useCallback(() => {
     if (!isTauri()) {
       return;
@@ -7161,54 +6905,6 @@ export function useWorkbenchController(
       reportError("Application", error),
     );
   }, [reportError]);
-
-  const closeActiveSurface = useCallback(() => {
-    if (selectedGitChange || gitDiffLoading) {
-      closeGitDiffPreview();
-      return;
-    }
-
-    if (activeDocument) {
-      closeDocument(activeDocument.path);
-      return;
-    }
-
-    closeApplicationWindow();
-  }, [
-    activeDocument,
-    closeApplicationWindow,
-    closeDocument,
-    closeGitDiffPreview,
-    gitDiffLoading,
-    selectedGitChange,
-  ]);
-
-  useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    let active = true;
-    let unlisten: TauriUnlistenFn | null = null;
-
-    listen(CLOSE_ACTIVE_TAB_EVENT, () => {
-      closeActiveSurface();
-    })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unlisten = dispose;
-      })
-      .catch((error) => reportError("Shortcuts", error));
-
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [closeActiveSurface, reportError]);
 
   const updateActiveDocument = useCallback(
     (content: string) => {
@@ -25910,84 +25606,6 @@ function uniqueProjectSymbols(
   }
 
   return unique;
-}
-
-// KEEP IN SYNC: this helper cluster is duplicated verbatim in useDiagnostics.ts
-// (see the FOLLOW-UP note there). Any change here must land in BOTH files until
-// the helpers move into a shared module.
-function phpLocalDiagnosticNoticeGroup(path: string): string {
-  return `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`;
-}
-
-function localPhpDiagnosticsFromSource(
-  source: string,
-  syntaxDiagnostics: Array<{
-    character: number;
-    endCharacter: number;
-    endLine: number;
-    line: number;
-    message: string;
-  }>,
-): LanguageServerDiagnostic[] {
-  const localSyntaxDiagnostics = [
-    ...(syntaxDiagnostics.length === 0
-      ? structuralPhpSyntaxDiagnostics(source)
-      : []),
-    ...suspiciousPhpBareIdentifierDiagnostics(source),
-  ];
-  const inspectionDiagnostics = phpInspectionDiagnostics(source);
-  const diagnostics: LanguageServerDiagnostic[] = [
-    ...syntaxDiagnostics,
-    ...localSyntaxDiagnostics,
-  ].map((diagnostic) => ({
-    character: diagnostic.character,
-    endCharacter: diagnostic.endCharacter,
-    endLine: diagnostic.endLine,
-    line: diagnostic.line,
-    message: diagnostic.message,
-    severity: "error" as const,
-    source: "PHP Syntax",
-  }));
-
-  diagnostics.push(
-    ...inspectionDiagnostics.map((diagnostic) => ({
-      character: diagnostic.character,
-      endCharacter: diagnostic.endCharacter,
-      endLine: diagnostic.endLine,
-      line: diagnostic.line,
-      message: diagnostic.message,
-      severity: "warning" as const,
-      source: "PHP Inspection",
-      tags: diagnostic.unnecessary ? [1] : undefined,
-    })),
-  );
-
-  return diagnostics;
-}
-
-function diagnosticNoticeNavigationTarget(
-  uri: string,
-  diagnostic: LanguageServerDiagnostic,
-): WorkbenchNoticeNavigationTarget | undefined {
-  const path = pathFromLanguageServerUri(uri);
-
-  if (!path) {
-    return undefined;
-  }
-
-  return {
-    path,
-    range: {
-      end: {
-        column: (diagnostic.endCharacter ?? diagnostic.character) + 1,
-        lineNumber: (diagnostic.endLine ?? diagnostic.line) + 1,
-      },
-      start: {
-        column: diagnostic.character + 1,
-        lineNumber: diagnostic.line + 1,
-      },
-    },
-  };
 }
 
 function identifierAtEditorPosition(
