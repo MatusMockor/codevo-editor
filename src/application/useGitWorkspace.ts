@@ -22,6 +22,7 @@ import {
   type GitRepositoryChangeGroup,
   type GitRepositoryMapping,
   type GitRepositoryStatus,
+  type ResolvedGitRepository,
 } from "../domain/gitRepositoryMapping";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
@@ -43,39 +44,22 @@ function errorText(error: unknown): string {
 }
 
 /**
- * Routes a hunk operation, whose caller supplies only a workspace-root-relative
- * path, to the owning repository plus that file's in-repo path. Falls back to
- * the workspace root when the resolver declines (fail-safe: the pre-multi-repo
- * behaviour, where every path is workspace-root-relative).
+ * Routes a hunk operation to the repository that actually owns the changed file,
+ * resolved from the file's ABSOLUTE path (`change.path`), which is unique across
+ * every repository in the workspace. Returns `null` when the file resolves to no
+ * repository so the caller fails safe: the operation is skipped rather than
+ * routed into the wrong repo. A nested repository reports its changes with
+ * repo-root-relative paths (`src/foo.php`), so the pre-fix approach of joining
+ * that path onto the workspace root silently mis-attributed a nested file's
+ * hunks to the primary (workspace-root) repository - resolving from the absolute
+ * path instead lands every hunk in its owning repository.
  */
 function resolveHunkRepository(
   mappings: GitRepositoryMapping[],
   workspaceRoot: string,
-  relativePath: string,
-): {
-  mapping: GitRepositoryMapping;
-  repositoryRoot: string;
-  repositoryRelativePath: string;
-} {
-  const resolved = resolveGitRepositoryForPath(
-    mappings,
-    workspaceRoot,
-    `${workspaceRoot}/${relativePath}`,
-  );
-
-  if (resolved) {
-    return {
-      mapping: resolved.mapping,
-      repositoryRoot: resolved.repositoryRoot,
-      repositoryRelativePath: resolved.repositoryRelativePath,
-    };
-  }
-
-  return {
-    mapping: WORKSPACE_ROOT_MAPPING,
-    repositoryRoot: workspaceRoot,
-    repositoryRelativePath: relativePath,
-  };
+  change: GitChangedFile,
+): ResolvedGitRepository | null {
+  return resolveGitRepositoryForPath(mappings, workspaceRoot, change.path);
 }
 
 /**
@@ -310,11 +294,11 @@ export interface GitWorkspace {
   stageGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   unstageGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   loadGitFileHunks: (
-    relativePath: string,
+    change: GitChangedFile,
     staged: boolean,
   ) => Promise<GitDiffHunk[]>;
-  stageGitHunk: (relativePath: string, hunkIndex: number) => Promise<void>;
-  unstageGitHunk: (relativePath: string, hunkIndex: number) => Promise<void>;
+  stageGitHunk: (change: GitChangedFile, hunkIndex: number) => Promise<void>;
+  unstageGitHunk: (change: GitChangedFile, hunkIndex: number) => Promise<void>;
   revertGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   runGitCommit: (options: { pushAfterCommit: boolean }) => Promise<void>;
   commitGitChanges: () => Promise<void>;
@@ -520,22 +504,29 @@ export function useGitWorkspace(
   );
 
   const loadGitFileHunks = useCallback(
-    async (relativePath: string, staged: boolean): Promise<GitDiffHunk[]> => {
+    async (
+      change: GitChangedFile,
+      staged: boolean,
+    ): Promise<GitDiffHunk[]> => {
       if (!workspaceRoot) {
         return [];
       }
 
       const requestedRoot = workspaceRoot;
-      const { repositoryRoot, repositoryRelativePath } = resolveHunkRepository(
-        mappings,
-        workspaceRoot,
-        relativePath,
-      );
+      const resolved = resolveHunkRepository(mappings, workspaceRoot, change);
+
+      // Fail-safe: a file that resolves to no repository is never read against
+      // the workspace root (a nested repo's diff must not query the primary
+      // repo). No hunks means the diff preview still renders, just without the
+      // per-hunk overlay.
+      if (!resolved) {
+        return [];
+      }
 
       try {
         const hunks = await gitGateway.getFileHunks(
-          repositoryRoot,
-          repositoryRelativePath,
+          resolved.repositoryRoot,
+          resolved.repositoryRelativePath,
           staged,
         );
 
@@ -559,7 +550,7 @@ export function useGitWorkspace(
 
   const runHunkOperation = useCallback(
     async (
-      relativePath: string,
+      change: GitChangedFile,
       hunkIndex: number,
       operation: (
         repositoryRoot: string,
@@ -573,8 +564,18 @@ export function useGitWorkspace(
       }
 
       const requestedRoot = workspaceRoot;
-      const { mapping, repositoryRoot, repositoryRelativePath } =
-        resolveHunkRepository(mappings, workspaceRoot, relativePath);
+      const resolved = resolveHunkRepository(mappings, workspaceRoot, change);
+
+      // Fail-safe: never stage/unstage a hunk against the wrong repository. A
+      // file that resolves to no repository is skipped and reported, not routed
+      // to the workspace root. Bails before the loading flag so no spinner
+      // flickers for a no-op.
+      if (!resolved) {
+        setMessage(skippedChangesMessage([change]));
+        return;
+      }
+
+      const { mapping, repositoryRoot, repositoryRelativePath } = resolved;
       setGitOperationLoading(true);
 
       try {
@@ -591,7 +592,7 @@ export function useGitWorkspace(
         publishStatuses([
           { mapping, root: repositoryRoot, status, failed: false },
         ]);
-        setMessage(`${messagePrefix} ${relativePath}`);
+        setMessage(`${messagePrefix} ${change.relativePath}`);
       } catch (error) {
         // A rejected patch (stale hunk / already staged) fails atomically on
         // the Rust side - the index is untouched, so this is a safe no-op.
@@ -608,9 +609,9 @@ export function useGitWorkspace(
   );
 
   const stageGitHunk = useCallback(
-    async (relativePath: string, hunkIndex: number) =>
+    async (change: GitChangedFile, hunkIndex: number) =>
       runHunkOperation(
-        relativePath,
+        change,
         hunkIndex,
         (root, repoRelative, index) =>
           gitGateway.stageHunk(root, repoRelative, index),
@@ -620,9 +621,9 @@ export function useGitWorkspace(
   );
 
   const unstageGitHunk = useCallback(
-    async (relativePath: string, hunkIndex: number) =>
+    async (change: GitChangedFile, hunkIndex: number) =>
       runHunkOperation(
-        relativePath,
+        change,
         hunkIndex,
         (root, repoRelative, index) =>
           gitGateway.unstageHunk(root, repoRelative, index),

@@ -218,7 +218,7 @@ describe("App Git diff click path", () => {
         expect(appGitDiffClickMocks.loadGitFileHunks).not.toHaveBeenCalled();
       } else {
         expect(appGitDiffClickMocks.loadGitFileHunks).toHaveBeenCalledWith(
-          change.relativePath,
+          expect.objectContaining({ relativePath: change.relativePath }),
           stagedArgument,
         );
       }

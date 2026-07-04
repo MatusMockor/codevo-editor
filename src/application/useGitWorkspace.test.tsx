@@ -214,14 +214,15 @@ describe("useGitWorkspace", () => {
       gitGateway: createFakeGitGateway({ stageHunk, unstageHunk }),
     });
 
+    const change = changedFile("a.ts");
     await act(async () => {
-      await harness.workspace().stageGitHunk("a.ts", 2);
+      await harness.workspace().stageGitHunk(change, 2);
     });
     expect(stageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2);
     expect(harness.setMessage).toHaveBeenCalledWith("Staged hunk in a.ts");
 
     await act(async () => {
-      await harness.workspace().unstageGitHunk("a.ts", 2);
+      await harness.workspace().unstageGitHunk(change, 2);
     });
     expect(unstageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2);
     expect(harness.setMessage).toHaveBeenCalledWith("Unstaged hunk in a.ts");
@@ -237,7 +238,9 @@ describe("useGitWorkspace", () => {
 
     let hunksPromise: Promise<GitDiffHunk[]> | null = null;
     act(() => {
-      hunksPromise = harness.workspace().loadGitFileHunks("a.ts", false);
+      hunksPromise = harness
+        .workspace()
+        .loadGitFileHunks(changedFile("a.ts"), false);
     });
 
     let resolved: GitDiffHunk[] | null = null;
@@ -248,6 +251,117 @@ describe("useGitWorkspace", () => {
     });
 
     expect(getFileHunks).toHaveBeenCalledWith(ROOT, "a.ts", false);
+    expect(resolved).toEqual([]);
+    harness.unmount();
+  });
+
+  it("loads hunks from the owning nested repository (root + repo-relative path)", async () => {
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+    const nestedHunks = [hunk(0)];
+    const getFileHunks = vi.fn(async () => nestedHunks);
+    const nestedChange = changedFile("src/foo.php", {
+      path: `${nestedRoot}/src/foo.php`,
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ getFileHunks }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+    });
+
+    let resolved: GitDiffHunk[] | null = null;
+    await act(async () => {
+      resolved = await harness
+        .workspace()
+        .loadGitFileHunks(nestedChange, false);
+    });
+
+    expect(getFileHunks).toHaveBeenCalledWith(nestedRoot, "src/foo.php", false);
+    expect(resolved).toEqual(nestedHunks);
+    harness.unmount();
+  });
+
+  it("stages and unstages a hunk in the owning nested repository and refreshes it", async () => {
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+    const nestedStatus = status(nestedRoot);
+    const stageHunk = vi.fn(async () => nestedStatus);
+    const unstageHunk = vi.fn(async () => nestedStatus);
+    const applyRepositoryOperationStatuses = vi.fn();
+    const nestedChange = changedFile("src/foo.php", {
+      path: `${nestedRoot}/src/foo.php`,
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageHunk, unstageHunk }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      applyRepositoryOperationStatuses,
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitHunk(nestedChange, 1);
+    });
+    expect(stageHunk).toHaveBeenCalledWith(nestedRoot, "src/foo.php", 1);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Staged hunk in src/foo.php",
+    );
+    // The touched (nested) repository's fresh status is published, and the
+    // primary surface is left untouched (the operation never hit the root repo).
+    expect(applyRepositoryOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({ root: nestedRoot, status: nestedStatus }),
+    ]);
+    expect(harness.applyGitOperationStatus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await harness.workspace().unstageGitHunk(nestedChange, 1);
+    });
+    expect(unstageHunk).toHaveBeenCalledWith(nestedRoot, "src/foo.php", 1);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Unstaged hunk in src/foo.php",
+    );
+    harness.unmount();
+  });
+
+  it("skips a hunk stage when the file resolves to no repository", async () => {
+    const stageHunk = vi.fn(async () => status(ROOT));
+    const orphanChange = changedFile("outside.ts", {
+      path: "/elsewhere/outside.ts",
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageHunk }),
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitHunk(orphanChange, 0);
+    });
+
+    expect(stageHunk).not.toHaveBeenCalled();
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Skipped 1 file(s) with no matching Git repository",
+    );
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("returns no hunks when the file resolves to no repository", async () => {
+    const getFileHunks = vi.fn(async () => [hunk(0)]);
+    const orphanChange = changedFile("outside.ts", {
+      path: "/elsewhere/outside.ts",
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ getFileHunks }),
+    });
+
+    let resolved: GitDiffHunk[] | null = null;
+    await act(async () => {
+      resolved = await harness
+        .workspace()
+        .loadGitFileHunks(orphanChange, false);
+    });
+
+    expect(getFileHunks).not.toHaveBeenCalled();
     expect(resolved).toEqual([]);
     harness.unmount();
   });

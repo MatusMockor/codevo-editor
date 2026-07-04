@@ -25,10 +25,15 @@ interface GitDiffPreviewProps {
   gitOperationLoading?: boolean;
   onClose(): void;
   onRevertFile?(change: GitChangedFile): void;
-  /** Loads the file's hunks (staged or worktree) for per-hunk staging. */
-  loadFileHunks?(relativePath: string, staged: boolean): Promise<GitDiffHunk[]>;
-  onStageHunk?(relativePath: string, hunkIndex: number): void;
-  onUnstageHunk?(relativePath: string, hunkIndex: number): void;
+  /**
+   * Loads the file's hunks (staged or worktree) for per-hunk staging. Receives
+   * the whole change so the owner can route the load into the repository that
+   * actually owns the file (multi-repo directory mappings) from its absolute
+   * path, not a repo-relative path that would be ambiguous across repositories.
+   */
+  loadFileHunks?(change: GitChangedFile, staged: boolean): Promise<GitDiffHunk[]>;
+  onStageHunk?(change: GitChangedFile, hunkIndex: number): void;
+  onUnstageHunk?(change: GitChangedFile, hunkIndex: number): void;
 }
 
 export function GitDiffPreview({
@@ -88,7 +93,9 @@ export function GitDiffPreview({
   ]);
 
   useEffect(() => {
-    if (!loadFileHunks || !changeRelativePath || !supportsHunkStaging) {
+    const change = diff?.change;
+
+    if (!loadFileHunks || !change || !supportsHunkStaging) {
       setHunks([]);
       return;
     }
@@ -118,9 +125,10 @@ export function GitDiffPreview({
     // The hunk load is best-effort. If the underlying command rejects (missing,
     // failing, or unavailable), swallow it and keep the hunk list empty so the
     // diff preview still renders instead of crashing the whole view to a blank
-    // screen (there is no error boundary around this tree).
+    // screen (there is no error boundary around this tree). The whole change is
+    // handed to the loader so it routes to the owning repository (multi-repo).
     void Promise.resolve()
-      .then(() => loadFileHunks(relativePath, staged))
+      .then(() => loadFileHunks(change, staged))
       .then(applyLoadedHunks)
       .catch((error) => {
         console.error("Loading git file hunks failed", error);
@@ -144,26 +152,21 @@ export function GitDiffPreview({
     supportsHunkStaging,
   ]);
 
+  const change = diff?.change ?? null;
   const onToggleHunk = useCallback(
     (hunkIndex: number) => {
-      if (!changeRelativePath || gitOperationLoading) {
+      if (!change || gitOperationLoading) {
         return;
       }
 
-      if (changeIsStaged) {
-        onUnstageHunk?.(changeRelativePath, hunkIndex);
+      if (change.isStaged) {
+        onUnstageHunk?.(change, hunkIndex);
         return;
       }
 
-      onStageHunk?.(changeRelativePath, hunkIndex);
+      onStageHunk?.(change, hunkIndex);
     },
-    [
-      changeIsStaged,
-      changeRelativePath,
-      gitOperationLoading,
-      onStageHunk,
-      onUnstageHunk,
-    ],
+    [change, gitOperationLoading, onStageHunk, onUnstageHunk],
   );
 
   const goToChange = useCallback(

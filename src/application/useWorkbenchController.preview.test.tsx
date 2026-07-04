@@ -12315,7 +12315,7 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().stageGitHunk("src/User.php", 1);
+      await getWorkbench().stageGitHunk(change, 1);
     });
 
     expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 1);
@@ -12342,7 +12342,7 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().unstageGitHunk("src/User.php", 0);
+      await getWorkbench().unstageGitHunk(change, 0);
     });
 
     expect(gitGateway.unstageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
@@ -12364,7 +12364,7 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().stageGitHunk("src/User.php", 0);
+      await getWorkbench().stageGitHunk(gitChangedFile("src/User.php", false), 0);
     });
 
     expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
@@ -12389,7 +12389,10 @@ describe("useWorkbenchController preview tabs", () => {
 
     let loaded: typeof hunks = [];
     await act(async () => {
-      loaded = await getWorkbench().loadGitFileHunks("src/User.php", false);
+      loaded = await getWorkbench().loadGitFileHunks(
+        gitChangedFile("src/User.php", false),
+        false,
+      );
     });
 
     expect(gitGateway.getFileHunks).toHaveBeenCalledWith(

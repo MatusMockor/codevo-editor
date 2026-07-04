@@ -113,7 +113,10 @@ describe("GitDiffPreview", () => {
       onUnstageHunk: vi.fn(),
     });
 
-    expect(loadFileHunks).toHaveBeenCalledWith("src/example.ts", false);
+    expect(loadFileHunks).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      false,
+    );
     const checkboxes = hunkCheckboxes();
     expect(checkboxes).toHaveLength(2);
 
@@ -121,7 +124,10 @@ describe("GitDiffPreview", () => {
       checkboxes[1].click();
     });
 
-    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 1);
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      1,
+    );
   });
 
   it("stages the first of several worktree hunks", async () => {
@@ -141,7 +147,10 @@ describe("GitDiffPreview", () => {
       checkboxes[0].click();
     });
 
-    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      0,
+    );
   });
 
   it("stages the last of several worktree hunks", async () => {
@@ -161,7 +170,10 @@ describe("GitDiffPreview", () => {
       checkboxes[2].click();
     });
 
-    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 2);
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      2,
+    );
   });
 
   it("unstages the middle of several staged hunks", async () => {
@@ -184,7 +196,10 @@ describe("GitDiffPreview", () => {
       checkboxes[1].click();
     });
 
-    expect(onUnstageHunk).toHaveBeenCalledWith("src/example.ts", 1);
+    expect(onUnstageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      1,
+    );
   });
 
   it("renders only additions for a pure-add hunk and stages it", async () => {
@@ -212,7 +227,10 @@ describe("GitDiffPreview", () => {
       hunkCheckboxes()[0].click();
     });
 
-    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      0,
+    );
   });
 
   it("renders only deletions for a pure-delete hunk and stages it", async () => {
@@ -240,7 +258,10 @@ describe("GitDiffPreview", () => {
       hunkCheckboxes()[0].click();
     });
 
-    expect(onStageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      0,
+    );
   });
 
   it("does not render the hunk list for a deleted (binary-like absent diff) change", async () => {
@@ -300,7 +321,10 @@ describe("GitDiffPreview", () => {
       },
     );
 
-    expect(loadFileHunks).toHaveBeenCalledWith("src/example.ts", true);
+    expect(loadFileHunks).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts", isStaged: true }),
+      true,
+    );
     const checkboxes = hunkCheckboxes();
     expect(checkboxes).toHaveLength(1);
 
@@ -308,7 +332,10 @@ describe("GitDiffPreview", () => {
       checkboxes[0].click();
     });
 
-    expect(onUnstageHunk).toHaveBeenCalledWith("src/example.ts", 0);
+    expect(onUnstageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts", isStaged: true }),
+      0,
+    );
   });
 
   it("does not render the hunk list for untracked changes", async () => {
