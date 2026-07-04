@@ -36,6 +36,7 @@ import {
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { nettePresenterLinkCompletionContextAt } from "../domain/latteLinkNavigation";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
   phpPostfixCompletionContextAt,
@@ -467,6 +468,19 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     offset: number,
   ): Promise<boolean>;
+  /**
+   * Produces `Presenter:action` completions for the cursor at `offset` inside a
+   * `.php` document's presenter-link string argument (`$this->link('...')`,
+   * `->redirect(...)`, `->forward(...)`, ...). Like
+   * {@link provideNettePhpLinkDefinition}, this is a dedicated callback (not
+   * folded into {@link providePhpMethodCompletions}) so the Laravel-heavy
+   * method-completion collector stays untouched; inert outside a Nette
+   * semantic project.
+   */
+  provideNettePhpLinkCompletions?(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletion[]>;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -4636,6 +4650,20 @@ async function provideCompletionItems(
     return { suggestions: postfixSuggestions };
   }
 
+  const nettePhpLinkSuggestions = await phpNettePresenterLinkCompletionSuggestions(
+    monaco,
+    context,
+    model,
+    source,
+    position,
+    range,
+    documentContext,
+  );
+
+  if (nettePhpLinkSuggestions) {
+    return { suggestions: nettePhpLinkSuggestions };
+  }
+
   // Kick off the language-server completion before awaiting the (potentially
   // framework-backed) method collectors so the two run concurrently instead of
   // adding their latencies serially on every keystroke.
@@ -4878,6 +4906,65 @@ function phpPostfixCompletionSuggestions(
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
   }));
+}
+
+/**
+ * `$this->link('...')` / `->redirect(...)` / `->forward(...)` / ... presenter
+ * link completion for a PHP document (Nette). Mirrors
+ * {@link phpPostfixCompletionSuggestions}: the domain's PURE
+ * `nettePresenterLinkCompletionContextAt` check runs FIRST (a single bounded
+ * regex scan), so a cursor anywhere else in the document — the overwhelming
+ * majority of keystrokes, and every keystroke in a Laravel/generic project —
+ * costs nothing and never reaches the controller. Only a cursor inside such a
+ * link-call's string argument awaits `context.provideNettePhpLinkCompletions`,
+ * which owns the framework/semantic-tier gating and the per-root presenter
+ * discovery cache (shared with the Latte-side `{link}` completion). Returns
+ * `null` when the cursor is NOT on a link target — so the caller falls through
+ * to the regular phpactor / method / variable / snippet pipeline — or an array
+ * (possibly empty) when it IS, which the caller returns directly, exactly like
+ * a matched postfix context: phpactor is never also consulted for a position
+ * that is unambiguously a Nette link-target string literal.
+ */
+async function phpNettePresenterLinkCompletionSuggestions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  source: string,
+  position: MonacoPosition,
+  range: Monaco.IRange,
+  request: { rootPath: string; sessionId: number | null },
+): Promise<Monaco.languages.CompletionItem[] | null> {
+  const offset = offsetAtMonacoPosition(source, position);
+  const linkCompletionContext = nettePresenterLinkCompletionContextAt(
+    source,
+    offset,
+    "php",
+  );
+
+  if (!linkCompletionContext || !context.provideNettePhpLinkCompletions) {
+    return null;
+  }
+
+  try {
+    const completions = await context.provideNettePhpLinkCompletions(
+      source,
+      offset,
+    );
+
+    if (!isPhpDocumentContextActive(context, request)) {
+      return [];
+    }
+
+    return completions.map((completion, index) =>
+      toMonacoLatteCompletion(monaco, model, source, range, completion, index),
+    );
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, request)) {
+      context.reportError(error);
+    }
+
+    return [];
+  }
 }
 
 /**

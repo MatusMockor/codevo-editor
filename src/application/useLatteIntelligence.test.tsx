@@ -1683,6 +1683,129 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
   });
 });
 
+describe("createLatteIntelligence PHP presenter link completion (S8 PHP)", () => {
+  const PRESENTERS = {
+    "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    "app/UI/Home/HomePresenter.php": `<?php
+namespace App\\UI\\Home;
+class HomePresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderDefault(): void {}
+}
+`,
+  };
+
+  it("offers Presenter:action targets inside $this->link('...')", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('P');";
+    const offset = source.indexOf("P'");
+    const completions = await latte.provideNettePhpLinkCompletions(
+      source,
+      offset,
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("Product:show");
+    expect(labels).toContain("Product:edit");
+    expect(labels).toContain("Product:delete!");
+    expect(completions.every((completion) => completion.kind === "link")).toBe(
+      true,
+    );
+  });
+
+  it("filters targets by the typed prefix inside ->redirect('...')", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->redirect('Product:s');";
+    const offset = source.indexOf("Product:s") + "Product:s".length;
+    const completions = await latte.provideNettePhpLinkCompletions(
+      source,
+      offset,
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "Product:show",
+    ]);
+  });
+
+  it("returns [] when the cursor is not on a link-call string argument", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->products->get(1);";
+
+    await expect(
+      latte.provideNettePhpLinkCompletions(source, source.indexOf("get")),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("reuses the same per-root presenter-target cache as the Latte-side completion", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+
+    const latteSource = "{link P}";
+    await latte.provideLatteCompletions(
+      latteSource,
+      positionAtOffset(latteSource, latteSource.indexOf("P") + 1),
+    );
+    const scansAfterLatteSide = listDirectory.mock.calls.length;
+    expect(scansAfterLatteSide).toBeGreaterThan(0);
+
+    const phpSource = "$this->link('P');";
+    const phpCompletions = await latte.provideNettePhpLinkCompletions(
+      phpSource,
+      phpSource.indexOf("P'"),
+    );
+
+    // Same requested root, same cache entry still warm: no additional scan.
+    expect(listDirectory.mock.calls.length).toBe(scansAfterLatteSide);
+    expect(phpCompletions.map((completion) => completion.label)).toContain(
+      "Product:show",
+    );
+  });
+
+  it("returns [] fast when the Nette framework is inactive (no scan)", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({
+      isNetteFrameworkActive: false,
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('P');";
+
+    await expect(
+      latte.provideNettePhpLinkCompletions(source, source.indexOf("P'")),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("drops PHP link completions when the root changes during discovery", async () => {
+    const rootRef = { current: ROOT };
+    const built = buildContentWorkspace(PRESENTERS);
+    const listDirectory = vi.fn(async (path: string) => {
+      rootRef.current = "/other";
+      return built.listDirectory(path);
+    });
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      listDirectory,
+      readFileContent: built.readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('P');";
+
+    await expect(
+      latte.provideNettePhpLinkCompletions(source, source.indexOf("P'")),
+    ).resolves.toEqual([]);
+  });
+});
+
 const COMPONENT_PRESENTER_SOURCE = `<?php
 
 namespace App\\UI\\Home;

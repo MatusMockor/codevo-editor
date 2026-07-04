@@ -1303,6 +1303,7 @@ function App() {
             provideNeonCompletions={workbench.provideNeonCompletions}
             provideNeonDefinition={workbench.provideNeonDefinition}
             provideNettePhpLinkDefinition={workbench.provideNettePhpLinkDefinition}
+            provideNettePhpLinkCompletions={workbench.provideNettePhpLinkCompletions}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}

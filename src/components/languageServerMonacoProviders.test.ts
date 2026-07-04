@@ -10986,6 +10986,162 @@ describe("registerLanguageServerMonacoProviders nette php link definition", () =
   });
 });
 
+describe("registerLanguageServerMonacoProviders nette php link completion", () => {
+  it("delegates $this->link('...') completion to the controller and skips phpactor", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    const provideNettePhpLinkCompletions = vi.fn(async () => [
+      {
+        detail: "Nette presenter action",
+        insertText: "Product:show",
+        kind: "link" as const,
+        label: "Product:show",
+        replaceEnd: source.indexOf("Pro") + "Pro".length,
+        replaceStart: source.indexOf("Pro"),
+      },
+    ]);
+    const gateway = featuresGateway();
+    const context = providerContext({
+      activeDocument: document(),
+      featuresGateway: gateway,
+      provideNettePhpLinkCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/src/User.php" }),
+      positionForOffset(source, offset),
+    );
+
+    expect(provideNettePhpLinkCompletions).toHaveBeenCalledWith(source, offset);
+    expect(gateway.completion).not.toHaveBeenCalled();
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        insertText: "Product:show",
+        kind: registered.monaco.languages.CompletionItemKind.Method,
+        label: "Product:show",
+      }),
+    ]);
+  });
+
+  it("does not call the controller when the cursor is not on a link-call string argument", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const provideNettePhpLinkCompletions = vi.fn(async () => []);
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      provideNettePhpLinkCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+
+    expect(provideNettePhpLinkCompletions).not.toHaveBeenCalled();
+    expect(gateway.completion).toHaveBeenCalled();
+  });
+
+  it("falls through to the regular pipeline when the host does not wire the completion callback", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).toHaveBeenCalled();
+  });
+
+  it("reports an error from the completion callback without falling back to phpactor", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    const failure = new Error("nette link completion failed");
+    const provideNettePhpLinkCompletions = vi.fn(async () => {
+      throw failure;
+    });
+    const reportError = vi.fn();
+    const gateway = featuresGateway();
+    const context = providerContext({
+      featuresGateway: gateway,
+      provideNettePhpLinkCompletions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(reportError).toHaveBeenCalledWith(failure);
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
+  it("drops a stale nette link completion result when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    let activeRoot: string | null = "/project";
+    const completion = createDeferred<
+      Array<{
+        detail?: string;
+        insertText: string;
+        kind: "link";
+        label: string;
+        replaceEnd: number;
+        replaceStart: number;
+      }>
+    >();
+    const provideNettePhpLinkCompletions = vi.fn(async () => completion.promise);
+    const reportError = vi.fn();
+    const gateway = featuresGateway();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+      provideNettePhpLinkCompletions,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      );
+
+    activeRoot = null;
+    completion.resolve([
+      {
+        detail: "Nette presenter action",
+        insertText: "Product:show",
+        kind: "link",
+        label: "Product:show",
+        replaceEnd: source.indexOf("Pro") + "Pro".length,
+        replaceStart: source.indexOf("Pro"),
+      },
+    ]);
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(reportError).not.toHaveBeenCalled();
+  });
+});
+
 function positionForOffset(source: string, offset: number) {
   const before = source.slice(0, offset);
   const lineNumber = before.split("\n").length;
@@ -11550,6 +11706,9 @@ function providerContext(
     provideNeonDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonDefinition"]
     >;
+    provideNettePhpLinkCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkCompletions"]
+    >;
     provideNettePhpLinkDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkDefinition"]
     >;
@@ -11600,6 +11759,7 @@ function providerContext(
     provideLatteDefinition: overrides.provideLatteDefinition,
     provideNeonCompletions: overrides.provideNeonCompletions,
     provideNeonDefinition: overrides.provideNeonDefinition,
+    provideNettePhpLinkCompletions: overrides.provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition: overrides.provideNettePhpLinkDefinition,
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,

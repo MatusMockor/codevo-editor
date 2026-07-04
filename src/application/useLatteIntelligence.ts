@@ -216,6 +216,19 @@ export interface LatteIntelligence {
     source: string,
     offset: number,
   ): Promise<boolean>;
+  /**
+   * `Presenter:action` completion while typing a PHP presenter link
+   * (`$this->link('...')`, `->redirect(...)`, `->forward(...)`, ...): the SAME
+   * discovered target list `{link}` / `n:href` completion offers (shared cache,
+   * see `lattePresenterLinkCompletions`), filtered by the typed prefix. Wired
+   * into the Monaco `php` completion provider by the controller mount (a
+   * dedicated context callback, mirroring `provideNettePhpLinkDefinition`);
+   * inert outside a Nette semantic project.
+   */
+  provideNettePhpLinkCompletions(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletionItem[]>;
 }
 
 interface LatteTemplateCacheEntry {
@@ -676,9 +689,59 @@ export function createLatteIntelligence(
     );
   };
 
+  const provideNettePhpLinkCompletions = async (
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletionItem[]> => {
+    const deps = getDependencies();
+    evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
+
+    if (!isLatteSemanticActive(deps)) {
+      return [];
+    }
+
+    const requestedRoot = deps.workspaceRoot;
+
+    if (!requestedRoot) {
+      return [];
+    }
+
+    const linkCompletion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset,
+      "php",
+    );
+
+    if (!linkCompletion) {
+      return [];
+    }
+
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+
+    // Reuses the SAME per-root discovery + cache the Latte-side `{link}` /
+    // `n:href` completion uses (`presenterCache` / `presenterInFlight`), so a
+    // PHP-file request never re-scans `app` when the Latte side already warmed
+    // the cache for this root, and vice versa.
+    return lattePresenterLinkCompletions(
+      {
+        cache: presenterCache,
+        deps,
+        inFlight: presenterInFlight,
+        isRequestedRootActive,
+        requestedRoot,
+      },
+      linkCompletion,
+    );
+  };
+
   return {
     provideLatteCompletions,
     provideLatteDefinition,
+    provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition,
   };
 }

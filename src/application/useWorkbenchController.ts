@@ -10,6 +10,8 @@ import { useGitWorkspace } from "./useGitWorkspace";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useLaravelTargets } from "./useLaravelTargets";
 import { useBookmarks } from "./useBookmarks";
+import { useFileHistory } from "./useFileHistory";
+import { useLocalHistory } from "./useLocalHistory";
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
@@ -50,7 +52,6 @@ import {
   type GitBlameLine,
   type GitChangedFile,
   type GitFileDiff,
-  type GitFileHistoryEntry,
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
@@ -65,11 +66,7 @@ import {
   type GitRepositoryMapping,
   type GitRepositoryStatus,
 } from "../domain/gitRepositoryMapping";
-import type {
-  LocalHistoryDiff,
-  LocalHistoryGateway,
-  LocalHistoryVersion,
-} from "../domain/localHistory";
+import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   applyIndexProgress,
@@ -1126,39 +1123,6 @@ export function useWorkbenchController(
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-  const [fileHistoryPanelOpen, setFileHistoryPanelOpen] = useState(false);
-  const [fileHistoryRelativePath, setFileHistoryRelativePath] = useState<
-    string | null
-  >(null);
-  const [fileHistoryCommits, setFileHistoryCommits] = useState<
-    GitFileHistoryEntry[]
-  >([]);
-  const [fileHistoryLoading, setFileHistoryLoading] = useState(false);
-  const [fileHistorySelectedSha, setFileHistorySelectedSha] = useState<
-    string | null
-  >(null);
-  const [fileHistoryDiff, setFileHistoryDiff] = useState<GitFileDiff | null>(
-    null,
-  );
-  const [fileHistoryDiffLoading, setFileHistoryDiffLoading] = useState(false);
-  // Local History (PhpStorm-style) panel state. Mirrors the git file-history
-  // panel but is git-independent: versions come from per-workspace snapshots
-  // captured on save. The "current" content is diffed against a selected
-  // version, and a version can be reverted back into the live document.
-  const [localHistoryPanelOpen, setLocalHistoryPanelOpen] = useState(false);
-  const [localHistoryRelativePath, setLocalHistoryRelativePath] = useState<
-    string | null
-  >(null);
-  const [localHistoryVersions, setLocalHistoryVersions] = useState<
-    LocalHistoryVersion[]
-  >([]);
-  const [localHistoryLoading, setLocalHistoryLoading] = useState(false);
-  const [localHistorySelectedId, setLocalHistorySelectedId] = useState<
-    string | null
-  >(null);
-  const [localHistoryDiff, setLocalHistoryDiff] =
-    useState<LocalHistoryDiff | null>(null);
-  const [localHistoryDiffLoading, setLocalHistoryDiffLoading] = useState(false);
   // Git blame annotation toggle, tracked per absolute document path so the
   // annotation state never leaks across open tabs (each path is workspace-
   // scoped). Reset on workspace switch alongside the other per-tab state.
@@ -1266,29 +1230,7 @@ export function useWorkbenchController(
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const gitDiffRequestTokenRef = useRef(0);
-  const fileHistoryRequestTokenRef = useRef(0);
-  const fileHistoryDiffRequestTokenRef = useRef(0);
   const emptyDocumentRefreshTimeoutsRef = useRef<Set<number>>(new Set());
-  // Mirrors the file currently shown in the history panel. Read by
-  // selectFileHistoryCommit so a commit click always targets the panel's live
-  // file (not a stale state closure), keeping the diff request per-file isolated.
-  const fileHistoryRelativePathRef = useRef<string | null>(null);
-  // The git repository root that owns the history panel's file (its nested repo
-  // for a directory-mapping file, else the workspace root). Read by
-  // selectFileHistoryCommit so a commit diff runs against the file's own repo.
-  const fileHistoryRepositoryRootRef = useRef<string | null>(null);
-  const localHistoryRequestTokenRef = useRef(0);
-  const localHistoryDiffRequestTokenRef = useRef(0);
-  // Mirrors the file currently shown in the local-history panel, for the same
-  // reason as fileHistoryRelativePathRef: a version click always targets the
-  // panel's live file, keeping the diff/revert request per-file isolated.
-  const localHistoryRelativePathRef = useRef<string | null>(null);
-  // The absolute path of the local-history panel's file, used to read the live
-  // document content for the diff and to write the reverted content back.
-  const localHistoryAbsolutePathRef = useRef<string | null>(null);
-  // The Monaco language of the local-history panel's file, captured at open so
-  // the version diff highlights correctly.
-  const localHistoryLanguageRef = useRef<string>("plaintext");
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexRootRef = useRef<string | null>(null);
@@ -5296,6 +5238,58 @@ export function useWorkbenchController(
     [updateLocalPhpDiagnostics, workspaceFiles],
   );
 
+  // Monotonic token guarding git-repository discovery against re-entrancy: the
+  // newest discovery request always wins, so two rapid git-mapping settings
+  // changes (or an open racing a save) can never let a slower earlier detection
+  // publish stale mappings.
+  const gitRepositoryDiscoveryRequestTokenRef = useRef(0);
+
+  // Discover nested git repositories (PhpStorm-style directory mappings) for
+  // `rootPath` from its settings and publish the effective mappings so every git
+  // operation routes into the repository that owns each file. Auto-detection is
+  // optional (the gateway may not implement it) and gated on the workspace
+  // setting; manual mappings are always honoured. Per-root isolated: captures
+  // `rootPath` and, after the (optional) detection await, re-checks BOTH the
+  // discovery token (last request wins) and the live workspace root before
+  // publishing, dropping any stale or superseded result. On failure or when auto
+  // is off it falls back to the manual mappings plus the workspace root
+  // (single-repo behaviour). Shared by the open flow and the settings-save flow
+  // so both resolve mappings identically.
+  const runGitRepositoryDiscovery = useCallback(
+    async (rootPath: string, settings: WorkspaceSettings): Promise<void> => {
+      const requestToken = gitRepositoryDiscoveryRequestTokenRef.current + 1;
+      gitRepositoryDiscoveryRequestTokenRef.current = requestToken;
+
+      const auto = settings.gitDirectoryMappingsAuto;
+      let detected: string[] | null = null;
+
+      try {
+        if (auto && gitGateway.detectRepositories) {
+          detected = await gitGateway.detectRepositories(rootPath);
+        }
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(rootPath, "Git", error);
+      }
+
+      if (gitRepositoryDiscoveryRequestTokenRef.current !== requestToken) {
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      setGitRepositoryMappings(
+        resolveEffectiveGitRepositoryMappings({
+          manualMappings: settings.gitDirectoryMappings,
+          detectedDirectories: detected,
+          auto,
+        }),
+      );
+    },
+    [gitGateway, reportErrorForActiveWorkspaceRoot],
+  );
+
   const openWorkspacePath = useCallback(
     async (path: string, options: OpenWorkspacePathOptions = {}) => {
       const shouldCachePreviousWorkspace =
@@ -5646,37 +5640,11 @@ export function useWorkbenchController(
         workspaceSessionRestoredRef.current = true;
       };
 
-      // Discover nested git repositories (PhpStorm-style directory mappings) so
-      // every git operation routes into the repo that owns each file. Auto-detection
-      // is optional (the gateway may not implement it) and gated on the workspace
-      // setting; manual mappings are always honoured. Per-root isolated: captures
-      // `path` and re-checks the live root after the await before publishing. On
-      // failure or when auto is off it falls back to the manual mappings plus the
-      // workspace root (single-repo behaviour).
-      const discoverGitRepositoriesTask = async (): Promise<void> => {
-        const auto = workspaceSettings.gitDirectoryMappingsAuto;
-        let detected: string[] | null = null;
-
-        try {
-          if (auto && gitGateway.detectRepositories) {
-            detected = await gitGateway.detectRepositories(path);
-          }
-        } catch (error) {
-          reportErrorForActiveWorkspaceRoot(path, "Git", error);
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
-          return;
-        }
-
-        setGitRepositoryMappings(
-          resolveEffectiveGitRepositoryMappings({
-            manualMappings: workspaceSettings.gitDirectoryMappings,
-            detectedDirectories: detected,
-            auto,
-          }),
-        );
-      };
+      // Discover nested git repositories from the freshly loaded workspace
+      // settings, sharing the isolated, re-entrancy-guarded discovery used by
+      // the settings-save flow so both resolve mappings identically.
+      const discoverGitRepositoriesTask = (): Promise<void> =>
+        runGitRepositoryDiscovery(path, workspaceSettings);
 
       // Fire-and-forget plans/scans that already isolate themselves per root.
       void refreshJavaScriptTypeScriptLanguageServerPlan(path);
@@ -5737,6 +5705,7 @@ export function useWorkbenchController(
       restoreCachedWorkspaceState,
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
+      runGitRepositoryDiscovery,
       resetFilePrefetchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
@@ -10706,423 +10675,54 @@ export function useWorkbenchController(
     [workspaceFiles],
   );
 
-  // Closes the file history panel and invalidates any in-flight history/diff
-  // requests so their results are dropped instead of repopulating a closed
-  // panel (or a different tab's panel after a fast reopen).
-  const closeFileHistory = useCallback(() => {
-    fileHistoryRequestTokenRef.current += 1;
-    fileHistoryDiffRequestTokenRef.current += 1;
-    fileHistoryRelativePathRef.current = null;
-    fileHistoryRepositoryRootRef.current = null;
-    setFileHistoryPanelOpen(false);
-    setFileHistoryCommits([]);
-    setFileHistoryLoading(false);
-    setFileHistorySelectedSha(null);
-    setFileHistoryDiff(null);
-    setFileHistoryDiffLoading(false);
-    setFileHistoryRelativePath(null);
-  }, []);
+  const {
+    fileHistoryPanelOpen,
+    fileHistoryRelativePath,
+    fileHistoryCommits,
+    fileHistoryLoading,
+    fileHistorySelectedSha,
+    fileHistoryDiff,
+    fileHistoryDiffLoading,
+    openFileHistory,
+    selectFileHistoryCommit,
+    closeFileHistory,
+  } = useFileHistory({
+    activeDocumentRef,
+    currentWorkspaceRootRef,
+    gitGateway,
+    reportError,
+    resolveGitRepositoryTarget,
+    workspaceRoot,
+  });
 
-  const closeLocalHistory = useCallback(() => {
-    localHistoryRequestTokenRef.current += 1;
-    localHistoryDiffRequestTokenRef.current += 1;
-    localHistoryRelativePathRef.current = null;
-    localHistoryAbsolutePathRef.current = null;
-    setLocalHistoryPanelOpen(false);
-    setLocalHistoryVersions([]);
-    setLocalHistoryLoading(false);
-    setLocalHistorySelectedId(null);
-    setLocalHistoryDiff(null);
-    setLocalHistoryDiffLoading(false);
-    setLocalHistoryRelativePath(null);
-  }, []);
-
-  // Current live content of the local-history panel's file: the open editor
-  // buffer when the document is loaded, otherwise null. Used as the "modified"
-  // (right) side of the version diff and as the pre-revert snapshot source.
-  const currentLocalHistoryContent = useCallback((): string | null => {
-    const absolutePath = localHistoryAbsolutePathRef.current;
-
-    if (!absolutePath) {
-      return null;
-    }
-
-    return documentsRef.current[absolutePath]?.content ?? null;
-  }, []);
-
-  // Loads the diff for a single local-history version (selected version vs the
-  // file's current content). The requested root, relative path, and request
-  // token are captured up front; after the await we re-check the active root and
-  // the token so a stale result from a switched-away tab or superseded click is
-  // dropped (per-tab isolation).
-  const selectLocalHistoryVersion = useCallback(
-    async (versionId: string) => {
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-      const relativePath = localHistoryRelativePathRef.current;
-
-      if (!requestedRoot || !relativePath) {
-        return;
-      }
-
-      const requestToken = localHistoryDiffRequestTokenRef.current + 1;
-      localHistoryDiffRequestTokenRef.current = requestToken;
-      setLocalHistorySelectedId(versionId);
-      setLocalHistoryDiffLoading(true);
-
-      const isCurrentRequest = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-        localHistoryRelativePathRef.current === relativePath &&
-        localHistoryDiffRequestTokenRef.current === requestToken;
-
-      try {
-        const originalContent = await localHistoryGateway.readVersion(
-          requestedRoot,
-          relativePath,
-          versionId,
-        );
-
-        if (!isCurrentRequest()) {
-          return;
-        }
-
-        setLocalHistoryDiff({
-          language: localHistoryLanguageRef.current,
-          modifiedContent: currentLocalHistoryContent() ?? "",
-          originalContent,
-        });
-      } catch (error) {
-        if (!isCurrentRequest()) {
-          return;
-        }
-
-        setLocalHistoryDiff(null);
-        reportError("Local History", error);
-      } finally {
-        if (isCurrentRequest()) {
-          setLocalHistoryDiffLoading(false);
-        }
-      }
-    },
-    [
-      currentLocalHistoryContent,
-      localHistoryGateway,
-      reportError,
-      workspaceRoot,
-    ],
-  );
-
-  // Opens the Local History panel for the active document. The requested root
-  // and the active document's relative/absolute paths + language are captured up
-  // front; after the await we re-check the active root, document, and request
-  // token so a stale version list from a switched-away tab is dropped.
-  const openLocalHistory = useCallback(async () => {
-    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-    const document = activeDocumentRef.current;
-
-    if (!requestedRoot || !document) {
-      return;
-    }
-
-    const requestedDocumentPath = document.path;
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocumentPath,
-    );
-
-    if (!relativePath) {
-      return;
-    }
-
-    const requestToken = localHistoryRequestTokenRef.current + 1;
-    localHistoryRequestTokenRef.current = requestToken;
-    localHistoryDiffRequestTokenRef.current += 1;
-    localHistoryRelativePathRef.current = relativePath;
-    localHistoryAbsolutePathRef.current = requestedDocumentPath;
-    localHistoryLanguageRef.current = document.language;
-    setLocalHistoryRelativePath(relativePath);
-    setLocalHistorySelectedId(null);
-    setLocalHistoryDiff(null);
-    setLocalHistoryDiffLoading(false);
-    setLocalHistoryVersions([]);
-    setLocalHistoryPanelOpen(true);
-    setLocalHistoryLoading(true);
-
-    const isCurrentRequest = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-      activeDocumentRef.current?.path === requestedDocumentPath &&
-      localHistoryRequestTokenRef.current === requestToken;
-
-    try {
-      const versions = await localHistoryGateway.listVersions(
-        requestedRoot,
-        relativePath,
-      );
-
-      if (!isCurrentRequest()) {
-        return;
-      }
-
-      setLocalHistoryVersions(versions);
-    } catch (error) {
-      if (!isCurrentRequest()) {
-        return;
-      }
-
-      setLocalHistoryVersions([]);
-      reportError("Local History", error);
-    } finally {
-      if (isCurrentRequest()) {
-        setLocalHistoryLoading(false);
-      }
-    }
-  }, [localHistoryGateway, reportError, workspaceRoot]);
-
-  // Reverts the panel's file to a stored version. Before overwriting, the
-  // current content is snapshotted into Local History so the revert itself is
-  // undoable. The version content is read first, then written to disk and synced
-  // into the open document. All work is scoped to the root captured up front and
-  // re-checked after each await so a tab switch drops the revert.
-  const revertLocalHistoryVersion = useCallback(
-    async (versionId: string) => {
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-      const relativePath = localHistoryRelativePathRef.current;
-      const absolutePath = localHistoryAbsolutePathRef.current;
-
-      if (!requestedRoot || !relativePath || !absolutePath) {
-        return;
-      }
-
-      try {
-        const versionContent = await localHistoryGateway.readVersion(
-          requestedRoot,
-          relativePath,
-          versionId,
-        );
-
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return;
-        }
-
-        // Snapshot the pre-revert content (best-effort) so the revert can be
-        // undone from history too.
-        const preRevertContent = currentLocalHistoryContent();
-        if (preRevertContent !== null && preRevertContent !== versionContent) {
-          await captureLocalHistorySnapshot(
-            requestedRoot,
-            absolutePath,
-            preRevertContent,
-          );
-        }
-
-        await workspaceFiles.writeTextFile(absolutePath, versionContent);
-        filePrefetchCacheRef.current.invalidate(absolutePath);
-
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return;
-        }
-
-        // Record the reverted content as the newest version too, so the file's
-        // current on-disk state always has a matching snapshot.
-        await captureLocalHistorySnapshot(
-          requestedRoot,
-          absolutePath,
-          versionContent,
-        );
-
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return;
-        }
-
-        setDocuments((current) => {
-          const existing = current[absolutePath];
-
-          if (!existing) {
-            return current;
-          }
-
-          return {
-            ...current,
-            [absolutePath]: {
-              ...existing,
-              content: versionContent,
-              savedContent: versionContent,
-            },
-          };
-        });
-
-        const reverted = documentsRef.current[absolutePath];
-        if (reverted) {
-          await syncSavedDocument(reverted);
-          await syncSavedJavaScriptTypeScriptDocument(reverted);
-        }
-
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return;
-        }
-
-        setMessage("Reverted to selected local history version");
-        // Refresh the panel so the new version list + diff reflect the revert.
-        void openLocalHistory();
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Local History", error);
-      }
-    },
-    [
-      captureLocalHistorySnapshot,
-      currentLocalHistoryContent,
-      localHistoryGateway,
-      openLocalHistory,
-      reportErrorForActiveWorkspaceRoot,
-      syncSavedDocument,
-      syncSavedJavaScriptTypeScriptDocument,
-      workspaceFiles,
-      workspaceRoot,
-    ],
-  );
-
-  // Loads the diff for a single commit in the file history panel. The requested
-  // root, relative path, and request token are captured up front; after the
-  // await we re-check both the active workspace root and the token so a stale
-  // result from a switched-away tab or a superseded click is dropped.
-  const selectFileHistoryCommit = useCallback(
-    async (sha: string) => {
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-      const relativePath = fileHistoryRelativePathRef.current;
-
-      if (!requestedRoot || !relativePath) {
-        return;
-      }
-
-      const requestToken = fileHistoryDiffRequestTokenRef.current + 1;
-      fileHistoryDiffRequestTokenRef.current = requestToken;
-      setFileHistorySelectedSha(sha);
-      setFileHistoryDiffLoading(true);
-
-      try {
-        // Run the commit diff against the file's owning repository (its nested
-        // repo for a directory-mapping file); the workspace-root re-checks below
-        // keep per-tab isolation intact.
-        const diff = await gitGateway.fileCommitDiff(
-          fileHistoryRepositoryRootRef.current ?? requestedRoot,
-          relativePath,
-          sha,
-        );
-
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          fileHistoryDiffRequestTokenRef.current !== requestToken
-        ) {
-          return;
-        }
-
-        setFileHistoryDiff(diff);
-      } catch (error) {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          fileHistoryDiffRequestTokenRef.current !== requestToken
-        ) {
-          return;
-        }
-
-        setFileHistoryDiff(null);
-        reportError("File History", error);
-      } finally {
-        if (
-          workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) &&
-          fileHistoryDiffRequestTokenRef.current === requestToken
-        ) {
-          setFileHistoryDiffLoading(false);
-        }
-      }
-    },
-    [gitGateway, reportError, workspaceRoot],
-  );
-
-  // Opens the file history panel for the active document. The requested root and
-  // the active document's relative path are captured up front; after the await
-  // we re-check the active workspace root and the request token so a stale
-  // history list from a switched-away tab is dropped (per-tab isolation).
-  const openFileHistory = useCallback(async () => {
-    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-    const document = activeDocumentRef.current;
-
-    if (!requestedRoot || !document) {
-      return;
-    }
-
-    const requestedDocumentPath = document.path;
-    // Route file history into the repository that owns the file (its nested repo
-    // for a directory-mapping file), so both the history list and per-commit
-    // diffs run against the correct repository.
-    const target = resolveGitRepositoryTarget(requestedDocumentPath);
-
-    if (!target) {
-      return;
-    }
-
-    const relativePath = target.relativePath;
-    const repositoryRoot = target.repositoryRoot;
-
-    const requestToken = fileHistoryRequestTokenRef.current + 1;
-    fileHistoryRequestTokenRef.current = requestToken;
-    // Reset any previously selected commit/diff for the new file.
-    fileHistoryDiffRequestTokenRef.current += 1;
-    fileHistoryRelativePathRef.current = relativePath;
-    fileHistoryRepositoryRootRef.current = repositoryRoot;
-    setFileHistoryRelativePath(relativePath);
-    setFileHistorySelectedSha(null);
-    setFileHistoryDiff(null);
-    setFileHistoryDiffLoading(false);
-    setFileHistoryCommits([]);
-    setFileHistoryPanelOpen(true);
-    setFileHistoryLoading(true);
-
-    // Re-checks that, after the history await, the request still belongs to the
-    // active workspace root, the active document, and the latest open request.
-    // A switched-away tab or a superseded reopen drops the stale result.
-    const isCurrentRequest = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-      activeDocumentRef.current?.path === requestedDocumentPath &&
-      fileHistoryRequestTokenRef.current === requestToken;
-
-    try {
-      const commits = await gitGateway.fileHistory(repositoryRoot, relativePath);
-
-      if (!isCurrentRequest()) {
-        return;
-      }
-
-      setFileHistoryCommits(commits);
-    } catch (error) {
-      if (!isCurrentRequest()) {
-        return;
-      }
-
-      setFileHistoryCommits([]);
-      reportError("File History", error);
-    } finally {
-      if (isCurrentRequest()) {
-        setFileHistoryLoading(false);
-      }
-    }
-  }, [gitGateway, reportError, resolveGitRepositoryTarget, workspaceRoot]);
+  const {
+    localHistoryPanelOpen,
+    localHistoryRelativePath,
+    localHistoryVersions,
+    localHistoryLoading,
+    localHistorySelectedId,
+    localHistoryDiff,
+    localHistoryDiffLoading,
+    openLocalHistory,
+    selectLocalHistoryVersion,
+    revertLocalHistoryVersion,
+    closeLocalHistory,
+  } = useLocalHistory({
+    activeDocumentRef,
+    captureLocalHistorySnapshot,
+    currentWorkspaceRootRef,
+    documentsRef,
+    filePrefetchCacheRef,
+    localHistoryGateway,
+    reportError,
+    reportErrorForActiveWorkspaceRoot,
+    setDocuments,
+    setMessage,
+    syncSavedDocument,
+    syncSavedJavaScriptTypeScriptDocument,
+    workspaceFiles,
+    workspaceRoot,
+  });
 
   const {
     gitStashPanelOpen,
@@ -20064,6 +19664,7 @@ export function useWorkbenchController(
     provideLatteDefinition,
     provideLatteCompletions,
     provideNettePhpLinkDefinition,
+    provideNettePhpLinkCompletions,
   } = useLatteIntelligence({
     currentWorkspaceRootRef,
     getActiveDocument: () => activeDocumentRef.current,
@@ -24099,6 +23700,22 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.phpactorPath ||
           previousWorkspaceSettings.intelephensePath !==
             resolvedWorkspaceSettings.intelephensePath;
+        // Changing the git directory mappings (manual add/remove or the
+        // auto-detect toggle) must re-run discovery live, without waiting for a
+        // workspace reopen, so the mappings and the fanned-out status reflect the
+        // new configuration immediately.
+        const previousGitDirectoryMappings =
+          previousWorkspaceSettings.gitDirectoryMappings;
+        const nextGitDirectoryMappings =
+          resolvedWorkspaceSettings.gitDirectoryMappings;
+        const shouldRediscoverGitRepositories =
+          previousWorkspaceSettings.gitDirectoryMappingsAuto !==
+            resolvedWorkspaceSettings.gitDirectoryMappingsAuto ||
+          previousGitDirectoryMappings.length !==
+            nextGitDirectoryMappings.length ||
+          previousGitDirectoryMappings.some(
+            (mapping, index) => mapping !== nextGitDirectoryMappings[index],
+          );
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           intelligenceModeRef.current = nextMode;
@@ -24273,6 +23890,14 @@ export function useWorkbenchController(
           }
         }
 
+        if (shouldRediscoverGitRepositories) {
+          await runGitRepositoryDiscovery(requestedRoot, resolvedWorkspaceSettings);
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+        }
+
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
@@ -24293,6 +23918,7 @@ export function useWorkbenchController(
       refreshLanguageServerPlan,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       reportErrorForActiveWorkspaceRoot,
+      runGitRepositoryDiscovery,
       runPhpWorkspaceProbe,
       smartModeGateway,
       startInitialIndexScan,
@@ -28484,6 +28110,7 @@ export function useWorkbenchController(
     provideNeonCompletions,
     provideNeonDefinition,
     provideNettePhpLinkDefinition,
+    provideNettePhpLinkCompletions,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,

@@ -267,6 +267,10 @@ interface EditorSurfaceProps {
     source: string,
     offset: number,
   ): Promise<boolean>;
+  provideNettePhpLinkCompletions?(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletion[]>;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -356,6 +360,7 @@ function EditorSurfaceComponent({
   provideNeonCompletions = async () => [],
   provideNeonDefinition = async () => false,
   provideNettePhpLinkDefinition = async () => false,
+  provideNettePhpLinkCompletions = async () => [],
   providePhpCodeActions = async () => [],
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
@@ -497,6 +502,7 @@ function EditorSurfaceComponent({
   const neonCompletionsRef = useRef(provideNeonCompletions);
   const neonDefinitionRef = useRef(provideNeonDefinition);
   const nettePhpLinkDefinitionRef = useRef(provideNettePhpLinkDefinition);
+  const nettePhpLinkCompletionsRef = useRef(provideNettePhpLinkCompletions);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -716,6 +722,10 @@ function EditorSurfaceComponent({
   }, [provideNettePhpLinkDefinition]);
 
   useEffect(() => {
+    nettePhpLinkCompletionsRef.current = provideNettePhpLinkCompletions;
+  }, [provideNettePhpLinkCompletions]);
+
+  useEffect(() => {
     phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
   }, [providePhpLaravelDefinition]);
 
@@ -860,6 +870,8 @@ function EditorSurfaceComponent({
         neonDefinitionRef.current(source, offset),
       provideNettePhpLinkDefinition: (source, offset) =>
         nettePhpLinkDefinitionRef.current(source, offset),
+      provideNettePhpLinkCompletions: (source, offset) =>
+        nettePhpLinkCompletionsRef.current(source, offset),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>
