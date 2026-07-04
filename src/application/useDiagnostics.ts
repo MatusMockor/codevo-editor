@@ -13,8 +13,18 @@ import {
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
-  type WorkbenchNoticeNavigationTarget,
 } from "./workbenchNotice";
+import {
+  buildDiagnosticOverflowNotice,
+  DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+  diagnosticNoticeNavigationTarget,
+  GLOBAL_NOTICE_LIMIT,
+  isCappableDiagnosticNotice,
+  javaScriptTypeScriptDiagnosticNoticeGroup,
+  localPhpDiagnosticsFromSource,
+  PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX,
+  phpLocalDiagnosticNoticeGroup,
+} from "./diagnosticNotices";
 import {
   languageServerDiagnosticNoticeGroup,
   languageServerDiagnosticNoticeMessage,
@@ -23,12 +33,7 @@ import {
   type LanguageServerDiagnostic,
   type LanguageServerDiagnosticEvent,
 } from "../domain/languageServerDiagnostics";
-import { phpInspectionDiagnostics } from "../domain/phpInspections";
-import {
-  structuralPhpSyntaxDiagnostics,
-  suspiciousPhpBareIdentifierDiagnostics,
-  type PhpSyntaxDiagnosticsGateway,
-} from "../domain/phpSyntaxDiagnostics";
+import { type PhpSyntaxDiagnosticsGateway } from "../domain/phpSyntaxDiagnostics";
 import type { DiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
 import {
   fileUriFromPath,
@@ -41,127 +46,6 @@ import {
   normalizedWorkspaceRootKey,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
-
-// Diagnostic-notice helpers duplicated verbatim from useWorkbenchController so
-// this hook stays a self-contained, independently testable unit (write-scope is
-// the hook + its test + region F of the controller). The controller keeps its
-// own identical copies because non-diagnostics regions (Laravel PHP diagnostic
-// reclassification, the effectiveNotices/summary memos) still consume them.
-// FOLLOW-UP: promote these to a shared `application/diagnosticNotices` module and
-// import from both sites to remove the duplication.
-const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
-const GLOBAL_NOTICE_LIMIT = 2000;
-const PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX = "php-local-diagnostics:";
-
-function isCappableDiagnosticNotice(notice: WorkbenchNotice): boolean {
-  const groupKey = notice.groupKey;
-
-  if (!groupKey) {
-    return false;
-  }
-
-  return (
-    groupKey.startsWith("language-server-diagnostics:") ||
-    groupKey.startsWith("javascript-typescript-diagnostics:") ||
-    groupKey.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX)
-  );
-}
-
-function buildDiagnosticOverflowNotice(
-  source: string,
-  groupKey: string,
-  hiddenCount: number,
-): WorkbenchNotice {
-  const shownCount = DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT;
-  const totalCount = shownCount + hiddenCount;
-  return createWorkbenchNotice(
-    "info",
-    source,
-    `Showing ${shownCount} of ${totalCount} diagnostics — ${hiddenCount} more hidden. Open the file to see all markers.`,
-    groupKey,
-    undefined,
-    "overflow",
-  );
-}
-
-function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {
-  return `javascript-typescript-diagnostics:${uri}`;
-}
-
-function phpLocalDiagnosticNoticeGroup(path: string): string {
-  return `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`;
-}
-
-function localPhpDiagnosticsFromSource(
-  source: string,
-  syntaxDiagnostics: Array<{
-    character: number;
-    endCharacter: number;
-    endLine: number;
-    line: number;
-    message: string;
-  }>,
-): LanguageServerDiagnostic[] {
-  const localSyntaxDiagnostics = [
-    ...(syntaxDiagnostics.length === 0
-      ? structuralPhpSyntaxDiagnostics(source)
-      : []),
-    ...suspiciousPhpBareIdentifierDiagnostics(source),
-  ];
-  const inspectionDiagnostics = phpInspectionDiagnostics(source);
-  const diagnostics: LanguageServerDiagnostic[] = [
-    ...syntaxDiagnostics,
-    ...localSyntaxDiagnostics,
-  ].map((diagnostic) => ({
-    character: diagnostic.character,
-    endCharacter: diagnostic.endCharacter,
-    endLine: diagnostic.endLine,
-    line: diagnostic.line,
-    message: diagnostic.message,
-    severity: "error" as const,
-    source: "PHP Syntax",
-  }));
-
-  diagnostics.push(
-    ...inspectionDiagnostics.map((diagnostic) => ({
-      character: diagnostic.character,
-      endCharacter: diagnostic.endCharacter,
-      endLine: diagnostic.endLine,
-      line: diagnostic.line,
-      message: diagnostic.message,
-      severity: "warning" as const,
-      source: "PHP Inspection",
-      tags: diagnostic.unnecessary ? [1] : undefined,
-    })),
-  );
-
-  return diagnostics;
-}
-
-function diagnosticNoticeNavigationTarget(
-  uri: string,
-  diagnostic: LanguageServerDiagnostic,
-): WorkbenchNoticeNavigationTarget | undefined {
-  const path = pathFromLanguageServerUri(uri);
-
-  if (!path) {
-    return undefined;
-  }
-
-  return {
-    path,
-    range: {
-      end: {
-        column: (diagnostic.endCharacter ?? diagnostic.character) + 1,
-        lineNumber: (diagnostic.endLine ?? diagnostic.line) + 1,
-      },
-      start: {
-        column: diagnostic.character + 1,
-        lineNumber: diagnostic.line + 1,
-      },
-    },
-  };
-}
 
 /**
  * Collaborators the workbench shell owns and injects into the diagnostics hook.
