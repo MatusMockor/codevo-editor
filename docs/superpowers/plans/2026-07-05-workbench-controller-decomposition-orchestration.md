@@ -836,6 +836,45 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 234 files, 5134 tests.
+28. `019f3419-b45a-73f0-a75b-b9f9e6db91f8`
+   - Title: Audit next Workbench step.
+   - Result: no code changes.
+   - Recommended a production micro-slice for the four PHP trait-host
+     predicates, because they have one clear consumer through
+     `usePhpDiagnosticContextFilter` and should remain separate from Laravel
+     local/dynamic scope predicates, completions, and navigation.
+29. `019f341b-f1c8-77f3-88dd-e29c0ef8622e`
+   - Title: Extract PHP trait host predicates.
+   - Integrated as `src/application/usePhpTraitHostPredicates.ts` with focused
+     tests in `src/application/usePhpTraitHostPredicates.test.tsx`.
+   - Moved only:
+     - `phpTraitHostMethodExists`
+     - `phpTraitHostPropertyExists`
+     - `phpTraitHostPropertyMethodExists`
+     - `phpTraitHostConstantExists`
+     - private trait-host traversal helpers needed by those predicates.
+   - Replaced the previous property/relation resolver ref with an explicit hook
+     dependency by placing the hook call after `resolvePhpClassPropertyOrRelationType`.
+   - Kept Laravel local/dynamic scope predicates, completions, navigation,
+     diagnostics provider ownership, code actions, JS/TS runtime, Monaco
+     registration, file ops, document tabs, and git diff pseudo-doc behavior in
+     their existing owners.
+   - Backup worker `019f341e-7dcb-77f0-8bf1-c8cf02195535` was started after
+     the first worker appeared stalled; ignore it unless this entry is reverted.
+   - Controller line count after integration: 15,187.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpTraitHostPredicates.test.tsx`
+       passed: 5 tests.
+     - `npm test -- src/application/usePhpClassHierarchyPredicates.test.tsx`
+       passed: 5 tests.
+     - `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts
+       src/domain/laravelCorrectnessMatrix.test.ts` passed: 76 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "trait|diagnostic|Laravel|definition|member property|scope|magic"`
+       passed: 294 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 235 files, 5139 tests.
 
 Integration order:
 
@@ -847,12 +886,13 @@ Integration order:
    integrated and verified.
 4. Do not revisit PHP class hierarchy predicates; they are integrated and
    verified.
-5. Next work must start with a fresh Codex audit thread over the remaining
+5. Do not revisit PHP trait-host predicates; they are integrated and verified.
+6. Next work must start with a fresh Codex audit thread over the remaining
    controller clusters and return a narrow worker slice or a blocker plan.
-6. Do not move PHP method completions or PHP/Laravel navigation without a new
+7. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-7. Follow-up focused hook tests for newly extracted provider/registry modules
+8. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
