@@ -466,21 +466,33 @@ Active worker threads:
    - Worktree: `/Users/matusmockor/.codex/worktrees/cfae/editor`.
    - Priority: integrate first if clean, because completions/diagnostics can
      consume the extracted resolver as dependency injection.
-2. `019f339b-3457-7413-bc6e-ffcebaeb7b4f`
-   - Title: Extract PHP completion provider.
-   - Worktree: `/Users/matusmockor/.codex/worktrees/ba2a/editor`.
-   - Must not move resolver internals; inject resolver callbacks or return a
-     smaller plan if blocked.
-3. `019f339b-8184-7b71-8eaf-a3c9d32379dc`
+2. `019f339b-8184-7b71-8eaf-a3c9d32379dc`
    - Title: Extract PHP diagnostic context filter.
    - Worktree: `/Users/matusmockor/.codex/worktrees/ba05/editor`.
    - Must not move completions or resolver internals; inject dependencies.
 
+Completed worker integrations:
+
+1. `019f339b-3457-7413-bc6e-ffcebaeb7b4f`
+   - Title: Extract PHP completion provider.
+   - Integrated as a smaller safe slice:
+     `src/application/usePhpMethodCompletionResolvers.ts`.
+   - Moved receiver/static PHP method completion resolvers and local merge
+     helper out of `useWorkbenchController.ts`.
+   - `providePhpMethodCompletions` intentionally remains in the controller
+     until Laravel target/source collectors are split.
+   - Controller line count after integration: 20,314.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - Focused preview completion/Laravel test passed: 222 tests.
+     - PHP completion/Laravel domain tests passed: 143 tests.
+     - Full preview test passed: 867 tests.
+
 Integration order:
 
 1. Semantic resolver.
-2. Completion provider.
-3. Diagnostic context filter.
+2. Diagnostic context filter.
+3. Laravel target/source collector split.
 
 For every worker:
 

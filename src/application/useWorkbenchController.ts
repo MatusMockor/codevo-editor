@@ -24,6 +24,10 @@ import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import {
+  usePhpMethodCompletionResolvers,
+  type PhpTraitThisCompletionContext,
+} from "./usePhpMethodCompletionResolvers";
+import {
   useWorkbenchImplementationChooserState,
   useWorkbenchLanguageNavigation,
 } from "./useWorkbenchLanguageNavigation";
@@ -296,7 +300,6 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
-  isPhpLaravelLocalScopeSourceMethod,
   phpLaravelCollectionModelTypeCandidate,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
@@ -312,8 +315,6 @@ import {
   phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelResolvedModelTypeCandidate,
   phpLaravelScopeMethodName,
-  phpLaravelStaticModelMemberCompletionsFromMethods,
-  phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
 import {
   detectLaravelRouteModelBindingAt,
@@ -572,12 +573,6 @@ interface PhpClassMemberCacheEntry {
 interface PhpLaravelSourcesCacheEntry {
   signature: string;
   sources: readonly string[];
-}
-
-interface PhpTraitThisCompletionContext {
-  contextualThisClassName: string | null;
-  declaringClassName: string;
-  memberSource: string;
 }
 
 // Upper bound on the number of PHP call expressions whose target signature is
@@ -10988,154 +10983,20 @@ export function useWorkbenchController(
     resolvePhpExpressionTypeRef.current = resolvePhpExpressionType;
   }, [resolvePhpExpressionType]);
 
-  const resolvePhpReceiverMethodCompletions = useCallback(
-    async (
-      source: string,
-      position: EditorPosition,
-      receiverExpression: string,
-      traitThisContext: PhpTraitThisCompletionContext | null = null,
-    ): Promise<PhpMethodCompletion[]> => {
-      if (
-        traitThisContext &&
-        phpNormalizedReceiverExpressionIsThis(receiverExpression)
-      ) {
-        const semanticOptions = traitThisContext.contextualThisClassName
-          ? {
-              contextualThisClassName: traitThisContext.contextualThisClassName,
-              frameworkProviders: activePhpFrameworkProviders,
-            }
-          : { frameworkProviders: activePhpFrameworkProviders };
-        const declaringClassName =
-          phpReceiverExpressionTypeInSource(
-            source,
-            position,
-            receiverExpression,
-            semanticOptions,
-          ) ?? traitThisContext.declaringClassName;
-        const { workspaceSources } = currentPhpLaravelSourceContext();
-
-        return phpMethodCompletionsFromSource(
-          traitThisContext.memberSource,
-          declaringClassName,
-          {
-            frameworkProviders: activePhpFrameworkProviders,
-            frameworkSourceContext:
-              workspaceSources.length > 0 ? { workspaceSources } : undefined,
-          },
-        );
-      }
-
-      const resolvedReceiverType = await resolvePhpExpressionType(
-        source,
-        position,
-        receiverExpression,
-      );
-      const receiverMethods = resolvedReceiverType
-        ? await collectPhpMethodsForClass(resolvedReceiverType)
-        : [];
-      const builderModelType = await resolvePhpEloquentBuilderModelType(
-        source,
-        position,
-        receiverExpression,
-      );
-      const receiverModelType =
-        !builderModelType && isLaravelFrameworkActive && resolvedReceiverType
-          ? phpLaravelResolvedModelTypeCandidate(source, resolvedReceiverType)
-          : null;
-      const localScopeModelType = builderModelType ?? receiverModelType;
-      const localScopeSourceMethods =
-        localScopeModelType && localScopeModelType === resolvedReceiverType
-          ? receiverMethods
-          : localScopeModelType
-            ? await collectPhpMethodsForClass(localScopeModelType)
-            : [];
-      const localScopeMethods = localScopeModelType
-        ? phpLaravelLocalScopeCompletionsFromMethods(
-            localScopeSourceMethods,
-          )
-        : [];
-      const dynamicWhereMethods = builderModelType
-        ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
-        : [];
-
-      // When the receiver is the model itself, its own members include the raw
-      // scope source methods (`scopeX` / `#[Scope]`) that `localScopeMethods`
-      // already represents as canonical `kind: "scope"` completions. Drop the
-      // raw sources so each scope surfaces once, in its own category. Elsewhere
-      // we still strip bare `#[Scope]` source methods (which carry no derived
-      // replacement here) so they never leak as raw members.
-      const receiverMethodsForMerge =
-        localScopeModelType && localScopeModelType === resolvedReceiverType
-          ? receiverMethods.filter(
-              (method) => !isPhpLaravelLocalScopeSourceMethod(method),
-            )
-          : receiverMethods.filter((method) => method.kind !== "scope");
-
-      return mergePhpMethodCompletions(
-        receiverMethodsForMerge,
-        localScopeMethods,
-        dynamicWhereMethods,
-      );
-    },
-    [
-      activePhpFrameworkProviders,
-      collectPhpLaravelDynamicWhereMethodsForClass,
-      collectPhpMethodsForClass,
-      currentPhpLaravelSourceContext,
-      isLaravelFrameworkActive,
-      resolvePhpEloquentBuilderModelType,
-      resolvePhpExpressionType,
-    ],
-  );
-
-  const resolvePhpStaticMethodCompletions = useCallback(
-    async (
-      source: string,
-      className: string,
-    ): Promise<PhpMethodCompletion[]> => {
-      const resolvedClassName = resolvePhpClassReference(source, className);
-
-      if (!resolvedClassName) {
-        return [];
-      }
-
-      const facadeTargetClassName = isLaravelFrameworkActive
-        ? laravelFacadeTargetClassName(resolvedClassName)
-        : null;
-      const methods = await collectPhpMethodsForClass(
-        facadeTargetClassName ?? resolvedClassName,
-      );
-
-      if (isLaravelFrameworkActive && facadeTargetClassName) {
-        return methods;
-      }
-
-      const dynamicWhereMethods =
-        await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
-          isStatic: true,
-        });
-      const isLaravelModelStaticAccess =
-        isLaravelFrameworkActive &&
-        phpLaravelResolvedModelTypeCandidate(source, resolvedClassName);
-      const baseMethods = isLaravelModelStaticAccess
-        ? phpLaravelStaticModelMemberCompletionsFromMethods(methods)
-        : methods.filter((method) => method.isStatic);
-
-      return mergePhpMethodCompletions(
-        baseMethods,
-        isLaravelFrameworkActive
-          ? phpLaravelStaticLocalScopeCompletionsFromMethods(methods)
-          : [],
-        dynamicWhereMethods,
-      );
-    },
-    [
-      collectPhpLaravelDynamicWhereMethodsForClass,
-      collectPhpMethodsForClass,
-      isLaravelFrameworkActive,
-      resolvePhpClassReference,
-    ],
-  );
+  const {
+    resolvePhpReceiverMethodCompletions,
+    resolvePhpStaticMethodCompletions,
+  } = usePhpMethodCompletionResolvers({
+    activePhpFrameworkProviders,
+    collectPhpLaravelDynamicWhereMethodsForClass,
+    collectPhpMethodsForClass,
+    currentPhpLaravelSourceContext,
+    isLaravelFrameworkActive,
+    phpNormalizedReceiverExpressionIsThis,
+    resolvePhpClassReference,
+    resolvePhpEloquentBuilderModelType,
+    resolvePhpExpressionType,
+  });
 
   const providePhpMethodCompletions = useCallback(
     async (
@@ -19937,24 +19798,6 @@ function phpClassDocGenericCollectionModelTypeCandidate(
   }
 
   return null;
-}
-
-function mergePhpMethodCompletions(
-  ...groups: PhpMethodCompletion[][]
-): PhpMethodCompletion[] {
-  const completions = new Map<string, PhpMethodCompletion>();
-
-  for (const group of groups) {
-    for (const completion of group) {
-      const key = `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
-
-      if (!completions.has(key)) {
-        completions.set(key, completion);
-      }
-    }
-  }
-
-  return Array.from(completions.values());
 }
 
 function phpMethodCompletionsWithStableMetadata(
