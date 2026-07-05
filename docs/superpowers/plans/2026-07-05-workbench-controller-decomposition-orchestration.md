@@ -26,9 +26,9 @@ Current operational goal:
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 25,518 lines after the
+- `src/application/useWorkbenchController.ts`: 23,199 lines after the
   workspace-edit, LSP runtime lifecycle, document tab, navigation, and
-  close-lifecycle slices.
+  close-lifecycle, and PHP code-action slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -127,6 +127,16 @@ Create Codex threads for:
    - Result: extracted `src/application/useWorkbenchCloseLifecycle.ts`;
      controller line count is now 25,518 in the main working tree.
 
+8. PHP code-action extraction
+   - Ownership: PHP code-action provider orchestration, create-class/create-view
+     quick fixes, ordering/grouping, generate members, create-from-usage,
+     implement/override methods, import/edit helpers, and related pure action
+     builders.
+   - Thread: `019f324a-9ba1-7b00-894e-318e30d9edf8`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/usePhpCodeActions.ts`; controller line
+     count is now 23,199 in the main working tree.
+
 ## Current Local Findings
 
 - Workspace edit region was extracted on 2026-07-05 into
@@ -157,6 +167,23 @@ Create Codex threads for:
 - Important invariant: git diff loading stays controller-owned to preserve
   git diff/editor tab separation.
 - Main-thread verification after integration:
+  - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+    passed: 867 tests.
+- PHP code-action region was extracted on 2026-07-05 into
+  `src/application/usePhpCodeActions.ts`.
+- It includes:
+  - PHP code-action provider orchestration,
+  - create-class and create-view quick fixes,
+  - action ordering and visual grouping,
+  - generate members/accessors/constructors,
+  - create-from-usage actions,
+  - implement/override methods,
+  - import/edit helper construction.
+- Important invariant: cross-file collectors and navigation-owned flows remain
+  controller-owned; PHP action hook exposes only the shared hierarchy helpers
+  needed by those callers.
+- Main-thread verification after integration:
+  - `npm run check` passed.
   - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
     passed: 867 tests.
 - Close/save lifecycle region was extracted on 2026-07-05 into
@@ -227,9 +254,10 @@ Delegate the next high-return controller slice from current `main`.
 
 Recommended next candidates:
 
-1. PHP code-action provider domain extraction
-   - Anchors: code action ordering, create-from-usage, generate members,
-     implement/override methods, Laravel/OOP action providers.
+1. Re-audit the controller responsibility clusters after the large PHP
+   code-action extraction.
+2. Pick the next high-return slice based on the audit rather than guessing from
+   stale anchors.
 
 Preserve:
 
