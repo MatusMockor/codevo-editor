@@ -10,6 +10,7 @@ import { useGitWorkspace } from "./useGitWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useLaravelTargets } from "./useLaravelTargets";
+import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -65,16 +66,6 @@ export type {
   PhpCodeActionNewFile,
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
-import {
-  isPhpLaravelMigrationPath,
-  loadPhpLaravelMigrationSources,
-  phpLaravelMigrationSourcesSignature,
-} from "./phpLaravelMigrationSources";
-import {
-  isPhpLaravelProviderPath,
-  loadPhpLaravelProviderSources,
-  phpLaravelProviderSourcesSignature,
-} from "./phpLaravelProviderSources";
 import {
   shouldApplyClassEditAfterWrite,
   writeExtractedInterfaceFile,
@@ -552,15 +543,6 @@ interface OpenGitChangeOptions {
 interface PhpClassMemberCacheEntry {
   members: PhpMethodCompletion[];
   sourceSignature: string;
-}
-
-// Cached Laravel source-registry file contents (migrations or providers) for a
-// single workspace root. The `signature` feeds the PHP class-member cache key so
-// editing a tracked source invalidates derived members instead of serving stale
-// DB columns / Builder macros.
-interface PhpLaravelSourcesCacheEntry {
-  signature: string;
-  sources: readonly string[];
 }
 
 // Upper bound on the number of PHP call expressions whose target signature is
@@ -1068,29 +1050,6 @@ export function useWorkbenchController(
   const phpLaravelMorphMapModelTypeCacheRef = useRef<
     Record<string, string | null>
   >({});
-  // Per-root cache of Laravel migration sources fed into model-attribute
-  // completions. Keyed by workspace root and reset on workspace switch / reindex
-  // so it can never leak DB columns across project tabs. Loaded lazily on a
-  // background turn (see ensurePhpLaravelMigrationSourcesLoaded) to keep the
-  // completion hot path off the file system.
-  const phpLaravelMigrationSourcesByRootRef = useRef<
-    Record<string, PhpLaravelSourcesCacheEntry>
-  >({});
-  const phpLaravelMigrationSourcesLoadInFlightRef = useRef<Set<string>>(
-    new Set(),
-  );
-  // Per-root cache of Laravel service-provider sources fed into Eloquent Builder
-  // macro completions. `Builder::macro('name', ...)` is registered in
-  // app/Providers, so these sources are merged with the migration sources into
-  // the single workspace source context. Same isolation guarantees as the
-  // migration cache: keyed by root, reset on switch / reindex, loaded lazily off
-  // the hot path (see ensurePhpLaravelProviderSourcesLoaded).
-  const phpLaravelProviderSourcesByRootRef = useRef<
-    Record<string, PhpLaravelSourcesCacheEntry>
-  >({});
-  const phpLaravelProviderSourcesLoadInFlightRef = useRef<Set<string>>(
-    new Set(),
-  );
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
@@ -1103,6 +1062,25 @@ export function useWorkbenchController(
   const selectedGitChangeRef = useRef<GitChangedFile | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<
+    (rootPath: string) => void
+  >(() => {});
+  const onPhpLaravelSourcesLoaded = useCallback((rootPath: string): void => {
+    reclassifyPhpLanguageServerDiagnosticsForRootRef.current(rootPath);
+  }, []);
+  const {
+    currentPhpLaravelSourceContext,
+    ensurePhpLaravelMigrationSourcesLoaded,
+    ensurePhpLaravelProviderSourcesLoaded,
+    invalidatePhpLaravelMigrationSourcesForPath,
+    invalidatePhpLaravelProviderSourcesForPath,
+    resetPhpLaravelSourceRegistries,
+  } = useLaravelSourceRegistries({
+    currentWorkspaceRootRef,
+    isLaravelFrameworkActive,
+    onSourcesLoaded: onPhpLaravelSourcesLoaded,
+    workspaceFiles,
+  });
   const openFileRef = useRef<
     (
       entry: FileEntry,
@@ -1936,10 +1914,7 @@ export function useWorkbenchController(
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
       invalidatePhpLaravelTargetCache();
-      phpLaravelMigrationSourcesByRootRef.current = {};
-      phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
-      phpLaravelProviderSourcesByRootRef.current = {};
-      phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+      resetPhpLaravelSourceRegistries();
       resetBladeIntelligenceCaches();
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
@@ -1958,7 +1933,7 @@ export function useWorkbenchController(
         ),
       );
     },
-    [indexProgressGateway, reportError],
+    [indexProgressGateway, reportError, resetPhpLaravelSourceRegistries],
   );
 
   const handleIndexProgress = useCallback((event: IndexProgressEvent) => {
@@ -2060,10 +2035,7 @@ export function useWorkbenchController(
     phpFrameworkBindingCacheRef.current = {};
     phpLaravelMorphMapModelTypeCacheRef.current = {};
     invalidatePhpLaravelTargetCache();
-    phpLaravelMigrationSourcesByRootRef.current = {};
-    phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
-    phpLaravelProviderSourcesByRootRef.current = {};
-    phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+    resetPhpLaravelSourceRegistries();
     resetBladeIntelligenceCaches();
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
@@ -2080,7 +2052,7 @@ export function useWorkbenchController(
     setNotices((current) =>
       current.filter((notice) => !notice.groupKey?.startsWith("index-progress:")),
     );
-  }, []);
+  }, [resetPhpLaravelSourceRegistries]);
 
   const clearWorkspaceIndex = useCallback(
     async (rootPath: string, message?: string) => {
@@ -2993,10 +2965,7 @@ export function useWorkbenchController(
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
       invalidatePhpLaravelTargetCache();
-      phpLaravelMigrationSourcesByRootRef.current = {};
-      phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
-      phpLaravelProviderSourcesByRootRef.current = {};
-      phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
+      resetPhpLaravelSourceRegistries();
       resetBladeIntelligenceCaches();
       setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = null;
@@ -5584,44 +5553,6 @@ export function useWorkbenchController(
     [resolvePhpTemplateTypesForGenericReferences],
   );
 
-  // Synchronous, file-system-free read of the cached Laravel source registry
-  // (migrations + service providers) for the *active* root only. The merged
-  // `workspaceSources` feed both migration-derived model attributes and
-  // provider-registered Builder macros through one context. Returning empty
-  // sources when nothing is cached keeps the completion hot path fast and lets
-  // model attributes / macros fall back until the background loads populate the
-  // caches. The signature combines both sub-signatures so editing either source
-  // kind busts the derived member cache.
-  const currentPhpLaravelSourceContext = useCallback((): {
-    signature: string;
-    workspaceSources: readonly string[];
-  } => {
-    const root = currentWorkspaceRootRef.current;
-
-    if (!root) {
-      return { signature: "", workspaceSources: [] };
-    }
-
-    const migrationEntry = phpLaravelMigrationSourcesByRootRef.current[root];
-    const providerEntry = phpLaravelProviderSourcesByRootRef.current[root];
-    const migrationSources = migrationEntry?.sources ?? [];
-    const providerSources = providerEntry?.sources ?? [];
-    const signature = `m:${migrationEntry?.signature ?? ""}|p:${providerEntry?.signature ?? ""}`;
-
-    if (providerSources.length === 0) {
-      return { signature, workspaceSources: migrationSources };
-    }
-
-    if (migrationSources.length === 0) {
-      return { signature, workspaceSources: providerSources };
-    }
-
-    return {
-      signature,
-      workspaceSources: [...migrationSources, ...providerSources],
-    };
-  }, []);
-
   const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
     (rootPath: string): void => {
       const rootKey = normalizedWorkspaceRootKey(rootPath);
@@ -5737,134 +5668,10 @@ export function useWorkbenchController(
     [activePhpFrameworkProviders, currentPhpLaravelSourceContext],
   );
 
-  // Loads the active project's migration sources on a background turn so the
-  // first completion is served immediately (without migrations) and subsequent
-  // ones pick up the DB columns once the cache is warm. Per-workspace isolation:
-  // the requested root is captured up front and re-checked after the await
-  // before the cache is mutated, so a tab switch mid-load drops the result.
-  const ensurePhpLaravelMigrationSourcesLoaded = useCallback(
-    async (requestedRoot: string): Promise<void> => {
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return;
-      }
-
-      if (
-        phpLaravelMigrationSourcesByRootRef.current[requestedRoot] ||
-        phpLaravelMigrationSourcesLoadInFlightRef.current.has(requestedRoot)
-      ) {
-        return;
-      }
-
-      phpLaravelMigrationSourcesLoadInFlightRef.current.add(requestedRoot);
-
-      try {
-        const sources = await loadPhpLaravelMigrationSources(
-          requestedRoot,
-          workspaceFiles,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        phpLaravelMigrationSourcesByRootRef.current[requestedRoot] = {
-          signature: phpLaravelMigrationSourcesSignature(sources),
-          sources,
-        };
-        reclassifyPhpLanguageServerDiagnosticsForRoot(requestedRoot);
-      } catch {
-        // Graceful: migrations unavailable -> keep the $fillable/$casts fallback.
-      } finally {
-        phpLaravelMigrationSourcesLoadInFlightRef.current.delete(requestedRoot);
-      }
-    },
-    [
-      isLaravelFrameworkActive,
-      reclassifyPhpLanguageServerDiagnosticsForRoot,
-      workspaceFiles,
-    ],
-  );
-
-  // Drops the cached migration sources for `root` when a file under
-  // database/migrations changes so the next completion reloads them. The cached
-  // member entries keyed with the old signature simply stop matching once the
-  // new sources load, so no manual member-cache reset is needed.
-  const invalidatePhpLaravelMigrationSourcesForPath = useCallback(
-    (root: string, path: string): void => {
-      if (!isPhpLaravelMigrationPath(root, path)) {
-        return;
-      }
-
-      delete phpLaravelMigrationSourcesByRootRef.current[root];
-      phpLaravelMigrationSourcesLoadInFlightRef.current.delete(root);
-    },
-    [],
-  );
-
-  // Loads the active project's service-provider sources on a background turn,
-  // mirroring the migration loader: the first completion is served without
-  // provider macros and later ones pick up `Builder::macro` registrations once
-  // the cache is warm. Per-workspace isolation: the requested root is captured
-  // up front and re-checked after the await before the cache is mutated, so a
-  // tab switch mid-load drops the result.
-  const ensurePhpLaravelProviderSourcesLoaded = useCallback(
-    async (requestedRoot: string): Promise<void> => {
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return;
-      }
-
-      if (
-        phpLaravelProviderSourcesByRootRef.current[requestedRoot] ||
-        phpLaravelProviderSourcesLoadInFlightRef.current.has(requestedRoot)
-      ) {
-        return;
-      }
-
-      phpLaravelProviderSourcesLoadInFlightRef.current.add(requestedRoot);
-
-      try {
-        const sources = await loadPhpLaravelProviderSources(
-          requestedRoot,
-          workspaceFiles,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        phpLaravelProviderSourcesByRootRef.current[requestedRoot] = {
-          signature: phpLaravelProviderSourcesSignature(sources),
-          sources,
-        };
-        reclassifyPhpLanguageServerDiagnosticsForRoot(requestedRoot);
-      } catch {
-        // Graceful: providers unavailable -> no provider-defined macros surface.
-      } finally {
-        phpLaravelProviderSourcesLoadInFlightRef.current.delete(requestedRoot);
-      }
-    },
-    [
-      isLaravelFrameworkActive,
-      reclassifyPhpLanguageServerDiagnosticsForRoot,
-      workspaceFiles,
-    ],
-  );
-
-  // Drops the cached provider sources for `root` when a file under app/Providers
-  // changes so the next completion reloads them. Same cache-key invalidation as
-  // migrations: the combined source signature changes once the new sources load,
-  // so stale macro members stop matching without a manual member-cache reset.
-  const invalidatePhpLaravelProviderSourcesForPath = useCallback(
-    (root: string, path: string): void => {
-      if (!isPhpLaravelProviderPath(root, path)) {
-        return;
-      }
-
-      delete phpLaravelProviderSourcesByRootRef.current[root];
-      phpLaravelProviderSourcesLoadInFlightRef.current.delete(root);
-    },
-    [],
-  );
+  useEffect(() => {
+    reclassifyPhpLanguageServerDiagnosticsForRootRef.current =
+      reclassifyPhpLanguageServerDiagnosticsForRoot;
+  }, [reclassifyPhpLanguageServerDiagnosticsForRoot]);
 
   const readPhpClassMembersFromPath = useCallback(
     async (

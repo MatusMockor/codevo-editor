@@ -550,11 +550,28 @@ Completed worker integrations:
        tests passed: 296 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5118 tests.
+7. `019f33b7-be69-7991-9c5b-5b3d65bc26f5`
+   - Title: Extract Laravel source registries.
+   - Integrated as `src/application/useLaravelSourceRegistries.ts`.
+   - Moved Laravel migration/provider source registries, lazy source loading,
+     source signatures, path invalidation, and reset lifecycle out of
+     `useWorkbenchController.ts`.
+   - Kept diagnostics reclassification, navigation, completion providers, and
+     non-Laravel framework logic outside the registry hook.
+   - Controller line count after integration: 19,179.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - Focused Laravel/migration/provider/diagnostic/completion/stale preview
+       tests passed: 404 tests.
+     - Laravel correctness and PHP diagnostic filter domain tests passed:
+       76 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5118 tests.
 
 Integration order:
 
-1. Laravel target/source collector split.
-2. Remaining expression/Laravel chain resolver extraction.
+1. Remaining expression/Laravel chain resolver extraction.
+2. PHP navigation/history lifecycle split.
 
 For every worker:
 
