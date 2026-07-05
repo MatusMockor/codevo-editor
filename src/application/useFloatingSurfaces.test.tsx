@@ -24,9 +24,7 @@ function createDependencies(
     setWorkspaceSymbolsOpen: vi.fn(),
     searchEverywhereOpen: false,
     setSearchEverywhereOpen: vi.fn(),
-    setSearchEverywhereQuery: vi.fn(),
-    setSearchEverywhereFiles: vi.fn(),
-    setSearchEverywhereSymbols: vi.fn(),
+    resetSearchEverywhere: vi.fn(),
     textSearchOpen: false,
     setTextSearchOpen: vi.fn(),
     languageServerSetupOpen: false,
@@ -186,9 +184,7 @@ describe("useFloatingSurfaces", () => {
     expect(deps.setRecentFilesSwitcherOpen).toHaveBeenCalledWith(false);
     expect(deps.setRecentLocationsPanelOpen).toHaveBeenCalledWith(false);
     expect(deps.setTextSearchOpen).toHaveBeenCalledWith(false);
-    expect(deps.setSearchEverywhereQuery).toHaveBeenCalledWith("");
-    expect(deps.setSearchEverywhereFiles).toHaveBeenCalledWith([]);
-    expect(deps.setSearchEverywhereSymbols).toHaveBeenCalledWith([]);
+    expect(deps.resetSearchEverywhere).toHaveBeenCalledTimes(1);
     expect(deps.setSearchEverywhereOpen).toHaveBeenCalledWith(true);
 
     harness.unmount();

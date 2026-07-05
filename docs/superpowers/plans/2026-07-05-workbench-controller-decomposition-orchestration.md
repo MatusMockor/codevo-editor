@@ -261,14 +261,21 @@ Create Codex threads for:
      debounced combined search effect, and pure model composition if it can move
      without owning command registry.
    - Thread: `019f3373-9b8d-7222-ab47-eeae1f001034`
-   - Status: active worker thread.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchSearchEverywhere.ts`;
+     controller line count is now 21,705 in the main working tree. The
+     floating-surface contract now receives `resetSearchEverywhere` instead of
+     raw Search Everywhere file/symbol setters.
    - Strict boundary: do not move Quick Open, text search, Open Class,
      Workspace Symbols, command registry, or navigation activation.
-   - Required verification before integration:
-     - `npm run check`
+   - Main-thread verification after integration:
+     - `npm run check` passed.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
-       "Search Everywhere|stale.*search|inactive project"`
-     - Full preview test if the diff is broad.
+       "Search Everywhere|stale.*search|inactive project"` passed: 23 tests.
+     - `npm test -- src/application/useFloatingSurfaces.test.tsx` passed: 10
+       tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
        passed: 867 tests.
      - `npm test -- --run` passed: 230 files, 5117 tests.

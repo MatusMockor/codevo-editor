@@ -19,6 +19,7 @@ import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
+import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { useDocumentSync } from "./useDocumentSync";
@@ -487,9 +488,6 @@ import type {
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import {
-  buildSearchEverywhereModel,
-} from "../domain/searchEverywhere";
-import {
   defaultAppSettings,
   defaultEditorFontSize,
   defaultWorkspaceSettings,
@@ -530,7 +528,6 @@ import {
   visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
-  type FileSearchResult,
   type FileSearchGateway,
   type IntelligenceMode,
   type ManagedPhpactorInstallCompletionEvent,
@@ -902,19 +899,6 @@ export function useWorkbenchController(
   const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  // PhpStorm "Search Everywhere" (double-Shift). One dialog aggregating the
-  // file / symbol / action searches above. The raw per-source results are kept
-  // separately (each filled by its own per-root, debounced, drop-stale search)
-  // and combined into the categorized model only at render time.
-  const [searchEverywhereOpen, setSearchEverywhereOpen] = useState(false);
-  const [searchEverywhereQuery, setSearchEverywhereQuery] = useState("");
-  const [searchEverywhereLoading, setSearchEverywhereLoading] = useState(false);
-  const [searchEverywhereFiles, setSearchEverywhereFiles] = useState<
-    FileSearchResult[]
-  >([]);
-  const [searchEverywhereSymbols, setSearchEverywhereSymbols] = useState<
-    ProjectSymbolSearchResult[]
-  >([]);
   const [implementationChooser, setImplementationChooser] = useState<{
     targets: ImplementationTarget[];
     title: string;
@@ -1603,6 +1587,23 @@ export function useWorkbenchController(
     searchClassOpenSymbols,
     reportError,
     setMessage,
+  });
+
+  const {
+    searchEverywhereOpen,
+    searchEverywhereQuery,
+    searchEverywhereLoading,
+    setSearchEverywhereOpen,
+    setSearchEverywhereQuery,
+    resetSearchEverywhere,
+    searchEverywhereModelFor,
+  } = useWorkbenchSearchEverywhere({
+    canSearchClassOpenSymbols,
+    fileSearch,
+    latencyTrackerForRoot,
+    reportError,
+    searchClassOpenSymbols,
+    workspaceRoot,
   });
 
   const forgetLatencyTrackerForRoot = useCallback(
@@ -2536,11 +2537,7 @@ export function useWorkbenchController(
     setWorkspaceSymbolsQuery("");
     setWorkspaceSymbolsLoading(false);
     setWorkspaceSymbolsResults([]);
-    setSearchEverywhereOpen(false);
-    setSearchEverywhereQuery("");
-    setSearchEverywhereLoading(false);
-    setSearchEverywhereFiles([]);
-    setSearchEverywhereSymbols([]);
+    resetSearchEverywhere();
     setQuickOpenOpen(false);
     setRecentFilesSwitcherOpen(false);
     setRecentLocationsPanelOpen(false);
@@ -2572,6 +2569,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     resetFilePrefetchState,
+    resetSearchEverywhere,
     resetTextSearchState,
     stopProjectRuntimes,
   ]);
@@ -2937,11 +2935,7 @@ export function useWorkbenchController(
       setWorkspaceSymbolsQuery("");
       setWorkspaceSymbolsLoading(false);
       setWorkspaceSymbolsResults([]);
-      setSearchEverywhereOpen(false);
-      setSearchEverywhereQuery("");
-      setSearchEverywhereLoading(false);
-      setSearchEverywhereFiles([]);
-      setSearchEverywhereSymbols([]);
+      resetSearchEverywhere();
       setQuickOpenOpen(false);
       resetTextSearchState();
       setFileStructureScope("current");
@@ -3189,6 +3183,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
       resetFilePrefetchState,
+      resetSearchEverywhere,
       resetTextSearchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
@@ -17743,9 +17738,7 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
     searchEverywhereOpen,
     setSearchEverywhereOpen,
-    setSearchEverywhereQuery,
-    setSearchEverywhereFiles,
-    setSearchEverywhereSymbols,
+    resetSearchEverywhere,
     textSearchOpen,
     setTextSearchOpen,
     languageServerSetupOpen,
@@ -18830,29 +18823,9 @@ export function useWorkbenchController(
     ),
   };
 
-  // Combine the three raw sources into the categorized Search Everywhere model.
-  // Files/symbols are already query-filtered by their gateways; actions are
-  // filtered here against the live query + command context so disabled commands
-  // never show. Pure aggregation lives in the domain layer (searchEverywhere).
-  const searchEverywhereCommands = commandRegistry.list();
-  const searchEverywhereModel = useMemo(
-    () =>
-      buildSearchEverywhereModel({
-        query: searchEverywhereQuery,
-        files: searchEverywhereFiles,
-        symbols: searchEverywhereSymbols,
-        commands: searchEverywhereCommands,
-        context: commandContext,
-      }),
-    [
-      searchEverywhereQuery,
-      searchEverywhereFiles,
-      searchEverywhereSymbols,
-      searchEverywhereCommands,
-      commandContext.hasWorkspace,
-      commandContext.hasActiveDocument,
-      commandContext.activeDocumentDirty,
-    ],
+  const searchEverywhereModel = searchEverywhereModelFor(
+    commandRegistry.list(),
+    commandContext,
   );
 
   useEffect(() => {
@@ -19438,107 +19411,6 @@ export function useWorkbenchController(
       active = false;
     };
   }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
-
-  // Search Everywhere unified file + symbol search. Reuses the exact same
-  // gateways as Quick Open (files) and Go to Symbol (symbols) - this effect only
-  // fans the one query out to both and stores the raw per-source results. The
-  // command/action source needs no async search (the registry is already in
-  // memory) so it is filtered synchronously in the render-time model.
-  //
-  // Isolation: the requested root is captured up front and the `active` flag
-  // (reset by cleanup on any dependency change, including a workspace tab
-  // switch) drops stale results so a slow search from a previous root can never
-  // overwrite the current tab's results. `searchClassOpenSymbols` additionally
-  // re-checks `currentWorkspaceRootRef` after its awaits.
-  useEffect(() => {
-    if (!searchEverywhereOpen || !workspaceRoot) {
-      setSearchEverywhereFiles([]);
-      setSearchEverywhereSymbols([]);
-      setSearchEverywhereLoading(false);
-      return;
-    }
-
-    const trimmedQuery = searchEverywhereQuery.trim();
-
-    if (!trimmedQuery) {
-      setSearchEverywhereFiles([]);
-      setSearchEverywhereSymbols([]);
-      setSearchEverywhereLoading(false);
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    let active = true;
-    setSearchEverywhereLoading(true);
-
-    const timeout = window.setTimeout(() => {
-      const fileSearchPromise = measureLatency(
-        latencyTrackerForRoot(requestedRoot),
-        "searchEverywhere",
-        () => fileSearch.searchFiles(requestedRoot, searchEverywhereQuery, 40),
-      )
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-
-          setSearchEverywhereFiles(results);
-        })
-        .catch((error) => {
-          if (!active) {
-            return;
-          }
-
-          setSearchEverywhereFiles([]);
-          reportError("Search Everywhere", error);
-        });
-
-      if (!canSearchClassOpenSymbols) {
-        setSearchEverywhereSymbols([]);
-      }
-
-      const symbolSearchPromise = canSearchClassOpenSymbols
-        ? searchClassOpenSymbols(searchEverywhereQuery, 40)
-            .then((results) => {
-              if (!active) {
-                return;
-              }
-
-              setSearchEverywhereSymbols(results);
-            })
-            .catch((error) => {
-              if (!active) {
-                return;
-              }
-
-              setSearchEverywhereSymbols([]);
-              reportError("Search Everywhere", error);
-            })
-        : Promise.resolve();
-
-      void Promise.all([fileSearchPromise, symbolSearchPromise]).finally(() => {
-        if (!active) {
-          return;
-        }
-
-        setSearchEverywhereLoading(false);
-      });
-    }, 120);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    canSearchClassOpenSymbols,
-    fileSearch,
-    latencyTrackerForRoot,
-    reportError,
-    searchClassOpenSymbols,
-    searchEverywhereOpen,
-    searchEverywhereQuery,
-    workspaceRoot,
-  ]);
 
   useEffect(() => {
     let active = true;

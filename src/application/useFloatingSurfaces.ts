@@ -2,11 +2,9 @@ import { useCallback } from "react";
 import type { CallHierarchyView } from "../domain/callHierarchy";
 import type { GitChangedFile } from "../domain/git";
 import type { ImplementationTarget } from "../domain/implementationTargets";
-import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
 import type { ReferencesView } from "../domain/referencesView";
 import type { SettingsSection } from "../domain/settings";
 import type { TypeHierarchyView } from "../domain/typeHierarchy";
-import type { FileSearchResult } from "../domain/workspace";
 
 export interface ImplementationChooserState {
   targets: ImplementationTarget[];
@@ -41,9 +39,7 @@ export interface FloatingSurfacesDependencies {
   setWorkspaceSymbolsOpen: (open: boolean) => void;
   searchEverywhereOpen: boolean;
   setSearchEverywhereOpen: (open: boolean) => void;
-  setSearchEverywhereQuery: (query: string) => void;
-  setSearchEverywhereFiles: (files: FileSearchResult[]) => void;
-  setSearchEverywhereSymbols: (symbols: ProjectSymbolSearchResult[]) => void;
+  resetSearchEverywhere: () => void;
   textSearchOpen: boolean;
   setTextSearchOpen: (open: boolean) => void;
   languageServerSetupOpen: boolean;
@@ -99,9 +95,7 @@ export function useFloatingSurfaces(
     setWorkspaceSymbolsOpen,
     searchEverywhereOpen,
     setSearchEverywhereOpen,
-    setSearchEverywhereQuery,
-    setSearchEverywhereFiles,
-    setSearchEverywhereSymbols,
+    resetSearchEverywhere,
     textSearchOpen,
     setTextSearchOpen,
     languageServerSetupOpen,
@@ -340,20 +334,16 @@ export function useFloatingSurfaces(
     setRecentFilesSwitcherOpen(false);
     setRecentLocationsPanelOpen(false);
     setTextSearchOpen(false);
-    setSearchEverywhereQuery("");
-    setSearchEverywhereFiles([]);
-    setSearchEverywhereSymbols([]);
+    resetSearchEverywhere();
     setSearchEverywhereOpen(true);
   }, [
+    resetSearchEverywhere,
     setClassOpenOpen,
     setPaletteOpen,
     setQuickOpenOpen,
     setRecentFilesSwitcherOpen,
     setRecentLocationsPanelOpen,
-    setSearchEverywhereFiles,
     setSearchEverywhereOpen,
-    setSearchEverywhereQuery,
-    setSearchEverywhereSymbols,
     setTextSearchOpen,
     setWorkspaceSymbolsOpen,
   ]);
