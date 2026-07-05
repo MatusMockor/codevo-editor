@@ -591,12 +591,28 @@ Completed worker integrations:
    - Confirmed the safe boundary: keep navigation/history playback and generic
      open/reveal hooks separate from document tab lifecycle, git diff
      pseudo-doc opening, and LSP-specific navigation orchestration.
+10. `019f33cc-34ca-71b0-b450-18d9ce5f38f6`
+   - Title: Extract close/save lifecycle.
+   - Result: no code changes.
+   - Confirmed the requested close/save lifecycle slice is already extracted
+     into `src/application/useDocumentLifecycle.ts`.
+   - Verification in worker:
+     - `npm run check` passed.
+     - Document lifecycle and git diff preview close tests passed: 16 tests.
+     - Focused close/dirty/save/tab/git-diff/read-only/modified preview tests
+       passed: 867 tests.
+11. `019f33cc-36b7-7732-8c84-224c7e9ec9a7`
+   - Title: Audit close/save boundary.
+   - Result: no code changes.
+   - Confirmed `useDocumentLifecycle.ts` is the correct owner for active
+     document save/close/Cmd+W behavior, while command registry glue,
+     controller-owned state mirrors, and git diff selected-preview close
+     behavior must remain separate.
 
 Integration order:
 
-1. Close/save lifecycle split.
-2. PHP code-action provider extraction.
-3. Remaining expression/Laravel chain resolver extraction.
+1. PHP code-action provider extraction.
+2. Remaining expression/Laravel chain resolver extraction.
 
 For every worker:
 
