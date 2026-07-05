@@ -14,6 +14,7 @@ import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
+import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
@@ -208,11 +209,6 @@ import {
   summarizeDiagnosticsByPath,
   type DiagnosticsSummary,
 } from "../domain/diagnosticsSummary";
-import {
-  nextProblemLocation,
-  previousProblemLocation,
-  type ProblemLocation,
-} from "../domain/problemNavigation";
 import {
   implementationChooserTitle,
   implementationTargetFromProjectSymbol,
@@ -535,7 +531,6 @@ import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import {
   buildSearchEverywhereModel,
-  type SearchEverywhereItem,
 } from "../domain/searchEverywhere";
 import {
   defaultAppSettings,
@@ -614,10 +609,6 @@ export interface WorkbenchControllerOptions {
    * tests inject a deterministic scheduler so flushes can be driven explicitly.
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
-}
-
-interface OpenNavigationOptions {
-  readOnly?: boolean;
 }
 
 interface OpenWorkspacePathOptions {
@@ -5392,97 +5383,38 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  const openSearchResult = useCallback(
-    async (result: FileSearchResult) => {
-      const opened = await openFile({
-        kind: "file",
-        name: result.name,
-        path: result.path,
-      });
-
-      if (!opened) {
-        return;
-      }
-
-      setQuickOpenOpen(false);
-    },
-    [openFile],
-  );
-
-  const openRecentFile = useCallback(
-    async (entry: RecentFileEntry) => {
-      // Capture the requested root up front so a workspace switch during the
-      // open cannot make us prune another tab's MRU after the await resolves.
-      const requestedRoot = currentWorkspaceRootRef.current;
-      const opened = await openFile({
-        kind: "file",
-        name: entry.name,
-        path: entry.path,
-      });
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      if (!opened) {
-        // The file vanished out from under the MRU (deleted/moved outside the
-        // editor). Prune the dead entry so it stops being offered.
-        forgetRecentFile(entry.path);
-        return;
-      }
-
-      setRecentFilesSwitcherOpen(false);
-    },
-    [forgetRecentFile, openFile],
-  );
-
-  const openClassSearchResult = useCallback(
-    async (result: ProjectSymbolSearchResult) => {
-      const opened = await openFile({
-        kind: "file",
-        name: getFileName(result.path),
-        path: result.path,
-      });
-
-      if (!opened) {
-        return;
-      }
-
-      setClassOpenOpen(false);
-      setEditorRevealTarget({
-        path: result.path,
-        position: editorPositionFromProjectSymbol(result),
-      });
-      setMessage(
-        `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
-      );
-    },
-    [openFile],
-  );
-
-  const openWorkspaceSymbolResult = useCallback(
-    async (result: ProjectSymbolSearchResult) => {
-      const opened = await openFile({
-        kind: "file",
-        name: getFileName(result.path),
-        path: result.path,
-      });
-
-      if (!opened) {
-        return;
-      }
-
-      setWorkspaceSymbolsOpen(false);
-      setEditorRevealTarget({
-        path: result.path,
-        position: editorPositionFromProjectSymbol(result),
-      });
-      setMessage(
-        `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
-      );
-    },
-    [openFile],
-  );
+  const {
+    activateSearchEverywhereItem,
+    openClassSearchResult,
+    openNavigationTarget,
+    openPathForNavigation,
+    openProblemNotice,
+    openRecentFile,
+    openSearchResult,
+    openWorkspaceSymbolResult,
+    goToNextProblem,
+    goToPreviousProblem,
+    readNavigationFileContent,
+  } = useWorkbenchNavigation({
+    activeDocumentRef,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
+    documentsRef,
+    noticesRef,
+    workspaceFiles,
+    openFile,
+    currentNavigationLocation,
+    forgetRecentFile,
+    recordNavigationLocationSnapshot,
+    reportError,
+    setClassOpenOpen,
+    setEditorRevealTarget,
+    setMessage,
+    setQuickOpenOpen,
+    setRecentFilesSwitcherOpen,
+    setSearchEverywhereOpen,
+    setWorkspaceSymbolsOpen,
+  });
 
   const openTextSearchResult = useCallback(
     async (result: TextSearchResult) => {
@@ -5769,148 +5701,6 @@ export function useWorkbenchController(
     workspaceDescriptor,
     workspaceRoot,
   });
-
-  const openPathForNavigation = useCallback(
-    async (
-      path: string,
-      options: OpenNavigationOptions = {},
-    ): Promise<boolean> => {
-      const opened = await openFile(
-        {
-          kind: "file",
-          name: getFileName(path),
-          path,
-        },
-        { readOnly: options.readOnly, recordNavigation: false },
-      );
-
-      if (!opened) {
-        return false;
-      }
-
-      return true;
-    },
-    [openFile],
-  );
-
-  const openNavigationTarget = useCallback(
-    async (
-      path: string,
-      position: EditorPosition,
-      label: string,
-      options: OpenNavigationOptions = {},
-    ): Promise<boolean> => {
-      const previousLocation = currentNavigationLocation();
-
-      const opened = await openPathForNavigation(path, options);
-
-      if (!opened) {
-        return false;
-      }
-
-      recordNavigationLocationSnapshot(previousLocation);
-      setEditorRevealTarget({
-        path,
-        position,
-      });
-      setMessage(
-        `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
-      );
-      return true;
-    },
-    [
-      currentNavigationLocation,
-      openPathForNavigation,
-      recordNavigationLocationSnapshot,
-    ],
-  );
-
-  const openProblemNotice = useCallback(
-    async (notice: WorkbenchNotice) => {
-      const target = notice.navigationTarget;
-
-      if (!target) {
-        return false;
-      }
-
-      return openNavigationTarget(
-        target.path,
-        target.range.start,
-        "problem",
-      );
-    },
-    [openNavigationTarget],
-  );
-
-  const currentProblemLocation = useCallback((): ProblemLocation | null => {
-    const path = activeDocumentRef.current?.path;
-
-    if (!path) {
-      return null;
-    }
-
-    const position = activeEditorPositionRef.current ?? {
-      column: 1,
-      lineNumber: 1,
-    };
-
-    return {
-      path,
-      position: { column: position.column, lineNumber: position.lineNumber },
-    };
-  }, []);
-
-  const goToProblemLocation = useCallback(
-    async (location: ProblemLocation | null): Promise<boolean> => {
-      if (!location) {
-        return false;
-      }
-
-      const opened = await openNavigationTarget(
-        location.path,
-        location.position,
-        "problem",
-      );
-
-      if (opened) {
-        activeEditorPositionRef.current = location.position;
-      }
-
-      return opened;
-    },
-    [openNavigationTarget],
-  );
-
-  const goToNextProblem = useCallback(async (): Promise<boolean> => {
-    return goToProblemLocation(
-      nextProblemLocation(noticesRef.current, currentProblemLocation()),
-    );
-  }, [currentProblemLocation, goToProblemLocation]);
-
-  const goToPreviousProblem = useCallback(async (): Promise<boolean> => {
-    return goToProblemLocation(
-      previousProblemLocation(noticesRef.current, currentProblemLocation()),
-    );
-  }, [currentProblemLocation, goToProblemLocation]);
-
-  const readNavigationFileContent = useCallback(
-    async (path: string): Promise<string> => {
-      const activeOpenDocument = activeDocumentRef.current;
-
-      if (activeOpenDocument?.path === path) {
-        return activeOpenDocument.content;
-      }
-
-      const openDocument = documentsRef.current[path];
-
-      if (openDocument) {
-        return openDocument.content;
-      }
-
-      return workspaceFiles.readTextFile(path);
-    },
-    [workspaceFiles],
-  );
 
   const {
     todoPanelOpen,
@@ -19552,52 +19342,6 @@ export function useWorkbenchController(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "workspaceSymbol",
         )),
-  );
-
-  const activateSearchEverywhereItem = useCallback(
-    async (item: SearchEverywhereItem) => {
-      if (item.kind === "action") {
-        setSearchEverywhereOpen(false);
-
-        try {
-          await item.command.run();
-        } catch (error) {
-          reportError("Command", error);
-        }
-
-        return;
-      }
-
-      // Capture the requested root up front so a workspace switch during the
-      // open cannot reveal a symbol position in another tab's editor.
-      const requestedRoot = currentWorkspaceRootRef.current;
-      const path = item.kind === "file" ? item.file.path : item.symbol.path;
-      const name =
-        item.kind === "file" ? item.file.name : getFileName(item.symbol.path);
-
-      const opened = await openFile({ kind: "file", name, path });
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      if (!opened) {
-        return;
-      }
-
-      setSearchEverywhereOpen(false);
-
-      if (item.kind === "symbol") {
-        setEditorRevealTarget({
-          path: item.symbol.path,
-          position: editorPositionFromProjectSymbol(item.symbol),
-        });
-        setMessage(
-          `Opened ${item.symbol.name} ${item.symbol.relativePath}:${item.symbol.lineNumber}:${item.symbol.column}`,
-        );
-      }
-    },
-    [openFile, reportError],
   );
 
   const commandRegistry = useMemo(() => {

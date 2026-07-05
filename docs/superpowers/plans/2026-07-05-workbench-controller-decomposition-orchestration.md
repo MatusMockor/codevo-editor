@@ -11,10 +11,23 @@ monitors Codex threads, integrates finished work, runs tests, and chooses the
 next slice. Implementation should happen in separate Codex threads whenever the
 slice can be isolated by file ownership.
 
+Current operational goal:
+
+- Continue only through Codex worker threads where possible.
+- Main thread owns orchestration, monitoring, integration, tests, commits, and
+  pushes.
+- Do not manually implement a delegable slice in the main thread.
+- Poll worker threads proactively through `read_thread` plus direct worktree
+  `git status` / `git diff --stat` checks.
+- Next order:
+  1. navigation/history operations,
+  2. close/save lifecycle split,
+  3. PHP code-action provider extraction.
+
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 25,905 lines after the
-  workspace-edit, LSP runtime lifecycle, and document tab slices.
+- `src/application/useWorkbenchController.ts`: 25,649 lines after the
+  workspace-edit, LSP runtime lifecycle, document tab, and navigation slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -94,6 +107,16 @@ Create Codex threads for:
    - Result: extracted `src/application/useWorkbenchDocumentTabs.ts`;
      controller line count is now 25,905 in the main working tree.
 
+6. Navigation/history extraction
+   - Ownership: generic non-LSP navigation operations, quick-open/search
+     result activation, recent-file activation/pruning, class/workspace symbol
+     result activation, problem navigation jumps, navigation target opening,
+     and navigation-aware file reads.
+   - Thread: `019f3238-8944-77b3-9ddd-f447eafdfe7f`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchNavigation.ts`;
+     controller line count is now 25,649 in the main working tree.
+
 ## Current Local Findings
 
 - Workspace edit region was extracted on 2026-07-05 into
@@ -128,6 +151,22 @@ Create Codex threads for:
     passed: 867 tests.
   - `npm run check` passed.
   - `npm test -- --run` passed: 230 files, 5117 tests.
+- Navigation/history region was extracted on 2026-07-05 into
+  `src/application/useWorkbenchNavigation.ts`.
+- It includes:
+  - Quick Open file activation,
+  - recent-file activation and stale recent-file pruning,
+  - Open Class/workspace-symbol result activation,
+  - Search Everywhere item activation,
+  - shared `openPathForNavigation` / `openNavigationTarget`,
+  - problem notice and next/previous problem jumps,
+  - `readNavigationFileContent`.
+- Important invariant: LSP-specific definition/implementation ownership stays
+  in the controller and still consumes the shared navigation primitives.
+- Main-thread verification after integration:
+  - `npm run check` passed.
+  - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+    passed: 867 tests.
   - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
     passed: 867 tests.
 - LSP runtime lifecycle region was extracted on 2026-07-05 into
@@ -163,14 +202,10 @@ Delegate the next high-return controller slice from current `main`.
 
 Recommended next candidates:
 
-1. Navigation/history operations
-   - Anchors: `navigateBack`, `navigateForward`, history stack refs, active
-     document jumps, symbol/open-file navigation that is not language-server
-     specific.
-2. Remaining close/save lifecycle split
+1. Remaining close/save lifecycle split
    - Anchors: `closeDocument`, dirty document prompts, save-before-close
      handling, Mac window close fallback.
-3. PHP code-action provider domain extraction
+2. PHP code-action provider domain extraction
    - Anchors: code action ordering, create-from-usage, generate members,
      implement/override methods, Laravel/OOP action providers.
 
