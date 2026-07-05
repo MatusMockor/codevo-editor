@@ -895,6 +895,43 @@ Completed worker integrations:
      - `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts
        src/domain/laravelCorrectnessMatrix.test.ts` passed: 76 tests.
      - `npm run check` passed.
+32. `019f342d-9825-7ef3-a10c-1f4197dbd0cc`
+   - Title: Audit remaining controller clusters.
+   - Result: read-only audit.
+   - Recommended one tiny production extraction:
+     `phpClassHasLaravelDynamicWhere` and `phpClassHasLaravelLocalScope`
+     should move from `useWorkbenchController.ts` into a dependency-injected
+     `usePhpLaravelScopePredicates` hook.
+   - Strict boundary:
+     - move only the two boolean Laravel magic/scope predicates,
+     - do not move `collectPhpMethodsForClass`,
+     - do not move `collectPhpLaravelDynamicWhereMethodsForClass`,
+     - do not move PHP method completions,
+     - do not move PHP/Laravel navigation or file-opening callbacks.
+   - Reason: this removes a real remaining controller island while preserving
+     provider/cache/navigation ownership and stale-root behavior in the
+     existing collectors.
+33. `019f3430-02c7-7b63-af85-e41b0984ad09`
+   - Title: Extract Laravel scope predicates.
+   - Integrated `src/application/usePhpLaravelScopePredicates.ts` with focused
+     tests in `src/application/usePhpLaravelScopePredicates.test.tsx`.
+   - Moved only:
+     - `phpClassHasLaravelDynamicWhere`,
+     - `phpClassHasLaravelLocalScope`,
+     - Laravel local-scope completion policy import needed by those predicates.
+   - Kept the collectors, PHP method completion provider, PHP/Laravel
+     navigation, file-opening callbacks, modified-document safety, and stale
+     root behavior in their existing owners.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpLaravelScopePredicates.test.tsx`
+       passed: 5 tests.
+     - `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts
+       src/domain/laravelCorrectnessMatrix.test.ts` passed: 76 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "Laravel|scope|magic|diagnostic|completion|definition"` passed:
+       296 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
 
 Integration order:
 
@@ -909,13 +946,27 @@ Integration order:
 5. Do not revisit PHP trait-host predicates; they are integrated and verified.
 6. Do not revisit trait-host stale-root test hardening; it is integrated and
    verified.
-7. Next work must start with a fresh Codex audit thread over the remaining
-   controller clusters and return a narrow worker slice or a blocker plan.
+7. Do not revisit Laravel scope predicates; they are integrated and verified.
+   The next step should start with a fresh Codex audit thread over remaining
+   controller clusters or recommend shifting to higher product-value work.
 8. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
 9. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
+
+Current operational goal:
+
+- Work toward shrinking `useWorkbenchController.ts` without regressing product
+  behavior.
+- Use Codex threads for delegable audit/implementation/review slices.
+- The main thread should not manually implement delegable work. It should
+  orchestrate: create/poll threads, review diffs, integrate narrowly, run tests,
+  update this plan, commit, and push.
+- After each completed slice, reassess whether another decomposition slice is
+  still safer than shifting to higher product-value work.
+- After every compaction, read this section first to avoid repeating completed
+  slices.
 
 For every worker:
 

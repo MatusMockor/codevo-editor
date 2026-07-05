@@ -32,6 +32,7 @@ import {
   type PhpTraitThisCompletionContext,
 } from "./usePhpMethodCompletionResolvers";
 import { usePhpClassHierarchyPredicates } from "./usePhpClassHierarchyPredicates";
+import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
 import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
 import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
 import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
@@ -275,7 +276,6 @@ import {
   phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeFromExpression,
-  phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
   phpLaravelMorphMapEntriesFromSource,
@@ -6158,19 +6158,6 @@ export function useWorkbenchController(
     ],
   );
 
-  const phpClassHasLaravelDynamicWhere = useCallback(
-    async (className: string, methodName: string): Promise<boolean> => {
-      const methodLookup = methodName.toLowerCase();
-      const dynamicWhereCompletions =
-        await collectPhpLaravelDynamicWhereMethodsForClass(className);
-
-      return dynamicWhereCompletions.some(
-        (method) => method.name.toLowerCase() === methodLookup,
-      );
-    },
-    [collectPhpLaravelDynamicWhereMethodsForClass],
-  );
-
   const {
     phpClassHierarchyHasConstant,
     phpClassHierarchyHasMethod,
@@ -6185,23 +6172,14 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const phpClassHasLaravelLocalScope = useCallback(
-    async (className: string, scopeName: string): Promise<boolean> => {
-      if (!isLaravelFrameworkActive) {
-        return false;
-      }
-
-      const scopeLookup = scopeName.toLowerCase();
-      const scopeCompletions = phpLaravelLocalScopeCompletionsFromMethods(
-        await collectPhpMethodsForClass(className),
-      );
-
-      return scopeCompletions.some(
-        (scope) => scope.name.toLowerCase() === scopeLookup,
-      );
-    },
-    [collectPhpMethodsForClass, isLaravelFrameworkActive],
-  );
+  const {
+    phpClassHasLaravelDynamicWhere,
+    phpClassHasLaravelLocalScope,
+  } = usePhpLaravelScopePredicates({
+    collectPhpLaravelDynamicWhereMethodsForClass,
+    collectPhpMethodsForClass,
+    isLaravelFrameworkActive,
+  });
 
   const { resolvePhpMethodReturnType } = usePhpMethodReturnTypeResolver({
     activePhpFrameworkProviders,
