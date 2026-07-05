@@ -38,11 +38,12 @@ Current operational goal:
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 16,849 lines after the
+- `src/application/useWorkbenchController.ts`: 16,228 lines after the
   workspace-edit, LSP runtime lifecycle, document tab, navigation,
   close-lifecycle, PHP code-action, file-operations, text-search, Quick Open,
   PHP semantic resolver, Laravel registry/relation/model-type, method-return,
-  expression-type resolver, and PHP signature/inlay provider slices.
+  expression-type resolver, PHP signature/inlay provider, and PHP class
+  hierarchy predicate slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -800,6 +801,41 @@ Completed worker integrations:
        -t "signature|inlay|Laravel container receivers|magic-where|scope"`
        passed: 12 tests.
      - `npm run check` passed.
+26. `019f340e-5ae8-7302-b5ee-4b8b7c32313c`
+   - Title: Audit next decomposition step.
+   - Result: no code changes.
+   - Recommended a production micro-slice for the four upward PHP
+     class-hierarchy predicates, not the whole trait-host block.
+   - Explicitly left out trait-host predicates, Laravel local/dynamic scope
+     predicates, completions, and navigation because those still feed broader
+     diagnostics/code-action/navigation/provider behavior.
+27. `019f3411-75ec-7aa3-b7ee-c93468290f6e`
+   - Title: Extract PHP hierarchy predicates.
+   - Integrated as `src/application/usePhpClassHierarchyPredicates.ts` with
+     focused tests in `src/application/usePhpClassHierarchyPredicates.test.tsx`.
+   - Moved only:
+     - `phpClassHierarchyHasMethod`
+     - `phpClassHierarchyHasStaticMethod`
+     - `phpClassHierarchyHasProperty`
+     - `phpClassHierarchyHasConstant`
+     - private declared property/constant source checks and local `escapeRegExp`
+       needed by those predicates.
+   - Kept `phpTraitHost*Exists`, Laravel dynamic where/local scope,
+     completions, navigation, diagnostics, code actions, JS/TS runtime, Monaco
+     registration, file ops, document tabs, and git diff pseudo-doc behavior in
+     their existing owners.
+   - Controller line count after integration: 16,228.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpClassHierarchyPredicates.test.tsx`
+       passed: 5 tests.
+     - `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts
+       src/domain/laravelCorrectnessMatrix.test.ts` passed: 76 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "diagnostic|trait|Laravel|definition|member property|scope|magic"`
+       passed: 294 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 234 files, 5134 tests.
 
 Integration order:
 
@@ -809,12 +845,14 @@ Integration order:
    integrated and verified.
 3. Do not revisit `usePhpSignatureHelpProvider` focused hook tests; they are
    integrated and verified.
-4. Next work must start with a fresh Codex audit thread over the remaining
+4. Do not revisit PHP class hierarchy predicates; they are integrated and
+   verified.
+5. Next work must start with a fresh Codex audit thread over the remaining
    controller clusters and return a narrow worker slice or a blocker plan.
-5. Do not move PHP method completions or PHP/Laravel navigation without a new
+6. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-6. Follow-up focused hook tests for newly extracted provider/registry modules
+7. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
