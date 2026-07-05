@@ -23,6 +23,7 @@ import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
 import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
+import { usePhpDiagnosticContextFilter } from "./usePhpDiagnosticContextFilter";
 import {
   usePhpMethodCompletionResolvers,
   type PhpTraitThisCompletionContext,
@@ -152,21 +153,7 @@ import {
   animationFrameDiagnosticsFlushScheduler,
   type DiagnosticsFlushScheduler,
 } from "../domain/diagnosticsCoalescer";
-import {
-  filterPhpLanguageServerDiagnostics,
-  phpMemberMethodDiagnosticKey,
-  phpMethodDiagnosticKey,
-  phpTraitHostConstantDiagnosticContext,
-  phpTraitHostConstantDiagnosticKey,
-  phpTraitHostMethodDiagnosticContext,
-  phpTraitHostMethodDiagnosticKey,
-  phpTraitHostPropertyDiagnosticContext,
-  phpTraitHostPropertyDiagnosticKey,
-  phpUnresolvedMemberMethodDiagnosticContext,
-  phpMemberPropertyDiagnosticKey,
-  phpUnresolvedMemberPropertyDiagnosticContext,
-  phpUnresolvedStaticMethodDiagnosticContext,
-} from "../domain/phpLanguageServerDiagnosticFilters";
+import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
   fileUriFromPath,
   isJavaScriptTypeScriptLanguageServerDocument,
@@ -8641,345 +8628,35 @@ export function useWorkbenchController(
     ],
   );
 
-  const filterPhpDiagnosticsWithContext = useCallback(
-    async (
-      path: string,
-      diagnostics: LanguageServerDiagnostic[],
-    ): Promise<LanguageServerDiagnostic[]> => {
-      if (!isPhpPath(path)) {
-        return diagnostics;
-      }
-
-      let source = "";
-
-      try {
-        source = await readNavigationFileContent(path);
-      } catch {
-        return diagnostics;
-      }
-
-      const contextualTraitHostMethods = new Set<string>();
-      const contextualTraitHostProperties = new Set<string>();
-      const contextualTraitHostConstants = new Set<string>();
-      const contextualExistingMethods = new Set<string>();
-      const contextualMemberMethods = new Set<string>();
-      const contextualMemberProperties = new Set<string>();
-
-      for (const diagnostic of diagnostics) {
-        const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
-
-        if (staticMethodContext) {
-          const resolvedClassName = resolvePhpClassReference(
-            source,
-            staticMethodContext.className,
-          );
-          const hasContextualScopeMethod =
-            resolvedClassName && isLaravelFrameworkActive
-              ? await phpClassHasLaravelLocalScope(
-                  resolvedClassName,
-                  staticMethodContext.methodName,
-                )
-              : false;
-          const hasContextualDynamicWhereMethod =
-            isLaravelFrameworkActive && resolvedClassName
-              ? await phpClassHasLaravelDynamicWhere(
-                  resolvedClassName,
-                  staticMethodContext.methodName,
-                )
-              : false;
-          const hasContextualExistingStaticMethod = resolvedClassName
-            ? await phpClassHierarchyHasStaticMethod(
-                resolvedClassName,
-                staticMethodContext.methodName,
-              )
-            : false;
-
-          if (
-            hasContextualScopeMethod ||
-            hasContextualDynamicWhereMethod ||
-            hasContextualExistingStaticMethod
-          ) {
-            contextualExistingMethods.add(
-              phpMethodDiagnosticKey(
-                staticMethodContext.className,
-                staticMethodContext.methodName,
-              ),
-            );
-          }
-        }
-
-        const memberMethodContext = phpUnresolvedMemberMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
-
-        if (memberMethodContext) {
-          const diagnosticPosition = {
-            column: diagnostic.character + 1,
-            lineNumber: diagnostic.line + 1,
-          };
-          const builderModelType = isLaravelFrameworkActive
-            ? await resolvePhpEloquentBuilderModelTypeRef.current(
-                source,
-                diagnosticPosition,
-                memberMethodContext.receiverExpression,
-              )
-            : null;
-          const hasContextualScopeMethod =
-            builderModelType && isLaravelFrameworkActive
-              ? await phpClassHasLaravelLocalScope(
-                  builderModelType,
-                  memberMethodContext.methodName,
-                )
-              : false;
-          const hasContextualDynamicWhereMethod =
-            isLaravelFrameworkActive && builderModelType
-              ? await phpClassHasLaravelDynamicWhere(
-                  builderModelType,
-                  memberMethodContext.methodName,
-                )
-              : false;
-          const receiverType = await resolvePhpExpressionTypeRef.current(
-            source,
-            diagnosticPosition,
-            memberMethodContext.receiverExpression,
-          );
-          const hasContextualExistingMemberMethod = receiverType
-            ? await phpClassHierarchyHasMethod(
-                receiverType,
-                memberMethodContext.methodName,
-              )
-            : false;
-          const receiverPropertyAccess =
-            phpCurrentTypeKind(source) === "trait"
-              ? phpPropertyAccessExpression(
-                  memberMethodContext.receiverExpression,
-                )
-              : null;
-          const traitClassName =
-            receiverPropertyAccess &&
-            phpNormalizedReceiverExpressionIsThis(
-              receiverPropertyAccess.receiverExpression,
-            )
-              ? phpCurrentClassName(source)
-              : null;
-          const hasContextualTraitHostPropertyMethod =
-            traitClassName && receiverPropertyAccess
-              ? await phpTraitHostPropertyMethodExists(
-                  traitClassName,
-                  receiverPropertyAccess.propertyName,
-                  memberMethodContext.methodName,
-                )
-              : false;
-
-          if (
-            hasContextualScopeMethod ||
-            hasContextualDynamicWhereMethod ||
-            hasContextualExistingMemberMethod ||
-            hasContextualTraitHostPropertyMethod
-          ) {
-            contextualMemberMethods.add(
-              phpMemberMethodDiagnosticKey(
-                memberMethodContext.receiverExpression,
-                memberMethodContext.methodName,
-              ),
-            );
-          }
-        }
-
-        const memberPropertyContext =
-          phpUnresolvedMemberPropertyDiagnosticContext(source, diagnostic);
-
-        if (memberPropertyContext) {
-          const diagnosticPosition = {
-            column: diagnostic.character + 1,
-            lineNumber: diagnostic.line + 1,
-          };
-          const receiverType = await resolvePhpExpressionTypeRef.current(
-            source,
-            diagnosticPosition,
-            memberPropertyContext.receiverExpression,
-          );
-          const hasContextualProperty = receiverType
-            ? await phpClassHierarchyHasProperty(
-                receiverType,
-                memberPropertyContext.propertyName,
-              )
-            : false;
-
-          if (hasContextualProperty) {
-            contextualMemberProperties.add(
-              phpMemberPropertyDiagnosticKey(
-                memberPropertyContext.receiverExpression,
-                memberPropertyContext.propertyName,
-              ),
-            );
-          }
-        }
-
-        const traitMethodContext = phpTraitHostMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
-
-        if (traitMethodContext) {
-          const normalizedTraitName = traitMethodContext.traitName.replace(
-            /^\\+/,
-            "",
-          );
-          const traitClassName = normalizedTraitName.includes("\\")
-            ? normalizedTraitName
-            : (resolvePhpClassReference(source, traitMethodContext.traitName) ??
-              normalizedTraitName);
-
-          if (
-            await phpTraitHostMethodExists(
-              traitClassName,
-              traitMethodContext.methodName,
-            )
-          ) {
-            contextualTraitHostMethods.add(
-              phpTraitHostMethodDiagnosticKey(
-                traitMethodContext.traitName,
-                traitMethodContext.methodName,
-              ),
-            );
-            contextualTraitHostMethods.add(
-              phpTraitHostMethodDiagnosticKey(
-                traitClassName,
-                traitMethodContext.methodName,
-              ),
-            );
-          }
-        }
-
-        const traitConstantContext = phpTraitHostConstantDiagnosticContext(
-          source,
-          diagnostic,
-        );
-
-        if (traitConstantContext) {
-          const normalizedTraitName = traitConstantContext.traitName.replace(
-            /^\\+/,
-            "",
-          );
-          const traitClassName = normalizedTraitName.includes("\\")
-            ? normalizedTraitName
-            : (resolvePhpClassReference(
-                source,
-                traitConstantContext.traitName,
-              ) ?? normalizedTraitName);
-
-          if (
-            await phpTraitHostConstantExists(
-              traitClassName,
-              traitConstantContext.constantName,
-            )
-          ) {
-            contextualTraitHostConstants.add(
-              phpTraitHostConstantDiagnosticKey(
-                traitConstantContext.traitName,
-                traitConstantContext.constantName,
-              ),
-            );
-            contextualTraitHostConstants.add(
-              phpTraitHostConstantDiagnosticKey(
-                traitClassName,
-                traitConstantContext.constantName,
-              ),
-            );
-          }
-        }
-
-        const traitPropertyContext = phpTraitHostPropertyDiagnosticContext(
-          source,
-          diagnostic,
-        );
-
-        if (traitPropertyContext) {
-          const normalizedTraitName = traitPropertyContext.traitName.replace(
-            /^\\+/,
-            "",
-          );
-          const traitClassName = normalizedTraitName.includes("\\")
-            ? normalizedTraitName
-            : (resolvePhpClassReference(
-                source,
-                traitPropertyContext.traitName,
-              ) ?? normalizedTraitName);
-
-          if (
-            await phpTraitHostPropertyExists(
-              traitClassName,
-              traitPropertyContext.propertyName,
-            )
-          ) {
-            contextualTraitHostProperties.add(
-              phpTraitHostPropertyDiagnosticKey(
-                traitPropertyContext.traitName,
-                traitPropertyContext.propertyName,
-              ),
-            );
-            contextualTraitHostProperties.add(
-              phpTraitHostPropertyDiagnosticKey(
-                traitClassName,
-                traitPropertyContext.propertyName,
-              ),
-            );
-          }
-        }
-      }
-
-      if (isLaravelFrameworkActive && currentWorkspaceRootRef.current) {
-        void ensurePhpLaravelMigrationSourcesLoaded(
-          currentWorkspaceRootRef.current,
-        );
-        void ensurePhpLaravelProviderSourcesLoaded(
-          currentWorkspaceRootRef.current,
-        );
-      }
-
-      const { workspaceSources } = currentPhpLaravelSourceContext();
-
-      return filterPhpLanguageServerDiagnostics(source, diagnostics, {
-        contextualExistingMethods,
-        contextualMemberMethods,
-        contextualMemberProperties,
-        contextualTraitHostConstants,
-        contextualTraitHostMethods,
-        contextualTraitHostProperties,
-        frameworkProviders: activePhpFrameworkProviders,
-        frameworkSourceContext:
-          workspaceSources.length > 0 ? { workspaceSources } : undefined,
-        path,
-      });
-    },
-    [
-      phpClassHasLaravelLocalScope,
-      phpClassHasLaravelDynamicWhere,
-      activePhpFrameworkProviders,
-      currentPhpLaravelSourceContext,
-      ensurePhpLaravelMigrationSourcesLoaded,
-      ensurePhpLaravelProviderSourcesLoaded,
-      isLaravelFrameworkActive,
-      phpClassHierarchyHasMethod,
-      phpClassHierarchyHasStaticMethod,
-      phpClassHierarchyHasProperty,
-      phpTraitHostConstantExists,
-      phpTraitHostMethodExists,
-      phpTraitHostPropertyMethodExists,
-      phpTraitHostPropertyExists,
-      readNavigationFileContent,
-      resolvePhpClassReference,
-    ],
-  );
-
-  useEffect(() => {
-    contextualDiagnosticsFilterRef.current = filterPhpDiagnosticsWithContext;
-  }, [filterPhpDiagnosticsWithContext]);
+  usePhpDiagnosticContextFilter({
+    activePhpFrameworkProviders,
+    contextualDiagnosticsFilterRef,
+    currentPhpLaravelSourceContext,
+    currentWorkspaceRoot: () => currentWorkspaceRootRef.current,
+    ensurePhpLaravelMigrationSourcesLoaded,
+    ensurePhpLaravelProviderSourcesLoaded,
+    isLaravelFrameworkActive,
+    isPhpPath,
+    phpClassHasLaravelDynamicWhere,
+    phpClassHasLaravelLocalScope,
+    phpClassHierarchyHasMethod,
+    phpClassHierarchyHasProperty,
+    phpClassHierarchyHasStaticMethod,
+    phpTraitHostConstantExists,
+    phpTraitHostMethodExists,
+    phpTraitHostPropertyExists,
+    phpTraitHostPropertyMethodExists,
+    readNavigationFileContent,
+    resolvePhpClassReference,
+    resolvePhpEloquentBuilderModelType: (source, position, receiverExpression) =>
+      resolvePhpEloquentBuilderModelTypeRef.current(
+        source,
+        position,
+        receiverExpression,
+      ),
+    resolvePhpExpressionType: (source, position, receiverExpression) =>
+      resolvePhpExpressionTypeRef.current(source, position, receiverExpression),
+  });
 
   const resolvePhpMethodReturnType = useCallback(
     async (

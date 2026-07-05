@@ -454,9 +454,8 @@ Remaining PHP/Laravel/OOP clusters:
 
 1. PHP semantic/type resolver around controller lines `5459-10989`.
 2. PHP/Laravel completions/signatures/inlay hints around lines `10991-12035`.
-3. Contextual PHP diagnostics false-positive filter around lines `8649-8987`.
-4. PHP contextual Laravel/navigation definitions around lines `12438-15468`.
-5. Laravel migration/provider source registries around lines `1085-1108` and
+3. PHP contextual Laravel/navigation definitions around lines `12438-15468`.
+4. Laravel migration/provider source registries around lines `1085-1108` and
    `6139-6414`.
 
 Active worker threads:
@@ -466,10 +465,6 @@ Active worker threads:
    - Worktree: `/Users/matusmockor/.codex/worktrees/cfae/editor`.
    - Priority: integrate first if clean, because completions/diagnostics can
      consume the extracted resolver as dependency injection.
-2. `019f339b-8184-7b71-8eaf-a3c9d32379dc`
-   - Title: Extract PHP diagnostic context filter.
-   - Worktree: `/Users/matusmockor/.codex/worktrees/ba05/editor`.
-   - Must not move completions or resolver internals; inject dependencies.
 
 Completed worker integrations:
 
@@ -487,12 +482,25 @@ Completed worker integrations:
      - Focused preview completion/Laravel test passed: 222 tests.
      - PHP completion/Laravel domain tests passed: 143 tests.
      - Full preview test passed: 867 tests.
+2. `019f339b-8184-7b71-8eaf-a3c9d32379dc`
+   - Title: Extract PHP diagnostic context filter.
+   - Integrated as `src/application/usePhpDiagnosticContextFilter.ts`.
+   - Moved contextual PHP/PHPactor false-positive filtering orchestration out
+     of `useWorkbenchController.ts`.
+   - Preserved explicit dependency injection for Laravel magic checks, trait
+     host checks, type resolution, and framework source contexts.
+   - Controller line count after integration: 19,991.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - Focused preview diagnostic/Laravel/stale test passed: 234 tests.
+     - PHP diagnostic filter and Laravel correctness domain tests passed:
+       76 tests.
+     - Full preview test passed: 867 tests.
 
 Integration order:
 
 1. Semantic resolver.
-2. Diagnostic context filter.
-3. Laravel target/source collector split.
+2. Laravel target/source collector split.
 
 For every worker:
 
