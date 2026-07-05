@@ -573,6 +573,21 @@ Integration order:
 1. Remaining expression/Laravel chain resolver extraction.
 2. PHP navigation/history lifecycle split.
 
+Active delegated work:
+
+1. `019f33c3-c424-7603-80a5-adaa78d3bac0`
+   - Title: Extract navigation history lifecycle.
+   - Role: implementation worker.
+   - Scope: `navigateBack`, `navigateForward`, history stack refs, active
+     document jumps, and non-LSP symbol/open-file navigation with per-project
+     and git diff tab behavior preserved.
+2. `019f33c3-c5cd-7c73-99e4-efb894c9369c`
+   - Title: Audit navigation history boundary.
+   - Role: review/audit worker.
+   - Scope: independently validate the extraction boundary and identify what
+     must remain in the controller before the main orchestrator integrates any
+     implementation patch.
+
 For every worker:
 
 - Poll with `read_thread` and direct worktree `git status` / `git diff --stat`.
