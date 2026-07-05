@@ -682,12 +682,30 @@ Completed worker integrations:
      Explicitly warned against moving the builder, collection, and expression
      resolver cluster in the same slice because those functions feed provider
      surfaces and remain mutually recursive.
+18. `019f33eb-eaae-7d81-98f4-dfce17dfada2`
+   - Title: Extract Laravel model-type resolvers.
+   - Integrated as `src/application/usePhpLaravelModelTypeResolvers.ts`.
+   - Moved Eloquent builder model type resolution, Laravel collection model
+     type resolution, and their local recursion/helper logic out of
+     `useWorkbenchController.ts`.
+   - Kept `resolvePhpExpressionType`, provider-facing registrations, refs,
+     diagnostics, navigation, code actions, and JS/TS runtime ownership in the
+     controller or existing modules.
+   - Controller line count after integration: 17,584.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic engine, method completions, and Laravel correctness tests
+       passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel/expression/return/
+       collection preview tests passed: 315 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5119 tests.
 
 Integration order:
 
-1. Remaining Eloquent builder, Laravel collection, and expression resolver
-   extraction, only after another audit slice proves a smaller dependency
-   boundary.
+1. Remaining expression resolver extraction, only after another audit slice
+   proves a smaller dependency boundary that does not drag provider-facing
+   behavior.
 2. Follow-up focused hook tests for newly extracted provider/registry modules.
 
 For every worker:
