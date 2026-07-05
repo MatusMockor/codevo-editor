@@ -932,6 +932,56 @@ Completed worker integrations:
        296 tests.
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
+34. `019f3436-3b7e-7130-9ed3-bd889d04fc3e`
+   - Title: Audit controller clusters.
+   - Result: read-only audit.
+   - Recommended one production extraction:
+     `usePhpClassMemberCollectors` should own the cache-backed PHP class/member
+     read and collector island while leaving provider/navigation callbacks in
+     the controller.
+   - Suggested boundary:
+     - `phpClassMemberCacheRef` and cache reset wiring,
+     - `resolvePhpTemplateTypesForGenericReferences`,
+     - `resolvePhpGenericTemplateTypesForInheritedClass`,
+     - `resolvePhpGenericTemplateTypesForMixinClass`,
+     - `readPhpClassMembersFromPath`,
+     - `collectPhpMethodsForClass`,
+     - `collectPhpLaravelDynamicWhereMethodsForClass`,
+     - `collectPhpLaravelRelationCompletionsForClass`,
+     - helper `phpClassMemberCacheKey`.
+   - Explicitly do not move method completion provider, PHP/Laravel navigation,
+     collection model type resolution, morph-map project resolution, or
+     file-opening callbacks.
+35. `019f3439-1f7d-7f82-b3a8-2120d8f69eb3`
+   - Title: Extract PHP collectors hook.
+   - Integrated `src/application/usePhpClassMemberCollectors.ts` with focused
+     tests in `src/application/usePhpClassMemberCollectors.test.tsx`.
+   - Moved:
+     - `phpClassMemberCacheRef` ownership and reset callback,
+     - `readPhpClassMembersFromPath`,
+     - `collectPhpMethodsForClass`,
+     - `collectPhpLaravelDynamicWhereMethodsForClass`,
+     - `collectPhpLaravelRelationCompletionsForClass`,
+     - inherited/mixin generic template resolution,
+     - cache key/source signature/member helper logic.
+   - Kept method completion provider, PHP/Laravel navigation,
+     `resolvePhpCollectionModelTypeFromClass`,
+     `resolvePhpLaravelProjectMorphMapModelType`, file-opening callbacks,
+     modified-document safety, and git diff pseudo-doc behavior in their
+     existing owners.
+   - Controller line count: 15,165 -> 14,561.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpClassMemberCollectors.test.tsx`
+       passed: 5 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "method completions|dynamic where completion|relation string
+       completion|route action|scope|stale PHP method"` passed: 25 tests.
+     - `npm test -- src/domain/phpMethodCompletions.test.ts
+       src/domain/phpSemanticEngine.test.ts
+       src/domain/laravelCorrectnessMatrix.test.ts` passed: 187 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 237 files, 5151 tests.
 
 Integration order:
 
@@ -947,12 +997,13 @@ Integration order:
 6. Do not revisit trait-host stale-root test hardening; it is integrated and
    verified.
 7. Do not revisit Laravel scope predicates; they are integrated and verified.
+8. Do not revisit class/member collectors; they are integrated and verified.
    The next step should start with a fresh Codex audit thread over remaining
    controller clusters or recommend shifting to higher product-value work.
-8. Do not move PHP method completions or PHP/Laravel navigation without a new
+9. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-9. Follow-up focused hook tests for newly extracted provider/registry modules
+10. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 Current operational goal:
