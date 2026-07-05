@@ -773,6 +773,33 @@ Completed worker integrations:
        passed: 12 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 232 files, 5122 tests.
+24. `019f3408-3752-7b10-8bb9-00122b24ec41`
+   - Title: Audit next post-signature slice.
+   - Result: no code changes.
+   - Recommended the next slice be focused hook tests for
+     `usePhpSignatureHelpProvider`, not another production extraction.
+   - Rationale: remaining PHP method completions and PHP/Laravel navigation
+     still fan into Laravel target collectors, provider caches, relation-path
+     owner resolution, indexed fallback, and file-opening side effects.
+   - Potential future production slice: class hierarchy/trait predicates, but
+     only after another audit because they currently feed diagnostics, code
+     actions, navigation, and trait-host checks.
+25. `019f340a-61b0-79d0-8a73-bfe9b9e67c9a`
+   - Title: Add PHP hook signature tests.
+   - Integrated as `src/application/usePhpSignatureHelpProvider.test.tsx`.
+   - Added focused hook coverage for receiver signatures, named-argument index
+     mapping, static resolver routing, stale-root null behavior, inlay reuse of
+     signature resolution, stale-root `[]` inlay fallback, and the 40-call inlay
+     cap.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpSignatureHelpProvider.test.tsx`
+       passed: 7 tests.
+     - `npm test -- src/domain/phpMethodCompletions.test.ts
+       src/domain/phpInlayHints.test.ts` passed: 101 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "signature|inlay|Laravel container receivers|magic-where|scope"`
+       passed: 12 tests.
+     - `npm run check` passed.
 
 Integration order:
 
@@ -780,12 +807,14 @@ Integration order:
    verified.
 2. Do not revisit PHP signature help + PHP parameter inlay hints; it is
    integrated and verified.
-3. Next work must start with a fresh Codex audit thread over the remaining
+3. Do not revisit `usePhpSignatureHelpProvider` focused hook tests; they are
+   integrated and verified.
+4. Next work must start with a fresh Codex audit thread over the remaining
    controller clusters and return a narrow worker slice or a blocker plan.
-4. Do not move PHP method completions or PHP/Laravel navigation without a new
+5. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-5. Follow-up focused hook tests for newly extracted provider/registry modules
+6. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
