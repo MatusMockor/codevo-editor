@@ -293,15 +293,19 @@ Create Codex threads for:
      definition/declaration/type-definition/implementation callbacks.
    - Thread: `019f3381-474c-7170-b66c-541516267ff0`
    - Worktree: `/Users/matusmockor/.codex/worktrees/e29b/editor`
-   - Status: active worker thread.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchLanguageNavigation.ts`;
+     controller line count is now 20,471 in the main working tree.
    - Strict boundary: do not move call hierarchy, type hierarchy, references,
      Open Class, Workspace Symbols, Search Everywhere, Quick Open, Text Search,
      or PHP semantic resolver/type inference logic.
-   - Required main-thread verification after integration:
-     - `npm run check`
+   - Main-thread verification after integration:
+     - `npm run check` passed.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
        "definition|implementation|declaration|type definition|implementation chooser|Cmd\\+B|stale|inactive project"`
-     - full preview test; full suite if user-facing diff is broad.
+       passed: 284 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
 
 17. Hierarchy and references panels
    - Ownership: call hierarchy, type hierarchy, references/file references

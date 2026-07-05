@@ -23,6 +23,10 @@ import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
 import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
+import {
+  useWorkbenchImplementationChooserState,
+  useWorkbenchLanguageNavigation,
+} from "./useWorkbenchLanguageNavigation";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
@@ -175,15 +179,11 @@ import type {
 import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
-  toEditorPosition,
-  toLanguageServerTextDocumentPosition,
   type EditorPosition,
   type EditorRevealTarget,
   type LanguageServerConfigurationSettings,
-  type LanguageServerFeature,
   type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
-  type LanguageServerLocation,
   type LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
 import {
@@ -225,7 +225,6 @@ import {
 import {
   implementationChooserTitle,
   implementationTargetFromProjectSymbol,
-  implementationTargetFromLocation,
   type ImplementationTarget,
 } from "../domain/implementationTargets";
 import {
@@ -893,10 +892,8 @@ export function useWorkbenchController(
   const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  const [implementationChooser, setImplementationChooser] = useState<{
-    targets: ImplementationTarget[];
-    title: string;
-  } | null>(null);
+  const { implementationChooser, setImplementationChooser } =
+    useWorkbenchImplementationChooserState();
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
@@ -15474,471 +15471,6 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  const implementationTargetsFromLocations = useCallback(
-    async (
-      locations: LanguageServerLocation[],
-      shouldContinue: () => boolean = () => true,
-    ): Promise<ImplementationTarget[]> => {
-      const uniqueTargets = new Map<string, ImplementationTarget>();
-
-      for (const location of locations) {
-        if (!shouldContinue()) {
-          return [];
-        }
-
-        const path = pathFromLanguageServerUri(location.uri);
-        let source: string | null = null;
-
-        if (path) {
-          try {
-            source =
-              documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
-          } catch {
-            source = null;
-          }
-        }
-
-        if (!shouldContinue()) {
-          return [];
-        }
-
-        const target = implementationTargetFromLocation(location, source);
-
-        if (!target) {
-          continue;
-        }
-
-        uniqueTargets.set(target.id, target);
-      }
-
-      return [...uniqueTargets.values()];
-    },
-    [documents, workspaceFiles],
-  );
-
-  const openImplementationTarget = useCallback(
-    async (target: ImplementationTarget) => {
-      const opened = await openNavigationTarget(
-        target.path,
-        target.position,
-        target.label,
-        {
-          readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                target.path,
-              )
-            : false,
-        },
-      );
-
-      if (opened) {
-        setImplementationChooser(null);
-      }
-    },
-    [openNavigationTarget, workspaceRoot],
-  );
-
-  const goToLanguageServerLocation = useCallback(async (
-    feature: Extract<
-      LanguageServerFeature,
-      "declaration" | "definition" | "implementation" | "typeDefinition"
-    >,
-    label: string,
-    requestedPosition?: EditorPosition,
-  ): Promise<boolean> => {
-    const document = activeDocument;
-    const requestedRoot = workspaceRoot;
-    const runtimeStatus = languageServerRuntimeStatus;
-    const runtimeStatusRoot = languageServerRuntimeStatusRoot;
-
-    if (!document || !requestedRoot || !isLanguageServerDocument(document)) {
-      return false;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        runtimeStatus,
-        runtimeStatusRoot,
-        requestedRoot,
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      !canUseLanguageServerFeature(
-        runtimeStatus.capabilities,
-        feature,
-      )
-    ) {
-      return false;
-    }
-
-    const requestedSessionId = runtimeStatus.sessionId;
-    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const requestedPath = document.path;
-    const isRequestedSessionActive = () =>
-      isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
-
-    if (feature === "implementation") {
-      setImplementationChooser(null);
-    }
-
-    try {
-      await flushPendingDocumentChange(requestedPath);
-
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      if (activeDocumentRef.current?.path !== requestedPath) {
-        return false;
-      }
-
-      // Cmd+B / Cmd+click resolution latency: time the language-server
-      // round-trip for the definition feature so the actual navigation cost is
-      // observable in the runtime panel. Other nav features (declaration /
-      // implementation / typeDefinition) share this path but are not the
-      // headline Cmd+B operation, so they stay untimed to keep the metric clean.
-      const locations =
-        feature === "definition"
-          ? await measureLatency(
-              latencyTrackerForRoot(requestedRoot),
-              "definition",
-              () =>
-                languageServerFeaturesGateway[feature](
-                  requestedRoot,
-                  toLanguageServerTextDocumentPosition(
-                    requestedPath,
-                    editorPosition,
-                  ),
-                ),
-            )
-          : await languageServerFeaturesGateway[feature](
-              requestedRoot,
-              toLanguageServerTextDocumentPosition(
-                requestedPath,
-                editorPosition,
-              ),
-            );
-
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
-
-      if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(
-          locations,
-          isRequestedSessionActive,
-        );
-
-        if (!isRequestedSessionActive()) {
-          return false;
-        }
-
-        if (targets.length > 1) {
-          setImplementationChooser({
-            targets,
-            title: implementationChooserTitle(symbolName),
-          });
-          return true;
-        }
-
-        const [onlyTarget] = targets;
-
-        if (onlyTarget) {
-          if (!isRequestedSessionActive()) {
-            return false;
-          }
-
-          await openImplementationTarget(onlyTarget);
-          return true;
-        }
-      }
-
-      const [target] = locations;
-
-      if (!target) {
-        return false;
-      }
-
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      const targetPath = pathFromLanguageServerUri(target.uri);
-
-      if (!targetPath) {
-        setMessage(`Could not open ${label} target.`);
-        return false;
-      }
-
-      const previousLocation = currentNavigationLocation();
-      const opened = await openPathForNavigation(targetPath);
-
-      if (!opened) {
-        return false;
-      }
-
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      recordNavigationLocationSnapshot(previousLocation);
-      const targetPosition = toEditorPosition(target.range.start);
-      setEditorRevealTarget({
-        path: targetPath,
-        position: targetPosition,
-      });
-      setMessage(
-        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
-      );
-      return true;
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      reportLanguageServerErrorForActiveWorkspaceRoot(requestedRoot, error);
-      return false;
-    }
-  }, [
-    activeDocument,
-    flushPendingDocumentChange,
-    implementationTargetsFromLocations,
-    isLanguageServerSessionActiveForRoot,
-    languageServerFeaturesGateway,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    latencyTrackerForRoot,
-    openImplementationTarget,
-    openPathForNavigation,
-    currentNavigationLocation,
-    recordNavigationLocationSnapshot,
-    reportLanguageServerErrorForActiveWorkspaceRoot,
-    workspaceRoot,
-  ]);
-
-  const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
-    feature: Extract<
-      LanguageServerFeature,
-      | "declaration"
-      | "definition"
-      | "implementation"
-      | "sourceDefinition"
-      | "typeDefinition"
-    >,
-    label: string,
-    requestedPosition?: EditorPosition,
-  ): Promise<boolean> => {
-    const document = activeDocument;
-    const requestedRoot = workspaceRoot;
-    const runtimeStatus = javaScriptTypeScriptLanguageServerRuntimeStatus;
-    const runtimeStatusRoot = javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
-
-    if (
-      !document ||
-      !requestedRoot ||
-      !isJavaScriptTypeScriptLanguageServerDocument(document)
-    ) {
-      return false;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        runtimeStatus,
-        runtimeStatusRoot,
-        requestedRoot,
-      )
-    ) {
-      return false;
-    }
-
-    if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
-      return false;
-    }
-
-    const requestedSessionId = runtimeStatus.sessionId;
-    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const requestedPath = document.path;
-    const isRequestedJavaScriptTypeScriptSessionActive = () => {
-      return isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-        requestedRoot,
-        requestedSessionId,
-      );
-    };
-
-    if (feature === "implementation") {
-      setImplementationChooser(null);
-    }
-
-    try {
-      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      if (activeDocumentRef.current?.path !== requestedPath) {
-        return false;
-      }
-
-      const locations =
-        await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
-          requestedRoot,
-          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-        );
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
-
-      if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(
-          locations,
-          isRequestedJavaScriptTypeScriptSessionActive,
-        );
-
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return false;
-        }
-
-        if (targets.length > 1) {
-          setImplementationChooser({
-            targets,
-            title: implementationChooserTitle(symbolName),
-          });
-          return true;
-        }
-
-        const [onlyTarget] = targets;
-
-        if (onlyTarget) {
-          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-            return false;
-          }
-
-          const previousLocation = currentNavigationLocation();
-          const opened = await openPathForNavigation(onlyTarget.path, {
-            readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-              requestedRoot,
-              onlyTarget.path,
-            ),
-          });
-
-          if (!opened) {
-            return false;
-          }
-
-          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-            return false;
-          }
-
-          recordNavigationLocationSnapshot(previousLocation);
-          setImplementationChooser(null);
-          setEditorRevealTarget({
-            path: onlyTarget.path,
-            position: onlyTarget.position,
-          });
-          const targetPosition = onlyTarget.position;
-          setMessage(
-            `Opened ${onlyTarget.label} ${getFileName(onlyTarget.path)}:${targetPosition.lineNumber}:${targetPosition.column}`,
-          );
-          return true;
-        }
-      }
-
-      const [target] = locations;
-
-      if (!target) {
-        return false;
-      }
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      const targetPath = pathFromLanguageServerUri(target.uri);
-
-      if (!targetPath) {
-        setMessage(`Could not open ${label} target.`);
-        return false;
-      }
-
-      const previousLocation = currentNavigationLocation();
-      const opened = await openPathForNavigation(targetPath, {
-        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-          requestedRoot,
-          targetPath,
-        ),
-      });
-
-      if (!opened) {
-        return false;
-      }
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      recordNavigationLocationSnapshot(previousLocation);
-      const targetPosition = toEditorPosition(target.range.start);
-      setEditorRevealTarget({
-        path: targetPath,
-        position: targetPosition,
-      });
-      setMessage(
-        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
-      );
-      return true;
-    } catch (error) {
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      reportErrorForActiveWorkspaceRoot(
-        requestedRoot,
-        "JavaScript/TypeScript",
-        error,
-      );
-      return false;
-    }
-  }, [
-    activeDocument,
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    implementationTargetsFromLocations,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    openPathForNavigation,
-    currentNavigationLocation,
-    recordNavigationLocationSnapshot,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceRoot,
-  ]);
-
   const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
     if (!activeDocument) {
       return false;
@@ -16193,163 +15725,47 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  const goToDefinition = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (document?.path.endsWith(".blade.php") && editorPosition) {
-      const openedBladeTarget = await provideBladeDefinition(
-        document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
-      );
-
-      if (openedBladeTarget) {
-        return;
-      }
-    }
-
-    if (document?.path.endsWith(".latte") && editorPosition) {
-      const openedLatteTarget = await provideLatteDefinition(
-        document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
-      );
-
-      if (openedLatteTarget) {
-        return;
-      }
-    }
-
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "definition",
-        "definition",
-      );
-
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
-
-    const openedContextualPhpTarget = await goToContextualPhpDefinition();
-
-    if (openedContextualPhpTarget) {
-      return;
-    }
-
-    const openedLanguageServerTarget = await goToLanguageServerLocation(
-      "definition",
-      "definition",
-    );
-
-    if (openedLanguageServerTarget) {
-      return;
-    }
-
-    await goToIndexedSymbolDefinition();
-  }, [
+  const {
+    goToDeclaration,
+    goToDefinition,
+    goToImplementation,
+    goToImplementationAt,
+    goToSourceDefinition,
+    goToTypeDefinition,
+    openImplementationTarget,
+  } = useWorkbenchLanguageNavigation({
+    activeDocumentRef,
+    activeEditorPositionRef,
+    currentNavigationLocation,
+    documentOffsetAtEditorPosition,
+    documents,
+    flushPendingDocumentChange,
+    flushPendingJavaScriptTypeScriptDocumentChange,
     goToContextualPhpDefinition,
+    goToIndexedPhpImplementation,
     goToIndexedSymbolDefinition,
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
+    identifierAtEditorPosition,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    isLanguageServerSessionActiveForRoot,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    languageServerFeaturesGateway,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
+    latencyTrackerForRoot,
+    openPathForNavigation,
     provideBladeDefinition,
     provideLatteDefinition,
-  ]);
-
-  const goToSourceDefinition = useCallback(async () => {
-    await goToJavaScriptTypeScriptLanguageServerLocation(
-      "sourceDefinition",
-      "source definition",
-    );
-  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
-
-  const goToDeclaration = useCallback(async () => {
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "declaration",
-        "declaration",
-      );
-
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
-
-    await goToLanguageServerLocation("declaration", "declaration");
-  }, [
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
-  ]);
-
-  const goToTypeDefinition = useCallback(async () => {
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "typeDefinition",
-        "type definition",
-      );
-
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
-
-    await goToLanguageServerLocation("typeDefinition", "type definition");
-  }, [
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
-  ]);
-
-  const goToImplementation = useCallback(async () => {
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "implementation",
-        "implementation",
-      );
-
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
-
-    const openedLanguageServerTarget = await goToLanguageServerLocation(
-      "implementation",
-      "implementation",
-    );
-
-    if (openedLanguageServerTarget) {
-      return;
-    }
-
-    await goToIndexedPhpImplementation();
-  }, [
-    goToIndexedPhpImplementation,
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
-  ]);
-
-  const goToImplementationAt = useCallback(async (position: EditorPosition) => {
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "implementation",
-        "implementation",
-        position,
-      );
-
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
-
-    const openedLanguageServerTarget = await goToLanguageServerLocation(
-      "implementation",
-      "implementation",
-      position,
-    );
-
-    if (openedLanguageServerTarget) {
-      return;
-    }
-
-    await goToIndexedPhpImplementation(position);
-  }, [
-    goToIndexedPhpImplementation,
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
-  ]);
+    recordNavigationLocationSnapshot,
+    reportErrorForActiveWorkspaceRoot,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
+    setEditorRevealTarget,
+    setImplementationChooser,
+    setMessage,
+    workspaceFiles,
+    workspaceRoot,
+  });
 
   const { navigateBackward, navigateForwardInHistory, openRecentLocation } =
     useNavigationHistory({
