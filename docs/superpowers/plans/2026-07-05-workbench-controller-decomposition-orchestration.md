@@ -20,29 +20,32 @@ Current operational goal:
 - Poll worker threads proactively through `read_thread` plus direct worktree
   `git status` / `git diff --stat` checks.
 - Current next order:
-  1. delegate `useWorkbenchFileOperations` based on the fresh post-extraction
-     audit,
-  2. monitor the worker proactively through `read_thread` and direct worktree
-     checks,
-  3. integrate, verify, commit, push, and update this checkpoint,
-  4. continue with search surfaces and generic LSP navigation only after the
-     file-operations slice is safely shipped.
+  1. finish the remaining non-text search surfaces only after respecting the
+     already extracted `useWorkbenchQuickOpen` and `useWorkbenchTextSearch`
+     boundaries,
+  2. monitor workers proactively through `read_thread` and direct worktree
+     checks instead of waiting for the user,
+  3. integrate only reviewed, non-overlapping worker patches,
+  4. verify with focused tests, full preview tests, and full suite when the
+     surface is user-facing,
+  5. commit, push, and update this checkpoint after each shipped slice.
 - Note: the Codex goal tool is blocked by an old paused goal in this thread.
   Treat this checkpoint as the active operational goal until that goal can be
   safely completed or replaced.
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 23,199 lines after the
-  workspace-edit, LSP runtime lifecycle, document tab, navigation, and
-  close-lifecycle, and PHP code-action slices.
+- `src/application/useWorkbenchController.ts`: 22,141 lines after the
+  workspace-edit, LSP runtime lifecycle, document tab, navigation,
+  close-lifecycle, PHP code-action, file-operations, text-search, and
+  Quick Open slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
   lifecycle, and shared notice rendering.
 - Remaining high-return regions:
-  - File operations and external file events.
-  - Search surfaces and replace-in-path.
+  - Remaining non-text search surfaces: Open Class, workspace symbols, and
+    Search Everywhere. Do not re-extract Quick Open or text search.
   - Generic LSP navigation panels.
   - Type inference/completions/hierarchy checks.
 
@@ -202,6 +205,26 @@ Create Codex threads for:
    - Remaining search-surface follow-up: Quick Open, Open Class/workspace
      symbols, and Search Everywhere should be extracted separately rather than
      grouped with text search.
+
+12. Quick Open
+   - Ownership: Quick Open open/query/loading/results state, reset-on-open/close
+     behavior, debounced file search, latency measurement, error reporting, and
+     stale result dropping.
+   - Thread: `019f3360-c207-7800-aa43-b3b7965f21a2`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchQuickOpen.ts`; controller
+     line count is now 22,141 in the main working tree.
+   - Main-thread verification after integration:
+     - `npm run check` passed.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "Quick Open|stale.*search|inactive project"` passed: 24 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
+     - `npm test -- --run` passed: 230 files, 5117 tests.
+   - Remaining search-surface follow-up: Open Class, workspace symbols, and
+     Search Everywhere only. Existing broad worker `019f335e-47b0-73a2-a931-5ebf7e41fbbb`
+     started before this integration, so review carefully for duplicated Quick
+     Open ownership before applying any of its work.
 
 ## Current Local Findings
 

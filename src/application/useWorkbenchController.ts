@@ -17,6 +17,7 @@ import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
+import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
@@ -880,18 +881,6 @@ export function useWorkbenchController(
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [quickOpenOpen, setQuickOpenOpenState] = useState(false);
-  const [quickOpenQuery, setQuickOpenQuery] = useState("");
-  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
-  const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
-    [],
-  );
-  const setQuickOpenOpen = useCallback((isOpen: boolean) => {
-    setQuickOpenQuery("");
-    setQuickOpenResults([]);
-    setQuickOpenLoading(false);
-    setQuickOpenOpenState(isOpen);
-  }, []);
   // Per-workspace MRU buffer (newest first). Cached/restored alongside the rest
   // of the per-tab workbench state so one project's recent files can never leak
   // into another project's switcher.
@@ -1563,6 +1552,21 @@ export function useWorkbenchController(
 
     return tracker;
   }, []);
+
+  const {
+    quickOpenOpen,
+    quickOpenQuery,
+    quickOpenLoading,
+    quickOpenResults,
+    setQuickOpenOpen,
+    setQuickOpenQuery,
+  } = useWorkbenchQuickOpen({
+    fileSearch,
+    latencyTrackerForRoot,
+    reportError,
+    setMessage,
+    workspaceRoot,
+  });
 
   const forgetLatencyTrackerForRoot = useCallback(
     (rootPath: string | null | undefined) => {
@@ -2501,9 +2505,6 @@ export function useWorkbenchController(
     setSearchEverywhereFiles([]);
     setSearchEverywhereSymbols([]);
     setQuickOpenOpen(false);
-    setQuickOpenQuery("");
-    setQuickOpenLoading(false);
-    setQuickOpenResults([]);
     setRecentFilesSwitcherOpen(false);
     setRecentLocationsPanelOpen(false);
     resetTextSearchState();
@@ -2905,9 +2906,6 @@ export function useWorkbenchController(
       setSearchEverywhereFiles([]);
       setSearchEverywhereSymbols([]);
       setQuickOpenOpen(false);
-      setQuickOpenQuery("");
-      setQuickOpenLoading(false);
-      setQuickOpenResults([]);
       resetTextSearchState();
       setFileStructureScope("current");
       setImplementationChooser(null);
@@ -19425,58 +19423,6 @@ export function useWorkbenchController(
       active = false;
     };
   }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
-
-  useEffect(() => {
-    if (!quickOpenOpen || !workspaceRoot) {
-      setQuickOpenResults([]);
-      setQuickOpenLoading(false);
-      return;
-    }
-
-    let active = true;
-    setQuickOpenLoading(true);
-
-    const timeout = window.setTimeout(() => {
-      measureLatency(latencyTrackerForRoot(workspaceRoot), "quickOpen", () =>
-        fileSearch.searchFiles(workspaceRoot, quickOpenQuery, 80),
-      )
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-
-          setQuickOpenResults(results);
-          setMessage(null);
-        })
-        .catch((error) => {
-          if (!active) {
-            return;
-          }
-
-          setQuickOpenResults([]);
-          reportError("Quick Open", error);
-        })
-        .finally(() => {
-          if (!active) {
-            return;
-          }
-
-          setQuickOpenLoading(false);
-        });
-    }, 120);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    fileSearch,
-    latencyTrackerForRoot,
-    quickOpenOpen,
-    quickOpenQuery,
-    reportError,
-    workspaceRoot,
-  ]);
 
   const searchClassOpenSymbols = useCallback(
     async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
