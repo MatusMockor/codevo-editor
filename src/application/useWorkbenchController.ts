@@ -20,6 +20,7 @@ import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
+import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
@@ -901,12 +902,6 @@ export function useWorkbenchController(
   const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  const [workspaceSymbolsOpen, setWorkspaceSymbolsOpen] = useState(false);
-  const [workspaceSymbolsQuery, setWorkspaceSymbolsQuery] = useState("");
-  const [workspaceSymbolsLoading, setWorkspaceSymbolsLoading] = useState(false);
-  const [workspaceSymbolsResults, setWorkspaceSymbolsResults] = useState<
-    ProjectSymbolSearchResult[]
-  >([]);
   // PhpStorm "Search Everywhere" (double-Shift). One dialog aggregating the
   // file / symbol / action searches above. The raw per-source results are kept
   // separately (each filled by its own per-root, debounced, drop-stale search)
@@ -1589,6 +1584,23 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatusRef,
     javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
     javaScriptTypeScriptRuntimeStatusByRootRef,
+    reportError,
+    setMessage,
+  });
+
+  const {
+    workspaceSymbolsOpen,
+    workspaceSymbolsQuery,
+    workspaceSymbolsLoading,
+    workspaceSymbolsResults,
+    setWorkspaceSymbolsOpen,
+    setWorkspaceSymbolsQuery,
+    setWorkspaceSymbolsLoading,
+    setWorkspaceSymbolsResults,
+  } = useWorkbenchWorkspaceSymbols({
+    workspaceRoot,
+    canSearchClassOpenSymbols,
+    searchClassOpenSymbols,
     reportError,
     setMessage,
   });
@@ -19426,61 +19438,6 @@ export function useWorkbenchController(
       active = false;
     };
   }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
-
-  useEffect(() => {
-    if (
-      !workspaceSymbolsOpen ||
-      !workspaceRoot ||
-      !workspaceSymbolsQuery.trim() ||
-      !canSearchClassOpenSymbols
-    ) {
-      setWorkspaceSymbolsResults([]);
-      setWorkspaceSymbolsLoading(false);
-      return;
-    }
-
-    let active = true;
-    setWorkspaceSymbolsLoading(true);
-
-    const timeout = window.setTimeout(() => {
-      searchClassOpenSymbols(workspaceSymbolsQuery, 120)
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-
-          setWorkspaceSymbolsResults(results.slice(0, 80));
-          setMessage(null);
-        })
-        .catch((error) => {
-          if (!active) {
-            return;
-          }
-
-          setWorkspaceSymbolsResults([]);
-          reportError("Go to Symbol in Workspace", error);
-        })
-        .finally(() => {
-          if (!active) {
-            return;
-          }
-
-          setWorkspaceSymbolsLoading(false);
-        });
-    }, 120);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    canSearchClassOpenSymbols,
-    reportError,
-    searchClassOpenSymbols,
-    workspaceRoot,
-    workspaceSymbolsOpen,
-    workspaceSymbolsQuery,
-  ]);
 
   // Search Everywhere unified file + symbol search. Reuses the exact same
   // gateways as Quick Open (files) and Go to Symbol (symbols) - this effect only

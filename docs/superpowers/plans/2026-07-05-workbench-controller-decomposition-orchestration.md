@@ -239,6 +239,36 @@ Create Codex threads for:
        passed: 38 tests.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
        passed: 867 tests.
+
+14. Workspace Symbols
+   - Ownership: Workspace Symbols open/query/loading/results state and the
+     debounced effect that consumes `searchClassOpenSymbols`.
+   - Thread: `019f3373-4f5e-7a81-9d6f-ce4b30b818aa`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchWorkspaceSymbols.ts`;
+     controller line count is now 21,833 in the main working tree.
+   - Strict boundary: do not move Quick Open, text search, Open Class,
+     Search Everywhere, command registry, or navigation activation.
+   - Main-thread verification after integration:
+     - `npm run check`
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "workspace symbol|stale.*search|inactive project"` passed: 34 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
+
+15. Search Everywhere
+   - Ownership: Search Everywhere open/query/loading raw file/symbol state,
+     debounced combined search effect, and pure model composition if it can move
+     without owning command registry.
+   - Thread: `019f3373-9b8d-7222-ab47-eeae1f001034`
+   - Status: active worker thread.
+   - Strict boundary: do not move Quick Open, text search, Open Class,
+     Workspace Symbols, command registry, or navigation activation.
+   - Required verification before integration:
+     - `npm run check`
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "Search Everywhere|stale.*search|inactive project"`
+     - Full preview test if the diff is broad.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
        passed: 867 tests.
      - `npm test -- --run` passed: 230 files, 5117 tests.
