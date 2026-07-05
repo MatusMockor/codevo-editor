@@ -20,6 +20,7 @@ import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
+import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { useDocumentSync } from "./useDocumentSync";
@@ -84,9 +85,6 @@ import {
   phpLocalDiagnosticNoticeGroup,
 } from "./diagnosticNotices";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import type { CallHierarchyRow, CallHierarchyView } from "../domain/callHierarchy";
-import type { TypeHierarchyRow, TypeHierarchyView } from "../domain/typeHierarchy";
-import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
 import {
   shouldIndexWorkspace,
   shouldStartLanguageServer,
@@ -188,10 +186,6 @@ import {
   type LanguageServerLocation,
   type LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
-import {
-  filterFileReferenceLocationsToWorkspace,
-  findAllFileReferencesCommand,
-} from "../domain/javascriptTypeScriptFileReferences";
 import {
   planFormatOnSave,
   type FormatOnSavePlan,
@@ -903,12 +897,6 @@ export function useWorkbenchController(
     targets: ImplementationTarget[];
     title: string;
   } | null>(null);
-  const [callHierarchyView, setCallHierarchyView] =
-    useState<CallHierarchyView | null>(null);
-  const [typeHierarchyView, setTypeHierarchyView] =
-    useState<TypeHierarchyView | null>(null);
-  const [referencesView, setReferencesView] =
-    useState<ReferencesView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
@@ -2441,6 +2429,79 @@ export function useWorkbenchController(
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
+  });
+
+  const openSymbolPanelNavigationTargetRef = useRef<
+    (
+      path: string,
+      position: EditorPosition,
+      label: string,
+      options?: { readOnly?: boolean },
+    ) => Promise<boolean>
+  >(async () => false);
+  const openSymbolPanelNavigationTarget = useCallback(
+    (
+      path: string,
+      position: EditorPosition,
+      label: string,
+      options?: { readOnly?: boolean },
+    ) =>
+      openSymbolPanelNavigationTargetRef.current(
+        path,
+        position,
+        label,
+        options,
+      ),
+    [],
+  );
+  const closeSymbolPanelCompetingSurfaces = useCallback(() => {
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
+    setTextSearchOpen(false);
+    setSettingsOpen(false);
+    setFileStructureOpen(false);
+    setImplementationChooser(null);
+  }, [
+    setClassOpenOpen,
+    setQuickOpenOpen,
+    setTextSearchOpen,
+    setWorkspaceSymbolsOpen,
+  ]);
+  const {
+    callHierarchyView,
+    typeHierarchyView,
+    referencesView,
+    setCallHierarchyView,
+    setTypeHierarchyView,
+    setReferencesView,
+    openCallHierarchyRow,
+    openTypeHierarchyRow,
+    openReferenceRow,
+    openCallHierarchy,
+    openTypeHierarchy,
+    openReferencesPanel,
+    openFileReferencesPanel,
+  } = useWorkbenchSymbolPanels({
+    activeDocumentRef,
+    activeEditorPositionRef,
+    workspaceRoot,
+    languageServerFeaturesGateway,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    flushPendingDocumentChange,
+    flushPendingJavaScriptTypeScriptDocumentChange,
+    isLanguageServerSessionActiveForRoot,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    openNavigationTarget: openSymbolPanelNavigationTarget,
+    shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
+    closeCompetingSurfaces: closeSymbolPanelCompetingSurfaces,
+    reportError,
+    setMessage,
   });
 
   const resetFilePrefetchState = useCallback(() => {
@@ -5168,6 +5229,7 @@ export function useWorkbenchController(
     setSearchEverywhereOpen,
     setWorkspaceSymbolsOpen,
   });
+  openSymbolPanelNavigationTargetRef.current = openNavigationTarget;
 
   const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
     activeEditorPositionRef.current = position;
@@ -16287,718 +16349,6 @@ export function useWorkbenchController(
     goToIndexedPhpImplementation,
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
-  ]);
-
-  const openCallHierarchyRow = useCallback(
-    async (row: CallHierarchyRow) => {
-      const path = pathFromLanguageServerUri(row.item.uri);
-
-      if (!path) {
-        setMessage("Could not open call hierarchy target.");
-        return;
-      }
-
-      const opened = await openNavigationTarget(
-        path,
-        toEditorPosition(row.range.start),
-        row.label,
-        {
-          readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                path,
-              )
-            : false,
-        },
-      );
-
-      if (opened) {
-        setCallHierarchyView(null);
-      }
-    },
-    [openNavigationTarget, workspaceRoot],
-  );
-
-  const openTypeHierarchyRow = useCallback(
-    async (row: TypeHierarchyRow) => {
-      const path = pathFromLanguageServerUri(row.item.uri);
-
-      if (!path) {
-        setMessage("Could not open type hierarchy target.");
-        return;
-      }
-
-      const opened = await openNavigationTarget(
-        path,
-        toEditorPosition(row.range.start),
-        row.label,
-        {
-          readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                path,
-              )
-            : false,
-        },
-      );
-
-      if (opened) {
-        setTypeHierarchyView(null);
-      }
-    },
-    [openNavigationTarget, workspaceRoot],
-  );
-
-  const openCallHierarchy = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to show call hierarchy.",
-      );
-      return;
-    }
-
-    if (
-      !workspaceRoot ||
-      (!isLanguageServerDocument(document) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(document))
-    ) {
-      setMessage(
-        "Call hierarchy is available for PHP, JavaScript, and TypeScript files.",
-      );
-      return;
-    }
-
-    const isPhpDocument = isLanguageServerDocument(document);
-    let callHierarchyContext: {
-      featuresGateway: LanguageServerFeaturesGateway;
-      flushPendingChange(path: string): Promise<void>;
-      isSessionActive(rootPath: string, sessionId: number): boolean;
-      sessionId: number;
-    };
-
-    if (isPhpDocument) {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "PHP language server is starting. Try call hierarchy again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "callHierarchy",
-        )
-      ) {
-        setMessage("PHP language server does not provide call hierarchy.");
-        return;
-      }
-
-      callHierarchyContext = {
-        featuresGateway: languageServerFeaturesGateway,
-        flushPendingChange: flushPendingDocumentChange,
-        isSessionActive: isLanguageServerSessionActiveForRoot,
-        sessionId: languageServerRuntimeStatus.sessionId,
-      };
-    } else {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "callHierarchy",
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service does not provide call hierarchy.",
-        );
-        return;
-      }
-
-      callHierarchyContext = {
-        featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-        flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
-        isSessionActive:
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-        sessionId: javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
-      };
-    }
-
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      setMessage("Place the cursor on a symbol to show call hierarchy.");
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedPath = document.path;
-    const requestedSessionId = callHierarchyContext.sessionId;
-    const isRequestedSessionActive = () =>
-      callHierarchyContext.isSessionActive(requestedRoot, requestedSessionId);
-
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setSettingsOpen(false);
-    setFileStructureOpen(false);
-    setImplementationChooser(null);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setReferencesView(null);
-
-    try {
-      await callHierarchyContext.flushPendingChange(requestedPath);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      const [item] = await callHierarchyContext.featuresGateway.prepareCallHierarchy(
-        requestedRoot,
-        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-      );
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      if (!item) {
-        setMessage("No call hierarchy available for this symbol.");
-        return;
-      }
-
-      const [incoming, outgoing] = await Promise.all([
-        callHierarchyContext.featuresGateway.incomingCalls(
-          requestedRoot,
-          item,
-        ),
-        callHierarchyContext.featuresGateway.outgoingCalls(
-          requestedRoot,
-          item,
-        ),
-      ]);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      setCallHierarchyView({
-        incoming,
-        item,
-        outgoing,
-      });
-      setMessage(null);
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      reportError("Call Hierarchy", error);
-    }
-  }, [
-    flushPendingDocumentChange,
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    isLanguageServerSessionActiveForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerFeaturesGateway,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    reportError,
-    workspaceRoot,
-  ]);
-
-  const openTypeHierarchy = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to show type hierarchy.",
-      );
-      return;
-    }
-
-    if (
-      !workspaceRoot ||
-      (!isLanguageServerDocument(document) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(document))
-    ) {
-      setMessage(
-        "Type hierarchy is available for PHP, JavaScript, and TypeScript files.",
-      );
-      return;
-    }
-
-    const isPhpDocument = isLanguageServerDocument(document);
-    let typeHierarchyContext: {
-      featuresGateway: LanguageServerFeaturesGateway;
-      flushPendingChange(path: string): Promise<void>;
-      isSessionActive(rootPath: string, sessionId: number): boolean;
-      sessionId: number;
-    };
-
-    if (isPhpDocument) {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "PHP language server is starting. Try type hierarchy again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "typeHierarchy",
-        )
-      ) {
-        setMessage("PHP language server does not provide type hierarchy.");
-        return;
-      }
-
-      typeHierarchyContext = {
-        featuresGateway: languageServerFeaturesGateway,
-        flushPendingChange: flushPendingDocumentChange,
-        isSessionActive: isLanguageServerSessionActiveForRoot,
-        sessionId: languageServerRuntimeStatus.sessionId,
-      };
-    } else {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "typeHierarchy",
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service does not provide type hierarchy.",
-        );
-        return;
-      }
-
-      typeHierarchyContext = {
-        featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-        flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
-        isSessionActive:
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-        sessionId: javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
-      };
-    }
-
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      setMessage("Place the cursor on a type to show type hierarchy.");
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedPath = document.path;
-    const requestedSessionId = typeHierarchyContext.sessionId;
-    const isRequestedSessionActive = () =>
-      typeHierarchyContext.isSessionActive(requestedRoot, requestedSessionId);
-
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setSettingsOpen(false);
-    setFileStructureOpen(false);
-    setImplementationChooser(null);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setReferencesView(null);
-
-    try {
-      await typeHierarchyContext.flushPendingChange(requestedPath);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      const [item] = await typeHierarchyContext.featuresGateway.prepareTypeHierarchy(
-        requestedRoot,
-        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-      );
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      if (!item) {
-        setMessage("No type hierarchy available for this symbol.");
-        return;
-      }
-
-      const [supertypes, subtypes] = await Promise.all([
-        typeHierarchyContext.featuresGateway.typeHierarchySupertypes(
-          requestedRoot,
-          item,
-        ),
-        typeHierarchyContext.featuresGateway.typeHierarchySubtypes(
-          requestedRoot,
-          item,
-        ),
-      ]);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      setTypeHierarchyView({
-        item,
-        subtypes,
-        supertypes,
-      });
-      setMessage(null);
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      reportError("Type Hierarchy", error);
-    }
-  }, [
-    flushPendingDocumentChange,
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    isLanguageServerSessionActiveForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerFeaturesGateway,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    reportError,
-    workspaceRoot,
-  ]);
-
-  const openReferenceRow = useCallback(
-    async (row: ReferenceRow) => {
-      const opened = await openNavigationTarget(
-        row.path,
-        toEditorPosition(row.location.range.start),
-        "reference",
-        {
-          readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                row.path,
-              )
-            : false,
-        },
-      );
-
-      if (opened) {
-        setReferencesView(null);
-      }
-    },
-    [openNavigationTarget, workspaceRoot],
-  );
-
-  const openReferencesPanel = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to find references.",
-      );
-      return;
-    }
-
-    if (
-      !workspaceRoot ||
-      (!isLanguageServerDocument(document) &&
-        !isJavaScriptTypeScriptLanguageServerDocument(document))
-    ) {
-      setMessage(
-        "Find references is available for PHP, JavaScript, and TypeScript files.",
-      );
-      return;
-    }
-
-    const isPhpDocument = isLanguageServerDocument(document);
-    let referencesContext: {
-      featuresGateway: LanguageServerFeaturesGateway;
-      flushPendingChange(path: string): Promise<void>;
-      isSessionActive(rootPath: string, sessionId: number): boolean;
-      sessionId: number;
-    };
-
-    if (isPhpDocument) {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "PHP language server is starting. Try find references again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "references",
-        )
-      ) {
-        setMessage("PHP language server does not provide references.");
-        return;
-      }
-
-      referencesContext = {
-        featuresGateway: languageServerFeaturesGateway,
-        flushPendingChange: flushPendingDocumentChange,
-        isSessionActive: isLanguageServerSessionActiveForRoot,
-        sessionId: languageServerRuntimeStatus.sessionId,
-      };
-    } else {
-      if (
-        !isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service is starting. Try find references again in a moment.",
-        );
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "references",
-        )
-      ) {
-        setMessage(
-          "JavaScript/TypeScript service does not provide references.",
-        );
-        return;
-      }
-
-      referencesContext = {
-        featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-        flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
-        isSessionActive:
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-        sessionId: javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
-      };
-    }
-
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      setMessage("Place the cursor on a symbol to find references.");
-      return;
-    }
-
-    const symbolName =
-      identifierAtEditorPosition(document.content, editorPosition) ??
-      "symbol";
-    const requestedRoot = workspaceRoot;
-    const requestedPath = document.path;
-    const requestedSessionId = referencesContext.sessionId;
-    const isRequestedSessionActive = () =>
-      referencesContext.isSessionActive(requestedRoot, requestedSessionId);
-
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setSettingsOpen(false);
-    setFileStructureOpen(false);
-    setImplementationChooser(null);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setReferencesView(null);
-
-    try {
-      await referencesContext.flushPendingChange(requestedPath);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      const locations = await referencesContext.featuresGateway.references(
-        requestedRoot,
-        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-      );
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      if (locations.length === 0) {
-        setReferencesView({ locations: [], symbol: symbolName });
-        setMessage(`No references found for ${symbolName}.`);
-        return;
-      }
-
-      setReferencesView({ locations, symbol: symbolName });
-      setMessage(null);
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      reportError("Find References", error);
-    }
-  }, [
-    flushPendingDocumentChange,
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    isLanguageServerSessionActiveForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerFeaturesGateway,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    reportError,
-    workspaceRoot,
-  ]);
-
-  const openFileReferencesPanel = useCallback(async () => {
-    const document = activeDocumentRef.current;
-
-    if (!document || !workspaceRoot) {
-      setMessage("Open a JavaScript or TypeScript file to find file references.");
-      return;
-    }
-
-    if (!isJavaScriptTypeScriptLanguageServerDocument(document)) {
-      setMessage(
-        "Find File References is available for JavaScript and TypeScript files.",
-      );
-      return;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
-    ) {
-      setMessage(
-        "JavaScript/TypeScript service is starting. Try find file references again in a moment.",
-      );
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedPath = document.path;
-    const requestedSessionId =
-      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-    const isRequestedSessionActive = () =>
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-        requestedRoot,
-        requestedSessionId,
-      );
-
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setSettingsOpen(false);
-    setFileStructureOpen(false);
-    setImplementationChooser(null);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setReferencesView(null);
-
-    try {
-      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      const locations =
-        await javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations(
-          requestedRoot,
-          findAllFileReferencesCommand(requestedPath),
-        );
-
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      const workspaceLocations = filterFileReferenceLocationsToWorkspace(
-        locations,
-        requestedRoot,
-      );
-      const symbol = document.name;
-
-      if (workspaceLocations.length === 0) {
-        setReferencesView({ locations: [], symbol });
-        setMessage(`No file references found for ${symbol}.`);
-        return;
-      }
-
-      setReferencesView({ locations: workspaceLocations, symbol });
-      setMessage(null);
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return;
-      }
-
-      reportError("Find File References", error);
-    }
-  }, [
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    reportError,
-    workspaceRoot,
   ]);
 
   const { navigateBackward, navigateForwardInHistory, openRecentLocation } =

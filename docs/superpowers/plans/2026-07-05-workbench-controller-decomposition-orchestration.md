@@ -308,15 +308,19 @@ Create Codex threads for:
      panel state and open-row/open-panel orchestration.
    - Thread: `019f3381-912d-7010-a52e-0f2d33d4dc08`
    - Worktree: `/Users/matusmockor/.codex/worktrees/31b2/editor`
-   - Status: active worker thread.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchSymbolPanels.ts`;
+     controller line count is now 21,055 in the main working tree.
    - Strict boundary: do not move definition/declaration/type-definition/
      implementation navigation or implementation chooser, and do not move PHP
      semantic/type resolver/completion regions.
-   - Required main-thread verification after integration:
-     - `npm run check`
+   - Main-thread verification after integration:
+     - `npm run check` passed.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
        "call hierarchy|type hierarchy|references|file references|stale|inactive project"`
-     - full preview test; full suite if user-facing diff is broad.
+       passed: 205 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
 
 ## Current Local Findings
 
