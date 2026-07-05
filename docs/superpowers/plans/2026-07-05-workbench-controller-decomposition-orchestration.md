@@ -19,10 +19,17 @@ Current operational goal:
 - Do not manually implement a delegable slice in the main thread.
 - Poll worker threads proactively through `read_thread` plus direct worktree
   `git status` / `git diff --stat` checks.
-- Next order:
-  1. navigation/history operations,
-  2. close/save lifecycle split,
-  3. PHP code-action provider extraction.
+- Current next order:
+  1. delegate `useWorkbenchFileOperations` based on the fresh post-extraction
+     audit,
+  2. monitor the worker proactively through `read_thread` and direct worktree
+     checks,
+  3. integrate, verify, commit, push, and update this checkpoint,
+  4. continue with search surfaces and generic LSP navigation only after the
+     file-operations slice is safely shipped.
+- Note: the Codex goal tool is blocked by an old paused goal in this thread.
+  Treat this checkpoint as the active operational goal until that goal can be
+  safely completed or replaced.
 
 Current baseline from main:
 
@@ -34,7 +41,9 @@ Current baseline from main:
   PHP outline, floating surfaces, document sync, diagnostics, save/close
   lifecycle, and shared notice rendering.
 - Remaining high-return regions:
-  - Document/tabs/open-file operations.
+  - File operations and external file events.
+  - Search surfaces and replace-in-path.
+  - Generic LSP navigation panels.
   - Type inference/completions/hierarchy checks.
 
 ## Orchestration Rules
@@ -134,8 +143,44 @@ Create Codex threads for:
      builders.
    - Thread: `019f324a-9ba1-7b00-894e-318e30d9edf8`
    - Status: completed and integrated into main working tree.
-   - Result: extracted `src/application/usePhpCodeActions.ts`; controller line
+  - Result: extracted `src/application/usePhpCodeActions.ts`; controller line
      count is now 23,199 in the main working tree.
+
+9. Fresh post-extraction controller audit
+   - Ownership: read-only.
+   - Thread: `019f3342-7496-7960-a1ad-4acf781b2f91`
+   - Status: completed.
+   - Result: current controller line count is 23,199. Recommended next slices:
+     `useWorkbenchFileOperations`, then `useWorkbenchSearchSurfaces`, then
+     generic LSP navigation panels. Do not extract workspace open/session reset
+     or the whole PHP semantic region yet because both are still too coupled.
+
+10. File operations and external file events
+   - Ownership: create/rename/delete file and folder flows, external file event
+     handling, directory refresh queues, and reconciliation with extracted
+     workspace-edit file operation helpers.
+   - Desired output: `src/application/useWorkbenchFileOperations.ts` or a
+     precise extraction plan if the worker finds hidden coupling.
+   - Required invariants: preserve JS/TS `will/didRenameFiles`, PHP rename
+     hooks, preview path remaps, stale-root guards after awaits, git diff
+     pseudo-document separation, and dirty external-change safety.
+   - Thread: `019f3348-ba1d-7762-94ff-3cd005080957`
+   - Retry thread: `019f334c-3554-7740-a6b0-f2c21e041ff8` was started while
+     the first worker appeared stalled; it was stopped after the first worker's
+     clean diff was integrated.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchFileOperations.ts`;
+     controller line count is now 22,485 in the main working tree.
+   - Main-thread verification after integration:
+     - `npm run check` passed.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "rename|delete|create|external file|workspace edit|stale"` passed:
+       223 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
+   - Next recommended worker slice from audit:
+     `useWorkbenchSearchSurfaces` for Quick Open, Open Class, workspace symbols,
+     Search Everywhere, text search, and replace-in-path state/effects.
 
 ## Current Local Findings
 

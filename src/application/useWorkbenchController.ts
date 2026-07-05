@@ -15,6 +15,7 @@ import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
+import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
@@ -243,8 +244,6 @@ import {
   cachedLanguageServerRuntimeStatusForRoot,
 } from "../domain/languageServerRuntimeStatusCache";
 import {
-  canRefreshDocumentFromExternalFileChange,
-  type WorkspaceFileChangeEvent,
   type WorkspaceFileChangeGateway,
   type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
@@ -509,8 +508,6 @@ import {
 } from "../domain/recentFiles";
 import { type RecentLocation } from "../domain/recentLocations";
 import {
-  removeBookmarksForPath,
-  renameBookmarksForPath,
   sortBookmarks,
   type Bookmark,
 } from "../domain/bookmarks";
@@ -601,12 +598,6 @@ interface PhpTraitThisCompletionContext {
 // cap simply receive no parameter-name hint until they scroll into a fresh
 // viewport window.
 const PHP_INLAY_HINT_CALL_LIMIT = 40;
-
-// Coalescing window for directory reloads triggered by external filesystem
-// changes so a burst (e.g. `git checkout`) reloads each affected directory
-// once instead of thrashing the tree on every event.
-const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
-const WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS = 120;
 
 interface PhpClassMemberReadResult {
   content: string;
@@ -1195,13 +1186,6 @@ export function useWorkbenchController(
   );
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
-  const pendingWorkspaceDirectoryRefreshesRef = useRef<Set<string>>(new Set());
-  const workspaceDirectoryRefreshTimerRef = useRef<
-    ReturnType<typeof setTimeout> | null
-  >(null);
-  const workspaceGitStatusRefreshTimerRef = useRef<
-    ReturnType<typeof setTimeout> | null
-  >(null);
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
   const laravelDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
@@ -4813,62 +4797,6 @@ export function useWorkbenchController(
     },
     [activeDocument, updateActiveDocument],
   );
-
-  const createFile = useCallback(async () => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    const relativePath = prompter.prompt("New file path", "src/NewFile.php");
-
-    if (!relativePath) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const path = joinWorkspacePath(requestedRoot, relativePath);
-
-    try {
-      const mayCreate = await applyJavaScriptTypeScriptCreateEdits(path);
-      if (!mayCreate) {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await workspaceFiles.createTextFile(path);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await notifyJavaScriptTypeScriptFileCreated(path);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const parentPath = getParentPath(path);
-      setExpandedDirectories((current) => new Set(current).add(parentPath));
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await openFile({ kind: "file", name: getFileName(path), path });
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Create File", error);
-    }
-  }, [
-    applyJavaScriptTypeScriptCreateEdits,
-    openFile,
-    notifyJavaScriptTypeScriptFileCreated,
-    prompter,
-    refreshDirectory,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
 
   // Returns the test file's content when it already exists, otherwise `null`.
   // Existence is probed by reading the file (the gateway rejects for a missing
@@ -17287,616 +17215,65 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  const createDirectory = useCallback(async () => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    const relativePath = prompter.prompt("New folder path", "src/Domain");
-
-    if (!relativePath) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const path = joinWorkspacePath(requestedRoot, relativePath);
-
-    try {
-      await workspaceFiles.createDirectory(path);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const parentPath = getParentPath(path);
-      setExpandedDirectories((current) => new Set(current).add(parentPath));
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Created ${path}`);
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Create Folder", error);
-    }
-  }, [
-    prompter,
-    refreshDirectory,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceFiles,
+  const {
+    createFile,
+    createDirectory,
+    renameActiveDocument,
+    renameEntry,
+    deleteActiveDocument,
+    handleWorkspaceFileChange,
+  } = useWorkbenchFileOperations({
     workspaceRoot,
-  ]);
-
-  const renameActiveDocument = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    if (!document) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    if (!requestedRoot) {
-      return;
-    }
-
-    const nextName = prompter.prompt("Rename file", document.name);
-
-    if (!nextName || nextName === document.name) {
-      return;
-    }
-
-    const parentPath = getParentPath(document.path);
-    const oldPath = document.path;
-    const nextPath = joinWorkspacePath(parentPath, nextName);
-
-    try {
-      if (isLanguageServerDocument(document)) {
-        await applyPhpRenameEdits(document.path, nextPath);
-      }
-
-      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
-          document.path,
-          nextPath,
-        );
-        if (!mayRename) {
-          return;
-        }
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await workspaceFiles.renamePath(document.path, nextPath);
-      filePrefetchCacheRef.current.invalidate(document.path);
-      filePrefetchCacheRef.current.invalidate(nextPath);
-      if (isLanguageServerDocument(document)) {
-        await notifyPhpFileRenamed(document.path, nextPath);
-      }
-
-      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        await notifyJavaScriptTypeScriptFileRenamed(document.path, nextPath);
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await syncClosedDocument(document);
-      await syncClosedJavaScriptTypeScriptDocument(document);
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      clearLanguageServerDiagnosticsForPath(requestedRoot, oldPath);
-
-      setDocuments((current) => {
-        const currentDocument = current[document.path] ?? document;
-        const renamedDocument = {
-          ...currentDocument,
-          language: detectLanguage(nextPath),
-          name: nextName,
-          path: nextPath,
-        };
-        const next = { ...current };
-        delete next[document.path];
-        next[nextPath] = renamedDocument;
-        return next;
-      });
-      setOpenPaths((current) =>
-        current.map((path) => (path === document.path ? nextPath : path)),
-      );
-      setActivePath(nextPath);
-      remapRecentFile(oldPath, { name: nextName, path: nextPath });
-      remapRecentLocations(oldPath, {
-        name: nextName,
-        path: nextPath,
-        relativePath:
-          workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
-      });
-      setBookmarks((current) =>
-        renameBookmarksForPath(current, oldPath, nextPath),
-      );
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Renamed ${document.name}`);
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename File", error);
-    }
-  }, [
+    activePath,
+    sidebarView,
+    languageServerDiagnosticsByPath,
+    javaScriptTypeScriptDiagnosticsByPath,
+    phpLocalDiagnosticsByPath,
+    activeDocumentRef,
+    currentWorkspaceRootRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
+    filePrefetchCacheRef,
+    workspaceFiles,
+    prompter,
+    setActivePath,
+    setBookmarks,
+    setDocuments,
+    setEntriesByDirectory,
+    setExpandedDirectories,
+    setManuallyCollapsedDirectories,
+    setMessage,
+    setOpenPaths,
+    setPreviewPath,
+    applyJavaScriptTypeScriptCreateEdits,
+    applyJavaScriptTypeScriptDeleteEdits,
     applyJavaScriptTypeScriptRenameEdits,
     applyPhpRenameEdits,
     clearLanguageServerDiagnosticsForPath,
+    closeDocument,
+    forgetExternallyRemovedDocumentPath,
+    forgetRecentFile,
+    forgetRecentLocationsForPath,
+    invalidateBladeComponentNamesForPath,
+    invalidateBladeViewDataEntriesForPath,
+    invalidatePhpLaravelMigrationSourcesForPath,
+    invalidatePhpLaravelProviderSourcesForPath,
+    markExternallyRemovedDocumentPath,
+    notifyJavaScriptTypeScriptFileCreated,
+    notifyJavaScriptTypeScriptFileDeleted,
     notifyJavaScriptTypeScriptFileRenamed,
     notifyPhpFileRenamed,
-    prompter,
+    openFile,
     refreshDirectory,
+    refreshGitStatus,
     remapRecentFile,
     remapRecentLocations,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  const renameEntry = useCallback(
-    async (entry: FileEntry) => {
-      if (entry.kind !== "directory") {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      if (!requestedRoot) {
-        return;
-      }
-
-      const nextName = prompter.prompt("Rename folder", entry.name);
-
-      if (!nextName || nextName === entry.name) {
-        return;
-      }
-
-      const oldPath = entry.path;
-      const parentPath = getParentPath(oldPath);
-      const nextPath = joinWorkspacePath(parentPath, nextName);
-
-      if (nextPath === oldPath) {
-        return;
-      }
-
-      try {
-        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
-          oldPath,
-          nextPath,
-        );
-        if (!mayRename) {
-          return;
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        await workspaceFiles.renamePath(oldPath, nextPath);
-        filePrefetchCacheRef.current.invalidate(oldPath);
-        filePrefetchCacheRef.current.invalidate(nextPath);
-
-        await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        const diagnosticPaths = new Set([
-          ...Object.keys(languageServerDiagnosticsByPath),
-          ...Object.keys(javaScriptTypeScriptDiagnosticsByPath),
-          ...Object.keys(phpLocalDiagnosticsByPath),
-          ...Object.keys(documentsRef.current),
-        ]);
-
-        for (const diagnosticPath of diagnosticPaths) {
-          if (isPathInDirectory(diagnosticPath, oldPath)) {
-            clearLanguageServerDiagnosticsForPath(requestedRoot, diagnosticPath);
-          }
-        }
-
-        const remappedDocuments = Object.values(documentsRef.current).filter(
-          (document) =>
-            remapPathForDirectoryRename(document.path, oldPath, nextPath) !==
-            document.path,
-        );
-        await Promise.all(
-          remappedDocuments.flatMap((document) => [
-            syncClosedDocument(document),
-            syncClosedJavaScriptTypeScriptDocument(document),
-          ]),
-        );
-
-        const nextDocuments: Record<string, EditorDocument> = {};
-        for (const document of Object.values(documentsRef.current)) {
-          const remappedPath = remapPathForDirectoryRename(
-            document.path,
-            oldPath,
-            nextPath,
-          );
-          const remappedDocument =
-            remappedPath === document.path
-              ? document
-              : {
-                  ...document,
-                  language: detectLanguage(remappedPath),
-                  name: getFileName(remappedPath),
-                  path: remappedPath,
-                };
-          nextDocuments[remappedDocument.path] = remappedDocument;
-        }
-
-        const nextOpenPaths = openPathsRef.current.map((path) =>
-          remapPathForDirectoryRename(path, oldPath, nextPath),
-        );
-        const nextPreviewPath = previewPathRef.current
-          ? remapPathForDirectoryRename(previewPathRef.current, oldPath, nextPath)
-          : null;
-        const nextActivePath = activePath
-          ? remapPathForDirectoryRename(activePath, oldPath, nextPath)
-          : null;
-
-        documentsRef.current = nextDocuments;
-        openPathsRef.current = nextOpenPaths;
-        previewPathRef.current = nextPreviewPath;
-        activeDocumentRef.current = nextActivePath
-          ? nextDocuments[nextActivePath] ?? null
-          : null;
-
-        setDocuments(nextDocuments);
-        setOpenPaths(nextOpenPaths);
-        setPreviewPath(nextPreviewPath);
-        setActivePath(nextActivePath);
-        setEntriesByDirectory((current) =>
-          remapEntriesByDirectoryForDirectoryRename(current, oldPath, nextPath),
-        );
-        setExpandedDirectories((current) =>
-          remapPathSetForDirectoryRename(current, oldPath, nextPath),
-        );
-        setManuallyCollapsedDirectories((current) =>
-          remapPathSetForDirectoryRename(current, oldPath, nextPath),
-        );
-
-        const directoriesToRefresh = new Set([parentPath, getParentPath(nextPath)]);
-        for (const directory of directoriesToRefresh) {
-          await refreshDirectory(directory);
-          if (
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-          ) {
-            return;
-          }
-        }
-
-        setMessage(`Renamed ${entry.name}`);
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename Folder", error);
-      }
-    },
-    [
-      activePath,
-      applyJavaScriptTypeScriptRenameEdits,
-      clearLanguageServerDiagnosticsForPath,
-      javaScriptTypeScriptDiagnosticsByPath,
-      languageServerDiagnosticsByPath,
-      notifyJavaScriptTypeScriptFileRenamed,
-      phpLocalDiagnosticsByPath,
-      prompter,
-      refreshDirectory,
-      reportErrorForActiveWorkspaceRoot,
-      workspaceFiles,
-      workspaceRoot,
-      syncClosedDocument,
-      syncClosedJavaScriptTypeScriptDocument,
-    ],
-  );
-
-  const deleteActiveDocument = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    if (!document) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    if (!requestedRoot) {
-      return;
-    }
-
-    if (!prompter.confirm(`Delete ${document.name}?`)) {
-      return;
-    }
-
-    const parentPath = getParentPath(document.path);
-    const deletedPath = document.path;
-
-    try {
-      const mayDelete = await applyJavaScriptTypeScriptDeleteEdits(deletedPath);
-      if (!mayDelete) {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      await workspaceFiles.deletePath(deletedPath);
-      filePrefetchCacheRef.current.invalidate(deletedPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        await syncClosedJavaScriptTypeScriptDocument(document);
-      }
-      await notifyJavaScriptTypeScriptFileDeleted(deletedPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      closeDocument(deletedPath);
-      forgetRecentFile(deletedPath);
-      forgetRecentLocationsForPath(deletedPath);
-      setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
-      clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Deleted ${document.name}`);
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Delete File", error);
-    }
-  }, [
-    applyJavaScriptTypeScriptDeleteEdits,
-    clearLanguageServerDiagnosticsForPath,
-    closeActiveSurface,
-    closeDocument,
-    forgetRecentFile,
-    forgetRecentLocationsForPath,
-    notifyJavaScriptTypeScriptFileDeleted,
-    prompter,
-    refreshDirectory,
-    reportErrorForActiveWorkspaceRoot,
-    syncClosedJavaScriptTypeScriptDocument,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  // External filesystem changes (delete / rename / create performed outside the
-  // editor) arrive in bursts — e.g. a `git checkout` rewrites many files at
-  // once. Coalesce the resulting directory reloads behind a short timer and
-  // re-check the active root before every reload so a workspace switch
-  // mid-burst can never refresh another project's tree.
-  const flushPendingWorkspaceDirectoryRefreshes = useCallback(() => {
-    workspaceDirectoryRefreshTimerRef.current = null;
-    const directories = Array.from(
-      pendingWorkspaceDirectoryRefreshesRef.current,
-    );
-    pendingWorkspaceDirectoryRefreshesRef.current = new Set();
-
-    directories.forEach((directory) => {
-      if (
-        !workspacePathBelongsToRoot(directory, currentWorkspaceRootRef.current)
-      ) {
-        return;
-      }
-
-      void refreshDirectory(directory);
-    });
-  }, [refreshDirectory]);
-
-  const queueWorkspaceDirectoryRefresh = useCallback(
-    (directory: string) => {
-      pendingWorkspaceDirectoryRefreshesRef.current.add(directory);
-
-      if (workspaceDirectoryRefreshTimerRef.current) {
-        return;
-      }
-
-      workspaceDirectoryRefreshTimerRef.current = setTimeout(() => {
-        flushPendingWorkspaceDirectoryRefreshes();
-      }, WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS);
-    },
-    [flushPendingWorkspaceDirectoryRefreshes],
-  );
-
-  const queueWorkspaceGitStatusRefresh = useCallback(
-    (requestedRoot: string) => {
-      if (sidebarView !== "git") {
-        return;
-      }
-
-      if (workspaceGitStatusRefreshTimerRef.current) {
-        clearTimeout(workspaceGitStatusRefreshTimerRef.current);
-      }
-
-      workspaceGitStatusRefreshTimerRef.current = setTimeout(() => {
-        workspaceGitStatusRefreshTimerRef.current = null;
-
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
-          return;
-        }
-
-        void refreshGitStatus();
-      }, WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS);
-    },
-    [refreshGitStatus, sidebarView],
-  );
-
-  const handleExternalRemovedPath = useCallback(
-    (requestedRoot: string, removedPath: string) => {
-      markExternallyRemovedDocumentPath(requestedRoot, removedPath);
-      closeDocument(removedPath);
-      clearLanguageServerDiagnosticsForPath(requestedRoot, removedPath);
-      filePrefetchCacheRef.current.invalidate(removedPath);
-      queueWorkspaceDirectoryRefresh(getParentPath(removedPath));
-    },
-    [
-      clearLanguageServerDiagnosticsForPath,
-      closeDocument,
-      markExternallyRemovedDocumentPath,
-      queueWorkspaceDirectoryRefresh,
-    ],
-  );
-
-  const refreshOpenDocumentFromExternalFileChange = useCallback(
-    async (requestedRoot: string, path: string): Promise<void> => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const openDocument = documentsRef.current[path];
-
-      if (!canRefreshDocumentFromExternalFileChange(openDocument)) {
-        return;
-      }
-
-      let refreshedContent: string;
-
-      try {
-        refreshedContent = await workspaceFiles.readTextFile(path);
-      } catch {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const latestDocument = documentsRef.current[path];
-
-      if (!canRefreshDocumentFromExternalFileChange(latestDocument)) {
-        return;
-      }
-
-      const refreshedDocument: EditorDocument = {
-        ...latestDocument,
-        content: refreshedContent,
-        savedContent: refreshedContent,
-      };
-
-      documentsRef.current = {
-        ...documentsRef.current,
-        [path]: refreshedDocument,
-      };
-      activeDocumentRef.current =
-        activeDocumentRef.current?.path === path
-          ? refreshedDocument
-          : activeDocumentRef.current;
-      setDocuments((current) => {
-        const currentDocument = current[path];
-
-        if (!canRefreshDocumentFromExternalFileChange(currentDocument)) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [path]: {
-            ...currentDocument,
-            content: refreshedContent,
-            savedContent: refreshedContent,
-          },
-        };
-      });
-    },
-    [workspaceFiles],
-  );
-
-  const handleWorkspaceFileChange = useCallback(
-    (event: WorkspaceFileChangeEvent) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      // Per-workspace isolation: never apply a change reported for a workspace
-      // other than the one currently active in this tab.
-      if (
-        !requestedRoot ||
-        !workspaceRootKeysEqual(requestedRoot, event.rootPath)
-      ) {
-        return;
-      }
-
-      queueWorkspaceGitStatusRefresh(requestedRoot);
-
-      // Drop the cached migration / provider sources / Blade component names /
-      // Blade view-data entries when anything under database/migrations,
-      // app/Providers, the Blade component directories, or any PHP file
-      // changes so the next completion reloads the DB columns / Builder macros
-      // / component tags / view variables. Covers create/modify/delete and
-      // both ends of a rename.
-      invalidatePhpLaravelMigrationSourcesForPath(requestedRoot, event.path);
-      invalidatePhpLaravelProviderSourcesForPath(requestedRoot, event.path);
-      invalidateBladeComponentNamesForPath(requestedRoot, event.path);
-      invalidateBladeViewDataEntriesForPath(requestedRoot, event.path);
-
-      if (event.previousPath) {
-        invalidatePhpLaravelMigrationSourcesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidatePhpLaravelProviderSourcesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidateBladeComponentNamesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidateBladeViewDataEntriesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-      }
-
-      if (event.kind === "deleted") {
-        handleExternalRemovedPath(requestedRoot, event.path);
-        return;
-      }
-
-      if (event.kind === "renamed") {
-        if (event.previousPath) {
-          handleExternalRemovedPath(requestedRoot, event.previousPath);
-        }
-
-        forgetExternallyRemovedDocumentPath(event.path);
-        queueWorkspaceDirectoryRefresh(getParentPath(event.path));
-        return;
-      }
-
-      if (event.kind === "created" || event.kind === "modified") {
-        queueWorkspaceDirectoryRefresh(getParentPath(event.path));
-      }
-
-      if (event.kind === "modified" && event.fileKind !== "directory") {
-        void refreshOpenDocumentFromExternalFileChange(requestedRoot, event.path);
-      }
-    },
-    [
-      handleExternalRemovedPath,
-      forgetExternallyRemovedDocumentPath,
-      invalidateBladeComponentNamesForPath,
-      invalidateBladeViewDataEntriesForPath,
-      invalidatePhpLaravelMigrationSourcesForPath,
-      invalidatePhpLaravelProviderSourcesForPath,
-      queueWorkspaceGitStatusRefresh,
-      queueWorkspaceDirectoryRefresh,
-      refreshOpenDocumentFromExternalFileChange,
-    ],
-  );
+    workspacePathBelongsToRoot,
+  });
 
   const toggleSmartMode = useCallback(async () => {
     const nextMode = shouldStartLanguageServer(intelligenceMode)
@@ -20873,21 +20250,6 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  useEffect(
-    () => () => {
-      if (workspaceDirectoryRefreshTimerRef.current) {
-        clearTimeout(workspaceDirectoryRefreshTimerRef.current);
-        workspaceDirectoryRefreshTimerRef.current = null;
-      }
-
-      if (workspaceGitStatusRefreshTimerRef.current) {
-        clearTimeout(workspaceGitStatusRefreshTimerRef.current);
-        workspaceGitStatusRefreshTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
   useEffect(() => {
     let active = true;
     let unsubscribe: ManagedPhpactorInstallUnsubscribeFn | null = null;
@@ -23098,82 +22460,6 @@ function isLanguageServerStatusForWorkspace(
   return (
     Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
   );
-}
-
-function isPathInDirectory(path: string, directoryPath: string): boolean {
-  return (
-    path === directoryPath || path.startsWith(`${directoryPath.replace(/\/+$/, "")}/`)
-  );
-}
-
-function remapPathForDirectoryRename(
-  path: string,
-  oldDirectoryPath: string,
-  newDirectoryPath: string,
-): string {
-  const normalizedOldDirectoryPath = oldDirectoryPath.replace(/\/+$/, "");
-
-  if (path === normalizedOldDirectoryPath) {
-    return newDirectoryPath;
-  }
-
-  const oldPrefix = `${normalizedOldDirectoryPath}/`;
-
-  if (!path.startsWith(oldPrefix)) {
-    return path;
-  }
-
-  return `${newDirectoryPath}${path.slice(normalizedOldDirectoryPath.length)}`;
-}
-
-function remapPathSetForDirectoryRename(
-  paths: Set<string>,
-  oldDirectoryPath: string,
-  newDirectoryPath: string,
-): Set<string> {
-  const next = new Set<string>();
-
-  for (const path of paths) {
-    next.add(remapPathForDirectoryRename(path, oldDirectoryPath, newDirectoryPath));
-  }
-
-  return next;
-}
-
-function remapEntriesByDirectoryForDirectoryRename(
-  entriesByDirectory: Record<string, FileEntry[]>,
-  oldDirectoryPath: string,
-  newDirectoryPath: string,
-): Record<string, FileEntry[]> {
-  const next: Record<string, FileEntry[]> = {};
-
-  for (const [directoryPath, entries] of Object.entries(entriesByDirectory)) {
-    const nextDirectoryPath = remapPathForDirectoryRename(
-      directoryPath,
-      oldDirectoryPath,
-      newDirectoryPath,
-    );
-
-    next[nextDirectoryPath] = entries.map((entry) => {
-      const nextEntryPath = remapPathForDirectoryRename(
-        entry.path,
-        oldDirectoryPath,
-        newDirectoryPath,
-      );
-
-      if (nextEntryPath === entry.path) {
-        return entry;
-      }
-
-      return {
-        ...entry,
-        name: getFileName(nextEntryPath),
-        path: nextEntryPath,
-      };
-    });
-  }
-
-  return next;
 }
 
 /**
