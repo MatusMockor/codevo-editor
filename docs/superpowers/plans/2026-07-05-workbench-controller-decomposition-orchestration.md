@@ -439,26 +439,55 @@ Create Codex threads for:
 
 ## Next Worker Slice
 
-Delegate the next high-return controller slice from current `main`.
+The post-LSP PHP semantic audit completed on 2026-07-05 from thread
+`019f3397-dde6-71a1-933c-c24376ec10cf`.
 
-Recommended next candidates:
+Current baseline:
 
-1. Re-audit the controller responsibility clusters after the large PHP
-   code-action extraction.
-2. Pick the next high-return slice based on the audit rather than guessing from
-   stale anchors.
+- Main commit: `0f0c10e2`.
+- `src/application/useWorkbenchController.ts`: 20,471 lines.
+- Already extracted in this phase:
+  - `src/application/useWorkbenchSymbolPanels.ts`.
+  - `src/application/useWorkbenchLanguageNavigation.ts`.
 
-Preserve:
+Remaining PHP/Laravel/OOP clusters:
 
-- per-project tab isolation.
-- modified-document safety.
-- git diff/editor tab separation.
-- PHP/JS feature boundaries.
+1. PHP semantic/type resolver around controller lines `5459-10989`.
+2. PHP/Laravel completions/signatures/inlay hints around lines `10991-12035`.
+3. Contextual PHP diagnostics false-positive filter around lines `8649-8987`.
+4. PHP contextual Laravel/navigation definitions around lines `12438-15468`.
+5. Laravel migration/provider source registries around lines `1085-1108` and
+   `6139-6414`.
 
-Suggested tests:
+Active worker threads:
 
-- focused `useWorkbenchController.preview.test.tsx` patterns around the chosen
-  slice,
-- `npm run check`,
-- full `npm test -- src/application/useWorkbenchController.preview.test.tsx`
-  before integration.
+1. `019f339d-1b51-73a1-8c6e-67d534678903`
+   - Title: Extract PHP semantic resolver.
+   - Worktree: `/Users/matusmockor/.codex/worktrees/cfae/editor`.
+   - Priority: integrate first if clean, because completions/diagnostics can
+     consume the extracted resolver as dependency injection.
+2. `019f339b-3457-7413-bc6e-ffcebaeb7b4f`
+   - Title: Extract PHP completion provider.
+   - Worktree: `/Users/matusmockor/.codex/worktrees/ba2a/editor`.
+   - Must not move resolver internals; inject resolver callbacks or return a
+     smaller plan if blocked.
+3. `019f339b-8184-7b71-8eaf-a3c9d32379dc`
+   - Title: Extract PHP diagnostic context filter.
+   - Worktree: `/Users/matusmockor/.codex/worktrees/ba05/editor`.
+   - Must not move completions or resolver internals; inject dependencies.
+
+Integration order:
+
+1. Semantic resolver.
+2. Completion provider.
+3. Diagnostic context filter.
+
+For every worker:
+
+- Poll with `read_thread` and direct worktree `git status` / `git diff --stat`.
+- Reject patches that duplicate ownership in both controller and hook.
+- Preserve per-project tab isolation, PHP/JS boundaries, Laravel provider
+  separation from future Nette, modified-document safety, and git diff/editor
+  tab separation.
+- Run focused tests requested by the worker, then `npm run check`, full preview
+  tests, and full suite for broad user-facing diffs.
