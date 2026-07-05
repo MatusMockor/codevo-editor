@@ -1013,6 +1013,45 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 238 files, 5154 tests.
+38. `019f3451-32f8-7760-ab1d-9a2fdf131643`
+   - Title: Audit next workbench decomposition slice.
+   - Result: read-only audit.
+   - Recommended next tiny production extraction:
+     move JS/TS file-structure orchestration into
+     `useJavaScriptTypeScriptFileStructure`.
+   - Strict boundary:
+     - move `loadJavaScriptTypeScriptFileOutline`, the JS/TS branch of
+       `openFileStructure`, and JS/TS outline/loading state,
+     - keep PHP outline behavior, inherited-member toggling, command registry,
+       floating-surface wiring, file-opening callbacks, modified-document
+       safety, and git diff pseudo-doc behavior in their existing owners,
+     - preserve stale-root and same-root JS/TS language-server session checks.
+39. `019f3453-5834-7f22-92d0-f42c893f17ca`
+   - Title: Extract JS/TS file structure.
+   - Integrated into main-thread worktree.
+   - Added `useJavaScriptTypeScriptFileStructure` ownership of JS/TS outline
+     loading, outline/loading state, JS/TS `openFileStructure` branch, outline
+     conversion helpers, and JS/TS reset helper.
+   - Kept PHP file-structure branch, inherited scope behavior, floating
+     surfaces, command wiring, returned workbench API shape, PHP completions,
+     PHP/Laravel navigation, file-opening callbacks, modified-document reads,
+     and git diff pseudo-doc behavior in `useWorkbenchController.ts`.
+   - Controller line count: 14,458 -> 14,270.
+   - Worker verification:
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "JavaScript and TypeScript file structure|same-root session
+       restart|stale JavaScript and TypeScript file structure"` passed: 26
+       tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "file structure|inherited members|PHP file structure"` passed: 9
+       tests.
+     - `npm run check` passed.
+   - Main-thread verification:
+     - Same JS/TS focused preview filter passed: 26 tests.
+     - Same PHP/file-structure focused preview filter passed: 9 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 238 files, 5154 tests.
 
 Integration order:
 
@@ -1031,10 +1070,12 @@ Integration order:
 8. Do not revisit class/member collectors; they are integrated and verified.
 9. Do not revisit collection model type resolver extraction; it is integrated
    and verified.
-10. Do not move PHP method completions or PHP/Laravel navigation without a new
+10. Do not revisit JS/TS file-structure extraction; it is integrated and
+    verified.
+11. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-11. Follow-up focused hook tests for newly extracted provider/registry modules
+12. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 Current operational goal:

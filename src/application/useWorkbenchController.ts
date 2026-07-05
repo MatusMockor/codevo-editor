@@ -64,6 +64,7 @@ import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import { usePhpOutline } from "./usePhpOutline";
+import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import {
   phpSuperMethodHierarchyReferences,
 } from "./usePhpCodeActions";
@@ -175,7 +176,6 @@ import {
   type EditorPosition,
   type EditorRevealTarget,
   type LanguageServerConfigurationSettings,
-  type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
   type LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
@@ -245,11 +245,9 @@ import {
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import type { NavigationHistory } from "../domain/navigation";
 import {
-  emptyPhpFileOutline,
   type PhpFileOutline,
   type PhpFileOutlineGateway,
   type PhpFileStructureScope,
-  type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
 import {
   emptyPhpTree,
@@ -711,14 +709,6 @@ export function useWorkbenchController(
     loadingInheritedPhpFileOutlinePaths,
     setLoadingInheritedPhpFileOutlinePaths,
   ] = useState<Set<string>>(new Set());
-  const [
-    javaScriptTypeScriptFileOutlinesByPath,
-    setJavaScriptTypeScriptFileOutlinesByPath,
-  ] = useState<Record<string, PhpFileOutline>>({});
-  const [
-    loadingJavaScriptTypeScriptFileOutlinePaths,
-    setLoadingJavaScriptTypeScriptFileOutlinePaths,
-  ] = useState<Set<string>>(new Set());
   const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] =
     useState<Set<string>>(new Set());
   const [editorRevealTarget, setEditorRevealTarget] =
@@ -795,6 +785,10 @@ export function useWorkbenchController(
   const [fileStructureOpen, setFileStructureOpen] = useState(false);
   const [fileStructureScope, setFileStructureScope] =
     useState<PhpFileStructureScope>("current");
+  const setJavaScriptTypeScriptFileStructureScopeCurrent = useCallback(
+    () => setFileStructureScope("current"),
+    [],
+  );
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const [
@@ -2178,6 +2172,29 @@ export function useWorkbenchController(
     reportErrorForActiveWorkspaceRoot,
   });
 
+  const {
+    javaScriptTypeScriptFileStructureOutlineForDocument,
+    javaScriptTypeScriptFileStructureLoadingForDocument,
+    openJavaScriptTypeScriptFileStructure,
+    resetJavaScriptTypeScriptFileStructure,
+  } = useJavaScriptTypeScriptFileStructure({
+    workspaceRoot,
+    currentWorkspaceRootRef,
+    languageServerFeaturesGateway:
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+    languageServerRuntimeStatus:
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot:
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    isLanguageServerSessionActiveForRoot:
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    reportError,
+    setMessage,
+    setFileStructureOpen,
+    setFileStructureScopeCurrent:
+      setJavaScriptTypeScriptFileStructureScopeCurrent,
+  });
+
   // Cold first-nav fix: the open-time PHP probe only starts phpactor; it never
   // issues a real LSP request, so phpactor's index stays cold until the user's
   // first Cmd+B / hover / completion eats the full cold-index latency. After
@@ -2446,8 +2463,7 @@ export function useWorkbenchController(
     setExpandedPhpFilePaths(new Set());
     setLoadingPhpFileOutlinePaths(new Set());
     setLoadingInheritedPhpFileOutlinePaths(new Set());
-    setJavaScriptTypeScriptFileOutlinesByPath({});
-    setLoadingJavaScriptTypeScriptFileOutlinePaths(new Set());
+    resetJavaScriptTypeScriptFileStructure();
     setPhpFileOutlineExpandedNodeIds(new Set());
     setClassOpenOpen(false);
     setClassOpenQuery("");
@@ -2491,6 +2507,7 @@ export function useWorkbenchController(
     resetFilePrefetchState,
     resetHistory,
     resetSearchEverywhere,
+    resetJavaScriptTypeScriptFileStructure,
     resetTextSearchState,
     stopProjectRuntimes,
   ]);
@@ -2842,11 +2859,10 @@ export function useWorkbenchController(
       setEditorGitBaselinesByPath({});
       setPhpFileOutlinesByPath({});
       setPhpInheritedFileOutlinesByPath({});
-      setJavaScriptTypeScriptFileOutlinesByPath({});
+      resetJavaScriptTypeScriptFileStructure();
       setExpandedPhpFilePaths(new Set());
       setLoadingPhpFileOutlinePaths(new Set());
       setLoadingInheritedPhpFileOutlinePaths(new Set());
-      setLoadingJavaScriptTypeScriptFileOutlinePaths(new Set());
       setPhpFileOutlineExpandedNodeIds(new Set());
       setClassOpenOpen(false);
       setClassOpenQuery("");
@@ -3101,6 +3117,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
       resetFilePrefetchState,
+      resetJavaScriptTypeScriptFileStructure,
       resetSearchEverywhere,
       resetTextSearchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
@@ -3865,90 +3882,6 @@ export function useWorkbenchController(
     setPhpFileOutlineExpandedNodeIds,
   });
 
-  const loadJavaScriptTypeScriptFileOutline = useCallback(
-    async (path: string) => {
-      if (!workspaceRoot) {
-        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        return;
-      }
-
-      if (
-        !isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-      const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
-      setLoadingJavaScriptTypeScriptFileOutlinePaths((current) =>
-        new Set(current).add(path),
-      );
-
-      try {
-        const symbols =
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols(
-            requestedRoot,
-            path,
-          );
-
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return;
-        }
-
-        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: fileOutlineFromLanguageServerDocumentSymbols(
-            requestedRoot,
-            path,
-            symbols,
-          ),
-        }));
-        setMessage(null);
-      } catch (error) {
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-          return;
-        }
-
-        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
-          ...current,
-          [path]: emptyPhpFileOutline(),
-        }));
-        reportError("JavaScript/TypeScript File Structure", error);
-      } finally {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        setLoadingJavaScriptTypeScriptFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
-      }
-    },
-    [
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-      javaScriptTypeScriptLanguageServerFeaturesGateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      reportError,
-      workspaceRoot,
-    ],
-  );
-
   const setFileStructureScopeMode = useCallback(
     (scope: PhpFileStructureScope) => {
       setFileStructureScope(scope);
@@ -3987,39 +3920,7 @@ export function useWorkbenchController(
     setTypeHierarchyView(null);
     setReferencesView(null);
 
-    if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-      if (
-        !workspaceRoot ||
-        !isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        )
-      ) {
-        setMessage("JavaScript/TypeScript service is starting. Try structure again in a moment.");
-        return;
-      }
-
-      if (
-        !canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "documentSymbol",
-        )
-      ) {
-        setMessage("JavaScript/TypeScript service does not provide file structure.");
-        return;
-      }
-
-      setFileStructureScopeMode("current");
-      setFileStructureOpen(true);
-
-      if (
-        !javaScriptTypeScriptFileOutlinesByPath[document.path] &&
-        !loadingJavaScriptTypeScriptFileOutlinePaths.has(document.path)
-      ) {
-        void loadJavaScriptTypeScriptFileOutline(document.path);
-      }
-
+    if (openJavaScriptTypeScriptFileStructure(document)) {
       return;
     }
 
@@ -4045,13 +3946,9 @@ export function useWorkbenchController(
   }, [
     fileStructureOpen,
     fileStructureScope,
-    javaScriptTypeScriptFileOutlinesByPath,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    loadJavaScriptTypeScriptFileOutline,
     loadPhpFileOutline,
-    loadingJavaScriptTypeScriptFileOutlinePaths,
     loadingPhpFileOutlinePaths,
+    openJavaScriptTypeScriptFileStructure,
     phpFileOutlinesByPath,
     setFileStructureScopeMode,
   ]);
@@ -13003,7 +12900,7 @@ export function useWorkbenchController(
     }
 
     if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-      return javaScriptTypeScriptFileOutlinesByPath[activeDocument.path] ?? null;
+      return javaScriptTypeScriptFileStructureOutlineForDocument(activeDocument);
     }
 
     const currentOutline = phpFileOutlinesByPath[activeDocument.path] ?? null;
@@ -13019,13 +12916,13 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     fileStructureScope,
-    javaScriptTypeScriptFileOutlinesByPath,
+    javaScriptTypeScriptFileStructureOutlineForDocument,
     phpFileOutlinesByPath,
     phpInheritedFileOutlinesByPath,
   ]);
   const fileStructureLoading = Boolean(
     activeDocument &&
-      (loadingJavaScriptTypeScriptFileOutlinePaths.has(activeDocument.path) ||
+      (javaScriptTypeScriptFileStructureLoadingForDocument(activeDocument) ||
         loadingPhpFileOutlinePaths.has(activeDocument.path) ||
         (fileStructureScope === "inherited" &&
           loadingInheritedPhpFileOutlinePaths.has(activeDocument.path))),
@@ -13501,91 +13398,6 @@ function mergeDiagnosticsByPath(
   });
 
   return merged;
-}
-
-function fileOutlineFromLanguageServerDocumentSymbols(
-  workspaceRoot: string,
-  path: string,
-  symbols: LanguageServerDocumentSymbol[],
-): PhpFileOutline {
-  return {
-    nodes: symbols.map((symbol) =>
-      fileOutlineNodeFromLanguageServerDocumentSymbol(
-        workspaceRoot,
-        path,
-        symbol,
-        null,
-      ),
-    ),
-  };
-}
-
-function fileOutlineNodeFromLanguageServerDocumentSymbol(
-  workspaceRoot: string,
-  path: string,
-  symbol: LanguageServerDocumentSymbol,
-  parentName: string | null,
-): PhpFileOutlineNode {
-  const fullyQualifiedName = parentName
-    ? `${parentName}.${symbol.name}`
-    : symbol.name;
-
-  return {
-    children: symbol.children.map((child) =>
-      fileOutlineNodeFromLanguageServerDocumentSymbol(
-        workspaceRoot,
-        path,
-        child,
-        fullyQualifiedName,
-      ),
-    ),
-    column: symbol.selectionRange.start.character + 1,
-    fullyQualifiedName,
-    id: `${path}:${symbol.selectionRange.start.line}:${symbol.selectionRange.start.character}:${fullyQualifiedName}`,
-    kind: fileOutlineKindFromLanguageServerSymbolKind(symbol.kind),
-    label: symbol.name,
-    lineNumber: symbol.selectionRange.start.line + 1,
-    path,
-    relativePath: relativeWorkspacePath(workspaceRoot, path),
-  };
-}
-
-function fileOutlineKindFromLanguageServerSymbolKind(
-  kind: number,
-): PhpFileOutlineNode["kind"] {
-  if (kind === 5) {
-    return "class";
-  }
-
-  if (kind === 6 || kind === 9) {
-    return "method";
-  }
-
-  if (kind === 7 || kind === 8) {
-    return "property";
-  }
-
-  if (kind === 10) {
-    return "enum";
-  }
-
-  if (kind === 11) {
-    return "interface";
-  }
-
-  if (kind === 12) {
-    return "function";
-  }
-
-  if (kind === 13) {
-    return "variable";
-  }
-
-  if (kind === 14 || kind === 22) {
-    return "constant";
-  }
-
-  return "container";
 }
 
 function relativeWorkspacePath(workspaceRoot: string, path: string): string {
