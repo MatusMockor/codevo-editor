@@ -1052,6 +1052,48 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 238 files, 5154 tests.
+40. `019f345c-9d24-7a53-b359-f4240d774084`
+   - Title: Audit controller decomposition.
+   - Result: read-only audit.
+   - Recommended next tiny production extraction:
+     move only the pure trait-context parser used to enrich `$this`
+     completions into `phpTraitThisCompletionContext.ts`.
+   - Strict boundary:
+     - move `phpTraitThisCompletionContextAt`,
+       `PhpSameSourceTypeDeclaration`, `phpSameSourceTypeDeclarations`,
+       `phpSameSourceTypeUsesTrait`, `phpSameSourceTypeBody`,
+       `phpMatchingPairOffset`, and `phpOffsetAtPosition`,
+     - keep `providePhpMethodCompletions`, route-action method completions,
+       Laravel relation string completions, receiver/static method completion
+       orchestration, stale-root guards, migration/provider warmups, and stable
+       metadata handling in `useWorkbenchController.ts`,
+     - keep `phpNormalizedReceiverExpressionIsThis` in the controller for now.
+41. `019f345e-953f-77f1-972c-fdf320e9d47b`
+   - Title: Extract trait context parser.
+   - Integrated into main-thread worktree.
+   - Added `phpTraitThisCompletionContext.ts` and focused parser tests.
+   - Moved only the pure trait `$this` completion parser helpers out of
+     `useWorkbenchController.ts`.
+   - Kept `providePhpMethodCompletions`, Laravel navigation/completions,
+     relation completion, PHP method collection, stale-root guards,
+     file-opening callbacks, pseudo-doc/git paths, and JS/TS paths in their
+     existing owners.
+   - Parser now returns `null` when there is no unique same-source host, matching
+     direct parser tests.
+   - Controller line count: 14,270 -> 14,085.
+   - Worker verification:
+     - `npm test -- src/application/phpTraitThisCompletionContext.test.ts`
+       passed: 5 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t 'trait \\$this host method|same-source trait host'` passed: 2
+       tests.
+     - `npm run check` passed.
+   - Main-thread verification:
+     - Same parser test passed: 5 tests.
+     - Same preview subset passed: 2 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 239 files, 5159 tests.
 
 Integration order:
 
@@ -1072,10 +1114,12 @@ Integration order:
    and verified.
 10. Do not revisit JS/TS file-structure extraction; it is integrated and
     verified.
-11. Do not move PHP method completions or PHP/Laravel navigation without a new
+11. Do not revisit trait `$this` completion parser extraction; it is integrated
+    and verified.
+12. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-12. Follow-up focused hook tests for newly extracted provider/registry modules
+13. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 Current operational goal:
