@@ -17,18 +17,21 @@ Current operational goal:
 - Main thread owns orchestration, monitoring, integration, tests, commits, and
   pushes.
 - Do not manually implement a delegable slice in the main thread.
+- If a slice can be split without shared file ownership, split it into multiple
+  Codex worktree threads. The main thread should orchestrate, not implement.
+- After starting workers, poll them proactively through `read_thread` and
+  direct worktree checks. Do not wait for the user to say they finished.
 - Poll worker threads proactively through `read_thread` plus direct worktree
   `git status` / `git diff --stat` checks.
 - Current next order:
-  1. finish the remaining non-text search surfaces only after respecting the
-     already extracted `useWorkbenchQuickOpen` and `useWorkbenchTextSearch`
-     boundaries,
-  2. monitor workers proactively through `read_thread` and direct worktree
-     checks instead of waiting for the user,
-  3. integrate only reviewed, non-overlapping worker patches,
-  4. verify with focused tests, full preview tests, and full suite when the
+  1. split generic LSP navigation into two non-overlapping worker slices:
+     location navigation and hierarchy/references panels,
+  2. integrate only reviewed, non-overlapping worker patches,
+  3. verify with focused tests, full preview tests, and full suite when the
      surface is user-facing,
-  5. commit, push, and update this checkpoint after each shipped slice.
+  4. commit, push, and update this checkpoint after each shipped slice,
+  5. after LSP navigation is shipped, re-audit the remaining PHP semantic/type
+     inference/completion region before choosing the next worker slice.
 - Note: the Codex goal tool is blocked by an old paused goal in this thread.
   Treat this checkpoint as the active operational goal until that goal can be
   safely completed or replaced.
@@ -279,10 +282,41 @@ Create Codex threads for:
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
        passed: 867 tests.
      - `npm test -- --run` passed: 230 files, 5117 tests.
-   - Remaining search-surface follow-up: Open Class, workspace symbols, and
-     Search Everywhere only. Existing broad worker `019f335e-47b0-73a2-a931-5ebf7e41fbbb`
-     started before this integration, so review carefully for duplicated Quick
-     Open ownership before applying any of its work.
+   - Old broad workers for combined search surfaces should remain ignored unless
+     explicitly restarted from this baseline; all non-text search surface slices
+     are already integrated.
+
+16. LSP location navigation and implementation chooser
+   - Ownership: implementation chooser state, LSP location target conversion,
+     `goToLanguageServerLocation`,
+     `goToJavaScriptTypeScriptLanguageServerLocation`, and command-facing
+     definition/declaration/type-definition/implementation callbacks.
+   - Thread: `019f3381-474c-7170-b66c-541516267ff0`
+   - Worktree: `/Users/matusmockor/.codex/worktrees/e29b/editor`
+   - Status: active worker thread.
+   - Strict boundary: do not move call hierarchy, type hierarchy, references,
+     Open Class, Workspace Symbols, Search Everywhere, Quick Open, Text Search,
+     or PHP semantic resolver/type inference logic.
+   - Required main-thread verification after integration:
+     - `npm run check`
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "definition|implementation|declaration|type definition|implementation chooser|Cmd\\+B|stale|inactive project"`
+     - full preview test; full suite if user-facing diff is broad.
+
+17. Hierarchy and references panels
+   - Ownership: call hierarchy, type hierarchy, references/file references
+     panel state and open-row/open-panel orchestration.
+   - Thread: `019f3381-912d-7010-a52e-0f2d33d4dc08`
+   - Worktree: `/Users/matusmockor/.codex/worktrees/31b2/editor`
+   - Status: active worker thread.
+   - Strict boundary: do not move definition/declaration/type-definition/
+     implementation navigation or implementation chooser, and do not move PHP
+     semantic/type resolver/completion regions.
+   - Required main-thread verification after integration:
+     - `npm run check`
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "call hierarchy|type hierarchy|references|file references|stale|inactive project"`
+     - full preview test; full suite if user-facing diff is broad.
 
 ## Current Local Findings
 
