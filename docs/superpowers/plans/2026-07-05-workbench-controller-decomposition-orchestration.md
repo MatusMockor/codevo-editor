@@ -452,21 +452,12 @@ Current baseline:
 
 Remaining PHP/Laravel/OOP clusters:
 
-1. PHP semantic/type resolver around controller lines `5459-10989`.
+1. PHP expression/Laravel chain resolver remaining from the broader semantic
+   area.
 2. PHP/Laravel completions/signatures/inlay hints around lines `10991-12035`.
 3. PHP contextual Laravel/navigation definitions around lines `12438-15468`.
 4. Laravel migration/provider source registries around lines `1085-1108` and
    `6139-6414`.
-
-Active worker threads:
-
-1. `019f33af-6cab-75f3-ad5a-ea2ccb4c7107`
-   - Title: Extract PHP semantic resolver.
-   - Worktree: `/Users/matusmockor/.codex/worktrees/74dd/editor`.
-   - Current task: implement a smaller semantic resolver slice on current
-     main, using the old broad resolver extraction only as a reference.
-   - Must preserve the existing `usePhpMethodCompletionResolvers` and
-     `usePhpDiagnosticContextFilter` dependency boundaries.
 
 Completed worker integrations:
 
@@ -522,11 +513,32 @@ Completed worker integrations:
      - New hook test passed: 1 test.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5118 tests.
+5. `019f33af-6cab-75f3-ad5a-ea2ccb4c7107`
+   - Title: Extract PHP semantic resolver.
+   - Integrated as a current-main mini-slice:
+     `src/application/usePhpSemanticResolver.ts`.
+   - Moved low-risk PHP class/type reference resolution, declared return type
+     resolution, framework binding lookup, and class source path lookup out of
+     `useWorkbenchController.ts`.
+   - Intentionally left expression inference, Laravel collectors, navigation,
+     completions provider, and diagnostics filter ownership in the existing
+     controller/hooks.
+   - Preserved `usePhpMethodCompletionResolvers` and
+     `usePhpDiagnosticContextFilter` as consumers of explicit resolver
+     dependencies.
+   - Controller line count after integration: 19,444.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic/completion/Laravel domain tests passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel preview tests passed:
+       290 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5118 tests.
 
 Integration order:
 
-1. Semantic resolver.
-2. Laravel target/source collector split.
+1. Laravel target/source collector split.
+2. Remaining expression/Laravel chain resolver extraction.
 
 For every worker:
 
