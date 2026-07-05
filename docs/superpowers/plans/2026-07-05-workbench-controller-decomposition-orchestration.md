@@ -13,8 +13,8 @@ slice can be isolated by file ownership.
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 26,512 lines after the
-  workspace-edit and LSP runtime lifecycle slices.
+- `src/application/useWorkbenchController.ts`: 25,905 lines after the
+  workspace-edit, LSP runtime lifecycle, and document tab slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -85,6 +85,15 @@ Create Codex threads for:
    - Result: extracted `src/application/useLanguageServerRuntimeLifecycle.ts`;
      controller line count is now 26,512 in the main working tree.
 
+5. Document/workspace tab and open-file extraction
+   - Ownership: regular document activation, preview/open/open-pinned flows,
+     pinning, read-only document tabs, hover prefetch, and preview replacement
+     safety logic.
+   - Thread: `019f2f92-b069-7d83-9690-19ca28de5cf5`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchDocumentTabs.ts`;
+     controller line count is now 25,905 in the main working tree.
+
 ## Current Local Findings
 
 - Workspace edit region was extracted on 2026-07-05 into
@@ -104,6 +113,21 @@ Create Codex threads for:
     "workspace edit|willRenameFiles|didRenameFiles|willCreateFiles|didCreateFiles|willDeleteFiles|didDeleteFiles|watched files|rename edits|create edits|delete edits"`
     passed: 22 tests.
   - `npm run check` passed.
+- Document/workspace tab region was extracted on 2026-07-05 into
+  `src/application/useWorkbenchDocumentTabs.ts`.
+- It includes:
+  - document activation,
+  - preview/open/open-pinned flows,
+  - read-only document tab opening,
+  - hover prefetch and cancel prefetch,
+  - preview-tab replacement safety logic.
+- Important invariant: git diff loading stays controller-owned to preserve
+  git diff/editor tab separation.
+- Main-thread verification after integration:
+  - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+    passed: 867 tests.
+  - `npm run check` passed.
+  - `npm test -- --run` passed: 230 files, 5117 tests.
   - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
     passed: 867 tests.
 - LSP runtime lifecycle region was extracted on 2026-07-05 into
@@ -135,31 +159,32 @@ Create Codex threads for:
 
 ## Next Worker Slice
 
-Delegate document/workspace tab and open-file operations from current `main`.
+Delegate the next high-return controller slice from current `main`.
 
-Suggested ownership:
+Recommended next candidates:
 
-- opening, previewing, pinning, and closing editor tabs,
-- active document selection and navigation history touch points,
-- quick-open/open-file flows that are not language-server specific,
-- file tree active-document sync side effects if they are tightly coupled to
-  open-file state.
+1. Navigation/history operations
+   - Anchors: `navigateBack`, `navigateForward`, history stack refs, active
+     document jumps, symbol/open-file navigation that is not language-server
+     specific.
+2. Remaining close/save lifecycle split
+   - Anchors: `closeDocument`, dirty document prompts, save-before-close
+     handling, Mac window close fallback.
+3. PHP code-action provider domain extraction
+   - Anchors: code action ordering, create-from-usage, generate members,
+     implement/override methods, Laravel/OOP action providers.
 
 Preserve:
 
-- preview-tab semantics: single-click reuses the current preview tab until edit
-  or double-click pins it,
-- modified documents must not be silently replaced,
-- `Cmd+W` closes the active tab and only closes the window when no editor tab is
-  open,
-- git diff/editor tabs keep their separate behavior,
 - per-project tab isolation.
+- modified-document safety.
+- git diff/editor tab separation.
+- PHP/JS feature boundaries.
 
 Suggested tests:
 
-- focused `useWorkbenchController.preview.test.tsx` patterns around open,
-  preview, pin, close, quick-open, navigation back/forward, git diff tabs, and
-  modified document safety,
+- focused `useWorkbenchController.preview.test.tsx` patterns around the chosen
+  slice,
 - `npm run check`,
 - full `npm test -- src/application/useWorkbenchController.preview.test.tsx`
   before integration.

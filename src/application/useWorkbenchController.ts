@@ -13,6 +13,7 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
@@ -193,11 +194,7 @@ import {
   type EditorConfigFile,
   type ResolvedEditorConfig,
 } from "../domain/editorConfig";
-import {
-  FilePrefetchCache,
-  isPrefetchableContentSize,
-  shouldPrefetchFileContent,
-} from "../domain/filePrefetchCache";
+import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
@@ -619,12 +616,6 @@ export interface WorkbenchControllerOptions {
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
 }
 
-interface OpenFileOptions {
-  pin?: boolean;
-  readOnly?: boolean;
-  recordNavigation?: boolean;
-}
-
 interface OpenNavigationOptions {
   readOnly?: boolean;
 }
@@ -634,10 +625,6 @@ interface OpenWorkspacePathOptions {
 }
 
 interface OpenGitChangeOptions {
-  pin?: boolean;
-}
-
-interface OpenReadOnlyDocumentOptions {
   pin?: boolean;
 }
 
@@ -761,7 +748,6 @@ const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
 const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
 const OPEN_APPEARANCE_SETTINGS_EVENT = "mockor-open-appearance-settings";
 const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
-const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
 // Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
 // this to tell the user when the previewed count is a lower bound (the backend
@@ -3533,48 +3519,56 @@ export function useWorkbenchController(
     [gitGateway, recordCurrentNavigationLocation, reportError, workspaceRoot],
   );
 
-  const activateDocument = useCallback(
-    (path: string) => {
-      if (activePath === path) {
-        return;
-      }
-
-      const gitChange = gitChangeForDiffDocumentPath(path, gitStatus.changes);
-
-      if (gitChange) {
-        loadGitDiffDocument(path, gitChange);
-        return;
-      }
-
-      recordCurrentNavigationLocation();
-      selectedGitChangeRef.current = null;
-      setSelectedGitChange(null);
-      setGitDiffPreview(null);
-      setActivePath(path);
-      recordRecentFile({
-        name: documentsRef.current[path]?.name ?? getFileName(path),
-        path,
-      });
-    },
-    [
-      activePath,
-      gitStatus.changes,
-      loadGitDiffDocument,
-      recordCurrentNavigationLocation,
-      recordRecentFile,
-    ],
-  );
-
-  const pinDocument = useCallback((path: string) => {
-    setOpenPaths((current) => {
-      if (current.includes(path)) {
-        return current;
-      }
-
-      return [...current, path];
-    });
-    setPreviewPath((current) => (current === path ? null : current));
-  }, []);
+  const {
+    activateDocument,
+    pinDocument,
+    openFile,
+    previewFile,
+    openPinnedFile,
+    openReadOnlyDocument,
+    prefetchFile,
+    cancelFilePrefetch,
+  } = useWorkbenchDocumentTabs({
+    workspaceRoot,
+    activePath,
+    documents,
+    openPaths,
+    gitStatus,
+    appSettingsRef,
+    currentWorkspaceRootRef,
+    activeDocumentRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
+    openFileRequestTokenRef,
+    openingFileFlagOwnerTokenRef,
+    emptyDocumentRefreshTimeoutsRef,
+    filePrefetchCacheRef,
+    filePrefetchTimersRef,
+    gitDiffRequestTokenRef,
+    selectedGitChangeRef,
+    setDocuments,
+    setOpenPaths,
+    setPreviewPath,
+    setActivePath,
+    setIsOpeningFile,
+    setSelectedGitChange,
+    setGitDiffPreview,
+    setGitDiffLoading,
+    setMessage,
+    workspaceFiles,
+    forgetExternallyRemovedDocumentPath,
+    gitChangeForDiffDocumentPath,
+    loadGitDiffDocument,
+    recordCurrentNavigationLocation,
+    recordRecentFile,
+    refreshLocalPhpDiagnosticsForContent,
+    syncClosedDocument,
+    syncClosedJavaScriptTypeScriptDocument,
+    workspacePathBelongsToRoot,
+    reportError,
+    reportErrorForActiveWorkspaceRoot,
+  });
 
   const toggleDirectory = useCallback(
     async (path: string) => {
@@ -3694,525 +3688,6 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceSettings.revealActiveFileInTree,
   ]);
-
-  const openFile = useCallback(
-    async (entry: FileEntry, options: OpenFileOptions = {}) => {
-      const requestToken = openFileRequestTokenRef.current + 1;
-      openFileRequestTokenRef.current = requestToken;
-      forgetExternallyRemovedDocumentPath(entry.path);
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-      const shouldRecordNavigation = options.recordNavigation !== false;
-      const shouldPin = options.pin === true;
-      const readTextFileForEmptyDocumentRefresh = async (
-        targetPath: string,
-      ): Promise<string | null> => {
-        try {
-          return await workspaceFiles.readTextFile(targetPath);
-        } catch {
-          return null;
-        }
-      };
-      const belongsToInactiveWorkspaceTab = appSettingsRef.current.workspaceTabs.some(
-        (tabPath) =>
-          !workspaceRootKeysEqual(tabPath, requestedRoot) &&
-          workspacePathBelongsToRoot(entry.path, tabPath),
-      );
-
-      if (belongsToInactiveWorkspaceTab) {
-        return false;
-      }
-
-      const scheduleEmptyDocumentRefresh = (targetPath: string) => {
-        const timeoutId = window.setTimeout(() => {
-          emptyDocumentRefreshTimeoutsRef.current.delete(timeoutId);
-
-          const refreshEmptyDocument = async () => {
-            if (
-              requestedRoot !== null &&
-              !workspaceRootKeysEqual(
-                currentWorkspaceRootRef.current,
-                requestedRoot,
-              )
-            ) {
-              return;
-            }
-
-            const currentDocument = documentsRef.current[targetPath];
-
-            if (
-              !currentDocument ||
-              currentDocument.content !== "" ||
-              currentDocument.savedContent !== ""
-            ) {
-              return;
-            }
-
-            let refreshedContent = "";
-
-            try {
-              refreshedContent = await workspaceFiles.readTextFile(targetPath);
-            } catch {
-              return;
-            }
-
-            if (
-              refreshedContent === "" ||
-              (requestedRoot !== null &&
-                !workspaceRootKeysEqual(
-                  currentWorkspaceRootRef.current,
-                  requestedRoot,
-                ))
-            ) {
-              return;
-            }
-
-            const latestDocument = documentsRef.current[targetPath];
-
-            if (
-              !latestDocument ||
-              latestDocument.content !== "" ||
-              latestDocument.savedContent !== ""
-            ) {
-              return;
-            }
-
-            const refreshedDocument: EditorDocument = {
-              ...latestDocument,
-              content: refreshedContent,
-              savedContent: refreshedContent,
-            };
-
-            documentsRef.current = {
-              ...documentsRef.current,
-              [targetPath]: refreshedDocument,
-            };
-            activeDocumentRef.current =
-              activeDocumentRef.current?.path === targetPath
-                ? refreshedDocument
-                : activeDocumentRef.current;
-            setDocuments((current) => {
-              const currentDocument = current[targetPath];
-
-              if (
-                !currentDocument ||
-                currentDocument.content !== "" ||
-                currentDocument.savedContent !== ""
-              ) {
-                return current;
-              }
-
-              return {
-                ...current,
-                [targetPath]: {
-                  ...currentDocument,
-                  content: refreshedContent,
-                  savedContent: refreshedContent,
-                },
-              };
-            });
-            refreshLocalPhpDiagnosticsForContent(
-              refreshedDocument.path,
-              refreshedDocument.content,
-              refreshedDocument.language,
-            );
-          };
-
-          void refreshEmptyDocument();
-        }, 150);
-
-        emptyDocumentRefreshTimeoutsRef.current.add(timeoutId);
-      };
-
-      const existingDocument =
-        documentsRef.current[entry.path] ?? documents[entry.path];
-
-      if (existingDocument) {
-        const openedDocument = existingDocument;
-        const hasEmptySavedContentWithoutUnsavedEdits =
-          openedDocument.savedContent === "" && openedDocument.content === "";
-
-        const refreshedContent = hasEmptySavedContentWithoutUnsavedEdits
-          ? await readTextFileForEmptyDocumentRefresh(entry.path)
-          : null;
-
-        if (refreshedContent !== null) {
-          const requestStillActive =
-            openFileRequestTokenRef.current === requestToken &&
-            (requestedRoot === null ||
-              workspaceRootKeysEqual(
-                currentWorkspaceRootRef.current,
-                requestedRoot,
-              ));
-
-          if (!requestStillActive) {
-            return false;
-          }
-
-          const stillEmptyAndUnedited =
-            documentsRef.current[entry.path]?.savedContent === "" &&
-            documentsRef.current[entry.path]?.content === "";
-
-          if (refreshedContent !== "" && stillEmptyAndUnedited) {
-            const refreshedDocument: EditorDocument = {
-              ...documentsRef.current[entry.path],
-              content: refreshedContent,
-              savedContent: refreshedContent,
-            };
-            activeDocumentRef.current =
-              activeDocumentRef.current?.path === entry.path
-                ? refreshedDocument
-                : activeDocumentRef.current;
-            documentsRef.current = {
-              ...documentsRef.current,
-              [entry.path]: refreshedDocument,
-            };
-            setDocuments((current) => ({
-              ...current,
-              [entry.path]: {
-                ...(current[entry.path] ?? refreshedDocument),
-                content: refreshedContent,
-                savedContent: refreshedContent,
-              },
-            }));
-            refreshLocalPhpDiagnosticsForContent(
-              refreshedDocument.path,
-              refreshedDocument.content,
-              refreshedDocument.language,
-            );
-          } else if (refreshedContent === "" && stillEmptyAndUnedited) {
-            scheduleEmptyDocumentRefresh(entry.path);
-          }
-        }
-
-        const documentToMakeReadOnly =
-          documentsRef.current[entry.path] ?? documents[entry.path];
-
-        if (options.readOnly === true && !documentToMakeReadOnly.readOnly) {
-          const readOnlyDocument = {
-            ...documentToMakeReadOnly,
-            readOnly: true,
-          };
-          activeDocumentRef.current =
-            activeDocumentRef.current?.path === entry.path
-              ? readOnlyDocument
-              : activeDocumentRef.current;
-          documentsRef.current = {
-            ...documentsRef.current,
-            [entry.path]: readOnlyDocument,
-          };
-          setDocuments((current) => ({
-            ...current,
-            [entry.path]: {
-              ...(current[entry.path] ?? readOnlyDocument),
-              readOnly: true,
-            },
-          }));
-        }
-
-        if (shouldRecordNavigation && activePath !== entry.path) {
-          recordCurrentNavigationLocation();
-        }
-
-        if (!shouldPin && !openPaths.includes(entry.path)) {
-          setPreviewPath(entry.path);
-        }
-
-        if (shouldPin) {
-          pinDocument(entry.path);
-        }
-
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
-        const activatedDocument =
-          documentsRef.current[entry.path] ?? documents[entry.path] ?? openedDocument;
-        refreshLocalPhpDiagnosticsForContent(
-          activatedDocument.path,
-          activatedDocument.content,
-          activatedDocument.language,
-        );
-        setActivePath(entry.path);
-        recordRecentFile({ name: entry.name, path: entry.path });
-        return true;
-      }
-
-      const clearOpeningFileForRequest = () => {
-        if (openingFileFlagOwnerTokenRef.current !== requestToken) {
-          return;
-        }
-
-        openingFileFlagOwnerTokenRef.current = null;
-        setIsOpeningFile(false);
-      };
-
-      try {
-        const prefetchedContent = filePrefetchCacheRef.current.get(
-          requestedRoot,
-          entry.path,
-        );
-        const hasUsablePrefetchedContent =
-          prefetchedContent !== null && prefetchedContent !== "";
-
-        if (!hasUsablePrefetchedContent) {
-          openingFileFlagOwnerTokenRef.current = requestToken;
-          setIsOpeningFile(true);
-        }
-
-        const content = hasUsablePrefetchedContent
-          ? prefetchedContent
-          : await workspaceFiles.readTextFile(entry.path);
-
-        if (
-          openFileRequestTokenRef.current !== requestToken ||
-          (requestedRoot !== null &&
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
-        ) {
-          clearOpeningFileForRequest();
-          return false;
-        }
-
-        // Compute the replacement from live refs (current state) AFTER the read
-        // resolves so rapid back-to-back opens never act on a stale closure
-        // capture. This keeps PhpStorm preview parity: the current unedited
-        // preview is replaced rather than spawning or wrongly closing tabs.
-        const replacement = cleanReplacementDocument(
-          activeDocumentRef.current,
-          documentsRef.current,
-          openPathsRef.current,
-          previewPathRef.current,
-        );
-        const replacedPath = replacement?.path ?? null;
-
-        const document: EditorDocument = {
-          path: entry.path,
-          name: entry.name,
-          content,
-          savedContent: content,
-          language: detectLanguage(entry.path),
-          readOnly: options.readOnly === true ? true : undefined,
-        };
-
-        if (shouldRecordNavigation) {
-          recordCurrentNavigationLocation();
-        }
-
-        if (replacement) {
-          void syncClosedDocument(replacement);
-          void syncClosedJavaScriptTypeScriptDocument(replacement);
-        }
-
-        const nextDocuments = {
-          ...documentsRef.current,
-          [entry.path]: document,
-        };
-
-        if (replacedPath) {
-          delete nextDocuments[replacedPath];
-        }
-
-        const nextOpenPaths = (() => {
-          if (shouldPin && !replacedPath) {
-            return openPathsRef.current.includes(entry.path)
-              ? openPathsRef.current
-              : [...openPathsRef.current, entry.path];
-          }
-
-          if (shouldPin && replacedPath) {
-            const mapped = openPathsRef.current.map((openPath) =>
-              openPath === replacedPath ? entry.path : openPath,
-            );
-            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
-          }
-
-          return openPathsRef.current.filter(
-            (openPath) => openPath !== replacedPath,
-          );
-        })();
-        const nextPreviewPath = shouldPin ? null : entry.path;
-
-        documentsRef.current = nextDocuments;
-        activeDocumentRef.current = document;
-        openPathsRef.current = nextOpenPaths;
-        previewPathRef.current = nextPreviewPath;
-        refreshLocalPhpDiagnosticsForContent(
-          document.path,
-          document.content,
-          document.language,
-        );
-
-        setDocuments((current) => {
-          const next = { ...current, [entry.path]: document };
-
-          if (replacedPath) {
-            delete next[replacedPath];
-          }
-
-          return next;
-        });
-        setOpenPaths((current) => {
-          if (shouldPin && !replacedPath) {
-            return current.includes(entry.path)
-              ? current
-              : [...current, entry.path];
-          }
-
-          if (shouldPin && replacedPath) {
-            const mapped = current.map((openPath) =>
-              openPath === replacedPath ? entry.path : openPath,
-            );
-            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
-          }
-
-          return current.filter((openPath) => openPath !== replacedPath);
-        });
-        setPreviewPath(nextPreviewPath);
-
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
-        setActivePath(entry.path);
-        recordRecentFile({ name: entry.name, path: entry.path });
-        setMessage(null);
-        filePrefetchCacheRef.current.invalidate(entry.path);
-        if (content === "") {
-          scheduleEmptyDocumentRefresh(entry.path);
-        }
-        clearOpeningFileForRequest();
-        return true;
-      } catch (error) {
-        if (
-          openFileRequestTokenRef.current !== requestToken ||
-          (requestedRoot !== null &&
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
-        ) {
-          clearOpeningFileForRequest();
-          return false;
-        }
-
-        clearOpeningFileForRequest();
-
-        if (requestedRoot) {
-          reportErrorForActiveWorkspaceRoot(requestedRoot, "Open File", error);
-        } else {
-          reportError("Open File", error);
-        }
-        return false;
-      }
-    },
-    [
-      activePath,
-      documents,
-      forgetExternallyRemovedDocumentPath,
-      openPaths,
-      recordCurrentNavigationLocation,
-      recordRecentFile,
-      refreshLocalPhpDiagnosticsForContent,
-      reportError,
-      reportErrorForActiveWorkspaceRoot,
-      syncClosedDocument,
-      syncClosedJavaScriptTypeScriptDocument,
-      workspaceFiles,
-      workspaceRoot,
-    ],
-  );
-
-  const prefetchFileContentNow = useCallback(
-    async (entry: FileEntry) => {
-      if (entry.kind === "directory") {
-        return;
-      }
-
-      if (!shouldPrefetchFileContent(entry.path)) {
-        return;
-      }
-
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
-
-      if (documentsRef.current[entry.path]) {
-        return;
-      }
-
-      if (filePrefetchCacheRef.current.has(requestedRoot, entry.path)) {
-        return;
-      }
-
-      try {
-        const content = await workspaceFiles.readTextFile(entry.path);
-
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
-          return;
-        }
-
-        if (documentsRef.current[entry.path]) {
-          return;
-        }
-
-        if (!isPrefetchableContentSize(content)) {
-          return;
-        }
-
-        filePrefetchCacheRef.current.set(requestedRoot, entry.path, content);
-      } catch {
-        // Prefetch is a best-effort optimization; ignore read failures so the
-        // real open (with its own error handling) stays the source of truth.
-      }
-    },
-    [workspaceFiles, workspaceRoot],
-  );
-
-  const prefetchFile = useCallback(
-    (entry: FileEntry) => {
-      if (entry.kind === "directory") {
-        return;
-      }
-
-      if (!shouldPrefetchFileContent(entry.path)) {
-        return;
-      }
-
-      const timers = filePrefetchTimersRef.current;
-
-      if (timers.has(entry.path)) {
-        return;
-      }
-
-      const timer = setTimeout(() => {
-        timers.delete(entry.path);
-        void prefetchFileContentNow(entry);
-      }, FILE_PREFETCH_HOVER_DELAY_MS);
-
-      timers.set(entry.path, timer);
-    },
-    [prefetchFileContentNow],
-  );
-
-  const cancelFilePrefetch = useCallback((entry: FileEntry) => {
-    const timers = filePrefetchTimersRef.current;
-    const timer = timers.get(entry.path);
-
-    if (timer === undefined) {
-      return;
-    }
-
-    clearTimeout(timer);
-    timers.delete(entry.path);
-  }, []);
-
-  const previewFile = useCallback(
-    async (entry: FileEntry) => {
-      await openFile(entry);
-    },
-    [openFile],
-  );
-
-  const openPinnedFile = useCallback(
-    async (entry: FileEntry) => {
-      return openFile(entry, { pin: true });
-    },
-    [openFile],
-  );
 
   const clearGitDiffPreviewState = useCallback(() => {
     gitDiffRequestTokenRef.current += 1;
@@ -4558,57 +4033,6 @@ export function useWorkbenchController(
       await previewGitChange(change, { pin: true });
     },
     [previewGitChange],
-  );
-
-  const openReadOnlyDocument = useCallback(
-    (document: EditorDocument, options: OpenReadOnlyDocumentOptions = {}) => {
-      const nextDocument = {
-        ...document,
-        readOnly: true,
-        savedContent: document.savedContent ?? document.content,
-      };
-
-      recordCurrentNavigationLocation();
-      documentsRef.current = {
-        ...documentsRef.current,
-        [nextDocument.path]: nextDocument,
-      };
-      activeDocumentRef.current = nextDocument;
-
-      if (options.pin === true) {
-        openPathsRef.current = openPathsRef.current.includes(nextDocument.path)
-          ? openPathsRef.current
-          : [...openPathsRef.current, nextDocument.path];
-        previewPathRef.current =
-          previewPathRef.current === nextDocument.path
-            ? null
-            : previewPathRef.current;
-        setOpenPaths((current) =>
-          current.includes(nextDocument.path)
-            ? current
-            : [...current, nextDocument.path],
-        );
-        setPreviewPath((current) =>
-          current === nextDocument.path ? null : current,
-        );
-      } else {
-        previewPathRef.current = nextDocument.path;
-        setPreviewPath(nextDocument.path);
-      }
-
-      setDocuments((current) => ({
-        ...current,
-        [nextDocument.path]: nextDocument,
-      }));
-      selectedGitChangeRef.current = null;
-      setSelectedGitChange(null);
-      setGitDiffPreview(null);
-      setGitDiffLoading(false);
-      gitDiffRequestTokenRef.current += 1;
-      setActivePath(nextDocument.path);
-      setMessage(null);
-    },
-    [recordCurrentNavigationLocation],
   );
 
   const closeGitDiffPreview = useCallback(() => {
@@ -24283,37 +23707,6 @@ function restoredActivePath(
   }
 
   return restoredPaths[0] || null;
-}
-
-function cleanReplacementDocument(
-  activeDocument: EditorDocument | null,
-  documents: Record<string, EditorDocument>,
-  openPaths: string[],
-  previewPath: string | null,
-): EditorDocument | null {
-  if (
-    activeDocument &&
-    !isDirty(activeDocument) &&
-    !openPaths.includes(activeDocument.path)
-  ) {
-    return activeDocument;
-  }
-
-  if (!previewPath) {
-    return null;
-  }
-
-  if (openPaths.includes(previewPath)) {
-    return null;
-  }
-
-  const previewDocument = documents[previewPath] ?? null;
-
-  if (!previewDocument || isDirty(previewDocument)) {
-    return null;
-  }
-
-  return previewDocument;
 }
 
 function gitDiffDocumentPath(change: GitChangedFile): string {
