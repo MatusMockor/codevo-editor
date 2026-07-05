@@ -608,11 +608,33 @@ Completed worker integrations:
      document save/close/Cmd+W behavior, while command registry glue,
      controller-owned state mirrors, and git diff selected-preview close
      behavior must remain separate.
+12. `019f33d1-663e-79f2-a509-203dbe549c11`
+   - Title: Extract PHP code action provider.
+   - Integrated as `src/application/usePhpCodeActionProvider.ts`.
+   - Moved app-side PHP code-action provider wiring and the cross-file
+     implement/override member collectors out of `useWorkbenchController.ts`.
+   - Preserved generated PHP behavior in `usePhpCodeActions`, Monaco provider
+     registration/disposal in `languageServerMonacoProviders`, and semantic
+     resolver, diagnostics filter, and completion provider ownership in their
+     existing modules.
+   - Controller line count after integration: 18,950.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - Focused code-action preview tests passed: 32 tests.
+     - Focused Monaco provider code-action tests passed: 28 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5119 tests.
+13. `019f33d1-6786-7732-ba87-05267022b0ae`
+   - Title: Audit PHP code-action boundary.
+   - Result: no code changes.
+   - Confirmed `usePhpCodeActions` should remain owner of descriptor
+     construction, ordering, categories, and generated actions, while file
+     mutation side effects and Monaco registration/disposal stay outside.
 
 Integration order:
 
-1. PHP code-action provider extraction.
-2. Remaining expression/Laravel chain resolver extraction.
+1. Remaining expression/Laravel chain resolver extraction.
+2. Follow-up focused hook tests for newly extracted provider/registry modules.
 
 For every worker:
 

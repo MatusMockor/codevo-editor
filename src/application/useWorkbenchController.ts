@@ -54,19 +54,15 @@ import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import { usePhpOutline } from "./usePhpOutline";
 import {
-  isPhpOverridableParentMethod,
   phpSuperMethodHierarchyReferences,
-  usePhpCodeActions,
 } from "./usePhpCodeActions";
-import type {
-  AbstractMemberToImplement,
-  PhpCodeActionNewFile,
-} from "./usePhpCodeActions";
+import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 export type {
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
+import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import {
   shouldApplyClassEditAfterWrite,
   writeExtractedInterfaceFile,
@@ -438,9 +434,6 @@ import {
   type PhpIdentifierContext,
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
-import {
-  parsePhpClassStructure,
-} from "../domain/phpClassStructure";
 import {
   phpTestClassPlan,
   renderPhpTestSkeleton,
@@ -10774,236 +10767,15 @@ export function useWorkbenchController(
     [providePhpMethodSignature, workspaceRoot],
   );
 
-  const collectPhpAbstractMembersToImplement = useCallback(
-    async (
-      source: string,
-      isRequestedRootActive: () => boolean,
-    ): Promise<{
-      abstractMembers: Map<string, AbstractMemberToImplement>;
-      satisfiedNames: Set<string>;
-    } | null> => {
-      const abstractMembers = new Map<string, AbstractMemberToImplement>();
-      const satisfiedNames = new Set<string>();
-      const visitedClassNames = new Set<string>();
-
-      const collectSuperType = async (
-        ownerSource: string,
-        reference: string,
-      ): Promise<boolean> => {
-        const resolvedClassName = resolvePhpClassName(ownerSource, reference);
-
-        if (!resolvedClassName) {
-          return true;
-        }
-
-        const normalizedClassName = resolvedClassName
-          .trim()
-          .replace(/^\\+/, "");
-        const visitedKey = normalizedClassName.toLowerCase();
-
-        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
-          return true;
-        }
-
-        visitedClassNames.add(visitedKey);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        for (const path of await resolvePhpClassSourcePaths(
-          normalizedClassName,
-        )) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            const structure = parsePhpClassStructure(
-              content,
-              shortPhpName(normalizedClassName),
-            );
-
-            for (const method of structure.methods) {
-              const memberKey = method.name.toLowerCase();
-
-              if (method.isAbstract) {
-                if (!abstractMembers.has(memberKey)) {
-                  abstractMembers.set(memberKey, {
-                    declaringSource: content,
-                    member: method,
-                  });
-                }
-
-                continue;
-              }
-
-              satisfiedNames.add(memberKey);
-            }
-
-            for (const superTypeReference of phpSuperTypeReferences(content)) {
-              if (!(await collectSuperType(content, superTypeReference))) {
-                return false;
-              }
-            }
-
-            return true;
-          } catch {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            continue;
-          }
-        }
-
-        return true;
-      };
-
-      for (const reference of phpSuperTypeReferences(source)) {
-        if (!(await collectSuperType(source, reference))) {
-          return null;
-        }
-      }
-
-      return { abstractMembers, satisfiedNames };
-    },
-    [readNavigationFileContent, resolvePhpClassSourcePaths],
-  );
-
-  // Walks the PARENT CLASS CHAIN of `source` (the `extends` target, then its
-  // own parent, …) collecting the concrete methods that the current class may
-  // override (PhpStorm "Override Methods"). A method is overridable when it is
-  // non-abstract, non-final, non-private and not the constructor. The nearest
-  // declaration of a given name wins, so once a name is seen it is not re-added
-  // from a more-distant ancestor (matching real override resolution); a name
-  // declared `final` / `private` / `abstract` anywhere in the chain is recorded
-  // so deeper ancestors cannot resurface it. Per-workspace isolation: the
-  // caller's `isRequestedRootActive` guard is re-checked after EVERY await and
-  // the walk is abandoned (returns `null`) the moment the requested root is no
-  // longer active, so stale cross-file results never leak into another tab.
-  const collectPhpOverridableParentMethods = useCallback(
-    async (
-      source: string,
-      isRequestedRootActive: () => boolean,
-    ): Promise<Map<string, AbstractMemberToImplement> | null> => {
-      const overridableMembers = new Map<string, AbstractMemberToImplement>();
-      const seenMemberNames = new Set<string>();
-      const visitedClassNames = new Set<string>();
-
-      const collectParent = async (
-        ownerSource: string,
-        reference: string,
-      ): Promise<boolean> => {
-        const resolvedClassName = resolvePhpClassName(ownerSource, reference);
-
-        if (!resolvedClassName) {
-          return true;
-        }
-
-        const normalizedClassName = resolvedClassName
-          .trim()
-          .replace(/^\\+/, "");
-        const visitedKey = normalizedClassName.toLowerCase();
-
-        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
-          return true;
-        }
-
-        visitedClassNames.add(visitedKey);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        for (const path of await resolvePhpClassSourcePaths(
-          normalizedClassName,
-        )) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            const structure = parsePhpClassStructure(
-              content,
-              shortPhpName(normalizedClassName),
-            );
-
-            for (const method of structure.methods) {
-              const memberKey = method.name.toLowerCase();
-
-              if (seenMemberNames.has(memberKey)) {
-                continue;
-              }
-
-              seenMemberNames.add(memberKey);
-
-              if (!isPhpOverridableParentMethod(method)) {
-                continue;
-              }
-
-              overridableMembers.set(memberKey, {
-                declaringSource: content,
-                member: method,
-              });
-            }
-
-            const parentReference = phpExtendsClassName(content);
-
-            if (parentReference) {
-              return collectParent(content, parentReference);
-            }
-
-            return true;
-          } catch {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            continue;
-          }
-        }
-
-        return true;
-      };
-
-      const parentReference = phpExtendsClassName(source);
-
-      if (!parentReference) {
-        return overridableMembers;
-      }
-
-      if (!(await collectParent(source, parentReference))) {
-        return null;
-      }
-
-      return overridableMembers;
-    },
-    [readNavigationFileContent, resolvePhpClassSourcePaths],
-  );
-
   const { createMissingBladeViewCodeAction, providePhpCodeActions } =
-    usePhpCodeActions({
+    usePhpCodeActionProvider({
       activeDocumentPath: activeDocument?.path ?? null,
-      collectPhpAbstractMembersToImplement,
       collectPhpLaravelViewTargets,
-      collectPhpOverridableParentMethods,
       currentWorkspaceRootRef,
       intelligenceMode,
       isLaravelFrameworkActive,
       projectSymbolSearch,
+      readNavigationFileContent,
       readTestFileIfExists,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
