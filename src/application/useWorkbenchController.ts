@@ -17,6 +17,7 @@ import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
+import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useDocumentSync } from "./useDocumentSync";
@@ -184,7 +185,6 @@ import {
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
   type LanguageServerTextEdit,
-  type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
   filterFileReferenceLocationsToWorkspace,
@@ -480,7 +480,6 @@ import {
   optimizePhpImportsSource,
 } from "../domain/phpImportsOrganizer";
 import type {
-  ProjectSymbolKind,
   ProjectSymbolSearchGateway,
   ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
@@ -902,12 +901,6 @@ export function useWorkbenchController(
   const [gitBlameEnabledPaths, setGitBlameEnabledPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  const [classOpenOpen, setClassOpenOpen] = useState(false);
-  const [classOpenQuery, setClassOpenQuery] = useState("");
-  const [classOpenLoading, setClassOpenLoading] = useState(false);
-  const [classOpenResults, setClassOpenResults] = useState<
-    ProjectSymbolSearchResult[]
-  >([]);
   const [workspaceSymbolsOpen, setWorkspaceSymbolsOpen] = useState(false);
   const [workspaceSymbolsQuery, setWorkspaceSymbolsQuery] = useState("");
   const [workspaceSymbolsLoading, setWorkspaceSymbolsLoading] = useState(false);
@@ -1566,6 +1559,38 @@ export function useWorkbenchController(
     reportError,
     setMessage,
     workspaceRoot,
+  });
+
+  const {
+    classOpenOpen,
+    classOpenQuery,
+    classOpenLoading,
+    classOpenResults,
+    canSearchClassOpenSymbols,
+    setClassOpenOpen,
+    setClassOpenQuery,
+    setClassOpenLoading,
+    setClassOpenResults,
+    searchClassOpenSymbols,
+  } = useWorkbenchClassOpen({
+    workspaceRoot,
+    currentWorkspaceRootRef,
+    intelligenceMode,
+    projectSymbolSearch,
+    languageServerFeaturesGateway,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRootRef,
+    languageServerRuntimeStatusByRootRef,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+    javaScriptTypeScriptRuntimeStatusByRootRef,
+    reportError,
+    setMessage,
   });
 
   const forgetLatencyTrackerForRoot = useCallback(
@@ -17776,28 +17801,6 @@ export function useWorkbenchController(
     zoomEditorFontOut,
   ]);
 
-  const canSearchClassOpenSymbols = Boolean(
-    shouldIndexWorkspace(intelligenceMode) ||
-      (isRunningLanguageServerForWorkspace(
-        languageServerRuntimeStatus,
-        languageServerRuntimeStatusRoot,
-        workspaceRoot,
-      ) &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )) ||
-      (isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )),
-  );
-
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
     const shortcut = (commandId: KeymapCommandId) =>
@@ -19424,197 +19427,6 @@ export function useWorkbenchController(
     };
   }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
 
-  const searchClassOpenSymbols = useCallback(
-    async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
-      if (!workspaceRoot) {
-        return [];
-      }
-
-      const requestedRoot = workspaceRoot;
-      const searches: Array<Promise<ProjectSymbolSearchResult[]>> = [];
-
-      if (shouldIndexWorkspace(intelligenceMode)) {
-        searches.push(
-          projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit),
-        );
-      }
-
-      if (
-        isRunningLanguageServerForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          requestedRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )
-      ) {
-        const requestedSessionId = languageServerRuntimeStatus.sessionId;
-        const isRequestedWorkspaceSymbolSessionActive = () =>
-          isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
-
-        searches.push(
-          languageServerFeaturesGateway
-            .workspaceSymbols(requestedRoot, query)
-            .then((symbols) => {
-              if (!isRequestedWorkspaceSymbolSessionActive()) {
-                return [];
-              }
-
-              return symbols
-                .map((symbol) =>
-                  projectSymbolFromLanguageServerWorkspaceSymbol(
-                    requestedRoot,
-                    symbol,
-                  ),
-                )
-                .filter(
-                  (symbol): symbol is ProjectSymbolSearchResult =>
-                    symbol !== null,
-                );
-            })
-            .catch((error) => {
-              if (!isRequestedWorkspaceSymbolSessionActive()) {
-                return [];
-              }
-
-              reportError("PHP Workspace Symbols", error);
-              return [];
-            }),
-        );
-      }
-
-      if (
-        isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          requestedRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )
-      ) {
-        const requestedSessionId =
-          javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-        const isRequestedWorkspaceSymbolSessionActive = () =>
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-            requestedRoot,
-            requestedSessionId,
-          );
-
-        searches.push(
-          javaScriptTypeScriptLanguageServerFeaturesGateway
-            .workspaceSymbols(requestedRoot, query)
-            .then((symbols) => {
-              if (!isRequestedWorkspaceSymbolSessionActive()) {
-                return [];
-              }
-
-              return symbols
-                .map((symbol) =>
-                  projectSymbolFromLanguageServerWorkspaceSymbol(
-                    requestedRoot,
-                    symbol,
-                  ),
-                )
-                .filter(
-                  (symbol): symbol is ProjectSymbolSearchResult =>
-                    symbol !== null,
-                );
-            })
-            .catch((error) => {
-              if (!isRequestedWorkspaceSymbolSessionActive()) {
-                return [];
-              }
-
-              reportError("JavaScript/TypeScript Workspace Symbols", error);
-              return [];
-            }),
-        );
-      }
-
-      const results = (await Promise.all(searches)).flat();
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return [];
-      }
-
-      return uniqueProjectSymbols(results).slice(0, limit);
-    },
-    [
-      intelligenceMode,
-      languageServerFeaturesGateway,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      javaScriptTypeScriptLanguageServerFeaturesGateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      isLanguageServerSessionActiveForRoot,
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-      projectSymbolSearch,
-      reportError,
-      workspaceRoot,
-    ],
-  );
-
-  useEffect(() => {
-    if (
-      !classOpenOpen ||
-      !workspaceRoot ||
-      !classOpenQuery.trim() ||
-      !canSearchClassOpenSymbols
-    ) {
-      setClassOpenResults([]);
-      setClassOpenLoading(false);
-      return;
-    }
-
-    let active = true;
-    setClassOpenLoading(true);
-
-    const timeout = window.setTimeout(() => {
-      searchClassOpenSymbols(classOpenQuery, 120)
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-
-          setClassOpenResults(
-            results.filter(isTypeProjectSymbol).slice(0, 80),
-          );
-          setMessage(null);
-        })
-        .catch((error) => {
-          if (!active) {
-            return;
-          }
-
-          setClassOpenResults([]);
-          reportError("Open Class", error);
-        })
-        .finally(() => {
-          if (!active) {
-            return;
-          }
-
-          setClassOpenLoading(false);
-        });
-    }, 120);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    classOpenOpen,
-    classOpenQuery,
-    canSearchClassOpenSymbols,
-    reportError,
-    searchClassOpenSymbols,
-    workspaceRoot,
-  ]);
-
   useEffect(() => {
     if (
       !workspaceSymbolsOpen ||
@@ -20937,83 +20749,6 @@ function workspacePathBelongsToRoot(
     normalizedPath.startsWith(`${normalizedRoot}/`) ||
     normalizedPath.startsWith(`${normalizedRoot}\\`)
   );
-}
-
-function projectSymbolFromLanguageServerWorkspaceSymbol(
-  workspaceRoot: string,
-  symbol: LanguageServerWorkspaceSymbol,
-): ProjectSymbolSearchResult | null {
-  const path = symbol.location ? pathFromLanguageServerUri(symbol.location.uri) : null;
-  const kind = projectSymbolKindFromLanguageServerSymbolKind(symbol.kind);
-
-  if (!path || !kind || !symbol.location) {
-    return null;
-  }
-
-  return {
-    column: symbol.location.range.start.character + 1,
-    containerName: symbol.containerName,
-    fullyQualifiedName: symbol.containerName
-      ? `${symbol.containerName}.${symbol.name}`
-      : symbol.name,
-    kind,
-    lineNumber: symbol.location.range.start.line + 1,
-    name: symbol.name,
-    path,
-    relativePath: relativeWorkspacePath(workspaceRoot, path),
-  };
-}
-
-function projectSymbolKindFromLanguageServerSymbolKind(
-  kind: number,
-): ProjectSymbolKind | null {
-  if (kind === 5) {
-    return "class";
-  }
-
-  if (kind === 6) {
-    return "method";
-  }
-
-  if (kind === 10) {
-    return "enum";
-  }
-
-  if (kind === 11) {
-    return "interface";
-  }
-
-  if (kind === 12) {
-    return "function";
-  }
-
-  return null;
-}
-
-function uniqueProjectSymbols(
-  symbols: ProjectSymbolSearchResult[],
-): ProjectSymbolSearchResult[] {
-  const seen = new Set<string>();
-  const unique: ProjectSymbolSearchResult[] = [];
-
-  for (const symbol of symbols) {
-    const key = [
-      symbol.kind,
-      symbol.fullyQualifiedName,
-      symbol.path,
-      symbol.lineNumber,
-      symbol.column,
-    ].join("\0");
-
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    unique.push(symbol);
-  }
-
-  return unique;
 }
 
 function identifierAtEditorPosition(

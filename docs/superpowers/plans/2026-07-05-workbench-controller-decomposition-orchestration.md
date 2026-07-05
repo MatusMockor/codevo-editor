@@ -218,6 +218,27 @@ Create Codex threads for:
      - `npm run check` passed.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
        "Quick Open|stale.*search|inactive project"` passed: 24 tests.
+
+13. Open Class and shared project-symbol search
+   - Ownership: Open Class open/query/loading/results state, Open Class
+     debounced search effect, `canSearchClassOpenSymbols`, shared
+     `searchClassOpenSymbols`, workspace-symbol LSP conversion/de-dupe helpers,
+     and PHP/JS runtime session guards required by that search.
+   - Thread: `019f336a-3889-71f0-aedf-4ab3eaff63f7`
+   - Broader overlapping thread: `019f3367-b236-7191-bade-1c81ee60e1c1`
+     attempted Open Class + workspace symbols + Search Everywhere together. Do
+     not integrate that work unless it is rebased after this slice and proves it
+     has no duplicate controller ownership.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchClassOpen.ts`; controller
+     line count is now 21,876 in the main working tree.
+   - Main-thread verification after integration:
+     - `npm run check` passed.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "Open Class|workspace symbol|Search Everywhere|stale.*search|inactive project"`
+       passed: 38 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
      - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
        passed: 867 tests.
      - `npm test -- --run` passed: 230 files, 5117 tests.
