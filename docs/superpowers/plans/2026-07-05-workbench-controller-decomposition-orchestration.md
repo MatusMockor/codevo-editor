@@ -728,14 +728,42 @@ Completed worker integrations:
        tests passed: 315 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5119 tests.
+21. `019f33ff-5099-7150-bee0-24c99b53fb86`
+   - Title: Audit next controller slice.
+   - Result: no code changes.
+   - Recommended next production slice:
+     `providePhpMethodSignature` plus `providePhpParameterInlayHints`, extracted
+     into a small hook such as `src/application/usePhpSignatureHelpProvider.ts`.
+   - Rationale: this provider layer depends on already extracted PHP method
+     completion resolvers, does not own Laravel target collection, and avoids
+     the larger PHP navigation/file-opening surface.
+   - Explicitly do not extract next:
+     `providePhpMethodCompletions` and PHP/Laravel definition/navigation
+     callbacks, because they still mix Laravel collectors, provider caches,
+     indexed fallback, and file-opening side effects.
+22. `019f33ff-5145-76d3-9e36-21bb1cb3d695`
+   - Title: Audit PHP resolver hook tests.
+   - Integrated as `src/application/useLaravelSourceRegistries.test.tsx`.
+   - Added focused hook coverage for root-scoped Laravel source context
+     merging, path-scoped invalidation, and stale in-flight load dropping when
+     the active workspace root changes.
+   - Main-thread verification:
+     - `npm test -- src/application/useLaravelSourceRegistries.test.tsx`
+       passed: 3 tests.
+     - `npm test -- src/application/phpLaravelMigrationSources.test.ts
+       src/application/phpLaravelProviderSources.test.ts` passed: 22 tests.
+     - `npm run check` passed.
 
 Integration order:
 
 1. Do not revisit the expression resolver extraction; it is integrated and
    verified.
-2. Next work must start with a fresh Codex audit thread over the remaining
-   controller clusters and return a narrow worker slice or a blocker plan.
-3. Follow-up focused hook tests for newly extracted provider/registry modules
+2. Next production worker slice is PHP signature help + PHP parameter inlay
+   hints only, using the audit from thread
+   `019f33ff-5099-7150-bee0-24c99b53fb86`.
+3. Do not move PHP method completions or PHP/Laravel navigation in that same
+   slice.
+4. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
