@@ -460,11 +460,13 @@ Remaining PHP/Laravel/OOP clusters:
 
 Active worker threads:
 
-1. `019f339d-1b51-73a1-8c6e-67d534678903`
+1. `019f33af-6cab-75f3-ad5a-ea2ccb4c7107`
    - Title: Extract PHP semantic resolver.
-   - Worktree: `/Users/matusmockor/.codex/worktrees/cfae/editor`.
-   - Priority: integrate first if clean, because completions/diagnostics can
-     consume the extracted resolver as dependency injection.
+   - Worktree: `/Users/matusmockor/.codex/worktrees/74dd/editor`.
+   - Current task: implement a smaller semantic resolver slice on current
+     main, using the old broad resolver extraction only as a reference.
+   - Must preserve the existing `usePhpMethodCompletionResolvers` and
+     `usePhpDiagnosticContextFilter` dependency boundaries.
 
 Completed worker integrations:
 
@@ -496,6 +498,30 @@ Completed worker integrations:
      - PHP diagnostic filter and Laravel correctness domain tests passed:
        76 tests.
      - Full preview test passed: 867 tests.
+3. `019f339d-1b51-73a1-8c6e-67d534678903`
+   - Title: Extract PHP semantic resolver.
+   - Result: broad 3,185-line `usePhpSemanticResolver.ts` extraction was
+     tested green in its worker worktree but not integrated.
+   - Reason: worker was based on `0f0c10e2` and conflicts conceptually with
+     the already integrated completion/diagnostic hooks.
+   - Use it only as a blueprint for smaller current-main semantic slices.
+4. `019f33ac-ac5a-7ff2-8d11-4ea79afc1dc0`
+   - Title: Extract git diff preview close.
+   - Integrated as `src/application/useGitDiffPreviewCloseLifecycle.ts`.
+   - Added focused hook test:
+     `src/application/useGitDiffPreviewCloseLifecycle.test.tsx`.
+   - Moved git diff pseudo-document close and selected-change fallback
+     orchestration out of `useWorkbenchController.ts`.
+   - Controller line count after integration: 19,924.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - `useDocumentLifecycle` tests passed: 15 tests.
+     - `useFloatingSurfaces` tests passed: 10 tests.
+     - Git diff boundary/click tests passed: 6 tests.
+     - Focused close/dirty/git-diff preview tests passed: 56 tests.
+     - New hook test passed: 1 test.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5118 tests.
 
 Integration order:
 

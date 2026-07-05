@@ -7,6 +7,7 @@ import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { useGitWorkspace } from "./useGitWorkspace";
+import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useLaravelTargets } from "./useLaravelTargets";
 import { useBookmarks } from "./useBookmarks";
@@ -505,7 +506,6 @@ import {
   isDirty,
   joinWorkspacePath,
   workspaceRelativePath,
-  nextActiveEditorPathAfterClose,
   visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
@@ -3548,6 +3548,26 @@ export function useWorkbenchController(
     setMessage(null);
   }, []);
 
+  const {
+    closeGitDiffPreview,
+    closeSelectedGitDiffPreviewForChanges,
+  } = useGitDiffPreviewCloseLifecycle({
+    gitStatusChanges: gitStatus.changes,
+    selectedGitChange,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
+    selectedGitChangeRef,
+    setDocuments,
+    setOpenPaths,
+    setPreviewPath,
+    setActivePath,
+    clearGitDiffPreviewState,
+    gitDiffDocumentPath,
+    gitChangeForDiffDocumentPath,
+    loadGitDiffDocument,
+  });
+
   // Resolves the git repository (and in-repo path) that owns an absolute file
   // path: a file in a nested repository (directory mapping) routes to that repo
   // root + its repo-relative path, so its gutter diff, blame and file history
@@ -3625,45 +3645,7 @@ export function useWorkbenchController(
           gitChangesReferToSameDiff(change, selectedGitChange),
         )
       ) {
-        clearGitDiffPreviewState();
-        const documentPath = gitDiffDocumentPath(selectedGitChange);
-        const nextActivePath = nextActiveEditorPathAfterClose(
-          documentPath,
-          openPathsRef.current,
-          previewPathRef.current,
-        );
-        const nextDocumentsRef = { ...documentsRef.current };
-        delete nextDocumentsRef[documentPath];
-        documentsRef.current = nextDocumentsRef;
-        openPathsRef.current = openPathsRef.current.filter(
-          (path) => path !== documentPath,
-        );
-        if (previewPathRef.current === documentPath) {
-          previewPathRef.current = null;
-        }
-        setDocuments((current) => {
-          const next = { ...current };
-          delete next[documentPath];
-          return next;
-        });
-        setOpenPaths((current) =>
-          current.filter((path) => path !== documentPath),
-        );
-        setPreviewPath((current) =>
-          current === documentPath ? null : current,
-        );
-
-        const nextGitChange = nextActivePath
-          ? gitChangeForDiffDocumentPath(nextActivePath, status.changes)
-          : null;
-
-        if (nextActivePath && nextGitChange) {
-          loadGitDiffDocument(nextActivePath, nextGitChange);
-        } else {
-          setActivePath((current) =>
-            current === documentPath ? nextActivePath : current,
-          );
-        }
+        closeSelectedGitDiffPreviewForChanges(status.changes);
       }
       setMessage(null);
     } catch (error) {
@@ -3682,10 +3664,9 @@ export function useWorkbenchController(
       setGitLoading(false);
     }
   }, [
-    clearGitDiffPreviewState,
+    closeSelectedGitDiffPreviewForChanges,
     gitGateway,
     gitRepositoryMappings,
-    loadGitDiffDocument,
     reportError,
     workspaceRoot,
   ]);
@@ -3884,54 +3865,6 @@ export function useWorkbenchController(
     },
     [previewGitChange],
   );
-
-  const closeGitDiffPreview = useCallback(() => {
-    clearGitDiffPreviewState();
-    const documentPath = selectedGitChange
-      ? gitDiffDocumentPath(selectedGitChange)
-      : null;
-    if (documentPath) {
-      const nextActivePath = nextActiveEditorPathAfterClose(
-        documentPath,
-        openPaths,
-        previewPath,
-      );
-      const nextDocumentsRef = { ...documentsRef.current };
-      delete nextDocumentsRef[documentPath];
-      documentsRef.current = nextDocumentsRef;
-      openPathsRef.current = openPathsRef.current.filter(
-        (path) => path !== documentPath,
-      );
-      if (previewPathRef.current === documentPath) {
-        previewPathRef.current = null;
-      }
-      setDocuments((current) => {
-        const next = { ...current };
-        delete next[documentPath];
-        return next;
-      });
-      setOpenPaths((current) => current.filter((path) => path !== documentPath));
-      setPreviewPath((current) => (current === documentPath ? null : current));
-      const nextGitChange = nextActivePath
-        ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
-        : null;
-
-      if (nextActivePath && nextGitChange) {
-        loadGitDiffDocument(nextActivePath, nextGitChange);
-      } else {
-        setActivePath((current) =>
-          current === documentPath ? nextActivePath : current,
-        );
-      }
-    }
-  }, [
-    clearGitDiffPreviewState,
-    gitStatus.changes,
-    loadGitDiffDocument,
-    openPaths,
-    previewPath,
-    selectedGitChange,
-  ]);
 
   const applyGitOperationStatus = useCallback(
     (status: GitStatus) => {
