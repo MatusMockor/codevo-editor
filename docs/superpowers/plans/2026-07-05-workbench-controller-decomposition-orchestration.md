@@ -534,6 +534,22 @@ Completed worker integrations:
        290 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5118 tests.
+6. `019f33b7-bf8e-7da0-b986-e42d11fd48f3`
+   - Title: Audit Laravel resolver slice.
+   - Integrated as `src/application/usePhpLaravelMethodGenericModelType.ts`.
+   - Moved repository/builder/collection generic model carrier inference out of
+     `useWorkbenchController.ts`.
+   - Kept the recursive PHP expression resolver, completion provider,
+     diagnostics filter, navigation callbacks, and Laravel source registries
+     in their existing owners.
+   - Controller line count after integration: 19,372.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic/completion/Laravel domain tests passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel/repository preview
+       tests passed: 296 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5118 tests.
 
 Integration order:
 

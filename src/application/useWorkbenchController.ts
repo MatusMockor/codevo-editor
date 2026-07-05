@@ -29,6 +29,7 @@ import {
   usePhpMethodCompletionResolvers,
   type PhpTraitThisCompletionContext,
 } from "./usePhpMethodCompletionResolvers";
+import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
   useWorkbenchImplementationChooserState,
@@ -8522,104 +8523,31 @@ export function useWorkbenchController(
     ],
   );
 
-  const resolvePhpLaravelMethodGenericModelType = useCallback(
-    async (
-      carrierKind: "builder" | "collection",
-      className: string,
-      methodName: string,
-    ): Promise<string | null> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
-        return null;
-      }
+  const phpLaravelGenericModelTypeHelpers = useMemo(
+    () => ({
+      builderCollectionModelTypeFromExpression:
+        phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
+      builderModelTypeCandidate: phpLaravelEloquentBuilderModelTypeCandidate,
+      builderModelTypeFromExpression:
+        phpLaravelEloquentBuilderModelTypeFromExpression,
+      collectionModelTypeCandidate: phpLaravelCollectionModelTypeCandidate,
+      repositoryConventionModelTypeFromCarrierReturnType:
+        phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
+    }),
+    [],
+  );
 
-      const normalizedClassName = className.trim().replace(/^\\+/, "");
-
-      if (!normalizedClassName) {
-        return null;
-      }
-
-      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
-        try {
-          const { content, members } = await readPhpClassMembersFromPath(
-            path,
-            normalizedClassName,
-          );
-          const method = members.find(
-            (candidate) =>
-              candidate.kind !== "property" &&
-              candidate.name.toLowerCase() === methodName.toLowerCase(),
-          );
-          const modelTypeCandidate =
-            carrierKind === "builder"
-              ? phpLaravelEloquentBuilderModelTypeCandidate(
-                  content,
-                  method?.returnType ?? null,
-                )
-              : phpLaravelCollectionModelTypeCandidate(
-                  content,
-                  method?.returnType ?? null,
-                );
-          const modelType = modelTypeCandidate
-            ? resolvePhpClassReference(content, modelTypeCandidate)
-            : null;
-
-          if (modelType) {
-            return modelType;
-          }
-
-          if (method) {
-            const expressionModelType = phpMethodReturnExpressions(
-              content,
-              method.name,
-            )
-              .map((expression) =>
-                carrierKind === "builder"
-                  ? phpLaravelEloquentBuilderModelTypeFromExpression(
-                      content,
-                      expression,
-                    )
-                  : phpLaravelEloquentBuilderCollectionModelTypeFromExpression(
-                      content,
-                      expression,
-                    ),
-              )
-              .find((candidate): candidate is string => Boolean(candidate));
-
-            if (expressionModelType) {
-              return expressionModelType;
-            }
-          }
-
-          const conventionModelType =
-            method?.returnType
-              ? phpLaravelRepositoryConventionModelTypeFromCarrierReturnType(
-                  content,
-                  normalizedClassName,
-                  method.returnType,
-                  carrierKind,
-                )
-              : null;
-
-          if (conventionModelType) {
-            return conventionModelType;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return null;
-    },
-    [
+  const { resolvePhpLaravelMethodGenericModelType } =
+    usePhpLaravelMethodGenericModelType({
+      currentWorkspaceRootRef,
+      helpers: phpLaravelGenericModelTypeHelpers,
       isLaravelFrameworkActive,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
-      phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
       workspaceDescriptor,
       workspaceRoot,
-    ],
-  );
+    });
 
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
