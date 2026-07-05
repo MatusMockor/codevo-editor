@@ -17,6 +17,7 @@ import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
+import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
@@ -535,11 +536,7 @@ import {
   type ManagedPhpactorInstallUnsubscribeFn,
   type PhpToolGateway,
   type PhpToolAvailability,
-  type TextSearchResult,
-  type TextSearchOptions,
   type TextSearchGateway,
-  type ReplaceInPathResult,
-  defaultTextSearchOptions,
   type WorkspaceDescriptor,
   type WorkspaceDetectionGateway,
   type WorkspaceFileGateway,
@@ -628,11 +625,6 @@ const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
 const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
 const OPEN_APPEARANCE_SETTINGS_EVENT = "mockor-open-appearance-settings";
 const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
-
-// Cap for the Find-in-Path results list shown in the UI. Replace-in-Path uses
-// this to tell the user when the previewed count is a lower bound (the backend
-// replace itself is NOT capped to this; it rewrites every matching file).
-const TEXT_SEARCH_RESULT_LIMIT = 100;
 
 function languageServerDiagnosticsEqual(
   left: readonly LanguageServerDiagnostic[],
@@ -946,20 +938,6 @@ export function useWorkbenchController(
   const [searchEverywhereSymbols, setSearchEverywhereSymbols] = useState<
     ProjectSymbolSearchResult[]
   >([]);
-  const [textSearchOpen, setTextSearchOpen] = useState(false);
-  const [textSearchQuery, setTextSearchQuery] = useState("");
-  const [textSearchLoading, setTextSearchLoading] = useState(false);
-  const [textSearchOptions, setTextSearchOptions] = useState<TextSearchOptions>(
-    defaultTextSearchOptions,
-  );
-  const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
-    [],
-  );
-  const [textReplacement, setTextReplacement] = useState("");
-  const [textReplaceBusy, setTextReplaceBusy] = useState(false);
-  // Bumped after every successful replace so the Find-in-Path search effect
-  // re-runs and the results list reflects what is now on disk.
-  const [textSearchRefreshToken, setTextSearchRefreshToken] = useState(0);
   const [implementationChooser, setImplementationChooser] = useState<{
     targets: ImplementationTarget[];
     title: string;
@@ -1196,6 +1174,18 @@ export function useWorkbenchController(
   const selectedGitChangeRef = useRef<GitChangedFile | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const openFileRef = useRef<
+    (
+      entry: FileEntry,
+      options?: {
+        pin?: boolean;
+        readOnly?: boolean;
+        recordNavigation?: boolean;
+      },
+    ) => Promise<boolean>
+  >(
+    async (_entry: FileEntry): Promise<boolean> => false,
+  );
   // PhpStorm double-Shift detector for Search Everywhere. Kept in a stable ref
   // so the keydown listener keeps the same instance across re-renders (the tap
   // timing must persist between events). 300ms is PhpStorm's default window.
@@ -1444,6 +1434,37 @@ export function useWorkbenchController(
     },
     [reportError],
   );
+
+  const {
+    textSearchLoading,
+    textSearchOpen,
+    textSearchQuery,
+    textSearchOptions,
+    textSearchResults,
+    textReplacement,
+    textReplaceBusy,
+    setTextSearchOpen,
+    setTextSearchQuery,
+    setTextSearchOptions,
+    setTextReplacement,
+    resetTextSearchState,
+    openTextSearchResult,
+    replaceAllInPath,
+    replaceInFile,
+  } = useWorkbenchTextSearch({
+    workspaceRoot,
+    activeDocumentRef,
+    currentWorkspaceRootRef,
+    documentsRef,
+    openFileRef,
+    prompter,
+    textSearch,
+    workspaceFiles,
+    reportError,
+    setDocuments,
+    setEditorRevealTarget,
+    setMessage,
+  });
 
   const isUnknownDocumentForUnsyncedPath = useCallback(
     (rootPath: string | null | undefined, error: unknown): boolean => {
@@ -2485,13 +2506,7 @@ export function useWorkbenchController(
     setQuickOpenResults([]);
     setRecentFilesSwitcherOpen(false);
     setRecentLocationsPanelOpen(false);
-    setTextSearchOpen(false);
-    setTextSearchQuery("");
-    setTextSearchLoading(false);
-    setTextSearchResults([]);
-    setTextSearchOptions(defaultTextSearchOptions);
-    setTextReplacement("");
-    setTextReplaceBusy(false);
+    resetTextSearchState();
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setFileStructureScope("current");
@@ -2519,6 +2534,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     resetFilePrefetchState,
+    resetTextSearchState,
     stopProjectRuntimes,
   ]);
 
@@ -2892,13 +2908,7 @@ export function useWorkbenchController(
       setQuickOpenQuery("");
       setQuickOpenLoading(false);
       setQuickOpenResults([]);
-      setTextSearchOpen(false);
-      setTextSearchQuery("");
-      setTextSearchLoading(false);
-      setTextSearchResults([]);
-      setTextSearchOptions(defaultTextSearchOptions);
-      setTextReplacement("");
-      setTextReplaceBusy(false);
+      resetTextSearchState();
       setFileStructureScope("current");
       setImplementationChooser(null);
       setCallHierarchyView(null);
@@ -3144,6 +3154,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
       resetFilePrefetchState,
+      resetTextSearchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
@@ -3337,6 +3348,7 @@ export function useWorkbenchController(
     reportError,
     reportErrorForActiveWorkspaceRoot,
   });
+  openFileRef.current = openFile;
 
   const toggleDirectory = useCallback(
     async (path: string) => {
@@ -5126,246 +5138,6 @@ export function useWorkbenchController(
     setSearchEverywhereOpen,
     setWorkspaceSymbolsOpen,
   });
-
-  const openTextSearchResult = useCallback(
-    async (result: TextSearchResult) => {
-      const opened = await openFile({
-        kind: "file",
-        name: getFileName(result.path),
-        path: result.path,
-      });
-
-      if (!opened) {
-        return;
-      }
-
-      setTextSearchOpen(false);
-      setEditorRevealTarget({
-        path: result.path,
-        position: {
-          column: Math.max(1, Number(result.column)),
-          lineNumber: Math.max(1, Number(result.lineNumber)),
-        },
-      });
-      setMessage(
-        `Opened ${result.relativePath}:${result.lineNumber}:${result.column}`,
-      );
-    },
-    [openFile],
-  );
-
-  // Re-reads the given files from disk and refreshes any matching open tabs so
-  // the editor shows the post-replace content. Tabs with UNSAVED edits are left
-  // untouched (we never clobber the user's in-flight work); the next save will
-  // win. `isRequestedRootActive` is re-checked after every await so a stale
-  // replace cannot mutate documents that belong to a different workspace tab.
-  const refreshOpenDocumentsAfterReplace = useCallback(
-    async (
-      changedPaths: string[],
-      isRequestedRootActive: () => boolean,
-    ): Promise<void> => {
-      for (const path of changedPaths) {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        const openDocument = documentsRef.current[path];
-
-        if (!openDocument) {
-          continue;
-        }
-
-        const hasUnsavedEdits = openDocument.content !== openDocument.savedContent;
-
-        if (hasUnsavedEdits) {
-          continue;
-        }
-
-        let refreshedContent: string;
-
-        try {
-          refreshedContent = await workspaceFiles.readTextFile(path);
-        } catch {
-          continue;
-        }
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        const latestDocument = documentsRef.current[path];
-
-        // Re-check after the await: the tab may have been edited, closed, or
-        // replaced by an unsaved version while we were reading from disk.
-        if (
-          !latestDocument ||
-          latestDocument.content !== latestDocument.savedContent
-        ) {
-          continue;
-        }
-
-        const refreshedDocument: EditorDocument = {
-          ...latestDocument,
-          content: refreshedContent,
-          savedContent: refreshedContent,
-        };
-
-        documentsRef.current = {
-          ...documentsRef.current,
-          [path]: refreshedDocument,
-        };
-        activeDocumentRef.current =
-          activeDocumentRef.current?.path === path
-            ? refreshedDocument
-            : activeDocumentRef.current;
-        setDocuments((current) => {
-          const currentDocument = current[path];
-
-          if (
-            !currentDocument ||
-            currentDocument.content !== currentDocument.savedContent
-          ) {
-            return current;
-          }
-
-          return {
-            ...current,
-            [path]: {
-              ...currentDocument,
-              content: refreshedContent,
-              savedContent: refreshedContent,
-            },
-          };
-        });
-      }
-    },
-    [workspaceFiles],
-  );
-
-  // Shared Replace-in-Path runner. `scopePath === null` means Replace All (every
-  // matching file); a non-null path narrows the run to a single file (the
-  // backend still confines edits to its exact matches). Destructive (it rewrites
-  // files on disk), so it always confirms first and reports the outcome.
-  const runReplaceInPath = useCallback(
-    async (scopePath: string | null): Promise<void> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      const query = textSearchQuery.trim();
-
-      if (!requestedRoot || !query || textReplaceBusy) {
-        return;
-      }
-
-      // Preview the blast radius BEFORE the destructive write: count the
-      // matching files/occurrences (within scope) so the confirmation is honest.
-      const previewResults = textSearchResults.filter(
-        (result) => scopePath === null || result.path === scopePath,
-      );
-      const fileCount = new Set(previewResults.map((result) => result.path))
-        .size;
-      const matchCount = previewResults.length;
-
-      if (matchCount === 0) {
-        setMessage("No matches to replace");
-        return;
-      }
-
-      // The results list is capped at TEXT_SEARCH_RESULT_LIMIT; when it is full
-      // the real blast radius may be larger than what we can preview, so the
-      // confirmation says "at least N" rather than implying an exact count.
-      const isCapped =
-        scopePath === null &&
-        textSearchResults.length >= TEXT_SEARCH_RESULT_LIMIT;
-      const atLeast = isCapped ? "at least " : "";
-      const scopeLabel =
-        scopePath === null
-          ? `${atLeast}${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${atLeast}${fileCount} file${fileCount === 1 ? "" : "s"}`
-          : `${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${getFileName(scopePath)}`;
-
-      if (
-        !prompter.confirm(
-          `Replace ${scopeLabel}? This rewrites files on disk and cannot be undone.`,
-        )
-      ) {
-        return;
-      }
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      setTextReplaceBusy(true);
-
-      try {
-        // Single-file scope is passed out-of-band as an exact path (not as an
-        // extra include glob), so an active user file mask can never widen a
-        // "Replace in file" run into other files. `scopePath === null` means
-        // Replace All.
-        const result: ReplaceInPathResult = await textSearch.replaceInPath(
-          requestedRoot,
-          query,
-          textReplacement,
-          textSearchOptions,
-          scopePath ?? undefined,
-        );
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        await refreshOpenDocumentsAfterReplace(
-          result.files.map((file) => file.path),
-          isRequestedRootActive,
-        );
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        setMessage(
-          result.totalReplacements === 0
-            ? "No replacements made"
-            : `Replaced ${result.totalReplacements} occurrence${result.totalReplacements === 1 ? "" : "s"} in ${result.files.length} file${result.files.length === 1 ? "" : "s"}`,
-        );
-        // Re-run the search so the results list matches what is now on disk.
-        setTextSearchRefreshToken((token) => token + 1);
-      } catch (error) {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        reportError("Replace in Path", error);
-      } finally {
-        if (isRequestedRootActive()) {
-          setTextReplaceBusy(false);
-        }
-      }
-    },
-    [
-      prompter,
-      refreshOpenDocumentsAfterReplace,
-      reportError,
-      textReplaceBusy,
-      textReplacement,
-      textSearch,
-      textSearchOptions,
-      textSearchQuery,
-      textSearchResults,
-      workspaceRoot,
-    ],
-  );
-
-  const replaceAllInPath = useCallback(
-    () => runReplaceInPath(null),
-    [runReplaceInPath],
-  );
-
-  const replaceInFile = useCallback(
-    (path: string) => runReplaceInPath(path),
-    [runReplaceInPath],
-  );
 
   const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
     activeEditorPositionRef.current = position;
@@ -20050,68 +19822,6 @@ export function useWorkbenchController(
     searchClassOpenSymbols,
     searchEverywhereOpen,
     searchEverywhereQuery,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!textSearchOpen || !workspaceRoot || !textSearchQuery.trim()) {
-      setTextSearchResults([]);
-      setTextSearchLoading(false);
-      return;
-    }
-
-    // Capture the requested root + filters up front; the `active` flag (reset by
-    // cleanup whenever any of these change, including a workspace tab switch)
-    // drops stale results so a slow search from a previous root/filter set can
-    // never overwrite the current one.
-    const requestedRoot = workspaceRoot;
-    let active = true;
-    setTextSearchLoading(true);
-
-    const timeout = window.setTimeout(() => {
-      textSearch
-        .searchText(
-          requestedRoot,
-          textSearchQuery,
-          TEXT_SEARCH_RESULT_LIMIT,
-          textSearchOptions,
-        )
-        .then((results) => {
-          if (!active) {
-            return;
-          }
-
-          setTextSearchResults(results);
-          setMessage(null);
-        })
-        .catch((error) => {
-          if (!active) {
-            return;
-          }
-
-          setTextSearchResults([]);
-          reportError("Text Search", error);
-        })
-        .finally(() => {
-          if (!active) {
-            return;
-          }
-
-          setTextSearchLoading(false);
-        });
-    }, 180);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    reportError,
-    textSearchOpen,
-    textSearchQuery,
-    textSearchOptions,
-    textSearchRefreshToken,
-    textSearch,
     workspaceRoot,
   ]);
 

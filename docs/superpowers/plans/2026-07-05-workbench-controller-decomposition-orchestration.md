@@ -182,6 +182,27 @@ Create Codex threads for:
      `useWorkbenchSearchSurfaces` for Quick Open, Open Class, workspace symbols,
      Search Everywhere, text search, and replace-in-path state/effects.
 
+11. Text search and replace-in-path
+   - Ownership: text search state/effect, opening text search results,
+     replace-in-path confirmation/run flow, dirty-open-document refresh after
+     replace, stale-root guards, and reset helpers.
+   - Thread: `019f3356-9345-73d0-a51f-a1545e59d6ca`
+   - Broader abandoned thread: `019f3352-f42a-7282-bf6a-9500ce2d6eb3` started a
+     wider search-surfaces extraction, but it duplicated ownership and was
+     stopped in favor of this narrower slice.
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchTextSearch.ts`; controller
+     line count is now 22,146 in the main working tree.
+   - Main-thread verification after integration:
+     - `npm run check` passed.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx -t
+       "Text Search|Replace|stale.*search|inactive project"` passed: 19 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+       passed: 867 tests.
+   - Remaining search-surface follow-up: Quick Open, Open Class/workspace
+     symbols, and Search Everywhere should be extracted separately rather than
+     grouped with text search.
+
 ## Current Local Findings
 
 - Workspace edit region was extracted on 2026-07-05 into
