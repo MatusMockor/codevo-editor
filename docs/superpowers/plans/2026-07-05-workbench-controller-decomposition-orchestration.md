@@ -630,10 +630,36 @@ Completed worker integrations:
    - Confirmed `usePhpCodeActions` should remain owner of descriptor
      construction, ordering, categories, and generated actions, while file
      mutation side effects and Monaco registration/disposal stay outside.
+14. `019f33d8-96ac-7761-b2a7-1920de821d07`
+   - Title: Extract Laravel relation resolver.
+   - Integrated as `src/application/usePhpLaravelRelationResolver.ts`.
+   - Moved Laravel model property/relation type inference, relation-path owner
+     resolution, relation target helpers, collection generic model helpers,
+     morph-to factory detection, and shared template-return substitution out of
+     `useWorkbenchController.ts`.
+   - Kept recursive expression resolution, method-return resolution,
+     completion provider wiring, diagnostics, navigation callbacks, and
+     JS/TS runtime ownership in their existing modules.
+   - Controller line count after integration: 18,466.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic engine, method completions, and Laravel correctness tests
+       passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel/relation/builder
+       preview tests passed: 300 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5119 tests.
+15. `019f33d8-96ac-7761-b2a7-193699a432ad`
+   - Title: Audit workbench resolver slice.
+   - Result: no code changes.
+   - Confirmed the safe boundary was the lower-level Laravel model
+     property/relation helpers, not the recursive expression resolver or
+     method-return resolver.
 
 Integration order:
 
-1. Remaining expression/Laravel chain resolver extraction.
+1. Remaining recursive expression/method-return resolver extraction, only after
+   another audit slice proves a smaller dependency boundary.
 2. Follow-up focused hook tests for newly extracted provider/registry modules.
 
 For every worker:

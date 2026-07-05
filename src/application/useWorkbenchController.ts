@@ -31,6 +31,13 @@ import {
   type PhpTraitThisCompletionContext,
 } from "./usePhpMethodCompletionResolvers";
 import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
+import {
+  isLaravelMorphToFactoryExpression,
+  phpClassDocGenericCollectionModelTypeCandidate,
+  phpMethodCompletionWithTemplateReturnType,
+  usePhpLaravelRelationResolver,
+  type PhpClassMemberReadResult,
+} from "./usePhpLaravelRelationResolver";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
   useWorkbenchImplementationChooserState,
@@ -287,7 +294,6 @@ import {
   phpLaravelMorphMapEntriesFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
-  phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelResolvedModelTypeCandidate,
   phpLaravelScopeMethodName,
 } from "../domain/phpFrameworkLaravel";
@@ -372,7 +378,6 @@ import {
 import {
   phpLaravelViewCompletionInsertText,
 } from "../domain/phpLaravelViews";
-import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
@@ -390,7 +395,6 @@ import {
   phpLaravelQueryCallbackContextForVariable,
 } from "../domain/phpSemanticEngine";
 import {
-  phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "../domain/phpTypeAnalysis";
@@ -543,11 +547,6 @@ interface PhpClassMemberCacheEntry {
 // viewport window.
 const PHP_INLAY_HINT_CALL_LIMIT = 40;
 
-interface PhpClassMemberReadResult {
-  content: string;
-  members: PhpMethodCompletion[];
-}
-
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
 interface CachedWorkspaceWorkbenchState {
@@ -613,12 +612,6 @@ function isLaravelMorphToReturnTypeName(returnType: string | null): boolean {
   return (
     normalizedTypeName === "morphto" ||
     normalizedTypeName?.endsWith("\\morphto") === true
-  );
-}
-
-function isLaravelMorphToFactoryExpression(expression: string): boolean {
-  return /\$(?:this|[A-Za-z_][A-Za-z0-9_]*)\??->morphTo\s*\(/i.test(
-    expression,
   );
 }
 
@@ -8348,317 +8341,27 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  const resolvePhpClassPropertyOrRelationType = useCallback(
-    async (
-      className: string,
-      propertyName: string,
-      includeCollectionRelations = false,
-      visitedClassNames = new Set<string>(),
-      templateTypes: ReadonlyMap<string, string> = new Map(),
-    ): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return null;
-      }
-
-      const normalizedClassName = className.trim().replace(/^\\+/, "");
-      const visitedKey = normalizedClassName.toLowerCase();
-
-      if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
-        return null;
-      }
-
-      visitedClassNames.add(visitedKey);
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        try {
-          const { content, members } = await readPhpClassMembersFromPath(
-            path,
-            normalizedClassName,
-          );
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          const matchingMembers = members.filter(
-            (candidate) =>
-              candidate.name.toLowerCase() === propertyName.toLowerCase(),
-          );
-          const relationMethod =
-            matchingMembers.find((candidate) => candidate.kind !== "property") ??
-            null;
-          const propertyMember =
-            matchingMembers.find(
-              (candidate) => candidate.kind === "property" && candidate.returnType,
-            ) ?? null;
-          const resolvedPropertyMember = propertyMember
-            ? phpMethodCompletionWithTemplateReturnType(
-                propertyMember,
-                templateTypes,
-              )
-            : null;
-          const collectionPropertyModelType =
-            resolvedPropertyMember && includeCollectionRelations
-              ? phpCollectionGenericModelTypeCandidate(
-                  resolvedPropertyMember.returnType,
-                )
-              : null;
-          const resolvedCollectionPropertyModelType = collectionPropertyModelType
-            ? resolvePhpClassReference(content, collectionPropertyModelType)
-            : null;
-
-          const relationType = relationMethod?.returnType
-            ? resolvePhpLaravelRelationModelType(
-                content,
-                relationMethod.returnType,
-                includeCollectionRelations,
-              )
-            : null;
-
-          if (relationType) {
-            return relationType;
-          }
-
-          if (resolvedCollectionPropertyModelType) {
-            return resolvedCollectionPropertyModelType;
-          }
-
-          const propertyReturnType = resolvedPropertyMember?.returnType ?? null;
-          const propertyTypeCandidate = propertyReturnType
-            ? phpDeclaredTypeCandidate(propertyReturnType)
-            : null;
-          const propertyType = propertyTypeCandidate?.includes("\\")
-            ? propertyTypeCandidate
-            : propertyReturnType
-              ? resolvePhpDeclaredType(content, propertyReturnType)
-              : null;
-
-          if (propertyType) {
-            return propertyType;
-          }
-
-          if (relationMethod) {
-            let hasMorphToReturnExpression = false;
-
-            for (const expression of phpMethodReturnExpressions(
-              content,
-              relationMethod.name,
-            )) {
-              if (isLaravelMorphToFactoryExpression(expression)) {
-                hasMorphToReturnExpression = true;
-              }
-
-              const relationTargetClassName =
-                phpLaravelRelationTargetClassNameFromExpression(
-                  expression,
-                  includeCollectionRelations,
-                );
-              const resolvedRelationTargetClassName = relationTargetClassName
-                ? resolvePhpRelationTargetClassReference(
-                    content,
-                    relationTargetClassName,
-                  )
-                : null;
-
-              if (resolvedRelationTargetClassName) {
-                return resolvedRelationTargetClassName;
-              }
-            }
-
-            if (hasMorphToReturnExpression && isLaravelFrameworkActive) {
-              const morphMapModelType =
-                await resolvePhpLaravelProjectMorphMapModelType();
-
-              if (!isRequestedRootActive()) {
-                return null;
-              }
-
-              if (morphMapModelType) {
-                return morphMapModelType;
-              }
-            }
-          }
-
-          for (const traitName of phpTraitClassNames(content)) {
-            const resolvedTraitName = resolvePhpClassReference(content, traitName);
-            const traitTemplateTypes = resolvedTraitName
-              ? await resolvePhpGenericTemplateTypesForInheritedClass(
-                  content,
-                  resolvedTraitName,
-                  templateTypes,
-                )
-              : new Map<string, string>();
-            const traitType = resolvedTraitName
-              ? await resolvePhpClassPropertyOrRelationType(
-                  resolvedTraitName,
-                  propertyName,
-                  includeCollectionRelations,
-                  visitedClassNames,
-                  traitTemplateTypes,
-                )
-              : null;
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            if (traitType) {
-              return traitType;
-            }
-          }
-
-          for (const mixinName of phpMixinClassNames(content)) {
-            const resolvedMixinName = resolvePhpClassReference(content, mixinName);
-            const mixinTemplateTypes = resolvedMixinName
-              ? await resolvePhpGenericTemplateTypesForMixinClass(
-                  content,
-                  resolvedMixinName,
-                  templateTypes,
-                )
-              : new Map<string, string>();
-            const mixinType = resolvedMixinName
-              ? await resolvePhpClassPropertyOrRelationType(
-                  resolvedMixinName,
-                  propertyName,
-                  includeCollectionRelations,
-                  visitedClassNames,
-                  mixinTemplateTypes,
-                )
-              : null;
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            if (mixinType) {
-              return mixinType;
-            }
-          }
-
-          for (const superTypeName of phpSuperTypeReferences(content)) {
-            const resolvedSuperTypeName = resolvePhpClassReference(
-              content,
-              superTypeName,
-            );
-            const superTypeTemplateTypes = resolvedSuperTypeName
-              ? await resolvePhpGenericTemplateTypesForInheritedClass(
-                  content,
-                  resolvedSuperTypeName,
-                  templateTypes,
-                )
-              : new Map<string, string>();
-            const superTypePropertyType = resolvedSuperTypeName
-              ? await resolvePhpClassPropertyOrRelationType(
-                  resolvedSuperTypeName,
-                  propertyName,
-                  includeCollectionRelations,
-                  visitedClassNames,
-                  superTypeTemplateTypes,
-                )
-              : null;
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            if (superTypePropertyType) {
-              return superTypePropertyType;
-            }
-          }
-
-          return null;
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          continue;
-        }
-      }
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      return null;
-    },
-    [
-      readPhpClassMembersFromPath,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-      resolvePhpDeclaredType,
-      resolvePhpGenericTemplateTypesForInheritedClass,
-      resolvePhpGenericTemplateTypesForMixinClass,
-      resolvePhpLaravelProjectMorphMapModelType,
-      isLaravelFrameworkActive,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
+  const {
+    resolvePhpClassPropertyOrRelationType,
+    resolvePhpLaravelRelationPathOwnerType,
+  } = usePhpLaravelRelationResolver({
+    currentWorkspaceRootRef,
+    isLaravelFrameworkActive,
+    readPhpClassMembersFromPath,
+    resolvePhpClassReference,
+    resolvePhpClassSourcePaths,
+    resolvePhpDeclaredType,
+    resolvePhpGenericTemplateTypesForInheritedClass,
+    resolvePhpGenericTemplateTypesForMixinClass,
+    resolvePhpLaravelProjectMorphMapModelType,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     resolvePhpClassPropertyOrRelationTypeRef.current =
       resolvePhpClassPropertyOrRelationType;
   }, [resolvePhpClassPropertyOrRelationType]);
-
-  const resolvePhpLaravelRelationPathOwnerType = useCallback(
-    async (
-      className: string,
-      previousRelationNames: readonly string[] = [],
-    ): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return null;
-      }
-
-      let ownerType: string | null = className;
-
-      for (const relationName of previousRelationNames) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        ownerType = ownerType
-          ? await resolvePhpClassPropertyOrRelationType(
-              ownerType,
-              relationName,
-              true,
-            )
-          : null;
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        if (!ownerType) {
-          return null;
-        }
-      }
-
-      return ownerType;
-    },
-    [
-      resolvePhpClassPropertyOrRelationType,
-      isLaravelFrameworkActive,
-      workspaceRoot,
-    ],
-  );
 
   const resolvePhpCollectionModelTypeFromClass = useCallback(
     async (className: string): Promise<string | null> => {
@@ -18256,29 +17959,6 @@ function phpSourceSignature(source: string): string {
   return `${source.length}:${hash >>> 0}`;
 }
 
-function phpMethodCompletionWithTemplateReturnType(
-  method: PhpMethodCompletion,
-  templateTypes: ReadonlyMap<string, string>,
-): PhpMethodCompletion {
-  if (!method.returnType || templateTypes.size === 0) {
-    return method;
-  }
-
-  let returnType = method.returnType;
-
-  for (const [templateName, resolvedType] of templateTypes) {
-    returnType = returnType.replace(
-      new RegExp(
-        `(^|[^A-Za-z0-9_\\\\])${escapeRegExp(templateName)}(?![A-Za-z0-9_])`,
-        "gi",
-      ),
-      `$1${resolvedType}`,
-    );
-  }
-
-  return returnType === method.returnType ? method : { ...method, returnType };
-}
-
 function laravelFacadeTargetClassName(className: string): string | null {
   const normalizedClassName = className.replace(/^\\+/, "").toLowerCase();
   const targets: Record<string, string> = {
@@ -18299,46 +17979,6 @@ function laravelFacadeTargetClassName(className: string): string | null {
   };
 
   return targets[normalizedClassName] ?? null;
-}
-
-function resolvePhpLaravelRelationModelType(
-  source: string,
-  returnType: string,
-  includeCollectionRelations: boolean,
-): string | null {
-  if (!isLaravelEloquentRelationType(returnType, includeCollectionRelations)) {
-    return null;
-  }
-
-  const relatedModelType = phpDeclaredGenericTypeCandidates(returnType).find(
-    (candidate) => !isGenericPhpPlaceholder(candidate),
-  );
-
-  return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
-}
-
-function resolvePhpRelationTargetClassReference(
-  source: string,
-  className: string,
-): string | null {
-  const normalizedClassName = className.trim().replace(/^\\+/, "").toLowerCase();
-
-  if (
-    normalizedClassName === "__class__" ||
-    normalizedClassName === "self" ||
-    normalizedClassName === "static" ||
-    normalizedClassName === "$this"
-  ) {
-    return phpCurrentClassName(source);
-  }
-
-  if (normalizedClassName === "parent") {
-    const parentClassName = phpExtendsClassName(source);
-
-    return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
-  }
-
-  return resolvePhpClassName(source, className);
 }
 
 function phpLooksLikeQualifiedClassName(typeName: string | null): boolean {
@@ -18376,64 +18016,6 @@ function phpIsBuiltinDeclaredType(typeName: string | null): boolean {
         "void",
       ]).has(normalizedTypeName),
   );
-}
-
-function phpCollectionGenericModelTypeCandidate(
-  typeName: string | null,
-): string | null {
-  if (!typeName) {
-    return null;
-  }
-
-  const arrayItemType = phpCollectionArrayModelTypeCandidate(typeName);
-
-  if (arrayItemType) {
-    return arrayItemType;
-  }
-
-  if (!/\bCollection\s*</i.test(typeName)) {
-    return null;
-  }
-
-  return phpDeclaredGenericTypeCandidates(typeName).find(
-    (candidate) => !isGenericPhpPlaceholder(candidate),
-  ) ?? null;
-}
-
-function phpCollectionArrayModelTypeCandidate(typeName: string): string | null {
-  if (!/\bCollection\b/i.test(typeName)) {
-    return null;
-  }
-
-  for (const segment of typeName.split(/[|&]/)) {
-    const match = /^(\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\[\]$/.exec(
-      segment.trim(),
-    );
-    const candidate = match?.[1] ?? null;
-
-    if (candidate && !isGenericPhpPlaceholder(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function phpClassDocGenericCollectionModelTypeCandidate(
-  source: string,
-): string | null {
-  for (const match of source.matchAll(
-    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements)\s+([^\r\n*]+)/g,
-  )) {
-    const typeName = firstPhpDocTypeToken(match[1] ?? null);
-    const candidate = phpCollectionGenericModelTypeCandidate(typeName);
-
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return null;
 }
 
 function phpMethodCompletionsWithStableMetadata(
@@ -18493,72 +18075,6 @@ function phpMethodCompletionWithStableMetadata(
 
   return stableCompletion;
 }
-
-function isLaravelEloquentRelationType(
-  typeName: string,
-  includeCollectionRelations: boolean,
-): boolean {
-  const normalizedTypeName = typeName
-    .trim()
-    .replace(/^\?/, "")
-    .replace(/^\\+/, "")
-    .split("<")[0]
-    ?.toLowerCase();
-
-  if (!normalizedTypeName) {
-    return false;
-  }
-
-  if (
-    normalizedTypeName.startsWith(
-      "illuminate\\database\\eloquent\\relations\\",
-    )
-  ) {
-    const shortTypeName = shortPhpName(normalizedTypeName);
-    return includeCollectionRelations
-      ? laravelEloquentRelationTypes.has(shortTypeName)
-      : laravelEloquentSingularRelationTypes.has(shortTypeName);
-  }
-
-  return includeCollectionRelations
-    ? laravelEloquentRelationTypes.has(normalizedTypeName)
-    : laravelEloquentSingularRelationTypes.has(normalizedTypeName);
-}
-
-function isGenericPhpPlaceholder(typeName: string): boolean {
-  const normalized = typeName.trim().replace(/^\\+/, "").toLowerCase();
-
-  return (
-    normalized === "self" ||
-    normalized === "static" ||
-    normalized === "$this" ||
-    normalized === "illuminate\\database\\eloquent\\model" ||
-    normalized === "model" ||
-    /^t[A-Z_]/.test(typeName)
-  );
-}
-
-const laravelEloquentRelationTypes = new Set([
-  "belongsto",
-  "belongstomany",
-  "hasmany",
-  "hasmanythrough",
-  "hasone",
-  "hasonethrough",
-  "morphmany",
-  "morphone",
-  "morphedbymany",
-  "morphto",
-  "morphtomany",
-]);
-
-const laravelEloquentSingularRelationTypes = new Set([
-  "belongsto",
-  "hasone",
-  "hasonethrough",
-  "morphone",
-  "morphto",
-]);
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
