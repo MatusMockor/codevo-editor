@@ -30,6 +30,7 @@ import {
   usePhpMethodCompletionResolvers,
   type PhpTraitThisCompletionContext,
 } from "./usePhpMethodCompletionResolvers";
+import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
 import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
 import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
 import { usePhpExpressionTypeResolver } from "./usePhpExpressionTypeResolver";
@@ -260,18 +261,10 @@ import {
   phpMemberAccessCompletionContextAt,
   phpMixinClassNames,
   phpMethodCompletionsFromSource,
-  phpMethodParameters,
-  phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
   type PhpMethodCompletion,
-  type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
-import {
-  phpCallArgumentInlayContexts,
-  phpParameterNameInlayHints,
-  type PhpParameterNameInlayHint,
-} from "../domain/phpInlayHints";
 import {
   isLaravelEloquentBuilderMethodName,
   phpLaravelCollectionModelTypeCandidate,
@@ -514,13 +507,6 @@ interface PhpClassMemberCacheEntry {
   members: PhpMethodCompletion[];
   sourceSignature: string;
 }
-
-// Upper bound on the number of PHP call expressions whose target signature is
-// resolved per inlay-hints viewport request. Keeps a dense file from fanning out
-// an unbounded number of signature resolutions on every scroll; calls beyond the
-// cap simply receive no parameter-name hint until they scroll into a fresh
-// viewport window.
-const PHP_INLAY_HINT_CALL_LIMIT = 40;
 
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
@@ -8881,125 +8867,13 @@ export function useWorkbenchController(
     ],
   );
 
-  const providePhpMethodSignature = useCallback(
-    async (
-      source: string,
-      position: EditorPosition,
-    ): Promise<PhpMethodSignature | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return null;
-      }
-
-      const signatureContext = phpMethodSignatureContextAt(source, position);
-
-      if (!signatureContext) {
-        return null;
-      }
-
-      const methods = signatureContext.className
-        ? await resolvePhpStaticMethodCompletions(source, signatureContext.className)
-        : signatureContext.receiverExpression
-          ? await resolvePhpReceiverMethodCompletions(
-              source,
-              position,
-              signatureContext.receiverExpression,
-            )
-          : [];
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      const method = methods.find(
-        (candidate) =>
-          candidate.name.toLowerCase() ===
-          signatureContext.methodName.toLowerCase(),
-      );
-
-      if (!method) {
-        return null;
-      }
-
-      const parameters = phpMethodParameters(method.parameters);
-      const namedArgumentIndex = signatureContext.argumentName
-        ? parameters.findIndex(
-            (parameter) => parameter.name === `$${signatureContext.argumentName}`,
-          )
-        : -1;
-
-      return {
-        argumentIndex:
-          namedArgumentIndex >= 0
-            ? namedArgumentIndex
-            : signatureContext.argumentIndex,
-        method: phpMethodCompletionWithStableMetadata(method),
-        parameters,
-      };
-    },
-    [
+  const { providePhpMethodSignature, providePhpParameterInlayHints } =
+    usePhpSignatureHelpProvider({
+      currentWorkspaceRootRef,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
       workspaceRoot,
-    ],
-  );
-
-  const providePhpParameterInlayHints = useCallback(
-    async (
-      source: string,
-      range: { endLine: number; startLine: number },
-    ): Promise<PhpParameterNameInlayHint[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return [];
-      }
-
-      const calls = phpCallArgumentInlayContexts(source, range);
-
-      if (calls.length === 0) {
-        return [];
-      }
-
-      // Cap the calls resolved per viewport so a dense file does not fan out an
-      // unbounded number of signature resolutions on every scroll.
-      const hints: PhpParameterNameInlayHint[] = [];
-
-      for (const call of calls.slice(0, PHP_INLAY_HINT_CALL_LIMIT)) {
-        const firstArgument = call.arguments[0];
-
-        if (!firstArgument) {
-          continue;
-        }
-
-        // Reuse the signature-resolution flow by probing a position inside the
-        // call's argument list; it resolves method / static / receiver targets
-        // (free functions resolve to null, so they yield no hint).
-        const signature = await providePhpMethodSignature(source, {
-          column: firstArgument.character + 1,
-          lineNumber: firstArgument.line + 1,
-        });
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (!signature) {
-          continue;
-        }
-
-        hints.push(...phpParameterNameInlayHints(call, signature.parameters));
-      }
-
-      return hints;
-    },
-    [providePhpMethodSignature, workspaceRoot],
-  );
+    });
 
   const { createMissingBladeViewCodeAction, providePhpCodeActions } =
     usePhpCodeActionProvider({

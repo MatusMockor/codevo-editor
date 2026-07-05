@@ -38,11 +38,11 @@ Current operational goal:
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 16,975 lines after the
+- `src/application/useWorkbenchController.ts`: 16,849 lines after the
   workspace-edit, LSP runtime lifecycle, document tab, navigation,
   close-lifecycle, PHP code-action, file-operations, text-search, Quick Open,
   PHP semantic resolver, Laravel registry/relation/model-type, method-return,
-  and expression-type resolver slices.
+  expression-type resolver, and PHP signature/inlay provider slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -753,17 +753,39 @@ Completed worker integrations:
      - `npm test -- src/application/phpLaravelMigrationSources.test.ts
        src/application/phpLaravelProviderSources.test.ts` passed: 22 tests.
      - `npm run check` passed.
+23. `019f3402-cc9b-7d62-9d17-25ce4d566dfe`
+   - Title: Extract PHP signature help provider.
+   - Integrated as `src/application/usePhpSignatureHelpProvider.ts`.
+   - Moved PHP method signature help and PHP parameter-name inlay hint
+     resolution out of `useWorkbenchController.ts`.
+   - Kept PHP method completions, PHP/Laravel definition/navigation callbacks,
+     code actions, diagnostics, runtime lifecycle, JS/TS provider logic,
+     Laravel target collectors, and Monaco registration outside the hook.
+   - Preserved passed-source-only behavior, requested-root capture, stale-root
+     checks after awaits, and `[]` fallback for stale inlay hint resolution.
+   - Controller line count after integration: 16,849.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - `npm test -- src/domain/phpMethodCompletions.test.ts
+       src/domain/phpInlayHints.test.ts` passed: 101 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "signature|inlay|Laravel container receivers|magic-where|scope"`
+       passed: 12 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 232 files, 5122 tests.
 
 Integration order:
 
 1. Do not revisit the expression resolver extraction; it is integrated and
    verified.
-2. Next production worker slice is PHP signature help + PHP parameter inlay
-   hints only, using the audit from thread
-   `019f33ff-5099-7150-bee0-24c99b53fb86`.
-3. Do not move PHP method completions or PHP/Laravel navigation in that same
-   slice.
-4. Follow-up focused hook tests for newly extracted provider/registry modules
+2. Do not revisit PHP signature help + PHP parameter inlay hints; it is
+   integrated and verified.
+3. Next work must start with a fresh Codex audit thread over the remaining
+   controller clusters and return a narrow worker slice or a blocker plan.
+4. Do not move PHP method completions or PHP/Laravel navigation without a new
+   audit, because those still mix Laravel collectors/provider caches and
+   file-opening side effects.
+5. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
