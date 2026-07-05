@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   isLaravelCollectionFluentMethod,
@@ -22,7 +22,11 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
+import { phpExtendsClassName } from "../domain/phpNavigation";
+import type { WorkspaceDescriptor } from "../domain/workspace";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpLaravelCarrierKind } from "./usePhpLaravelMethodGenericModelType";
+import { phpClassDocGenericCollectionModelTypeCandidate } from "./usePhpLaravelRelationResolver";
 
 export type PhpLaravelModelTypeResolver = (
   source: string,
@@ -33,6 +37,7 @@ export type PhpLaravelModelTypeResolver = (
 
 export interface UsePhpLaravelModelTypeResolversOptions {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
+  currentWorkspaceRootRef: MutableRefObject<string | null>;
   isLaravelFrameworkActive: boolean;
   phpClassHasLaravelDynamicWhere: (
     className: string,
@@ -48,9 +53,8 @@ export interface UsePhpLaravelModelTypeResolversOptions {
     includeCollectionRelations?: boolean,
   ) => Promise<string | null>;
   resolvePhpClassReference: (source: string, className: string) => string | null;
-  resolvePhpCollectionModelTypeFromClass: (
-    className: string,
-  ) => Promise<string | null>;
+  readNavigationFileContent: (path: string) => Promise<string>;
+  resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   resolvePhpLaravelMethodGenericModelType: (
     carrierKind: PhpLaravelCarrierKind,
     className: string,
@@ -64,19 +68,25 @@ export interface UsePhpLaravelModelTypeResolversOptions {
     className: string,
     methodName: string,
   ) => Promise<string | null>;
+  workspaceDescriptor: WorkspaceDescriptor | null;
+  workspaceRoot: string | null;
 }
 
 export function usePhpLaravelModelTypeResolvers({
   activePhpFrameworkProviders,
+  currentWorkspaceRootRef,
   isLaravelFrameworkActive,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
+  readNavigationFileContent,
   resolvePhpClassReference,
-  resolvePhpCollectionModelTypeFromClass,
+  resolvePhpClassSourcePaths,
   resolvePhpLaravelMethodGenericModelType,
   resolvePhpLaravelRelationPathOwnerType,
   resolvePhpMethodReturnType,
+  workspaceDescriptor,
+  workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
@@ -398,6 +408,110 @@ export function usePhpLaravelModelTypeResolvers({
       resolvePhpLaravelMethodGenericModelType,
       resolvePhpLaravelRelationPathOwnerType,
       resolvePhpMethodReturnType,
+    ],
+  );
+
+  const resolvePhpCollectionModelTypeFromClass = useCallback(
+    async (className: string): Promise<string | null> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return null;
+      }
+
+      const visitedClassNames = new Set<string>();
+
+      const resolveCollection = async (
+        candidateClassName: string,
+      ): Promise<string | null> => {
+        const normalizedClassName = candidateClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return null;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedClassName,
+        )) {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            const genericModelType =
+              phpClassDocGenericCollectionModelTypeCandidate(content);
+            const resolvedGenericModelType = genericModelType
+              ? resolvePhpClassReference(content, genericModelType)
+              : null;
+
+            if (resolvedGenericModelType) {
+              return resolvedGenericModelType;
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+            const parentModelType = resolvedParentClassName
+              ? await resolveCollection(resolvedParentClassName)
+              : null;
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            if (parentModelType) {
+              return parentModelType;
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            continue;
+          }
+        }
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        return null;
+      };
+
+      const modelType = await resolveCollection(className);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      return modelType;
+    },
+    [
+      currentWorkspaceRootRef,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
     ],
   );
 

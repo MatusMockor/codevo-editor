@@ -38,10 +38,7 @@ import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
 import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
 import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
 import { usePhpExpressionTypeResolver } from "./usePhpExpressionTypeResolver";
-import {
-  phpClassDocGenericCollectionModelTypeCandidate,
-  usePhpLaravelRelationResolver,
-} from "./usePhpLaravelRelationResolver";
+import { usePhpLaravelRelationResolver } from "./usePhpLaravelRelationResolver";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
   usePhpMethodReturnTypeResolver,
@@ -385,7 +382,6 @@ import {
   phpDocMethodPositionOrNull,
   phpPropertyPositionOrNull,
   phpEnclosingMethodNameAt,
-  phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
@@ -5747,123 +5743,24 @@ export function useWorkbenchController(
       resolvePhpExpressionTypeRef.current(source, position, receiverExpression),
   });
 
-  const resolvePhpCollectionModelTypeFromClass = useCallback(
-    async (className: string): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return null;
-      }
-
-      const visitedClassNames = new Set<string>();
-
-      const resolveCollection = async (
-        candidateClassName: string,
-      ): Promise<string | null> => {
-        const normalizedClassName = candidateClassName
-          .trim()
-          .replace(/^\\+/, "");
-        const visitedKey = normalizedClassName.toLowerCase();
-
-        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
-          return null;
-        }
-
-        visitedClassNames.add(visitedKey);
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        for (const path of await resolvePhpClassSourcePaths(
-          normalizedClassName,
-        )) {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            const genericModelType =
-              phpClassDocGenericCollectionModelTypeCandidate(content);
-            const resolvedGenericModelType = genericModelType
-              ? resolvePhpClassReference(content, genericModelType)
-              : null;
-
-            if (resolvedGenericModelType) {
-              return resolvedGenericModelType;
-            }
-
-            const parentClassName = phpExtendsClassName(content);
-            const resolvedParentClassName = parentClassName
-              ? resolvePhpClassReference(content, parentClassName)
-              : null;
-            const parentModelType = resolvedParentClassName
-              ? await resolveCollection(resolvedParentClassName)
-              : null;
-
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            if (parentModelType) {
-              return parentModelType;
-            }
-          } catch {
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            continue;
-          }
-        }
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        return null;
-      };
-
-      const modelType = await resolveCollection(className);
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      return modelType;
-    },
-    [
-      readNavigationFileContent,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
-
   const {
     resolvePhpEloquentBuilderModelType,
     resolvePhpLaravelCollectionModelType,
   } = usePhpLaravelModelTypeResolvers({
     activePhpFrameworkProviders,
+    currentWorkspaceRootRef,
     isLaravelFrameworkActive,
     phpClassHasLaravelDynamicWhere,
     phpClassHasLaravelLocalScope,
+    readNavigationFileContent,
     resolvePhpClassPropertyOrRelationType,
     resolvePhpClassReference,
-    resolvePhpCollectionModelTypeFromClass,
+    resolvePhpClassSourcePaths,
     resolvePhpLaravelMethodGenericModelType,
     resolvePhpLaravelRelationPathOwnerType,
     resolvePhpMethodReturnType,
+    workspaceDescriptor,
+    workspaceRoot,
   });
 
   useEffect(() => {

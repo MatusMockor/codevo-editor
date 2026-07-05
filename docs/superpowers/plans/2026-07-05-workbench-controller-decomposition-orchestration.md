@@ -982,6 +982,37 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 237 files, 5151 tests.
+36. `019f3445-7a62-7eb2-ac88-8ca5568cddda`
+   - Title: Audit controller clusters.
+   - Result: read-only audit.
+   - Recommended one tiny production extraction:
+     move only `resolvePhpCollectionModelTypeFromClass` from
+     `useWorkbenchController.ts` into `usePhpLaravelModelTypeResolvers.ts`.
+   - Strict boundary:
+     - move the collection model type resolver and its
+       `phpClassDocGenericCollectionModelTypeCandidate` dependency,
+     - keep provider registration, method completions, PHP/Laravel navigation,
+       file-opening callbacks, and UI lifecycle code in their existing owners,
+     - preserve requested-root capture and post-await stale-root checks.
+37. `019f3448-afbf-71e0-a89c-8b3e77b82596`
+   - Title: Move PHP collection resolver.
+   - Integrated into main-thread worktree.
+   - Added `usePhpLaravelModelTypeResolvers` ownership of
+     `resolvePhpCollectionModelTypeFromClass`.
+   - Kept provider registration, method completions, PHP/Laravel navigation,
+     file-opening callbacks, modified-document safety, and git diff pseudo-doc
+     behavior in their existing owners.
+   - Preserved requested-root capture and post-await stale-root checks.
+   - Controller line count: 14,561 -> 14,458.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpLaravelModelTypeResolvers.test.tsx`
+       passed: 3 tests.
+     - `npm test -- src/application/useWorkbenchController.preview.test.tsx
+       -t "collection model type|method completions|stale PHP collection"`
+       passed: 7 tests.
+     - `npm run check` passed.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 238 files, 5154 tests.
 
 Integration order:
 
@@ -998,12 +1029,12 @@ Integration order:
    verified.
 7. Do not revisit Laravel scope predicates; they are integrated and verified.
 8. Do not revisit class/member collectors; they are integrated and verified.
-   The next step should start with a fresh Codex audit thread over remaining
-   controller clusters or recommend shifting to higher product-value work.
-9. Do not move PHP method completions or PHP/Laravel navigation without a new
+9. Do not revisit collection model type resolver extraction; it is integrated
+   and verified.
+10. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-10. Follow-up focused hook tests for newly extracted provider/registry modules
+11. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 Current operational goal:
