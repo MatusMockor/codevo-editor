@@ -655,11 +655,39 @@ Completed worker integrations:
    - Confirmed the safe boundary was the lower-level Laravel model
      property/relation helpers, not the recursive expression resolver or
      method-return resolver.
+16. `019f33e3-55ee-7941-8f5d-3d590aebf6ba`
+   - Title: Extract PHP method-return resolver.
+   - Integrated as `src/application/usePhpMethodReturnTypeResolver.ts`.
+   - Moved recursive PHP method return resolution, declared return handling,
+     return-expression traversal, trait/mixin/supertype traversal, Laravel
+     facade target handling, MorphTo morph-map return refinement, and builder
+     terminal model lookup through the existing builder resolver ref.
+   - Kept Eloquent builder model resolution, Laravel collection model
+     resolution, expression resolution, completion provider wiring,
+     diagnostics, navigation, and JS/TS runtime ownership in the controller or
+     existing modules.
+   - Controller line count after integration: 18,049.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic engine, method completions, and Laravel correctness tests
+       passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel/expression/return
+       preview tests passed: 314 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5119 tests.
+17. `019f33e3-5696-7f51-823d-b0b2a63d29f6`
+   - Title: Audit PHP resolver extraction.
+   - Result: no code changes.
+   - Confirmed the safe micro-slice was `resolvePhpMethodReturnType` only.
+     Explicitly warned against moving the builder, collection, and expression
+     resolver cluster in the same slice because those functions feed provider
+     surfaces and remain mutually recursive.
 
 Integration order:
 
-1. Remaining recursive expression/method-return resolver extraction, only after
-   another audit slice proves a smaller dependency boundary.
+1. Remaining Eloquent builder, Laravel collection, and expression resolver
+   extraction, only after another audit slice proves a smaller dependency
+   boundary.
 2. Follow-up focused hook tests for newly extracted provider/registry modules.
 
 For every worker:
