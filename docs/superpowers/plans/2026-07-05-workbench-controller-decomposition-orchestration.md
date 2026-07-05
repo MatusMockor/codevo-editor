@@ -875,6 +875,26 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 235 files, 5139 tests.
+30. `019f3426-c974-7d31-a8e8-20e562a67778`
+   - Title: Audit remaining controller clusters.
+   - Result: no code changes.
+   - Recommended test-only hardening for the freshly extracted trait-host hook
+     instead of extracting the small Laravel local/dynamic scope predicates,
+     because those predicates feed diagnostics, expression typing, model-type
+     resolution, and completion helper wiring.
+31. `019f3429-1992-72b2-9f78-1d496b9a9c10`
+   - Title: Add trait host root-change tests.
+   - Integrated two focused stale-root race tests in
+     `src/application/usePhpTraitHostPredicates.test.tsx`:
+     - root changes after host source read,
+     - root changes after trait host property type resolution.
+   - No production code changes.
+   - Main-thread verification:
+     - `npm test -- src/application/usePhpTraitHostPredicates.test.tsx`
+       passed: 7 tests.
+     - `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts
+       src/domain/laravelCorrectnessMatrix.test.ts` passed: 76 tests.
+     - `npm run check` passed.
 
 Integration order:
 
@@ -887,12 +907,14 @@ Integration order:
 4. Do not revisit PHP class hierarchy predicates; they are integrated and
    verified.
 5. Do not revisit PHP trait-host predicates; they are integrated and verified.
-6. Next work must start with a fresh Codex audit thread over the remaining
+6. Do not revisit trait-host stale-root test hardening; it is integrated and
+   verified.
+7. Next work must start with a fresh Codex audit thread over the remaining
    controller clusters and return a narrow worker slice or a blocker plan.
-7. Do not move PHP method completions or PHP/Laravel navigation without a new
+8. Do not move PHP method completions or PHP/Laravel navigation without a new
    audit, because those still mix Laravel collectors/provider caches and
    file-opening side effects.
-8. Follow-up focused hook tests for newly extracted provider/registry modules
+9. Follow-up focused hook tests for newly extracted provider/registry modules
    are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:

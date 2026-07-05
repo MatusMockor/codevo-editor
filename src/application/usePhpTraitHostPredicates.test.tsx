@@ -277,4 +277,96 @@ class Post
 
     harness.unmount();
   });
+
+  it("returns false when the workspace root changes after host source read", async () => {
+    const hostSourceRead = createDeferred<string>();
+    const hostPath = classPath("App\\Models\\Post");
+    const options = makeOptions(
+      {
+        "App\\Models\\Post": `<?php
+namespace App\\Models;
+
+class Post
+{
+    use \\App\\Traits\\HasSlugs;
+}
+`,
+      },
+      {
+        phpClassHierarchyHasMethod: vi.fn(async () => true),
+        readNavigationFileContent: vi.fn(() => hostSourceRead.promise),
+        searchText: vi.fn(async () => [
+          searchResult(hostPath, "App\\Traits\\HasSlugs"),
+        ]),
+      },
+    );
+    const harness = renderHook(options);
+    const result = harness
+      .api()
+      .phpTraitHostMethodExists("App\\Traits\\HasSlugs", "slug");
+
+    await vi.waitFor(() => {
+      expect(options.readNavigationFileContent).toHaveBeenCalledWith(hostPath);
+    });
+
+    options.currentWorkspaceRootRef.current = "/other";
+    hostSourceRead.resolve(`<?php
+namespace App\\Models;
+
+class Post
+{
+    use \\App\\Traits\\HasSlugs;
+}
+`);
+
+    await expect(result).resolves.toBe(false);
+    expect(options.phpClassHierarchyHasMethod).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("returns false when the workspace root changes after trait host property type resolution", async () => {
+    const propertyType = createDeferred<string | null>();
+    const options = makeOptions(
+      {
+        "App\\Models\\Post": `<?php
+namespace App\\Models;
+
+class Post
+{
+    use \\App\\Traits\\FormatsTitles;
+}
+`,
+      },
+      {
+        phpClassHierarchyHasMethod: vi.fn(async () => true),
+        resolvePhpClassPropertyOrRelationType: vi.fn(
+          () => propertyType.promise,
+        ),
+      },
+    );
+    const harness = renderHook(options);
+    const result = harness
+      .api()
+      .phpTraitHostPropertyMethodExists(
+        "App\\Traits\\FormatsTitles",
+        "$formatter",
+        "format",
+      );
+
+    await vi.waitFor(() => {
+      expect(options.resolvePhpClassPropertyOrRelationType).toHaveBeenCalledWith(
+        "App\\Models\\Post",
+        "formatter",
+      );
+    });
+
+    options.currentWorkspaceRootRef.current = "/other";
+    propertyType.resolve("App\\Support\\TitleFormatter");
+
+    await expect(result).resolves.toBe(false);
+    expect(options.phpClassHierarchyHasMethod).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });
