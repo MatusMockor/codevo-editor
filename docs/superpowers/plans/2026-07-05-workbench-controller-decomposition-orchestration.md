@@ -26,8 +26,9 @@ Current operational goal:
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 25,649 lines after the
-  workspace-edit, LSP runtime lifecycle, document tab, and navigation slices.
+- `src/application/useWorkbenchController.ts`: 25,518 lines after the
+  workspace-edit, LSP runtime lifecycle, document tab, navigation, and
+  close-lifecycle slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -117,6 +118,15 @@ Create Codex threads for:
    - Result: extracted `src/application/useWorkbenchNavigation.ts`;
      controller line count is now 25,649 in the main working tree.
 
+7. Close/save lifecycle extraction
+   - Ownership: workspace-tab close flow, cached dirty workspace prompts,
+     active/inactive workspace close cleanup, runtime/document sync teardown,
+     and application quit command.
+   - Thread: `019f3243-0c96-70c1-9ab0-f09770c1c7f6`
+   - Status: completed and integrated into main working tree.
+   - Result: extracted `src/application/useWorkbenchCloseLifecycle.ts`;
+     controller line count is now 25,518 in the main working tree.
+
 ## Current Local Findings
 
 - Workspace edit region was extracted on 2026-07-05 into
@@ -147,6 +157,21 @@ Create Codex threads for:
 - Important invariant: git diff loading stays controller-owned to preserve
   git diff/editor tab separation.
 - Main-thread verification after integration:
+  - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+    passed: 867 tests.
+- Close/save lifecycle region was extracted on 2026-07-05 into
+  `src/application/useWorkbenchCloseLifecycle.ts`.
+- It includes:
+  - workspace-tab close flow,
+  - dirty cached workspace prompts,
+  - active/inactive workspace close cleanup,
+  - language-server document sync teardown,
+  - project runtime stop/forget logic,
+  - application quit command.
+- Important invariant: document-level close/save/autosave remains owned by
+  `useDocumentLifecycle`.
+- Main-thread verification after integration:
+  - `npm run check` passed.
   - `npm test -- src/application/useWorkbenchController.preview.test.tsx`
     passed: 867 tests.
   - `npm run check` passed.
@@ -202,10 +227,7 @@ Delegate the next high-return controller slice from current `main`.
 
 Recommended next candidates:
 
-1. Remaining close/save lifecycle split
-   - Anchors: `closeDocument`, dirty document prompts, save-before-close
-     handling, Mac window close fallback.
-2. PHP code-action provider domain extraction
+1. PHP code-action provider domain extraction
    - Anchors: code action ordering, create-from-usage, generate members,
      implement/override methods, Laravel/OOP action providers.
 

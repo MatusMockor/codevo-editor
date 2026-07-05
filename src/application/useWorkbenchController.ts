@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
@@ -13,6 +13,7 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useDocumentSync } from "./useDocumentSync";
@@ -3304,133 +3305,28 @@ export function useWorkbenchController(
     [openWorkspacePath, workspaceRoot],
   );
 
-  const closeWorkspaceTab = useCallback(
-    async (path: string) => {
-      const currentSettings = appSettingsRef.current;
-      const currentTabs = currentSettings.workspaceTabs;
-      const tabPath = workspaceTabPathForPath(currentTabs, path) ?? path;
-      const closingActiveWorkspace = workspaceRootKeysEqual(tabPath, workspaceRoot);
-      const targetRootPath =
-        closingActiveWorkspace && workspaceRoot ? workspaceRoot : tabPath;
-      const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
-      const cachedWorkspaceState =
-        workspaceStateCacheRef.current[tabPath] ??
-        workspaceStateCacheRef.current[targetRootPath] ??
-        null;
-
-      if (nextTabs.length === currentTabs.length) {
-        return;
-      }
-
-      if (
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, targetRootPath)
-      ) {
-        openWorkspaceRequestTokenRef.current += 1;
-        openWorkspaceRequestPathRef.current = null;
-      }
-
-      if (!closingActiveWorkspace) {
-        if (
-          cachedWorkspaceState &&
-          cachedWorkspaceHasDirtyDocuments(cachedWorkspaceState) &&
-          !prompter.confirm("Close workspace and discard unsaved changes?")
-        ) {
-          return;
-        }
-
-        const nextRecentPath =
-          workspaceRootKeysEqual(currentSettings.recentWorkspacePath, tabPath)
-            ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
-            : currentSettings.recentWorkspacePath;
-
-        delete workspaceStateCacheRef.current[tabPath];
-        delete workspaceStateCacheRef.current[targetRootPath];
-        delete editorConfigCacheRef.current[tabPath];
-        delete editorConfigCacheRef.current[targetRootPath];
-        forgetLatencyTrackerForRoot(targetRootPath);
-        forgetLanguageServerRuntimeStatuses(targetRootPath);
-        await Promise.allSettled([
-          closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-          closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-        ]);
-        await stopProjectRuntimes(targetRootPath);
-        forgetLanguageServerRuntimeStatuses(targetRootPath);
-
-        try {
-          await persistAppSettings({
-            ...currentSettings,
-            recentWorkspacePath: nextRecentPath,
-            workspaceTabs: nextTabs,
-          });
-        } catch (error) {
-          reportError("Settings", error);
-        }
-        return;
-      }
-
-      if (
-        dirtyCount > 0 &&
-        !prompter.confirm("Close workspace and discard unsaved changes?")
-      ) {
-        return;
-      }
-
-      openFileRequestTokenRef.current += 1;
-      gitDiffRequestTokenRef.current += 1;
-      editorGitBaselineRequestTokenRef.current += 1;
-      const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
-      const nextPath =
-        nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
-        nextTabs[nextTabs.length - 1] ??
-        null;
-
-      delete workspaceStateCacheRef.current[tabPath];
-      delete workspaceStateCacheRef.current[targetRootPath];
-      delete editorConfigCacheRef.current[tabPath];
-      delete editorConfigCacheRef.current[targetRootPath];
-      forgetLatencyTrackerForRoot(targetRootPath);
-      forgetLanguageServerRuntimeStatuses(targetRootPath);
-      await Promise.allSettled([
-        closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-        closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-      ]);
-      await stopProjectRuntimes(targetRootPath);
-      forgetLanguageServerRuntimeStatuses(targetRootPath);
-
-      try {
-        await persistAppSettings({
-          ...currentSettings,
-          recentWorkspacePath: nextPath,
-          workspaceTabs: nextTabs,
-        });
-      } catch (error) {
-        reportError("Settings", error);
-        return;
-      }
-
-      if (nextPath) {
-        await openWorkspacePath(nextPath, { cachePreviousWorkspace: false });
-        return;
-      }
-
-      await clearActiveWorkspace();
-    },
-    [
-      clearActiveWorkspace,
-      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-      closeSyncedLanguageServerDocumentsForRoot,
-      dirtyCount,
-      forgetLanguageServerRuntimeStatuses,
-      forgetLatencyTrackerForRoot,
-      openWorkspacePath,
-      persistAppSettings,
-      prompter,
-      reportError,
-      stopProjectRuntimes,
-      workspaceRoot,
-    ],
-  );
+  const { closeWorkspaceTab, quitApplication } = useWorkbenchCloseLifecycle({
+    workspaceRoot,
+    dirtyCount,
+    appSettingsRef,
+    workspaceStateCacheRef,
+    editorConfigCacheRef,
+    openWorkspaceRequestPathRef,
+    openWorkspaceRequestTokenRef,
+    openFileRequestTokenRef,
+    gitDiffRequestTokenRef,
+    editorGitBaselineRequestTokenRef,
+    prompter,
+    persistAppSettings,
+    closeSyncedLanguageServerDocumentsForRoot,
+    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    stopProjectRuntimes,
+    forgetLanguageServerRuntimeStatuses,
+    forgetLatencyTrackerForRoot,
+    openWorkspacePath,
+    clearActiveWorkspace,
+    reportError,
+  });
 
   const refreshDirectory = useCallback(
     async (path: string) => {
@@ -4960,16 +4856,6 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
-
-  const quitApplication = useCallback(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    void invoke("quit_application").catch((error) =>
-      reportError("Application", error),
-    );
-  }, [reportError]);
 
   const updateActiveDocument = useCallback(
     (content: string) => {
@@ -23715,12 +23601,6 @@ function formattingOptionsForActiveJavaScriptTypeScriptDocument(
   );
 }
 
-function cachedWorkspaceHasDirtyDocuments(
-  cached: CachedWorkspaceWorkbenchState,
-): boolean {
-  return Object.values(cached.documents).some(isDirty);
-}
-
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {
   if (workspaceTabPathForPath(tabs, path)) {
     return tabs;
@@ -23729,22 +23609,11 @@ function workspaceTabsWithPath(tabs: string[], path: string): string[] {
   return [...tabs, path];
 }
 
-function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {
-  return tabs.filter((tabPath) => !workspaceRootKeysEqual(tabPath, path));
-}
-
 function workspaceTabPathForPath(
   tabs: string[],
   path: string | null | undefined,
 ): string | null {
   return tabs.find((tabPath) => workspaceRootKeysEqual(tabPath, path)) ?? null;
-}
-
-function workspaceTabIndexForPath(
-  tabs: string[],
-  path: string | null | undefined,
-): number {
-  return tabs.findIndex((tabPath) => workspaceRootKeysEqual(tabPath, path));
 }
 
 function isRunningLanguageServerForWorkspace(
