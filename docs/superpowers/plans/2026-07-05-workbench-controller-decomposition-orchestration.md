@@ -24,24 +24,25 @@ Current operational goal:
 - Poll worker threads proactively through `read_thread` plus direct worktree
   `git status` / `git diff --stat` checks.
 - Current next order:
-  1. split generic LSP navigation into two non-overlapping worker slices:
-     location navigation and hierarchy/references panels,
+  1. create/audit Codex worker threads before each remaining controller
+     extraction,
   2. integrate only reviewed, non-overlapping worker patches,
   3. verify with focused tests, full preview tests, and full suite when the
      surface is user-facing,
   4. commit, push, and update this checkpoint after each shipped slice,
-  5. after LSP navigation is shipped, re-audit the remaining PHP semantic/type
-     inference/completion region before choosing the next worker slice.
+  5. after each PHP/Laravel semantic extraction, re-audit the remaining
+     controller clusters before choosing the next worker slice.
 - Note: the Codex goal tool is blocked by an old paused goal in this thread.
   Treat this checkpoint as the active operational goal until that goal can be
   safely completed or replaced.
 
 Current baseline from main:
 
-- `src/application/useWorkbenchController.ts`: 22,141 lines after the
+- `src/application/useWorkbenchController.ts`: 16,975 lines after the
   workspace-edit, LSP runtime lifecycle, document tab, navigation,
-  close-lifecycle, PHP code-action, file-operations, text-search, and
-  Quick Open slices.
+  close-lifecycle, PHP code-action, file-operations, text-search, Quick Open,
+  PHP semantic resolver, Laravel registry/relation/model-type, method-return,
+  and expression-type resolver slices.
 - Recent decomposition already extracted hooks for Git, TODOs/bookmarks/history,
   Latte/Neon/Blade intelligence, Laravel targets, engine terminal/navigation,
   PHP outline, floating surfaces, document sync, diagnostics, save/close
@@ -700,13 +701,42 @@ Completed worker integrations:
        collection preview tests passed: 315 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5119 tests.
+19. `019f33f5-a35c-7ec2-97f3-8d01ae0425a8`
+   - Title: Audit PHP type resolver extraction.
+   - Result: no code changes.
+   - Confirmed a narrow expression resolver extraction is now safe if it moves
+     only `resolvePhpExpressionType` plus its private class-string helper and
+     keeps completions, diagnostics, navigation, code actions, provider
+     registration, and JS/TS runtime ownership outside the hook.
+   - Explicit dependency warning: the extracted hook must inject
+     `resolvePhpSemanticTypeReference` to avoid stale type normalization.
+20. `019f33f5-a2b0-71c2-84b4-4c462ab6f286`
+   - Title: Audit PHP expression resolver.
+   - Integrated as `src/application/usePhpExpressionTypeResolver.ts`.
+   - Moved recursive PHP expression type resolution and private class-string
+     argument detection out of `useWorkbenchController.ts`.
+   - Kept provider-facing completion/diagnostic/navigation/code-action
+     behavior, refs, root/session guards, and JS/TS runtime ownership in the
+     controller or existing modules.
+   - Controller line count after integration: 16,975.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - PHP semantic engine, method completions, and Laravel correctness tests
+       passed: 187 tests.
+     - Focused completion/definition/diagnostic/Laravel/relation/attribute/
+       builder/repository/scope/magic/expression/return/collection preview
+       tests passed: 315 tests.
+     - Full preview test passed: 867 tests.
+     - Full suite passed: 231 files, 5119 tests.
 
 Integration order:
 
-1. Remaining expression resolver extraction, only after another audit slice
-   proves a smaller dependency boundary that does not drag provider-facing
-   behavior.
-2. Follow-up focused hook tests for newly extracted provider/registry modules.
+1. Do not revisit the expression resolver extraction; it is integrated and
+   verified.
+2. Next work must start with a fresh Codex audit thread over the remaining
+   controller clusters and return a narrow worker slice or a blocker plan.
+3. Follow-up focused hook tests for newly extracted provider/registry modules
+   are acceptable only as separate, non-overlapping worker slices.
 
 For every worker:
 
