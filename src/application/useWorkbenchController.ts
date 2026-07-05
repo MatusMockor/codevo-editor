@@ -47,6 +47,7 @@ import {
   useNavigationHistory,
   useRecentNavigation,
 } from "./useNavigationHistory";
+import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
@@ -235,10 +236,7 @@ import {
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
-import {
-  createNavigationHistory,
-  type NavigationHistory,
-} from "../domain/navigation";
+import type { NavigationHistory } from "../domain/navigation";
 import {
   emptyPhpFileOutline,
   type PhpFileOutline,
@@ -807,8 +805,8 @@ export function useWorkbenchController(
     useState<Set<string>>(new Set());
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
-  const [navigationHistory, setNavigationHistory] =
-    useState<NavigationHistory>(createNavigationHistory);
+  const { navigationHistory, resetHistory, restoreHistory, setNavigationHistory } =
+    useNavigationHistoryLifecycle();
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -1767,12 +1765,12 @@ export function useWorkbenchController(
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
-      setNavigationHistory(cached.navigationHistory);
+      restoreHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
       setBottomPanelView(cached.bottomPanelView);
       setBottomPanelVisible(cached.bottomPanelVisible);
     },
-    [],
+    [restoreHistory],
   );
 
   const {
@@ -2517,7 +2515,7 @@ export function useWorkbenchController(
     closeBookmarksPanel();
     setGitBlameEnabledPaths(new Set());
     setEditorRevealTarget(null);
-    setNavigationHistory(createNavigationHistory());
+    resetHistory();
     setSidebarView("files");
     setBottomPanelView("problems");
     setBottomPanelVisible(false);
@@ -2582,6 +2580,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     resetFilePrefetchState,
+    resetHistory,
     resetSearchEverywhere,
     resetTextSearchState,
     stopProjectRuntimes,
@@ -2874,7 +2873,7 @@ export function useWorkbenchController(
         setRecentLocations([]);
         setBookmarks([]);
         setGitBlameEnabledPaths(new Set());
-        setNavigationHistory(createNavigationHistory());
+        resetHistory();
         setSidebarView("files");
         setBottomPanelView("problems");
         setBottomPanelVisible(false);

@@ -567,26 +567,36 @@ Completed worker integrations:
        76 tests.
      - Full preview test passed: 867 tests.
      - Full suite passed: 231 files, 5118 tests.
+8. `019f33c3-c424-7603-80a5-adaa78d3bac0`
+   - Title: Extract navigation history lifecycle.
+   - Integrated as `src/application/useNavigationHistoryLifecycle.ts`.
+   - Moved navigation history state ownership, explicit reset, and explicit
+     restore for workspace-cache lifecycle out of `useWorkbenchController.ts`.
+   - Kept existing back/forward playback in `useNavigationHistory`, generic
+     open/reveal orchestration in `useWorkbenchNavigation`, git diff pseudo-tab
+     behavior, close/save lifecycle, PHP code actions, and LSP-specific
+     definition/implementation wiring in their existing owners.
+   - Controller line count after integration: 19,178.
+   - Main-thread verification:
+     - `npm run check` passed.
+     - `useNavigationHistory` hook tests passed: 25 tests.
+     - Focused navigation/history/git-diff/tab preview tests passed:
+       867 tests.
+     - Navigation, git diff preview close, and editor surface tests passed:
+       136 tests.
+     - Full suite passed: 231 files, 5119 tests.
+9. `019f33c3-c5cd-7c73-99e4-efb894c9369c`
+   - Title: Audit navigation history boundary.
+   - Result: no code changes.
+   - Confirmed the safe boundary: keep navigation/history playback and generic
+     open/reveal hooks separate from document tab lifecycle, git diff
+     pseudo-doc opening, and LSP-specific navigation orchestration.
 
 Integration order:
 
-1. Remaining expression/Laravel chain resolver extraction.
-2. PHP navigation/history lifecycle split.
-
-Active delegated work:
-
-1. `019f33c3-c424-7603-80a5-adaa78d3bac0`
-   - Title: Extract navigation history lifecycle.
-   - Role: implementation worker.
-   - Scope: `navigateBack`, `navigateForward`, history stack refs, active
-     document jumps, and non-LSP symbol/open-file navigation with per-project
-     and git diff tab behavior preserved.
-2. `019f33c3-c5cd-7c73-99e4-efb894c9369c`
-   - Title: Audit navigation history boundary.
-   - Role: review/audit worker.
-   - Scope: independently validate the extraction boundary and identify what
-     must remain in the controller before the main orchestrator integrates any
-     implementation patch.
+1. Close/save lifecycle split.
+2. PHP code-action provider extraction.
+3. Remaining expression/Laravel chain resolver extraction.
 
 For every worker:
 

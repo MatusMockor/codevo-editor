@@ -3,6 +3,7 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
 import {
   useNavigationHistory,
   useRecentNavigation,
@@ -50,6 +51,7 @@ interface Harness {
   shouldOpenNavigationTargetReadOnly: ReturnType<typeof vi.fn>;
   setActiveDocument: (document: EditorDocument | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
+  resetNavigationHistory: () => void;
   openQuickOpenClassAndWorkspaceSymbols: () => void;
   unmount: () => void;
 }
@@ -61,7 +63,8 @@ interface Harness {
  * forgetRecentLocationsForPath fed into useNavigationHistory. Every piece of
  * cached per-tab state (recentFiles, recentLocations, navigationHistory, the
  * switcher/panel toggles, the overlay-exclusivity toggles) is owned by the
- * harness component, mirroring the shell's dependency-injection contract.
+ * harness component or by the same lifecycle hook the shell uses, mirroring
+ * the dependency-injection contract.
  */
 function renderNavigationHistory(
   initialWorkspaceRoot: string | null = ROOT,
@@ -115,14 +118,18 @@ function renderNavigationHistory(
     () => {};
   let setWorkspaceRootState: (rootPath: string | null) => void = () => {};
   let triggerOpenOverlays: () => void = () => {};
+  let resetNavigationHistoryState: () => void = () => {};
 
   function HarnessComponent() {
     const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
     const [recentLocations, setRecentLocations] = useState<RecentLocation[]>(
       [],
     );
-    const [navigationHistory, setNavigationHistory] =
-      useState<NavigationHistory>(createNavigationHistory);
+    const {
+      navigationHistory,
+      resetHistory,
+      setNavigationHistory,
+    } = useNavigationHistoryLifecycle();
     const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] =
       useState(false);
     const [recentLocationsPanelOpen, setRecentLocationsPanelOpen] =
@@ -145,6 +152,7 @@ function renderNavigationHistory(
       setClassOpenOpen(true);
       setWorkspaceSymbolsOpen(true);
     };
+    resetNavigationHistoryState = resetHistory;
 
     captured.recentFiles = recentFiles;
     captured.recentLocations = recentLocations;
@@ -218,6 +226,11 @@ function renderNavigationHistory(
     quickOpenOpen: () => captured.quickOpenOpen,
     recentFiles: () => captured.recentFiles,
     recentFilesSwitcherOpen: () => captured.recentFilesSwitcherOpen,
+    resetNavigationHistory: () => {
+      act(() => {
+        resetNavigationHistoryState();
+      });
+    },
     recentLocations: () => captured.recentLocations,
     recentLocationsPanelOpen: () => captured.recentLocationsPanelOpen,
     recentNavigation: () => {
@@ -506,6 +519,23 @@ describe("useRecentNavigation", () => {
     expect(harness.recentLocations()).toEqual([
       expect.objectContaining({ path: `${ROOT}/a.ts`, line: 1 }),
     ]);
+
+    harness.unmount();
+  });
+
+  it("resets the back/forward stack through the lifecycle owner", () => {
+    const harness = renderNavigationHistory();
+
+    act(() => {
+      harness.recentNavigation().recordNavigationLocationSnapshot({
+        path: `${ROOT}/a.ts`,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+
+    harness.resetNavigationHistory();
+
+    expect(harness.navigationHistory()).toEqual(createNavigationHistory());
 
     harness.unmount();
   });
