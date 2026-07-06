@@ -177,6 +177,13 @@ describe("nettePresenterActionMethodCandidates", () => {
     ]);
   });
 
+  it("preserves camel-case action names such as showBasic", () => {
+    expect(nettePresenterActionMethodCandidates("showBasic", false)).toEqual([
+      "actionShowBasic",
+      "renderShowBasic",
+    ]);
+  });
+
   it("returns no candidates for the `this` marker", () => {
     expect(nettePresenterActionMethodCandidates("this", false)).toEqual([]);
   });
@@ -251,6 +258,17 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
     ).toEqual(["app/UI/Product/ProductPresenter.php"]);
   });
 
+  it("resolves current-presenter shorthand from an ebox-style module presenter", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({ action: "showBasic", presenter: null }),
+        "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+    ]);
+  });
+
   it("resolves a relative n:href action from a classic module partial to the current presenter", () => {
     const source = '<a n:href="default">Back</a>';
     const detection = detectLatteLinkAt(source, offsetOf(source, "default", 2));
@@ -291,6 +309,37 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
       "app/modules/productsModule/ProductsAdminPresenter.php",
       "app/Presenters/ProductsAdminPresenter.php",
       "app/UI/ProductsAdmin/ProductsAdminPresenter.php",
+    ]);
+  });
+
+  it("keeps explicit presenter links inside the current ebox-style module presenter base", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({ action: "showBasic", presenter: "SubscriptionTypeGroupAdmin" }),
+        "app/modules/efabricaSubscriptionsModule/Presenters/DashboardPresenter.php",
+      ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/SubscriptionTypeGroupAdminPresenter.php",
+      "app/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/UI/SubscriptionTypeGroupAdmin/SubscriptionTypeGroupAdminPresenter.php",
+    ]);
+  });
+
+  it("keeps relative target modules under the current ebox-style module presenter base", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({ module: "Reports", presenter: "Overview" }),
+        "app/modules/efabricaSubscriptionsModule/Presenters/DashboardPresenter.php",
+      ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/ReportsModule/Presenters/OverviewPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/ReportsModule/presenters/OverviewPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/ReportsModule/OverviewPresenter.php",
+      "app/ReportsModule/presenters/OverviewPresenter.php",
+      "app/ReportsModule/Presenters/OverviewPresenter.php",
+      "app/UI/Reports/Overview/OverviewPresenter.php",
     ]);
   });
 

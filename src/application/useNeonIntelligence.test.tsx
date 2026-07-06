@@ -496,6 +496,68 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
     expect(openClassTarget).toHaveBeenCalledWith("App\\Model\\Foo");
   });
 
+  it("navigates a class-typed @service to a same-file anonymous service when registered", async () => {
+    const openClassTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openClassTarget, openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = [
+      "services:",
+      "    - Crm\\ApplicationModule\\Router\\RouterFactory",
+      "    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter",
+    ].join("\n");
+    const offset =
+      source.indexOf("@Crm\\ApplicationModule\\Router\\RouterFactory") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@Crm\\ApplicationModule\\Router\\RouterFactory",
+    );
+    expect(openClassTarget).not.toHaveBeenCalled();
+  });
+
+  it("matches typed @service references when the definition has a leading backslash", async () => {
+    const openClassTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openClassTarget, openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = [
+      "services:",
+      "    - \\App\\Model\\Repo",
+      "    consumer: App\\Consumer(@App\\Model\\Repo)",
+    ].join("\n");
+    const offset = source.indexOf("@App\\Model\\Repo") + 3;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@App\\Model\\Repo",
+    );
+    expect(openClassTarget).not.toHaveBeenCalled();
+  });
+
+  it("navigates a generated @01 service name to the first explicit anonymous service", async () => {
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = [
+      "services:",
+      "    - Crm\\ApplicationModule\\Router\\RouterFactory",
+      "    router: @01::createRouter",
+    ].join("\n");
+    const offset = source.indexOf("@01") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@01",
+    );
+  });
+
   it("navigates a named @service defined in another config file (cross-file)", async () => {
     const { listDirectory, readFileContent } = buildNeonWorkspace({
       "config/config.neon":
@@ -514,6 +576,36 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
       expect.objectContaining({ lineNumber: 2 }),
       "@logger",
     );
+  });
+
+  it("navigates a class-typed @service to an anonymous service in a module config", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter\n",
+      "app/modules/applicationModule/config/config.neon":
+        "services:\n    - Crm\\ApplicationModule\\Router\\RouterFactory\n",
+    });
+    const openClassTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openClassTarget,
+      openTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter\n";
+    const offset =
+      source.indexOf("@Crm\\ApplicationModule\\Router\\RouterFactory") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/applicationModule/config/config.neon",
+      expect.objectContaining({ lineNumber: 2 }),
+      "@Crm\\ApplicationModule\\Router\\RouterFactory",
+    );
+    expect(openClassTarget).not.toHaveBeenCalled();
   });
 });
 
@@ -561,6 +653,62 @@ describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () =>
     expect(
       completions.every((completion) => completion.kind === "service"),
     ).toBe(true);
+  });
+
+  it("offers anonymous service class and generated service-name completions after @", async () => {
+    const deps = makeDeps();
+    const neon = createNeonIntelligence(() => deps);
+    const source = [
+      "services:",
+      "    - Crm\\ApplicationModule\\Router\\RouterFactory",
+      "    router: @Crm",
+    ].join("\n");
+    const crmOffset = source.length;
+    const classCompletions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, crmOffset),
+    );
+
+    expect(classCompletions.map((completion) => completion.label)).toContain(
+      "Crm\\ApplicationModule\\Router\\RouterFactory",
+    );
+
+    const generatedSource = [
+      "services:",
+      "    - Crm\\ApplicationModule\\Router\\RouterFactory",
+      "    router: @0",
+    ].join("\n");
+    const generatedCompletions = await neon.provideNeonCompletions(
+      generatedSource,
+      positionAtOffset(generatedSource, generatedSource.length),
+    );
+
+    expect(generatedCompletions.map((completion) => completion.label)).toContain(
+      "01",
+    );
+  });
+
+  it("offers service completions from recursively scanned module config files", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    app:\n        arguments: [@]\n",
+      "app/modules/paymentsModule/config/config.neon":
+        "services:\n    paymentTemplateHelper: Crm\\PaymentsModule\\Helper\\PaymentTemplateHelper\n",
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "services:\n    app:\n        arguments: [@]\n";
+    const offset = source.indexOf("[@]") + 2;
+    const completions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("paymentTemplateHelper");
+    expect(labels).toContain(
+      "Crm\\PaymentsModule\\Helper\\PaymentTemplateHelper",
+    );
   });
 
   it("returns nothing for %param% completion when Nette is inactive", async () => {

@@ -294,6 +294,32 @@ describe("componentClassCandidatePathsForTemplate", () => {
       "app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php",
     ]);
   });
+
+  it("prefers a widget class named by the component template basename", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/modules/usersModule/Components/UserTimeTravel/user_time_travel_widget.latte",
+      ),
+    ).toEqual([
+      "app/modules/usersModule/Components/UserTimeTravel/UserTimeTravelWidget.php",
+      "app/modules/usersModule/Components/UserTimeTravel/UserTimeTravel.php",
+      "app/modules/usersModule/Components/UserTimeTravel/UserTimeTravelControl.php",
+      "app/modules/usersModule/Components/UserTimeTravel/UserTimeTravelComponent.php",
+    ]);
+  });
+
+  it("maps a default component template to directory-based class candidates", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/modules/apiModule/Components/ApiConsole/default.latte",
+      ),
+    ).toEqual([
+      "app/modules/apiModule/Components/ApiConsole/ApiConsole.php",
+      "app/modules/apiModule/Components/ApiConsole/ApiConsoleControl.php",
+      "app/modules/apiModule/Components/ApiConsole/ApiConsoleComponent.php",
+      "app/modules/apiModule/Components/ApiConsole/ApiConsoleWidget.php",
+    ]);
+  });
 });
 
 describe("componentTemplateCandidatePathsForClass", () => {
@@ -305,6 +331,7 @@ describe("componentTemplateCandidatePathsForClass", () => {
     ).toEqual([
       "app/modules/apiModule/Components/ApiConsoleControl/api_console.latte",
       "app/modules/apiModule/Components/ApiConsoleControl/api_console_control.latte",
+      "app/modules/apiModule/Components/ApiConsoleControl/default.latte",
     ]);
   });
 
@@ -316,6 +343,7 @@ describe("componentTemplateCandidatePathsForClass", () => {
     ).toEqual([
       "app/modules/usersModule/Components/UserTimeTravel/user_time_travel_widget.latte",
       "app/modules/usersModule/Components/UserTimeTravel/user_time_travel.latte",
+      "app/modules/usersModule/Components/UserTimeTravel/default.latte",
     ]);
   });
 });

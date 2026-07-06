@@ -50,6 +50,7 @@ import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
 import {
   detectLatteControlAt,
   detectLatteFormNameAt,
+  detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
   netteComponentUsagesInLatte,
   netteCreateComponentMethodName,
@@ -675,6 +676,20 @@ export function createLatteIntelligence(
           requestedRoot,
         },
         controlCompletion,
+      );
+    }
+
+    const formNameCompletion = latteFormNameCompletionAt(source, offset);
+
+    if (formNameCompletion) {
+      return latteControlCompletions(
+        {
+          componentCache,
+          deps,
+          isRequestedRootActive,
+          requestedRoot,
+        },
+        formNameCompletion,
       );
     }
 
@@ -1393,6 +1408,23 @@ function latteControlCompletionAt(
   }
 
   return { prefix: typed, replaceEnd: offset, replaceStart: span.expressionStart };
+}
+
+function latteFormNameCompletionAt(
+  source: string,
+  offset: number,
+): LatteControlCompletion | null {
+  const completion = detectLatteFormNameCompletionAt(source, offset);
+
+  if (!completion || completion.elementTag !== "form") {
+    return null;
+  }
+
+  return {
+    prefix: completion.prefix,
+    replaceEnd: completion.replaceEnd,
+    replaceStart: completion.replaceStart,
+  };
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectLatteControlAt,
   detectLatteFormNameAt,
+  detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
   netteComponentClassFromCreateMethod,
   netteComponentUsagesInLatte,
@@ -65,6 +66,17 @@ describe("detectLatteControlAt", () => {
 
     expect(result?.name).toBe("productList");
     expect(result?.args).toBe("$page");
+  });
+
+  it("detects a quoted static {control 'contactForm'} name", () => {
+    const source = "{control 'contactForm'}";
+    const offset = offsetOf(source, "contactForm", 3);
+
+    expect(detectLatteControlAt(source, offset)).toEqual({
+      name: "contactForm",
+      nameStart: source.indexOf("contactForm"),
+      nameEnd: source.indexOf("contactForm") + "contactForm".length,
+    });
   });
 
   it("returns null for a dynamic {control $dynamic}", () => {
@@ -171,6 +183,39 @@ describe("detectLatteFormNameAt", () => {
   });
 });
 
+describe("detectLatteFormNameCompletionAt", () => {
+  it("returns a completion span inside an empty form n:name value", () => {
+    const source = '<form n:name=""></form>';
+    const offset = source.indexOf('">');
+
+    expect(detectLatteFormNameCompletionAt(source, offset)).toEqual({
+      elementTag: "form",
+      prefix: "",
+      replaceStart: offset,
+      replaceEnd: offset,
+    });
+  });
+
+  it("returns the typed prefix and replaces the whole partial value", () => {
+    const source = '<form n:name="cont"></form>';
+    const offset = offsetOf(source, "cont", "cont".length);
+
+    expect(detectLatteFormNameCompletionAt(source, offset)).toEqual({
+      elementTag: "form",
+      prefix: "cont",
+      replaceStart: source.indexOf("cont"),
+      replaceEnd: source.indexOf("cont") + "cont".length,
+    });
+  });
+
+  it("does not complete a dynamic n:name expression", () => {
+    const source = '<form n:name="$form"></form>';
+    const offset = offsetOf(source, "$form", 3);
+
+    expect(detectLatteFormNameCompletionAt(source, offset)).toBeNull();
+  });
+});
+
 describe("netteCreateComponentMethodName", () => {
   it("upper-cases the first letter of the control name", () => {
     expect(netteCreateComponentMethodName("contactForm")).toBe(
@@ -237,6 +282,18 @@ describe("netteComponentUsagesInLatte", () => {
     for (const usage of usages) {
       expect(source.slice(usage.start, usage.end)).toBe("contactForm");
     }
+  });
+
+  it("finds quoted static {control 'name'} usages", () => {
+    const source = "{control 'contactForm'}";
+
+    expect(netteComponentUsagesInLatte(source, "contactForm")).toEqual([
+      {
+        end: source.indexOf("contactForm") + "contactForm".length,
+        kind: "control",
+        start: source.indexOf("contactForm"),
+      },
+    ]);
   });
 
   it("ignores usages inside a Latte comment", () => {

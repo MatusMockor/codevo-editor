@@ -77,6 +77,14 @@ export interface LatteFormNameDetection {
   nameStart: number;
 }
 
+/** A completion cursor inside a static `n:name` value. */
+export interface LatteFormNameCompletionDetection {
+  elementTag: string | null;
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
 /** The reverse of a `createComponent<Name>` factory: the backing component. */
 export interface NetteCreateComponentDetection {
   componentName: string;
@@ -246,6 +254,50 @@ export function detectLatteFormNameAt(
       name,
       nameEnd: attribute.valueEnd,
       nameStart: attribute.valueStart,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Returns the completion span for a static `n:name` value at `offset`. This is
+ * deliberately broader than {@link detectLatteFormNameAt}: an empty value or a
+ * partially typed identifier is a valid completion site, while dynamic values
+ * (`$form`) and mixed expressions are rejected.
+ */
+export function detectLatteFormNameCompletionAt(
+  source: string,
+  offset: number,
+): LatteFormNameCompletionDetection | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  if (isInsideMask(source, offset)) {
+    return null;
+  }
+
+  for (const attribute of nNameAttributes(source)) {
+    if (offset < attribute.valueStart || offset > attribute.valueEnd) {
+      continue;
+    }
+
+    const value = source.slice(attribute.valueStart, attribute.valueEnd);
+    const prefix = source.slice(attribute.valueStart, offset);
+
+    if (
+      !isIdentifierPrefix(prefix) ||
+      !isIdentifierSuffix(value.slice(prefix.length))
+    ) {
+      return null;
+    }
+
+    return {
+      elementTag: elementTagBefore(source, attribute.keywordStart),
+      prefix,
+      replaceEnd: attribute.valueEnd,
+      replaceStart: attribute.valueStart,
     };
   }
 
@@ -425,18 +477,26 @@ function parseControlArgument(
   let index = skipInlineSpaces(source, from, limit);
   const nameStart = index;
 
-  if (!IDENTIFIER_HEAD.test(source[index] ?? "")) {
-    return null;
-  }
+  const quotedName = readQuotedIdentifier(source, index, limit);
 
-  index += 1;
+  if (quotedName) {
+    index = quotedName.end;
+  } else {
+    if (!IDENTIFIER_HEAD.test(source[index] ?? "")) {
+      return null;
+    }
 
-  while (index < limit && IDENTIFIER_TAIL.test(source[index] ?? "")) {
     index += 1;
+
+    while (index < limit && IDENTIFIER_TAIL.test(source[index] ?? "")) {
+      index += 1;
+    }
   }
 
-  const nameEnd = index;
+  const nameEnd = quotedName ? quotedName.nameEnd : index;
+  const actualNameStart = quotedName ? quotedName.nameStart : nameStart;
   const name = source.slice(nameStart, nameEnd);
+  const actualName = quotedName ? quotedName.name : name;
 
   const part = readControlPart(source, index, limit);
   const argsFrom = part ? part.end : index;
@@ -444,12 +504,54 @@ function parseControlArgument(
 
   return {
     args: args.length > 0 ? args : null,
-    name,
+    name: actualName,
     nameEnd,
-    nameStart,
+    nameStart: actualNameStart,
     part: part ? part.text : null,
     partEnd: part ? part.end : null,
   };
+}
+
+interface QuotedIdentifier {
+  end: number;
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+function readQuotedIdentifier(
+  source: string,
+  from: number,
+  limit: number,
+): QuotedIdentifier | null {
+  const quote = source[from];
+
+  if (quote !== '"' && quote !== "'") {
+    return null;
+  }
+
+  const nameStart = from + 1;
+  let index = nameStart;
+
+  while (index < limit && source[index] !== quote) {
+    if (source[index] === "\\" || source[index] === "\n") {
+      return null;
+    }
+
+    index += 1;
+  }
+
+  if (source[index] !== quote) {
+    return null;
+  }
+
+  const name = source.slice(nameStart, index);
+
+  if (!isIdentifier(name)) {
+    return null;
+  }
+
+  return { end: index + 1, name, nameEnd: index, nameStart };
 }
 
 interface ControlPart {
@@ -681,12 +783,18 @@ function collectControlUsages(
   // case mismatch is a deliberate false-negative here, not a bug - see the
   // rationale on netteComponentUsagesInLatte above.
   const pattern = new RegExp(
-    `\\{control\\s+(${escapeRegExp(componentName)})(?::[A-Za-z0-9_]*)?\\b`,
+    [
+      "\\{control\\s+",
+      `(?:(['"])(${escapeRegExp(componentName)})\\1|`,
+      `(${escapeRegExp(componentName)}))`,
+      "(?::[A-Za-z0-9_]*)?",
+      "(?![A-Za-z0-9_])",
+    ].join(""),
     "gd",
   );
 
   forEachMatch(source, pattern, (match) => {
-    const span = groupSpan(match, 1);
+    const span = groupSpan(match, 2) ?? groupSpan(match, 3);
 
     if (!span) {
       return;
@@ -1225,6 +1333,14 @@ function isOffsetMasked(offset: number, masks: LatteMaskedRegion[]): boolean {
 
 function isIdentifier(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+function isIdentifierPrefix(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$|^$/.test(value);
+}
+
+function isIdentifierSuffix(value: string): boolean {
+  return /^[A-Za-z0-9_]*$/.test(value);
 }
 
 function isTypeChar(character: string | undefined): boolean {

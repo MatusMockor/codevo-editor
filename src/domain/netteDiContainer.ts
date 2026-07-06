@@ -93,6 +93,13 @@ export interface NeonService {
   offset: number;
 }
 
+export interface NeonGeneratedServiceName {
+  /** Nette's generated service id for an explicit anonymous service. */
+  name: string;
+  /** The anonymous service this generated name points at. */
+  service: NeonService;
+}
+
 export interface NeonServiceReference {
   /** The referenced name/type without the leading `@` (`logger`, `\App\Repo`). */
   name: string;
@@ -151,11 +158,11 @@ function isParamNameChar(character: string): boolean {
 }
 
 function isServiceNameChar(character: string): boolean {
-  return /[A-Za-z0-9_\\]/.test(character);
+  return /[A-Za-z0-9_.\\-]/.test(character);
 }
 
 function isServiceNameStart(character: string): boolean {
-  return /[A-Za-z_\\]/.test(character);
+  return /[A-Za-z0-9_\\]/.test(character);
 }
 
 function isClassTokenChar(character: string): boolean {
@@ -1100,6 +1107,28 @@ export function neonServicesFromSource(source: string): NeonService[] {
   }
 
   return services;
+}
+
+export function neonGeneratedServiceNamesFromServices(
+  services: readonly NeonService[],
+  startIndex = 1,
+): NeonGeneratedServiceName[] {
+  const names: NeonGeneratedServiceName[] = [];
+  let anonymousIndex = startIndex;
+
+  for (const service of services) {
+    if (service.serviceName !== null) {
+      continue;
+    }
+
+    names.push({
+      name: `0${anonymousIndex}`,
+      service,
+    });
+    anonymousIndex += 1;
+  }
+
+  return names;
 }
 
 // --- @service references + completion -----------------------------------------

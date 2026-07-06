@@ -231,7 +231,7 @@ export function componentClassCandidatePathsForTemplate(
     return [];
   }
 
-  return componentClassCandidate(dirnameOf(path));
+  return componentClassCandidate(dirnameOf(path), basenameOf(path));
 }
 
 /**
@@ -284,7 +284,7 @@ function modernPresenterCandidate(dir: string): string[] {
   return [joinRelative(dir, `${ucfirst(dirName)}${PRESENTER_SUFFIX}`)];
 }
 
-function componentClassCandidate(dir: string): string[] {
+function componentClassCandidate(dir: string, fileName: string): string[] {
   if (!hasComponentsSegment(dir)) {
     return [];
   }
@@ -295,7 +295,36 @@ function componentClassCandidate(dir: string): string[] {
     return [];
   }
 
-  return [joinRelative(dir, `${ucfirst(dirName)}.php`)];
+  const candidates: string[] = [];
+  const templateBase = fileName.slice(0, -LATTE_EXTENSION.length);
+  const dirShortName = ucfirst(dirName);
+  const strippedDirName = strippedComponentClassName(dirShortName);
+  const templateMatchesDir =
+    templateBase === "default" ||
+    camelToSnake(dirShortName) === templateBase ||
+    Boolean(strippedDirName && camelToSnake(strippedDirName) === templateBase);
+
+  if (templateMatchesDir) {
+    candidates.push(...componentClassBasenamesFromStem(dirShortName));
+  }
+
+  if (
+    !templateMatchesDir &&
+    templateBase !== "default" &&
+    isSnakeIdentifier(templateBase)
+  ) {
+    candidates.push(
+      ...componentClassBasenamesFromStem(snakeToPascal(templateBase)),
+    );
+  }
+
+  candidates.push(...componentClassBasenamesFromStem(dirShortName));
+
+  return dedupe(
+    candidates
+      .filter(isUsableIdentifier)
+      .map((candidate) => joinRelative(dir, `${candidate}.php`)),
+  );
 }
 
 function hasComponentsSegment(path: string): boolean {
@@ -411,18 +440,33 @@ function basenameOf(path: string): string {
 function componentTemplateBasenames(shortName: string): string[] {
   const full = camelToSnake(shortName);
   const stripped = strippedComponentClassName(shortName);
+  const fallback = "default";
 
   if (!stripped || stripped === shortName) {
-    return [full];
+    return [full, fallback];
   }
 
   const strippedName = camelToSnake(stripped);
 
   if (shortName.endsWith("Widget")) {
-    return [full, strippedName];
+    return [full, strippedName, fallback];
   }
 
-  return [strippedName, full];
+  return [strippedName, full, fallback];
+}
+
+function componentClassBasenamesFromStem(stem: string): string[] {
+  if (hasComponentSuffix(stem)) {
+    return [stem];
+  }
+
+  return [stem, `${stem}Control`, `${stem}Component`, `${stem}Widget`];
+}
+
+function hasComponentSuffix(name: string): boolean {
+  return ["Control", "Component", "Widget"].some((suffix) =>
+    name.endsWith(suffix),
+  );
 }
 
 function strippedComponentClassName(shortName: string): string | null {
@@ -440,6 +484,14 @@ function camelToSnake(name: string): string {
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .toLowerCase();
+}
+
+function snakeToPascal(name: string): string {
+  return name
+    .split("_")
+    .filter((segment) => segment.length > 0)
+    .map(ucfirst)
+    .join("");
 }
 
 function parentDirOf(dir: string): string {
@@ -579,4 +631,8 @@ function isUsableIdentifier(value: string): boolean {
 
 function isUsableSegment(value: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function isSnakeIdentifier(value: string): boolean {
+  return /^[a-z0-9_]+$/.test(value);
 }

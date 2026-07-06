@@ -255,7 +255,7 @@ export function nettePresenterClassCandidatePathsForLink(
     return [];
   }
 
-  const currentClassicModuleBase = currentClassicTemplatePresenterBase(
+  const currentClassicModuleBase = currentClassicModulePresenterBase(
     currentRelativePath,
   );
   const appRoot = detectAppRoot(currentRelativePath);
@@ -478,14 +478,26 @@ function currentClassicModulePresenterCandidates(
 }
 
 /**
- * Classic module template convention used by older Nette apps:
+ * Classic module convention used by older Nette apps:
  * `app/modules/productsModule/templates/ProductsAdmin/default.latte` maps back
  * to `app/modules/productsModule/Presenters/ProductsAdminPresenter.php`.
+ * The same module root is used when Cmd+B runs from a presenter under
+ * `app/modules/productsModule/Presenters/*Presenter.php`, so relative
+ * presenter links stay inside the current module instead of falling back to
+ * root-level `app/ProductsModule/...` candidates.
  */
-function currentClassicTemplatePresenterBase(
+function currentClassicModulePresenterBase(
   currentRelativePath: string,
 ): string | null {
   const path = normalizeSlashes(currentRelativePath).trim();
+
+  return (
+    currentClassicTemplatePresenterBase(path) ??
+    currentClassicModulesPresenterBase(path)
+  );
+}
+
+function currentClassicTemplatePresenterBase(path: string): string | null {
   const marker = "/templates/";
   const templatesIndex = path.indexOf(marker);
 
@@ -506,6 +518,32 @@ function currentClassicTemplatePresenterBase(
   }
 
   return base;
+}
+
+function currentClassicModulesPresenterBase(path: string): string | null {
+  if (!path.endsWith(PRESENTER_SUFFIX)) {
+    return null;
+  }
+
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  const presenterDirIndex = segments.length - 2;
+  const presenterDir = segments[presenterDirIndex] ?? "";
+
+  if (presenterDir !== "Presenters" && presenterDir !== "presenters") {
+    return null;
+  }
+
+  const moduleIndex = presenterDirIndex - 1;
+  const moduleSegment = segments[moduleIndex] ?? "";
+
+  if (
+    segments[moduleIndex - 1]?.toLowerCase() !== "modules" ||
+    !isClassicModuleBase(moduleSegment)
+  ) {
+    return null;
+  }
+
+  return segments.slice(0, moduleIndex + 1).join("/");
 }
 
 function isClassicModuleBase(path: string): boolean {

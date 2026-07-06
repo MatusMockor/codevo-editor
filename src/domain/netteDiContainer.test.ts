@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectNeonParameterReferenceAt,
   detectNeonServiceReferenceAt,
+  neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
   neonServiceReferenceCompletionContextAt,
@@ -308,6 +309,27 @@ describe("neonServicesFromSource", () => {
       },
     ]);
   });
+
+  it("derives Nette generated names for explicit anonymous services", () => {
+    const source = [
+      "services:",
+      "    - Crm\\ApplicationModule\\Router\\RouterFactory",
+      "    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter",
+      "    - Crm\\ApplicationModule\\Widget\\WidgetManager",
+      "    -",
+      "        create: Crm\\ApplicationModule\\Translator\\FrontendTranslator()",
+    ].join("\n");
+
+    expect(
+      neonGeneratedServiceNamesFromServices(neonServicesFromSource(source)).map(
+        (entry) => [entry.name, entry.service.className],
+      ),
+    ).toEqual([
+      ["01", "Crm\\ApplicationModule\\Router\\RouterFactory"],
+      ["02", "Crm\\ApplicationModule\\Widget\\WidgetManager"],
+      ["03", "Crm\\ApplicationModule\\Translator\\FrontendTranslator"],
+    ]);
+  });
 });
 
 describe("detectNeonServiceReferenceAt", () => {
@@ -339,6 +361,26 @@ describe("detectNeonServiceReferenceAt", () => {
     expect(detectNeonServiceReferenceAt(source, onRef)).toEqual({
       name: "App\\Model\\Repo",
       span: spanOf(source, "@App\\Model\\Repo"),
+    });
+  });
+
+  it("detects a generated numeric @service reference", () => {
+    const source = "services:\n    router: @01::createRouter\n";
+    const onRef = offsetOf(source, "@01", 2);
+
+    expect(detectNeonServiceReferenceAt(source, onRef)).toEqual({
+      name: "01",
+      span: spanOf(source, "@01"),
+    });
+  });
+
+  it("detects dotted Nette service names", () => {
+    const source = "services:\n    x: Foo(@nette.latteFactory)\n";
+    const onRef = offsetOf(source, "@nette.latteFactory", 4);
+
+    expect(detectNeonServiceReferenceAt(source, onRef)).toEqual({
+      name: "nette.latteFactory",
+      span: spanOf(source, "@nette.latteFactory"),
     });
   });
 
@@ -376,6 +418,28 @@ describe("neonServiceReferenceCompletionContextAt", () => {
     expect(neonServiceReferenceCompletionContextAt(source, cursor)).toEqual({
       prefix: "log",
       span: { start: nameStart, end: nameStart + 3 },
+    });
+  });
+
+  it("offers completion for a generated numeric service reference", () => {
+    const source = "services:\n    x: App\\Foo(@0)\n";
+    const nameStart = offsetOf(source, "@0") + 1;
+    const cursor = nameStart + 1;
+
+    expect(neonServiceReferenceCompletionContextAt(source, cursor)).toEqual({
+      prefix: "0",
+      span: { start: nameStart, end: nameStart + 1 },
+    });
+  });
+
+  it("offers completion for dotted service references", () => {
+    const source = "services:\n    x: App\\Foo(@nette.lat)\n";
+    const nameStart = offsetOf(source, "@nette.lat") + 1;
+    const cursor = nameStart + "nette.lat".length;
+
+    expect(neonServiceReferenceCompletionContextAt(source, cursor)).toEqual({
+      prefix: "nette.lat",
+      span: { start: nameStart, end: nameStart + "nette.lat".length },
     });
   });
 

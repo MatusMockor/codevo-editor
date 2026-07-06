@@ -36,6 +36,7 @@ import {
 import {
   detectNeonParameterReferenceAt,
   detectNeonServiceReferenceAt,
+  neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
   neonServiceReferenceCompletionContextAt,
@@ -155,6 +156,9 @@ const NEON_MAX_CONFIG_FILES = 200;
  * non-standard layout still resolves same-directory cross-file definitions.
  */
 const NEON_CONFIG_SCAN_DIRECTORIES: readonly string[] = ["config", "app/config"];
+const NEON_CONFIG_RECURSIVE_SCAN_DIRECTORIES: readonly string[] = [
+  "app/modules",
+];
 
 /** A definition location the cross-file scan resolves a name to. */
 interface NeonDefinitionLocation {
@@ -168,6 +172,7 @@ interface NeonProjectConfig {
   parameters: Map<string, NeonDefinitionLocation>;
   serviceNames: string[];
   services: Map<string, NeonDefinitionLocation>;
+  serviceTypes: Map<string, NeonDefinitionLocation>;
 }
 
 interface NeonConfigCacheEntry {
@@ -436,11 +441,9 @@ async function resolveNeonServiceDefinition(
   name: string,
 ): Promise<boolean> {
   const { deps, isRequestedRootActive } = context;
-
-  if (name.includes("\\")) {
-    return deps.openClassTarget(name.replace(/^\\+/, ""));
-  }
-
+  const normalizedType = name.includes("\\")
+    ? normalizeNeonServiceType(name)
+    : null;
   const currentPath = deps.getActiveDocument()?.path ?? null;
   const sameFileOffset = neonServiceOffsetInSource(source, name);
 
@@ -452,19 +455,35 @@ async function resolveNeonServiceDefinition(
     );
   }
 
+  if (normalizedType === null) {
+    const config = await loadNeonProjectConfig(context);
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const location = config.services.get(name);
+
+    if (!location) {
+      return false;
+    }
+
+    return deps.openTarget(location.path, location.position, `@${name}`);
+  }
+
   const config = await loadNeonProjectConfig(context);
 
   if (!isRequestedRootActive()) {
     return false;
   }
 
-  const location = config.services.get(name);
+  const location = config.serviceTypes.get(normalizedType);
 
-  if (!location) {
-    return false;
+  if (location) {
+    return deps.openTarget(location.path, location.position, `@${name}`);
   }
 
-  return deps.openTarget(location.path, location.position, `@${name}`);
+  return deps.openClassTarget(normalizedType);
 }
 
 /** The offset of the first `parameters:` leaf named `name` in `source`, or `null`. */
@@ -480,13 +499,36 @@ function neonParameterOffsetInSource(source: string, name: string): number | nul
 
 /** The offset of the first named service `name` in `source`, or `null`. */
 function neonServiceOffsetInSource(source: string, name: string): number | null {
-  for (const service of neonServicesFromSource(source)) {
+  const services = neonServicesFromSource(source);
+  const normalizedType = name.includes("\\")
+    ? normalizeNeonServiceType(name)
+    : null;
+
+  for (const service of services) {
     if (service.serviceName === name) {
+      return service.offset;
+    }
+
+    if (
+      normalizedType &&
+      service.className &&
+      normalizeNeonServiceType(service.className) === normalizedType
+    ) {
       return service.offset;
     }
   }
 
+  for (const generated of neonGeneratedServiceNamesFromServices(services)) {
+    if (generated.name === name) {
+      return generated.service.offset;
+    }
+  }
+
   return null;
+}
+
+function normalizeNeonServiceType(type: string): string {
+  return type.replace(/^\\+/, "");
 }
 
 /**
@@ -580,11 +622,20 @@ async function collectNeonServiceNames(
   source: string,
 ): Promise<string[]> {
   const names = new Set<string>();
+  const services = neonServicesFromSource(source);
 
-  for (const service of neonServicesFromSource(source)) {
+  for (const service of services) {
     if (service.serviceName) {
       names.add(service.serviceName);
     }
+
+    if (service.className) {
+      names.add(service.className);
+    }
+  }
+
+  for (const generated of neonGeneratedServiceNamesFromServices(services)) {
+    names.add(generated.name);
   }
 
   const config = await loadNeonProjectConfig(context);
@@ -594,6 +645,10 @@ async function collectNeonServiceNames(
   }
 
   for (const name of config.serviceNames) {
+    names.add(name);
+  }
+
+  for (const name of config.serviceTypes.keys()) {
     names.add(name);
   }
 
@@ -638,6 +693,7 @@ function emptyNeonProjectConfig(): NeonProjectConfig {
     parameters: new Map(),
     serviceNames: [],
     services: new Map(),
+    serviceTypes: new Map(),
   };
 }
 
@@ -660,6 +716,8 @@ async function scanNeonProjectConfig(
 
   const parameters = new Map<string, NeonDefinitionLocation>();
   const services = new Map<string, NeonDefinitionLocation>();
+  const serviceTypes = new Map<string, NeonDefinitionLocation>();
+  let generatedServiceStartIndex = 1;
 
   for (const path of filePaths) {
     if (!isRequestedRootActive()) {
@@ -691,11 +749,39 @@ async function scanNeonProjectConfig(
       }
     }
 
-    for (const service of neonServicesFromSource(content)) {
+    const sourceServices = neonServicesFromSource(content);
+
+    for (const service of sourceServices) {
       if (service.serviceName && !services.has(service.serviceName)) {
         services.set(service.serviceName, {
           path,
           position: editorPositionAtOffset(content, service.offset),
+        });
+      }
+
+      const serviceType = service.className
+        ? normalizeNeonServiceType(service.className)
+        : null;
+
+      if (serviceType && !serviceTypes.has(serviceType)) {
+        serviceTypes.set(serviceType, {
+          path,
+          position: editorPositionAtOffset(content, service.offset),
+        });
+      }
+    }
+
+    const generated = neonGeneratedServiceNamesFromServices(
+      sourceServices,
+      generatedServiceStartIndex,
+    );
+    generatedServiceStartIndex += generated.length;
+
+    for (const entry of generated) {
+      if (!services.has(entry.name)) {
+        services.set(entry.name, {
+          path,
+          position: editorPositionAtOffset(content, entry.service.offset),
         });
       }
     }
@@ -714,6 +800,7 @@ async function scanNeonProjectConfig(
       left.localeCompare(right),
     ),
     services,
+    serviceTypes,
   };
   configCache[requestedRoot] = {
     config,
@@ -725,9 +812,10 @@ async function scanNeonProjectConfig(
 
 /**
  * Collects the workspace `.neon` config file paths from the candidate scan
- * directories (the current config's own directory plus the conventional
- * `config` / `app/config`), non-recursively, bounded by `NEON_MAX_CONFIG_FILES`.
- * Per-project isolation: re-checks the live root after every directory read.
+ * directories (the current config's own directory plus conventional `config` /
+ * `app/config`) and recursively from module config folders, bounded by
+ * `NEON_MAX_CONFIG_FILES`. Per-project isolation: re-checks the live root after
+ * every directory read.
  */
 async function collectNeonFilePaths(
   context: NeonRequestContext,
@@ -771,7 +859,55 @@ async function collectNeonFilePaths(
     }
   }
 
+  for (const directory of recursiveNeonScanDirectories(deps, requestedRoot)) {
+    if (!isRequestedRootActive() || paths.size >= NEON_MAX_CONFIG_FILES) {
+      break;
+    }
+
+    await collectNeonFilePathsUnderDirectory(context, directory, paths);
+  }
+
   return Array.from(paths);
+}
+
+async function collectNeonFilePathsUnderDirectory(
+  context: NeonRequestContext,
+  directory: string,
+  paths: Set<string>,
+): Promise<void> {
+  const { deps, isRequestedRootActive } = context;
+
+  if (!isRequestedRootActive() || paths.size >= NEON_MAX_CONFIG_FILES) {
+    return;
+  }
+
+  let entries: NeonDirectoryEntry[];
+
+  try {
+    entries = await deps.listDirectory(directory);
+  } catch {
+    return;
+  }
+
+  if (!isRequestedRootActive()) {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!isRequestedRootActive() || paths.size >= NEON_MAX_CONFIG_FILES) {
+      return;
+    }
+
+    if (entry.kind === "file") {
+      if (entry.path.endsWith(NEON_EXTENSION)) {
+        paths.add(entry.path);
+      }
+
+      continue;
+    }
+
+    await collectNeonFilePathsUnderDirectory(context, entry.path, paths);
+  }
 }
 
 /**
@@ -799,6 +935,16 @@ function neonScanDirectories(
   }
 
   return Array.from(directories);
+}
+
+/** Conventional module root scanned recursively for ebox-crm style configs. */
+function recursiveNeonScanDirectories(
+  deps: NeonIntelligenceDependencies,
+  requestedRoot: string,
+): string[] {
+  return NEON_CONFIG_RECURSIVE_SCAN_DIRECTORIES.map((relative) =>
+    deps.joinPath(requestedRoot, relative),
+  );
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

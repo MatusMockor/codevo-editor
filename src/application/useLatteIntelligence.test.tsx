@@ -2664,6 +2664,33 @@ describe("createLatteIntelligence {control} completion (Fáza 2)", () => {
     ]);
   });
 
+  it("offers component names in a form n:name attribute", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="cont"></form>';
+    const offset = source.indexOf("cont") + "cont".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        insertText: "contactForm",
+        kind: "component",
+        label: "contactForm",
+        replaceEnd: source.indexOf("cont") + "cont".length,
+        replaceStart: source.indexOf("cont"),
+      }),
+    );
+  });
+
   it("caches the presenter component scan across completion requests", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
