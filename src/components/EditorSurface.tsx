@@ -187,6 +187,7 @@ interface EditorSurfaceProps {
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
+  transientWidgetDismissKey?: string;
   phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -323,6 +324,7 @@ function EditorSurfaceComponent({
   monacoTheme,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
+  transientWidgetDismissKey,
   phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
   phpLanguageServerWorkspaceEditGateway,
@@ -376,6 +378,7 @@ function EditorSurfaceComponent({
   const previousActiveDocumentPathRef = useRef<string | null>(
     activeDocument?.path ?? null,
   );
+  const previousTransientWidgetDismissKeyRef = useRef(transientWidgetDismissKey);
   // Warms TextMate tokens for the active model on idle, off the synchronous
   // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
   // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
@@ -2262,6 +2265,22 @@ function EditorSurfaceComponent({
   }, [activeDocument?.path, editorApi]);
 
   useEffect(() => {
+    if (!editorApi || transientWidgetDismissKey === undefined) {
+      return;
+    }
+
+    if (
+      previousTransientWidgetDismissKeyRef.current ===
+      transientWidgetDismissKey
+    ) {
+      return;
+    }
+
+    previousTransientWidgetDismissKeyRef.current = transientWidgetDismissKey;
+    dismissTransientEditorWidgets(editorApi, "floating-surface");
+  }, [editorApi, transientWidgetDismissKey]);
+
+  useEffect(() => {
     if (!editorApi) {
       return;
     }
@@ -3649,6 +3668,7 @@ function dismissTransientEditorWidgets(
 
   editor.trigger(source, "editor.action.hideHover", {});
   editor.trigger(source, "closeFindWidget", {});
+  editor.trigger(source, "hideSuggestWidget", {});
 }
 
 function expandEditorSelection(

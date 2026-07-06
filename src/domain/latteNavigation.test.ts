@@ -66,6 +66,32 @@ describe("detectLatteReferenceAt", () => {
     });
   });
 
+  it("detects an unquoted include path from the macro closing brace boundary", () => {
+    const source = "{include partials/@showHeader.latte}";
+    const offset = source.indexOf("}") + 1;
+
+    expect(detectLatteReferenceAt(source, offset)).toEqual({
+      kind: "template",
+      tag: "include",
+      name: "partials/@showHeader.latte",
+      nameStart: source.indexOf("partials/@showHeader.latte"),
+      nameEnd:
+        source.indexOf("partials/@showHeader.latte") +
+        "partials/@showHeader.latte".length,
+    });
+  });
+
+  it("detects a single unquoted include path at the closing brace after whitespace", () => {
+    const source = "{include partials/@showHeader.latte }";
+    const offset = source.indexOf("}");
+
+    expect(detectLatteReferenceAt(source, offset)).toMatchObject({
+      kind: "template",
+      tag: "include",
+      name: "partials/@showHeader.latte",
+    });
+  });
+
   it("stops an unquoted include path before named arguments", () => {
     const source = "{include partials/@showSubmenu.latte 'group' => $group}";
     const offset = offsetOf(source, "@showSubmenu", 2);
@@ -74,6 +100,13 @@ describe("detectLatteReferenceAt", () => {
       kind: "template",
       name: "partials/@showSubmenu.latte",
     });
+  });
+
+  it("does not navigate from the macro end when an include has more arguments", () => {
+    const source = "{include partials/@showSubmenu.latte 'group' => $group}";
+    const offset = source.indexOf("}") + 1;
+
+    expect(detectLatteReferenceAt(source, offset)).toBeNull();
   });
 
   it("detects a {layout '...'} template reference", () => {

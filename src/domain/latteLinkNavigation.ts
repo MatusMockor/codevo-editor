@@ -523,8 +523,8 @@ function classicPresenterClassPathsFromBase(
   }
 
   return [
-    joinRelative(presenterBase, `presenters/${file}`),
     joinRelative(presenterBase, `Presenters/${file}`),
+    joinRelative(presenterBase, `presenters/${file}`),
     joinRelative(presenterBase, file),
   ];
 }
@@ -741,7 +741,7 @@ function latteNHrefLinkAt(
     return null;
   }
 
-  const token = readSpaceDelimitedToken(source, value.valueStart, value.valueEnd);
+  const token = readTargetToken(source, value.valueStart, value.valueEnd);
 
   if (!token || offset < token.start || offset > token.end) {
     return null;
@@ -963,7 +963,7 @@ function nHrefCompletionAt(
     return null;
   }
 
-  const region = spaceDelimitedTokenRegion(
+  const region = targetTokenRegion(
     source,
     value.valueStart,
     value.valueEnd,
@@ -1055,21 +1055,6 @@ function readTargetToken(
   return { end: region.end, start: region.start, text };
 }
 
-function readSpaceDelimitedToken(
-  source: string,
-  from: number,
-  limit: number,
-): TargetToken | null {
-  const region = spaceDelimitedTokenRegion(source, from, limit);
-  const text = source.slice(region.start, region.end);
-
-  if (!isPlausibleLinkToken(text)) {
-    return null;
-  }
-
-  return { end: region.end, start: region.start, text };
-}
-
 function targetTokenRegion(
   source: string,
   from: number,
@@ -1092,21 +1077,6 @@ function targetTokenRegion(
   const start = index;
 
   while (index < limit && !isBareTargetBoundary(source[index])) {
-    index += 1;
-  }
-
-  return { end: index, start };
-}
-
-function spaceDelimitedTokenRegion(
-  source: string,
-  from: number,
-  limit: number,
-): TokenRegion {
-  const start = skipInlineWhitespace(source, from, limit);
-  let index = start;
-
-  while (index < limit && !isWhitespace(source[index])) {
     index += 1;
   }
 

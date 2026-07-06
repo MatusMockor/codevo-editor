@@ -272,8 +272,8 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
           "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
         ),
     ).toEqual([
-      "app/modules/efabricaSubscriptionsModule/presenters/SubscriptionTypeGroupAdminPresenter.php",
       "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      "app/modules/efabricaSubscriptionsModule/presenters/SubscriptionTypeGroupAdminPresenter.php",
       "app/modules/efabricaSubscriptionsModule/SubscriptionTypeGroupAdminPresenter.php",
       "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/PartialsPresenter.php",
     ]);
@@ -286,8 +286,8 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
         "app/modules/productsModule/templates/Home/default.latte",
       ),
     ).toEqual([
-      "app/modules/productsModule/presenters/ProductsAdminPresenter.php",
       "app/modules/productsModule/Presenters/ProductsAdminPresenter.php",
+      "app/modules/productsModule/presenters/ProductsAdminPresenter.php",
       "app/modules/productsModule/ProductsAdminPresenter.php",
       "app/Presenters/ProductsAdminPresenter.php",
       "app/UI/ProductsAdmin/ProductsAdminPresenter.php",
@@ -475,7 +475,7 @@ describe("detectLatteLinkAt", () => {
   });
 
   it("detects an n:href attribute target", () => {
-    const source = '<a n:href="Product:show $id">Go</a>';
+    const source = '<a n:href="Product:show">Go</a>';
     const offset = offsetOf(source, "Product:show", 2);
 
     expect(detectLatteLinkAt(source, offset)).toEqual({
@@ -484,6 +484,23 @@ describe("detectLatteLinkAt", () => {
       targetStart: source.indexOf("Product:show"),
       targetEnd: source.indexOf("Product:show") + "Product:show".length,
     });
+  });
+
+  it("takes only the first n:href argument before a comma", () => {
+    const source =
+      '<a n:href="SubscriptionTypeGroupAdmin:showAddons, $subscriptionTypeGroup[\'id\']">Addons</a>';
+    const target = "SubscriptionTypeGroupAdmin:showAddons";
+    const offset = offsetOf(source, target, 2);
+
+    expect(detectLatteLinkAt(source, offset)).toEqual({
+      tag: "n:href",
+      target,
+      targetStart: source.indexOf(target),
+      targetEnd: source.indexOf(target) + target.length,
+    });
+    expect(
+      detectLatteLinkAt(source, offsetOf(source, "$subscriptionTypeGroup", 2)),
+    ).toBeNull();
   });
 
   it("detects a single-quoted n:href target", () => {

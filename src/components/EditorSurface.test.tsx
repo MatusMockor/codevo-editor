@@ -289,6 +289,69 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("dismisses transient Monaco widgets when the floating-surface state changes", async () => {
+    const activeDocument: EditorDocument = {
+      content: "{block content}\n{/block}\n",
+      language: "latte",
+      name: "template.latte",
+      path: "/workspace/templates/template.latte",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          transientWidgetDismissKey: "000",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.trigger).not.toHaveBeenCalledWith(
+      "floating-surface",
+      "hideSuggestWidget",
+      {},
+    );
+
+    editor.trigger.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          transientWidgetDismissKey: "010",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "floating-surface",
+      "editor.action.hideHover",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "floating-surface",
+      "closeFindWidget",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "floating-surface",
+      "hideSuggestWidget",
+      {},
+    );
+  });
+
   it("forwards providePhpCodeActions into the language server provider context", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\nclass Example {}\n",

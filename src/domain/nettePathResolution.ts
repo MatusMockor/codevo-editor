@@ -276,8 +276,8 @@ function classicPresenterCandidatesFromBase(
   }
 
   return [
-    joinRelative(presenterBase, `presenters/${file}`),
     joinRelative(presenterBase, `Presenters/${file}`),
+    joinRelative(presenterBase, `presenters/${file}`),
     joinRelative(presenterBase, file),
   ];
 }

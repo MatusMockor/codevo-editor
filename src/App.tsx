@@ -351,6 +351,37 @@ function App() {
       ),
     [navigationHistoryPathsKey],
   );
+  const transientEditorWidgetDismissKey = useMemo(
+    () =>
+      [
+        workbench.paletteOpen,
+        workbench.quickOpenOpen,
+        workbench.classOpenOpen,
+        workbench.workspaceSymbolsOpen,
+        workbench.searchEverywhereOpen,
+        workbench.textSearchOpen,
+        workbench.fileStructureOpen,
+        workbench.recentFilesSwitcherOpen,
+        workbench.recentLocationsPanelOpen,
+        workbench.languageServerSetupOpen,
+        workbench.settingsOpen,
+      ]
+        .map((open) => (open ? "1" : "0"))
+        .join(""),
+    [
+      workbench.classOpenOpen,
+      workbench.fileStructureOpen,
+      workbench.languageServerSetupOpen,
+      workbench.paletteOpen,
+      workbench.quickOpenOpen,
+      workbench.recentFilesSwitcherOpen,
+      workbench.recentLocationsPanelOpen,
+      workbench.searchEverywhereOpen,
+      workbench.settingsOpen,
+      workbench.textSearchOpen,
+      workbench.workspaceSymbolsOpen,
+    ],
+  );
   // Depend on the inputs editorChangeHunks actually reads (baseline + current
   // content strings) rather than the whole activeDocument object. A cursor move
   // hands down a new activeDocument identity with identical content, so keying
@@ -1267,6 +1298,7 @@ function App() {
             monacoTheme={monacoTheme}
             navigationHistoryPaths={navigationHistoryPaths}
             openDocumentPaths={openDocumentPaths}
+            transientWidgetDismissKey={transientEditorWidgetDismissKey}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             phpLanguageServerWorkspaceEditGateway={
               phpLanguageServerWorkspaceEditGateway

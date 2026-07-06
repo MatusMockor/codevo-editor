@@ -131,17 +131,30 @@ export function detectLatteReferenceAt(
       offset,
       macro.tag,
       macro.argStart,
+      macro.braceEnd,
     );
 
     if (quoted) {
       return quoted;
     }
 
-    return bareTemplateReference(source, offset, macro.tag, macro.argStart);
+    return bareTemplateReference(
+      source,
+      offset,
+      macro.tag,
+      macro.argStart,
+      macro.braceEnd,
+    );
   }
 
   if (macro.tag === "include") {
-    const file = quotedTemplateReference(source, offset, "include", macro.argStart);
+    const file = quotedTemplateReference(
+      source,
+      offset,
+      "include",
+      macro.argStart,
+      macro.braceEnd,
+    );
 
     if (file) {
       return file;
@@ -152,6 +165,7 @@ export function detectLatteReferenceAt(
       offset,
       "include",
       macro.argStart,
+      macro.braceEnd,
     );
 
     if (unquotedFile) {
@@ -282,6 +296,8 @@ export function detectLatteIncludeCompletionAt(
 interface MacroTag {
   /** Offset of the opening `{`. */
   braceStart: number;
+  /** Offset of the closing `}`, or `null` for an unterminated macro. */
+  braceEnd: number | null;
   /** The tag name immediately after `{` (or `{/`). */
   tag: string;
   /** Offset one past the tag name (start of the argument region). */
@@ -322,6 +338,7 @@ function enclosingMacroTag(source: string, offset: number): MacroTag | null {
 
   return {
     braceStart,
+    braceEnd: macroCloseAfter(source, braceStart),
     tag: source.slice(nameStart, index),
     argStart: index,
     closing,
@@ -335,8 +352,13 @@ function enclosingMacroTag(source: string, offset: number): MacroTag | null {
  */
 function macroOpenBefore(source: string, offset: number): number | null {
   const min = Math.max(0, offset - MAX_MACRO_SCAN);
+  let index = offset - 1;
 
-  for (let index = offset - 1; index >= min; index -= 1) {
+  if (source[index] === "}") {
+    index -= 1;
+  }
+
+  for (; index >= min; index -= 1) {
     const character = source[index];
 
     if (character === "\n" || character === "}") {
@@ -344,6 +366,32 @@ function macroOpenBefore(source: string, offset: number): number | null {
     }
 
     if (character === "{") {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Returns the closing `}` for the macro opened at `braceStart`, ignoring braces
+ * inside quoted strings. A newline ends the search because Latte tags are
+ * treated as single-line constructs by this navigation detector.
+ */
+function macroCloseAfter(source: string, braceStart: number): number | null {
+  for (let index = braceStart + 1; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (character === "\n") {
+      return null;
+    }
+
+    if (character === "'" || character === "\"") {
+      index = stringLiteralEnd(source, index);
+      continue;
+    }
+
+    if (character === "}") {
       return index;
     }
   }
@@ -360,6 +408,7 @@ function quotedTemplateReference(
   offset: number,
   tag: string,
   argStart: number,
+  macroEnd: number | null,
 ): LatteReference | null {
   const quoteStart = skipSpaces(source, argStart);
   const quote = source[quoteStart] ?? "";
@@ -370,7 +419,15 @@ function quotedTemplateReference(
 
   const quoteEnd = stringLiteralEnd(source, quoteStart);
 
-  if (offset <= quoteStart || offset > quoteEnd + 1) {
+  if (
+    !isOffsetOnReferenceOrMacroEnd(
+      source,
+      offset,
+      quoteStart + 1,
+      quoteEnd + 1,
+      macroEnd,
+    )
+  ) {
     return null;
   }
 
@@ -399,6 +456,7 @@ function bareTemplateReference(
   offset: number,
   tag: string,
   argStart: number,
+  macroEnd: number | null,
 ): LatteReference | null {
   let index = skipSpaces(source, argStart);
   const nameStart = index;
@@ -410,7 +468,10 @@ function bareTemplateReference(
   const nameEnd = index;
   const name = source.slice(nameStart, nameEnd);
 
-  if (!looksLikeTemplatePath(name) || offset < nameStart || offset > nameEnd) {
+  if (
+    !looksLikeTemplatePath(name) ||
+    !isOffsetOnReferenceOrMacroEnd(source, offset, nameStart, nameEnd, macroEnd)
+  ) {
     return null;
   }
 
@@ -421,6 +482,24 @@ function bareTemplateReference(
     nameStart,
     nameEnd,
   };
+}
+
+function isOffsetOnReferenceOrMacroEnd(
+  source: string,
+  offset: number,
+  referenceStart: number,
+  referenceEnd: number,
+  macroEnd: number | null,
+): boolean {
+  if (offset >= referenceStart && offset <= referenceEnd) {
+    return true;
+  }
+
+  if (macroEnd === null || (offset !== macroEnd && offset !== macroEnd + 1)) {
+    return false;
+  }
+
+  return source.slice(referenceEnd, macroEnd).trim().length === 0;
 }
 
 /**
