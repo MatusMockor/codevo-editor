@@ -952,6 +952,81 @@ class ProductTemplate extends Template
     );
   });
 
+  it("types the implicit $presenter variable as the current presenter", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "HomePresenter",
+        name: "link",
+        parameters: "string $destination",
+        returnType: "string",
+      },
+    ]);
+    const deps = makeDeps({
+      readFileContent,
+      resolvePhpReceiverCompletions,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$presenter->}";
+    const offset = source.indexOf("->") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "presenter",
+      "App\\UI\\Home\\HomePresenter",
+    );
+    expect(completions.map((completion) => completion.label)).toContain("link");
+  });
+
+  it("types the implicit $control variable as the Nette base control", async () => {
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Control",
+        name: "getPresenter",
+        parameters: "",
+        returnType: "Nette\\Application\\UI\\Presenter",
+      },
+    ]);
+    const deps = makeDeps({
+      resolvePhpReceiverCompletions,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$control->}";
+    const offset = source.indexOf("->") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "control",
+      "Nette\\Application\\UI\\Control",
+    );
+    expect(completions.map((completion) => completion.label)).toContain(
+      "getPresenter",
+    );
+  });
+
   it("matches a wildcard presenter binding (beforeRender applies to every action)", async () => {
     const { readFileContent, searchText } = buildNettePresenterWorkspace({
       "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
@@ -1183,9 +1258,27 @@ class ProductTemplate extends Template
     expect(labels).toContain("$product");
     expect(labels).toContain("$row");
     expect(labels).toContain("$invoice");
+    expect(labels).toContain("$presenter");
+    expect(labels).toContain("$control");
     expect(completions.every((completion) => completion.kind === "variable")).toBe(
       true,
     );
+  });
+
+  it("offers Nette implicit template variables in an empty expression", async () => {
+    const deps = makeDeps();
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.find((completion) => completion.label === "$presenter"))
+      .toMatchObject({ detail: "Nette template context · Presenter" });
+    expect(completions.find((completion) => completion.label === "$control"))
+      .toMatchObject({ detail: "Nette template context · Control" });
   });
 
   it("offers Latte built-in filters after a | in an expression", async () => {
@@ -2265,6 +2358,46 @@ class ProductsAdminPresenter extends AdminPresenter
     );
   });
 
+  it("navigates component-template {control} references to the colocated control class", async () => {
+    const controlSource = `<?php
+namespace Crm\\ApiModule\\Components\\ApiConsoleControl;
+
+use Nette\\Application\\UI\\Control;
+use Nette\\Application\\UI\\Form;
+
+class ApiConsoleControl extends Control
+{
+    protected function createComponentConsoleForm(): Form
+    {
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php":
+        controlSource,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/apiModule/Components/ApiConsoleControl/api_console.latte`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control consoleForm}";
+    const offset = source.indexOf("consoleForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "consoleForm",
+    );
+  });
+
   it("navigates a <form n:name=\"contactForm\"> the same way", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
@@ -2447,6 +2580,40 @@ describe("createLatteIntelligence createComponent -> {control} reverse (Fáza 2)
       "/ws/app/UI/Product/ProductPresenter.php",
       expect.objectContaining({ lineNumber: 9 }),
       "Product:show",
+    );
+  });
+
+  it("navigates a colocated control createComponent method back to its Latte usage", async () => {
+    const controlSource = `<?php
+class ApiConsoleControl extends Nette\\Application\\UI\\Control
+{
+    protected function createComponentConsoleForm(): Nette\\Application\\UI\\Form
+    {
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/modules/apiModule/Components/ApiConsoleControl/api_console.latte":
+        "<h2>Api Web Console</h2>\n{control consoleForm}\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const offset = controlSource.indexOf("createComponentConsoleForm") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(controlSource, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/apiModule/Components/ApiConsoleControl/api_console.latte",
+      expect.objectContaining({ lineNumber: 2 }),
+      "consoleForm",
     );
   });
 });

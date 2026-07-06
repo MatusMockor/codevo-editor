@@ -214,6 +214,61 @@ export function presenterCandidatePathsForTemplate(
 }
 
 /**
+ * Maps a component/control template back to its colocated PHP class.
+ *
+ * Nette projects commonly keep component templates next to their backing class:
+ * `Components/ApiConsoleControl/api_console.latte` is rendered by
+ * `Components/ApiConsoleControl/ApiConsoleControl.php`. This is intentionally a
+ * conservative colocated-only strategy; parent presenters and service factories
+ * are still resolved by the integration layer's existing presenter candidates.
+ */
+export function componentClassCandidatePathsForTemplate(
+  templateRelativePath: string,
+): string[] {
+  const path = normalizeSlashes(templateRelativePath).trim();
+
+  if (path.length === 0 || !path.endsWith(LATTE_EXTENSION)) {
+    return [];
+  }
+
+  return componentClassCandidate(dirnameOf(path));
+}
+
+/**
+ * Maps a component/control PHP class back to likely colocated Latte templates.
+ * The stripped-name candidates cover `ApiConsoleControl -> api_console.latte`,
+ * while the full-name candidates cover widget-style templates such as
+ * `UserTimeTravelWidget -> user_time_travel_widget.latte`.
+ */
+export function componentTemplateCandidatePathsForClass(
+  componentRelativePath: string,
+): string[] {
+  const path = normalizeSlashes(componentRelativePath).trim();
+
+  if (path.length === 0 || !path.endsWith(".php")) {
+    return [];
+  }
+
+  const dir = dirnameOf(path);
+
+  if (!hasComponentsSegment(dir)) {
+    return [];
+  }
+
+  const shortName = basenameOf(path).slice(0, -".php".length);
+
+  if (!isUsableIdentifier(shortName)) {
+    return [];
+  }
+
+  return dedupe(
+    componentTemplateBasenames(shortName).map((basename) =>
+      joinRelative(dir, `${basename}${LATTE_EXTENSION}`),
+    ),
+  );
+}
+
+/**
  * Modern convention: presenter sits beside the template, named after its
  * directory. `templates` is the classic-convention marker segment, never a
  * real component name, so it is skipped here - `.../templates/Product.show.latte`
@@ -227,6 +282,26 @@ function modernPresenterCandidate(dir: string): string[] {
   }
 
   return [joinRelative(dir, `${ucfirst(dirName)}${PRESENTER_SUFFIX}`)];
+}
+
+function componentClassCandidate(dir: string): string[] {
+  if (!hasComponentsSegment(dir)) {
+    return [];
+  }
+
+  const dirName = basenameOf(dir);
+
+  if (!isUsableIdentifier(dirName)) {
+    return [];
+  }
+
+  return [joinRelative(dir, `${ucfirst(dirName)}.php`)];
+}
+
+function hasComponentsSegment(path: string): boolean {
+  return path
+    .split("/")
+    .some((segment) => segment.toLowerCase() === "components");
 }
 
 /** Classic convention: `.../templates/<Short>/<view>.latte`. */
@@ -331,6 +406,40 @@ function basenameOf(path: string): string {
   }
 
   return path.slice(index + 1);
+}
+
+function componentTemplateBasenames(shortName: string): string[] {
+  const full = camelToSnake(shortName);
+  const stripped = strippedComponentClassName(shortName);
+
+  if (!stripped || stripped === shortName) {
+    return [full];
+  }
+
+  const strippedName = camelToSnake(stripped);
+
+  if (shortName.endsWith("Widget")) {
+    return [full, strippedName];
+  }
+
+  return [strippedName, full];
+}
+
+function strippedComponentClassName(shortName: string): string | null {
+  for (const suffix of ["Control", "Component", "Widget"]) {
+    if (shortName.endsWith(suffix) && shortName.length > suffix.length) {
+      return shortName.slice(0, -suffix.length);
+    }
+  }
+
+  return null;
+}
+
+function camelToSnake(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
 }
 
 function parentDirOf(dir: string): string {

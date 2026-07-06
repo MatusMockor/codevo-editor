@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  componentClassCandidatePathsForTemplate,
+  componentTemplateCandidatePathsForClass,
   latteLayoutCandidatePaths,
   latteViewNameFromAction,
   presenterCandidatePathsForTemplate,
@@ -279,5 +281,41 @@ describe("presenterCandidatePathsForTemplate", () => {
 
   it("returns no candidates for a blank path", () => {
     expect(presenterCandidatePathsForTemplate("")).toEqual([]);
+  });
+});
+
+describe("componentClassCandidatePathsForTemplate", () => {
+  it("maps an ebox-crm colocated control template to its control class", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/modules/apiModule/Components/ApiConsoleControl/api_console.latte",
+      ),
+    ).toEqual([
+      "app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php",
+    ]);
+  });
+});
+
+describe("componentTemplateCandidatePathsForClass", () => {
+  it("prefers the stripped Control template basename before the full class name", () => {
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/modules/apiModule/Components/ApiConsoleControl/ApiConsoleControl.php",
+      ),
+    ).toEqual([
+      "app/modules/apiModule/Components/ApiConsoleControl/api_console.latte",
+      "app/modules/apiModule/Components/ApiConsoleControl/api_console_control.latte",
+    ]);
+  });
+
+  it("keeps Widget templates with the widget suffix first", () => {
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/modules/usersModule/Components/UserTimeTravel/UserTimeTravelWidget.php",
+      ),
+    ).toEqual([
+      "app/modules/usersModule/Components/UserTimeTravel/user_time_travel_widget.latte",
+      "app/modules/usersModule/Components/UserTimeTravel/user_time_travel.latte",
+    ]);
   });
 });

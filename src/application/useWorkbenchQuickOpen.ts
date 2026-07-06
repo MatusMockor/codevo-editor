@@ -49,12 +49,19 @@ export function useWorkbenchQuickOpen(
     [],
   );
 
-  const setQuickOpenOpen = useCallback((isOpen: boolean) => {
-    setQuickOpenQuery("");
-    setQuickOpenResults([]);
-    setQuickOpenLoading(false);
-    setQuickOpenOpenState(isOpen);
-  }, []);
+  const setQuickOpenOpen = useCallback(
+    (isOpen: boolean) => {
+      setQuickOpenQuery("");
+      setQuickOpenResults([]);
+      setQuickOpenLoading(false);
+      setQuickOpenOpenState(isOpen);
+
+      if (!isOpen) {
+        setMessage(null);
+      }
+    },
+    [setMessage],
+  );
 
   useEffect(() => {
     if (!quickOpenOpen || !workspaceRoot) {

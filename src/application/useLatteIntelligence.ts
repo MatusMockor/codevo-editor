@@ -78,6 +78,8 @@ import {
 } from "../domain/phpMethodCompletions";
 import {
   latteLayoutCandidatePaths,
+  componentTemplateCandidatePathsForClass,
+  componentClassCandidatePathsForTemplate,
   moduleTemplatesRootOf,
   presenterCandidatePathsForTemplate,
   presenterTemplateCandidatePaths,
@@ -1324,7 +1326,9 @@ async function resolveNetteControlDefinition(
   }
 
   const methodName = netteCreateComponentMethodName(componentName);
-  const candidatePaths = presenterCandidatePathsForTemplate(currentRelativePath);
+  const candidatePaths = componentOwnerCandidatePathsForTemplate(
+    currentRelativePath,
+  );
 
   for (const relativePath of candidatePaths) {
     if (!isRequestedRootActive()) {
@@ -1476,7 +1480,7 @@ async function scanNettePresenterComponentNames(
   isRequestedRootActive: () => boolean,
   templateRelativePath: string,
 ): Promise<string[]> {
-  for (const relativePath of presenterCandidatePathsForTemplate(
+  for (const relativePath of componentOwnerCandidatePathsForTemplate(
     templateRelativePath,
   )) {
     if (!isRequestedRootActive()) {
@@ -1611,6 +1615,13 @@ function presenterTemplateCandidatesForViews(
   presenterRelativePath: string,
   views: readonly string[],
 ): string[] {
+  const componentTemplates =
+    componentTemplateCandidatePathsForClass(presenterRelativePath);
+
+  if (componentTemplates.length > 0) {
+    return componentTemplates;
+  }
+
   const seen = new Set<string>();
   const paths: string[] = [];
 
@@ -1629,6 +1640,15 @@ function presenterTemplateCandidatesForViews(
   }
 
   return paths;
+}
+
+function componentOwnerCandidatePathsForTemplate(
+  templateRelativePath: string,
+): string[] {
+  return Array.from(new Set([
+    ...presenterCandidatePathsForTemplate(templateRelativePath),
+    ...componentClassCandidatePathsForTemplate(templateRelativePath),
+  ]));
 }
 
 function latteTagCompletions(
@@ -1953,6 +1973,21 @@ interface LatteVariableCandidate {
   typeHint: string | null;
 }
 
+const NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE = "Nette\\Application\\UI\\Control";
+
+const NETTE_TEMPLATE_IMPLICIT_VARIABLES = [
+  {
+    detail: "Nette template context",
+    name: "$presenter",
+    typeHint: "Presenter",
+  },
+  {
+    detail: "Nette template context",
+    name: "$control",
+    typeHint: "Control",
+  },
+] satisfies LatteVariableCandidate[];
+
 /**
  * Gathers the in-scope template variables for the `{$}` list, first sighting of
  * a name wins (inline declarations > template type > loop bindings > presenter
@@ -2011,6 +2046,10 @@ async function collectLatteVariableCandidates(
     if (binding.keyVariableName) {
       add(`$${binding.keyVariableName}`, "foreach key", null);
     }
+  }
+
+  for (const variable of NETTE_TEMPLATE_IMPLICIT_VARIABLES) {
+    add(variable.name, variable.detail, variable.typeHint);
   }
 
   const entries = await loadNetteViewDataEntries(context);
@@ -2079,6 +2118,16 @@ async function resolveLatteVariableType(
     return localType;
   }
 
+  const implicitType = await latteImplicitVariableType(context, variableName);
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (implicitType) {
+    return implicitType;
+  }
+
   const presenterType = await lattePresenterVariableType(context, variableName);
 
   if (!isRequestedRootActive()) {
@@ -2090,6 +2139,70 @@ async function resolveLatteVariableType(
   }
 
   return latteForeachVariableType(context, source, offset, variableName, depth);
+}
+
+async function latteImplicitVariableType(
+  context: LatteExpressionResolutionContext,
+  variableName: string,
+): Promise<string | null> {
+  if (variableName === "control") {
+    return NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE;
+  }
+
+  if (variableName !== "presenter") {
+    return null;
+  }
+
+  return currentNettePresenterClassName(context);
+}
+
+async function currentNettePresenterClassName(
+  context: LatteExpressionResolutionContext,
+): Promise<string | null> {
+  const { deps, isRequestedRootActive, requestedRoot } = context;
+  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+
+  if (!templateRelativePath) {
+    return null;
+  }
+
+  for (const relativePath of presenterCandidatePathsForTemplate(
+    templateRelativePath,
+  )) {
+    if (!isRequestedRootActive()) {
+      return null;
+    }
+
+    let source: string;
+
+    try {
+      source = await deps.readFileContent(
+        deps.joinPath(requestedRoot, relativePath),
+      );
+    } catch {
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return null;
+    }
+
+    const className = phpPrimaryClassName(source);
+
+    if (!className) {
+      continue;
+    }
+
+    const namespace = phpNamespaceName(source);
+
+    return namespace ? `${namespace}\\${className}` : className;
+  }
+
+  return null;
 }
 
 /** Priority 2: typed properties on an explicit `{templateType FooTemplate}` class. */
@@ -2799,6 +2912,13 @@ function shortTypeName(typeName: string | null): string | null {
   const shortName = segments[segments.length - 1]?.trim() ?? "";
 
   return shortName.length > 0 ? shortName : null;
+}
+
+function phpPrimaryClassName(source: string): string | null {
+  const match = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(source);
+  const className = match?.[1]?.trim() ?? "";
+
+  return className.length > 0 ? className : null;
 }
 
 function phpSourceDefinesType(source: string, typeName: string): boolean {

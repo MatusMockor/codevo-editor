@@ -57,6 +57,7 @@ interface FakeEditor {
     gotoDefinition: (...args: unknown[]) => Promise<void>;
   };
   gotoDefinitionContributionNavigate: ReturnType<typeof vi.fn>;
+  getDomNode: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
@@ -9823,6 +9824,63 @@ class Foo
     ).toBe(true);
   });
 
+  it("clears delayed Monaco find accessibility status after a document navigation", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const firstDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "first.ts",
+        path: "/workspace/src/first.ts",
+        savedContent: "",
+      };
+      const secondDocument: EditorDocument = {
+        content: "const other = 2;\n",
+        language: "typescript",
+        name: "second.ts",
+        path: "/workspace/src/second.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        dispose: vi.fn(),
+        uri: { fsPath: firstDocument.path, path: firstDocument.path },
+      };
+      const editor = createEditor(model);
+      const domNode = document.createElement("div");
+      const ariaContainer = document.createElement("div");
+      ariaContainer.className = "monaco-aria-container";
+      document.body.append(ariaContainer);
+      editor.getDomNode.mockReturnValue(domNode);
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      await act(async () => {
+        root.render(memoGuardSurface(firstDocument));
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        root.render(memoGuardSurface(secondDocument));
+        await Promise.resolve();
+      });
+
+      ariaContainer.textContent =
+        "No results found for 'partials/@showHeader.latte'";
+
+      await act(async () => {
+        vi.advanceTimersByTime(0);
+      });
+
+      expect(ariaContainer.textContent).toBe("");
+    } finally {
+      document
+        .querySelectorAll(".monaco-aria-container")
+        .forEach((element) => element.remove());
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\nconst other = 2;\n",
@@ -10856,6 +10914,7 @@ function createEditor(model: FakeModel): FakeEditor {
     gotoDefinition: (...args: unknown[]) =>
       gotoDefinitionContributionNavigate(...args),
   };
+  const domNode = document.createElement("div");
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
@@ -10873,6 +10932,7 @@ function createEditor(model: FakeModel): FakeEditor {
     gotoDefinitionContribution,
     gotoDefinitionContributionDispose,
     gotoDefinitionContributionNavigate,
+    getDomNode: vi.fn(() => domNode),
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
       height: 480,

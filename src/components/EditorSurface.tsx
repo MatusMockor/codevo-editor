@@ -3690,6 +3690,17 @@ function dismissTransientEditorWidgets(
   editor: Monaco.editor.IStandaloneCodeEditor,
   source: string,
 ): void {
+  dismissTransientEditorWidgetsNow(editor, source);
+
+  window.setTimeout(() => {
+    dismissTransientEditorWidgetsNow(editor, source);
+  }, 0);
+}
+
+function dismissTransientEditorWidgetsNow(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  source: string,
+): void {
   if (!editor.getModel()) {
     return;
   }
@@ -3697,6 +3708,25 @@ function dismissTransientEditorWidgets(
   editor.trigger(source, "editor.action.hideHover", {});
   editor.trigger(source, "closeFindWidget", {});
   editor.trigger(source, "hideSuggestWidget", {});
+  clearMonacoTransientAccessibilityStatus(editor);
+}
+
+function clearMonacoTransientAccessibilityStatus(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+): void {
+  const domNode = editor.getDomNode();
+
+  if (!domNode) {
+    return;
+  }
+
+  const root = domNode.ownerDocument ?? document;
+
+  root
+    .querySelectorAll<HTMLElement>(".monaco-aria-container, .monaco-status")
+    .forEach((element) => {
+      element.textContent = "";
+    });
 }
 
 function expandEditorSelection(
