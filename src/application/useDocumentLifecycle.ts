@@ -25,6 +25,7 @@ import {
   workspaceRelativePath,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
@@ -496,7 +497,7 @@ export function useDocumentLifecycle(
           return;
         }
 
-        unlisten = dispose;
+        unlisten = createSafeUnsubscribe(dispose);
       })
       .catch((error) => reportError("Shortcuts", error));
 

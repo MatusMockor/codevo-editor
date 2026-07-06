@@ -13471,6 +13471,95 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace");
   });
 
+  it("does not restart a completed index scan when returning to a cached project tab", async () => {
+    let publishMetadataScanCompletion:
+      | ((event: MetadataScanCompletionEvent) => void)
+      | null = null;
+    const indexProgressGateway: IndexProgressGateway = {
+      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+        databasePath: `/tmp/${rootPath.replace(/\W+/g, "-")}.sqlite`,
+        rootPath,
+        status: "started" as const,
+      })),
+      startReindex: vi.fn(async (rootPath) => ({
+        databasePath: `/tmp/${rootPath.replace(/\W+/g, "-")}.sqlite`,
+        rootPath,
+        status: "started" as const,
+      })),
+      subscribeIndexProgress: vi.fn(async () => () => undefined),
+      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
+        publishMetadataScanCompletion = listener;
+        return () => undefined;
+      }),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      indexProgressGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace-a");
+    act(() => {
+      publishMetadataScanCompletion?.({
+        databasePath: "/tmp/workspace-a.sqlite",
+        message: null,
+        report: {
+          changedFiles: 0,
+          errorDetails: [],
+          erroredEntries: 0,
+          indexedFiles: 42,
+          parsedFiles: 42,
+          removedFiles: 0,
+          skippedDetails: [],
+          skippedEntries: 0,
+          symbolsIndexed: 84,
+        },
+        rootPath: "/workspace-a",
+        status: "completed",
+      });
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().indexProgress.status).toBe("completed");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    const initialScanCalls = vi.mocked(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).mock.calls;
+    expect(
+      initialScanCalls.filter(([rootPath]) => rootPath === "/workspace-a"),
+    ).toHaveLength(1);
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        indexedFiles: 42,
+        rootPath: "/workspace-a",
+        status: "completed",
+      }),
+    );
+  });
+
   it("refreshes the PHP tree for index progress roots that only differ by a trailing slash", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {

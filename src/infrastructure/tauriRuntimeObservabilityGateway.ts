@@ -8,6 +8,7 @@ import {
   type RuntimeObservabilityReport,
 } from "../domain/runtimeObservability";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { createSafeUnsubscribe } from "./safeUnsubscribe";
 
 const PHP_STATUS_EVENT = "language-server://status";
 const JAVASCRIPT_TYPESCRIPT_STATUS_EVENT =
@@ -106,8 +107,12 @@ export class TauriRuntimeObservabilityGateway
       this.listen(JAVASCRIPT_TYPESCRIPT_STATUS_EVENT, () => listener()),
     ]);
 
+    const safeUnsubscribers = unsubscribers.map((unsubscribe) =>
+      createSafeUnsubscribe(unsubscribe),
+    );
+
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      safeUnsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }
 

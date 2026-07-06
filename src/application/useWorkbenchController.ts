@@ -203,6 +203,7 @@ import {
 } from "../domain/editorConfig";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
+import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
   collectBareKeyShortcutKeys,
@@ -501,6 +502,8 @@ interface CachedWorkspaceWorkbenchState {
   documents: Record<string, EditorDocument>;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
+  indexHealthLogs: IndexHealthLogEntry[];
+  indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
   navigationHistory: NavigationHistory;
   openPaths: string[];
@@ -1605,6 +1608,8 @@ export function useWorkbenchController(
         documents: cacheableDocuments,
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
+        indexHealthLogs,
+        indexProgress,
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
         navigationHistory,
         openPaths: cacheableOpenPaths,
@@ -1623,6 +1628,8 @@ export function useWorkbenchController(
       entriesByDirectory,
       manuallyCollapsedDirectories,
       expandedDirectories,
+      indexHealthLogs,
+      indexProgress,
       navigationHistory,
       openPaths,
       previewPath,
@@ -1658,6 +1665,8 @@ export function useWorkbenchController(
 
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
+      setIndexHealthLogs(cached.indexHealthLogs);
+      setIndexProgress(cached.indexProgress);
       setManuallyCollapsedDirectories(
         new Set(cached.manuallyCollapsedDirectories),
       );
@@ -2803,6 +2812,8 @@ export function useWorkbenchController(
         setSidebarView("files");
         setBottomPanelView("problems");
         setBottomPanelVisible(false);
+        setIndexProgress(initialIndexProgress());
+        setIndexHealthLogs([]);
       }
 
       // The TODO panel is a transient, workspace-scoped overlay (not part of the
@@ -2843,8 +2854,6 @@ export function useWorkbenchController(
       }
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
-      setIndexProgress(initialIndexProgress());
-      setIndexHealthLogs([]);
       setPhpTree(emptyPhpTree());
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
@@ -2892,7 +2901,7 @@ export function useWorkbenchController(
       resetPhpLaravelSourceRegistries();
       resetBladeIntelligenceCaches();
       setPhpIdeReadinessVersion(0);
-      activeIndexRootRef.current = null;
+      activeIndexRootRef.current = cachedWorkspaceState?.indexProgress.rootPath ?? null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
@@ -3059,7 +3068,10 @@ export function useWorkbenchController(
       // Fire-and-forget plans/scans that already isolate themselves per root.
       void refreshJavaScriptTypeScriptLanguageServerPlan(path);
 
-      if (shouldIndexWorkspace(resolvedIntelligenceMode)) {
+      if (
+        shouldIndexWorkspace(resolvedIntelligenceMode) &&
+        shouldRunInitialIndexScan(cachedWorkspaceState)
+      ) {
         void startInitialIndexScan(path);
       }
 
@@ -10784,7 +10796,7 @@ export function useWorkbenchController(
             return;
           }
 
-          unlisteners.push(dispose);
+          unlisteners.push(createSafeUnsubscribe(dispose));
         })
         .catch((error) => reportError("Shortcuts", error));
     });
@@ -13413,6 +13425,16 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   }
 
   return path;
+}
+
+function shouldRunInitialIndexScan(
+  cachedWorkspaceState: CachedWorkspaceWorkbenchState | null,
+): boolean {
+  if (!cachedWorkspaceState) {
+    return true;
+  }
+
+  return cachedWorkspaceState.indexProgress.status !== "completed";
 }
 
 function bladeSyntheticPhpMemberAccessSource(

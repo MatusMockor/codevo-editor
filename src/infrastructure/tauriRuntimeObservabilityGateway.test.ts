@@ -156,4 +156,31 @@ describe("TauriRuntimeObservabilityGateway", () => {
 
     unsubscribe();
   });
+
+  it("keeps status unsubscribe idempotent when Tauri races listener cleanup", async () => {
+    const unsubscribeCalls = vi.fn();
+    const listenToEvent = vi.fn<ListenToEvent>(async () => () => {
+      unsubscribeCalls();
+      return Promise.reject(
+        new TypeError(
+          "undefined is not an object (evaluating 'listeners[eventId].handlerId')",
+        ),
+      );
+    });
+    const gateway = new TauriRuntimeObservabilityGateway(
+      vi.fn(),
+      listenToEvent,
+      () => true,
+    );
+
+    const unsubscribe = await gateway.subscribeStatus(vi.fn());
+
+    expect(() => {
+      unsubscribe();
+      unsubscribe();
+    }).not.toThrow();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(unsubscribeCalls).toHaveBeenCalledTimes(2);
+  });
 });

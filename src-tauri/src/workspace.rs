@@ -329,7 +329,7 @@ fn collect_file_results(
             .to_string_lossy()
             .replace('\\', "/");
 
-        if !query.is_empty() && !relative_path.to_lowercase().contains(query) {
+        if !file_search_matches(&relative_path, query) {
             continue;
         }
 
@@ -358,7 +358,45 @@ fn score_result(relative_path: &str, query: &str) -> usize {
         return 1;
     }
 
-    lower_path.find(query).unwrap_or(usize::MAX - 1) + 2
+    if let Some(index) = lower_path.find(query) {
+        return index + 2;
+    }
+
+    let tokens = file_search_query_tokens(query);
+
+    if tokens.is_empty() || !tokens.iter().all(|token| lower_path.contains(token)) {
+        return usize::MAX - 1;
+    }
+
+    let token_score = tokens
+        .iter()
+        .filter_map(|token| lower_path.find(token))
+        .sum::<usize>();
+
+    10_000 + token_score + lower_path.matches('/').count()
+}
+
+fn file_search_matches(relative_path: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+
+    let lower_path = relative_path.to_lowercase();
+
+    if lower_path.contains(query) {
+        return true;
+    }
+
+    let tokens = file_search_query_tokens(query);
+
+    !tokens.is_empty() && tokens.iter().all(|token| lower_path.contains(token))
+}
+
+fn file_search_query_tokens(query: &str) -> Vec<&str> {
+    query
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .collect()
 }
 
 fn apply_text_edits_to_content(content: &str, edits: &[WorkspaceTextEdit]) -> io::Result<String> {
@@ -576,6 +614,41 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].relative_path, "src/User.php");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn search_files_matches_folder_and_file_tokens() {
+        let root = create_temp_dir("workspace-search-tokenized");
+        fs::create_dir_all(
+            root.join("app")
+                .join("modules")
+                .join("customersModule")
+                .join("templates")
+                .join("RetentionAnalysisAdmin"),
+        )
+        .expect("create latte directory");
+        fs::write(
+            root.join("app")
+                .join("modules")
+                .join("customersModule")
+                .join("templates")
+                .join("RetentionAnalysisAdmin")
+                .join("show.latte"),
+            "{block content}",
+        )
+        .expect("write latte");
+
+        let repository = LocalWorkspaceFileRepository;
+        let results = repository
+            .search_files(&root, "RetentionAnalysisAdmin show", 20)
+            .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].relative_path,
+            "app/modules/customersModule/templates/RetentionAnalysisAdmin/show.latte"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

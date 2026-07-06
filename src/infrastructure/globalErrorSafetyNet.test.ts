@@ -132,6 +132,18 @@ describe("installGlobalErrorSafetyNet", () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("ignores Tauri event listener cleanup races instead of alarming the user", () => {
+    uninstall = installGlobalErrorSafetyNet();
+
+    dispatchRejection(
+      new TypeError(
+        "undefined is not an object (evaluating 'listeners[eventId].handlerId')",
+      ),
+    );
+
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("still surfaces a genuine error (e.g. a TypeError) after filtering benign noise", () => {
     uninstall = installGlobalErrorSafetyNet();
 

@@ -53,6 +53,7 @@ const BENIGN_ERROR_NAMES = new Set([
 const BENIGN_ERROR_PATTERNS: readonly RegExp[] = [
   /resizeobserver loop/i,
   /^cancell?ed$/i,
+  /listeners\[eventId\]\.handlerId/,
   /the (?:operation|user aborted a request|request) (?:was )?aborted/i,
 ];
 

@@ -1857,6 +1857,42 @@ describe("createLatteIntelligence {control} component definition (Fáza 2)", () 
     );
   });
 
+  it("navigates Nette module {control} references to the module presenter factory", async () => {
+    const presenter = `<?php
+namespace App\\ProductsModule\\Presenters;
+
+class ProductsAdminPresenter extends AdminPresenter
+{
+    public function createComponentProductsGrid(string $name): DataGrid
+    {
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/modules/productsModule/Presenters/ProductsAdminPresenter.php": presenter,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/productsModule/templates/ProductsAdmin/default.latte`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "      {control productsGrid}";
+    const offset = source.indexOf("productsGrid") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/productsModule/Presenters/ProductsAdminPresenter.php",
+      expect.objectContaining({ lineNumber: 6 }),
+      "productsGrid",
+    );
+  });
+
   it("navigates a <form n:name=\"contactForm\"> the same way", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,

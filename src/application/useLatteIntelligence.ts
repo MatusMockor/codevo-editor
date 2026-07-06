@@ -520,8 +520,18 @@ export function createLatteIntelligence(
 
     const reference = detectLatteReferenceAt(source, offset);
 
+    if (reference?.kind === "control") {
+      return resolveNetteControlDefinition(
+        deps,
+        requestedRoot,
+        isRequestedRootActive,
+        reference.name,
+        currentTemplateRelativePath,
+      );
+    }
+
     if (reference && reference.kind !== "template") {
-      // Block / control navigation is owned by a later slice.
+      // Block navigation is owned by a later slice.
       return false;
     }
 
