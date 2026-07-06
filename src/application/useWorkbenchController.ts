@@ -1389,6 +1389,11 @@ export function useWorkbenchController(
     setMessage,
     workspaceRoot,
   });
+  const [floatingSurfaceActivationVersion, setFloatingSurfaceActivationVersion] =
+    useState(0);
+  const markFloatingSurfaceActivated = useCallback(() => {
+    setFloatingSurfaceActivationVersion((current) => current + 1);
+  }, []);
 
   const {
     classOpenOpen,
@@ -12229,6 +12234,7 @@ export function useWorkbenchController(
         setWorkspaceSymbolsOpen(false);
         setRecentFilesSwitcherOpen(false);
         setPaletteOpen(true);
+        markFloatingSurfaceActivated();
         return;
       }
 
@@ -12239,6 +12245,7 @@ export function useWorkbenchController(
           setWorkspaceSymbolsOpen(false);
           setRecentFilesSwitcherOpen(false);
           setClassOpenOpen(true);
+          markFloatingSurfaceActivated();
         }
         return;
       }
@@ -12258,6 +12265,7 @@ export function useWorkbenchController(
           setWorkspaceSymbolsOpen(false);
           setRecentFilesSwitcherOpen(false);
           setQuickOpenOpen(true);
+          markFloatingSurfaceActivated();
         }
         return;
       }
@@ -12308,6 +12316,7 @@ export function useWorkbenchController(
     runTestForActiveDocument,
     goToNextProblem,
     goToPreviousProblem,
+    markFloatingSurfaceActivated,
     goToSourceDefinition,
     goToTypeDefinition,
     navigateBackward,
@@ -13146,6 +13155,7 @@ export function useWorkbenchController(
     registerActiveTerminalSession,
     runTestAt,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
+    closeFloatingSurface,
     bottomPanelVisible,
     bottomPanelView,
     editorRevealTarget,
@@ -13174,6 +13184,7 @@ export function useWorkbenchController(
     languageServerPlan,
     languageServerRuntimeStatus,
     languageServerSetupOpen,
+    floatingSurfaceActivationVersion,
     installingManagedPhpactor,
     message,
     openDocuments,

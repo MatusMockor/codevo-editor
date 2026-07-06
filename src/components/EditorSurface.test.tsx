@@ -66,6 +66,7 @@ interface FakeEditor {
   cursorPositionHandler:
     | ((event: { position: EditorPosition }) => void)
     | null;
+  keyDownHandler: ((event: FakeKeyDownEvent) => void) | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   mouseMoveHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
@@ -85,6 +86,7 @@ interface FakeEditor {
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
   onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
+  onKeyDown: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
   onMouseMove: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
@@ -92,6 +94,17 @@ interface FakeEditor {
   setSelection: ReturnType<typeof vi.fn>;
   trigger: ReturnType<typeof vi.fn>;
   updateOptions: ReturnType<typeof vi.fn>;
+}
+
+interface FakeKeyDownEvent {
+  browserEvent: {
+    key: string;
+    preventDefault: ReturnType<typeof vi.fn>;
+    stopPropagation: ReturnType<typeof vi.fn>;
+  };
+  keyCode: number;
+  preventDefault: ReturnType<typeof vi.fn>;
+  stopPropagation: ReturnType<typeof vi.fn>;
 }
 
 interface FakeMouseDownEvent {
@@ -348,6 +361,58 @@ describe("EditorSurface", () => {
     expect(editor.trigger).toHaveBeenCalledWith(
       "floating-surface",
       "hideSuggestWidget",
+      {},
+    );
+  });
+
+  it("dismisses transient Monaco widgets when an already-open floating surface is activated again", async () => {
+    const activeDocument: EditorDocument = {
+      content: "{block content}\n{/block}\n",
+      language: "latte",
+      name: "template.latte",
+      path: "/workspace/templates/template.latte",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          transientWidgetDismissKey: "010:1",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    editor.trigger.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          transientWidgetDismissKey: "010:2",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "floating-surface",
+      "closeFindWidget",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "floating-surface",
+      "editor.action.hideHover",
       {},
     );
   });
@@ -7141,6 +7206,104 @@ class Foo
     );
   });
 
+  it("routes editor-focused Escape through the floating-surface closer", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onCloseFloatingSurface = vi.fn(() => true);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onCloseFloatingSurface,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    editor.keyDownHandler?.({
+      browserEvent: {
+        key: "Escape",
+        preventDefault,
+        stopPropagation,
+      },
+      keyCode: monaco.KeyCode.Escape,
+      preventDefault,
+      stopPropagation,
+    });
+
+    expect(onCloseFloatingSurface).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
+  it("leaves editor-focused Escape to Monaco when no floating surface closes", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onCloseFloatingSurface = vi.fn(() => false);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onCloseFloatingSurface,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    editor.keyDownHandler?.({
+      browserEvent: {
+        key: "Escape",
+        preventDefault,
+        stopPropagation,
+      },
+      keyCode: monaco.KeyCode.Escape,
+      preventDefault,
+      stopPropagation,
+    });
+
+    expect(onCloseFloatingSurface).toHaveBeenCalledTimes(1);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(stopPropagation).not.toHaveBeenCalled();
+  });
+
   it("formats the active document through the formatting provider with Shift+Alt+F", async () => {
     const activeDocument: EditorDocument = {
       content: "export class UserService {}\n",
@@ -10441,7 +10604,10 @@ describe("EditorSurface .editorconfig application", () => {
 
 function memoGuardProps(
   activeDocument: EditorDocument,
-  overrides: Partial<{ onEditorFocused: () => void }> = {},
+  overrides: Partial<{
+    onCloseFloatingSurface: () => boolean;
+    onEditorFocused: () => void;
+  }> = {},
 ) {
   return {
     activeDocument,
@@ -10462,6 +10628,7 @@ function memoGuardProps(
     onGoToDefinition: vi.fn(),
     onGoToImplementationAt: vi.fn(),
     onGoToSuperMethod: vi.fn(),
+    onCloseFloatingSurface: overrides.onCloseFloatingSurface,
     onEditorFocused: overrides.onEditorFocused ?? vi.fn(),
     onLanguageServerError: vi.fn(),
     onOpenClass: vi.fn(),
@@ -10477,7 +10644,10 @@ function memoGuardProps(
 
 function memoGuardSurface(
   activeDocument: EditorDocument,
-  overrides: Partial<{ onEditorFocused: () => void }> = {},
+  overrides: Partial<{
+    onCloseFloatingSurface: () => boolean;
+    onEditorFocused: () => void;
+  }> = {},
 ): ReactNode {
   return createElement(EditorSurface, memoGuardProps(activeDocument, overrides));
 }
@@ -10717,6 +10887,7 @@ function createEditor(model: FakeModel): FakeEditor {
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     cursorPositionHandler: null,
+    keyDownHandler: null,
     mouseDownHandler: null,
     mouseMoveHandler: null,
     modelContentChangeHandler: null,
@@ -10752,6 +10923,11 @@ function createEditor(model: FakeModel): FakeEditor {
         return { dispose: vi.fn() };
       },
     ),
+    onKeyDown: vi.fn((handler: (event: FakeKeyDownEvent) => void) => {
+      editor.keyDownHandler = handler;
+
+      return { dispose: vi.fn() };
+    }),
     onMouseDown: vi.fn((handler: (event: FakeMouseDownEvent) => void) => {
       editor.mouseDownHandler = handler;
 
@@ -10821,6 +10997,7 @@ function createMonaco(model: FakeModel) {
       BracketRight: 6,
       DownArrow: 11,
       Enter: 8,
+      Escape: 91,
       Equal: 86,
       F2: 60,
       F5: 63,

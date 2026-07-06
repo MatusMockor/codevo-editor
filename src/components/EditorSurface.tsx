@@ -201,6 +201,7 @@ interface EditorSurfaceProps {
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
   onGoToSuperMethod(): void;
+  onCloseFloatingSurface?(): boolean;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
   onToggleGitBlame?(): void;
@@ -338,6 +339,7 @@ function EditorSurfaceComponent({
   onGoToDefinition,
   onGoToImplementationAt,
   onGoToSuperMethod,
+  onCloseFloatingSurface,
   onRunTestAt,
   onToggleBookmarkAtLine,
   onToggleGitBlame,
@@ -1596,6 +1598,32 @@ function EditorSurfaceComponent({
     onToggleGitBlame,
     setSurroundWithRequest,
   ]);
+
+  useEffect(() => {
+    if (!editorApi || !monacoApi || !onCloseFloatingSurface) {
+      return;
+    }
+
+    const disposable = editorApi.onKeyDown((event) => {
+      if (
+        event.keyCode !== monacoApi.KeyCode.Escape &&
+        event.browserEvent.key !== "Escape"
+      ) {
+        return;
+      }
+
+      if (!onCloseFloatingSurface()) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.browserEvent.preventDefault();
+      event.browserEvent.stopPropagation();
+    });
+
+    return () => disposable.dispose();
+  }, [editorApi, monacoApi, onCloseFloatingSurface]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {

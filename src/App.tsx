@@ -365,12 +365,14 @@ function App() {
         workbench.recentLocationsPanelOpen,
         workbench.languageServerSetupOpen,
         workbench.settingsOpen,
+        workbench.floatingSurfaceActivationVersion,
       ]
-        .map((open) => (open ? "1" : "0"))
-        .join(""),
+        .map((part) => String(part))
+        .join("|"),
     [
       workbench.classOpenOpen,
       workbench.fileStructureOpen,
+      workbench.floatingSurfaceActivationVersion,
       workbench.languageServerSetupOpen,
       workbench.paletteOpen,
       workbench.quickOpenOpen,
@@ -1306,6 +1308,7 @@ function App() {
             onCloseActiveTab={closeActiveTab}
             onCursorPositionChange={workbench.updateActiveEditorPosition}
             onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
+            onCloseFloatingSurface={workbench.closeFloatingSurface}
             onGoBack={goBack}
             onGoForward={goForward}
             onGoToDefinition={goToDefinition}

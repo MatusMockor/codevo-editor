@@ -234,6 +234,43 @@ describe("useFloatingSurfaces", () => {
     harness.unmount();
   });
 
+  it("closeFloatingSurface closes Quick Open when it is the active editor overlay", () => {
+    const deps = createDependencies({
+      quickOpenOpen: true,
+      paletteOpen: true,
+    });
+    const harness = renderFloatingSurfaces(deps);
+
+    let closed = false;
+    act(() => {
+      closed = harness.surfaces().closeFloatingSurface();
+    });
+
+    expect(closed).toBe(true);
+    expect(deps.setQuickOpenOpen).toHaveBeenCalledWith(false);
+    expect(deps.setPaletteOpen).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("closeFloatingSurface closes Quick Open after navigation state rerenders", () => {
+    const deps = createDependencies();
+    const harness = renderFloatingSurfaces(deps);
+    const afterNavigationDeps = createDependencies({ quickOpenOpen: true });
+
+    harness.rerender(afterNavigationDeps);
+
+    let closed = false;
+    act(() => {
+      closed = harness.surfaces().closeFloatingSurface();
+    });
+
+    expect(closed).toBe(true);
+    expect(afterNavigationDeps.setQuickOpenOpen).toHaveBeenCalledWith(false);
+
+    harness.unmount();
+  });
+
   it("closeFloatingSurface falls all the way through to the git diff preview as the last resort", () => {
     const deps = createDependencies({
       selectedGitChange: changedFile("/workspace/a.ts"),
