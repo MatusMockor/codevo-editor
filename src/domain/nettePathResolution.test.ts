@@ -88,6 +88,29 @@ describe("resolveLatteTemplateCandidatePaths", () => {
       ),
     ).toEqual(["app/UI/Product/menu.latte"]);
   });
+
+  it("adds a module templates-root fallback for ebox-crm style include paths", () => {
+    expect(
+      resolveLatteTemplateCandidatePaths(
+        "SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+        "app/modules/efabricaSubscriptionsModule/templates/Dashboard/default.latte",
+      ),
+    ).toEqual([
+      "app/modules/efabricaSubscriptionsModule/templates/Dashboard/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+    ]);
+  });
+
+  it("does not add a module templates-root fallback for arbitrary app/modules templates paths", () => {
+    expect(
+      resolveLatteTemplateCandidatePaths(
+        "Shared/card.latte",
+        "app/modules/shared/templates/Dashboard/default.latte",
+      ),
+    ).toEqual([
+      "app/modules/shared/templates/Dashboard/Shared/card.latte",
+    ]);
+  });
 });
 
 describe("latteViewNameFromAction", () => {

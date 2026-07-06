@@ -64,8 +64,10 @@ import {
 } from "../domain/latteSyntax";
 import {
   NETTE_VIEW_DATA_SEARCH_QUERIES,
+  netteTemplateClassPropertiesFromSource,
   netteViewDataEntryFromSource,
 } from "../domain/netteViewData";
+import type { NetteTemplateProperty } from "../domain/netteViewData";
 import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
@@ -76,6 +78,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import {
   latteLayoutCandidatePaths,
+  moduleTemplatesRootOf,
   presenterCandidatePathsForTemplate,
   presenterTemplateCandidatePaths,
   resolveLatteTemplateCandidatePaths,
@@ -256,6 +259,30 @@ export type LatteViewDataCache = Record<string, LatteViewDataCacheEntry>;
 /** In-flight view-data loads keyed by requested root (concurrent callers join). */
 type LatteViewDataInFlight = Map<string, Promise<PhpFrameworkViewDataEntry[]>>;
 
+interface LatteTemplateTypePropertySighting {
+  property: NetteTemplateProperty;
+  source: string;
+}
+
+interface LatteTemplateTypeCacheEntry {
+  expiresAt: number;
+  sightingsByTypeName: Record<string, LatteTemplateTypePropertySighting[]>;
+}
+
+/**
+ * Per-root cache of explicit `{templateType App\FooTemplate}` property scans.
+ * The root entry contains a tiny type-name map because a single Latte template
+ * can only name a handful of template types, while root-level eviction keeps
+ * project switching isolated like the sibling caches.
+ */
+export type LatteTemplateTypeCache = Record<string, LatteTemplateTypeCacheEntry>;
+
+/** In-flight template-type property scans keyed by requested root + type name. */
+type LatteTemplateTypeInFlight = Map<
+  string,
+  Promise<LatteTemplateTypePropertySighting[]>
+>;
+
 interface LattePresenterCacheEntry {
   expiresAt: number;
   /** `Presenter:action` targets discovered under the workspace, sorted. */
@@ -304,6 +331,8 @@ interface LatteExpressionResolutionContext {
   deps: LatteIntelligenceDependencies;
   isRequestedRootActive: () => boolean;
   requestedRoot: string;
+  templateTypeCache: LatteTemplateTypeCache;
+  templateTypeInFlight: LatteTemplateTypeInFlight;
   viewDataCache: LatteViewDataCache;
   viewDataInFlight: LatteViewDataInFlight;
 }
@@ -350,6 +379,8 @@ const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
  * workspace never streams an unbounded hit list into the lazy presenter scan.
  */
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
+const LATTE_TEMPLATE_TYPE_SEARCH_LIMIT = 50;
+const LATTE_TEMPLATE_TYPE_CACHE_TTL_MS = 5_000;
 
 /**
  * Bound on the recursion that resolves a `{foreach}` element type through nested
@@ -454,6 +485,7 @@ export function createLatteIntelligence(
   viewDataCache: LatteViewDataCache = {},
   presenterCache: LattePresenterCache = {},
   componentCache: LatteComponentCache = {},
+  templateTypeCache: LatteTemplateTypeCache = {},
 ): LatteIntelligence {
   /**
    * Per-instance in-flight registry for the view-data loads, so concurrent
@@ -463,6 +495,7 @@ export function createLatteIntelligence(
    * only by requests for that same root) so no eviction pass is needed.
    */
   const viewDataInFlight: LatteViewDataInFlight = new Map();
+  const templateTypeInFlight: LatteTemplateTypeInFlight = new Map();
   /**
    * Per-instance in-flight registry for the presenter link-target discovery,
    * collapsing the completion-per-keystroke storm into one scan per root
@@ -479,6 +512,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return false;
@@ -576,6 +610,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return [];
@@ -646,6 +681,8 @@ export function createLatteIntelligence(
         deps,
         isRequestedRootActive,
         requestedRoot,
+        templateTypeCache,
+        templateTypeInFlight,
         viewDataCache,
         viewDataInFlight,
       },
@@ -663,6 +700,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return false;
@@ -708,6 +746,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(presenterCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
+    evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
     if (!isLatteSemanticActive(deps)) {
       return [];
@@ -771,6 +810,7 @@ export function useLatteIntelligence(
   const viewDataCacheRef = useRef<LatteViewDataCache>({});
   const presenterCacheRef = useRef<LattePresenterCache>({});
   const componentCacheRef = useRef<LatteComponentCache>({});
+  const templateTypeCacheRef = useRef<LatteTemplateTypeCache>({});
   const apiRef = useRef<LatteIntelligence | null>(null);
 
   if (!apiRef.current) {
@@ -780,6 +820,7 @@ export function useLatteIntelligence(
       viewDataCacheRef.current,
       presenterCacheRef.current,
       componentCacheRef.current,
+      templateTypeCacheRef.current,
     );
   }
 
@@ -1914,8 +1955,8 @@ interface LatteVariableCandidate {
 
 /**
  * Gathers the in-scope template variables for the `{$}` list, first sighting of
- * a name wins (declarations > loop bindings > presenter data), matching the
- * resolution precedence used for member completion.
+ * a name wins (inline declarations > template type > loop bindings > presenter
+ * data), matching the resolution precedence used for member completion.
  */
 async function collectLatteVariableCandidates(
   context: LatteExpressionResolutionContext,
@@ -1949,6 +1990,21 @@ async function collectLatteVariableCandidates(
     );
   }
 
+  for (const sighting of await latteTemplateTypePropertySightings(
+    context,
+    source,
+  )) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    add(
+      sighting.property.name,
+      "template type",
+      shortTypeName(sighting.property.type),
+    );
+  }
+
   for (const binding of latteForeachLoopBindingsAt(source, offset)) {
     add(`$${binding.loopVariableName}`, "foreach item", null);
 
@@ -1974,8 +2030,9 @@ async function collectLatteVariableCandidates(
 
 /**
  * Resolves the receiver type of a Latte variable through the §4.4 priority
- * chain: (1) `{varType}` / `{parameters}` inline type, (2) `{var}` / `{default}`
- * local expression, (3) presenter view-data, (4) enclosing `{foreach}` element
+ * chain: (1) `{varType}` / `{parameters}` inline type, (2) typed properties on
+ * an explicit `{templateType FooTemplate}` class, (3) `{var}` / `{default}`
+ * local expression, (4) presenter view-data, (5) enclosing `{foreach}` element
  * type. Bounded by `MAX_LATTE_TYPE_RESOLUTION_DEPTH` (foreach root variables
  * recurse). Conservative: an unresolved variable yields `null`, never a guess.
  */
@@ -1996,6 +2053,20 @@ async function resolveLatteVariableType(
 
   if (declaredType) {
     return declaredType;
+  }
+
+  const templateType = await latteTemplateTypeVariableType(
+    context,
+    source,
+    variableName,
+  );
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (templateType) {
+    return templateType;
   }
 
   const localType = await latteLocalVariableType(context, source, variableName);
@@ -2021,6 +2092,73 @@ async function resolveLatteVariableType(
   return latteForeachVariableType(context, source, offset, variableName, depth);
 }
 
+/** Priority 2: typed properties on an explicit `{templateType FooTemplate}` class. */
+async function latteTemplateTypeVariableType(
+  context: LatteExpressionResolutionContext,
+  source: string,
+  variableName: string,
+): Promise<string | null> {
+  const { deps, isRequestedRootActive } = context;
+  const target = `$${variableName}`;
+  const sightings = await latteTemplateTypePropertySightings(context, source);
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  const resolved: (string | null)[] = [];
+
+  for (const sighting of sightings) {
+    if (sighting.property.name !== target) {
+      continue;
+    }
+
+    resolved.push(
+      deps.resolveDeclaredType(sighting.source, sighting.property.type) ??
+        sighting.property.type,
+    );
+  }
+
+  return mergeLatteResolvedTypes(resolved);
+}
+
+async function latteTemplateTypePropertySightings(
+  context: LatteExpressionResolutionContext,
+  source: string,
+): Promise<LatteTemplateTypePropertySighting[]> {
+  const typeNames = latteTemplateTypeNames(source);
+
+  if (typeNames.length === 0) {
+    return [];
+  }
+
+  const sightings: LatteTemplateTypePropertySighting[] = [];
+
+  for (const typeName of typeNames) {
+    sightings.push(...(await loadNetteTemplateTypeProperties(context, typeName)));
+
+    if (!context.isRequestedRootActive()) {
+      return [];
+    }
+  }
+
+  return sightings;
+}
+
+function latteTemplateTypeNames(source: string): string[] {
+  const names = new Set<string>();
+
+  for (const declaration of latteVariableDeclarations(source)) {
+    if (declaration.kind !== "templateType" || !declaration.typeName) {
+      continue;
+    }
+
+    names.add(declaration.typeName);
+  }
+
+  return Array.from(names);
+}
+
 /** Priority 1: the first `{varType}` / `{parameters}` type for the variable. */
 function latteDeclaredVariableType(
   source: string,
@@ -2039,7 +2177,7 @@ function latteDeclaredVariableType(
   return null;
 }
 
-/** Priority 2: the resolved type of a `{var}` / `{default}` value expression. */
+/** Priority 3: the resolved type of a `{var}` / `{default}` value expression. */
 async function latteLocalVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
@@ -2077,7 +2215,7 @@ async function latteLocalVariableType(
   return null;
 }
 
-/** Priority 3: the merged type across the presenter sightings for the variable. */
+/** Priority 4: the merged type across the presenter sightings for the variable. */
 async function lattePresenterVariableType(
   context: LatteExpressionResolutionContext,
   variableName: string,
@@ -2127,7 +2265,7 @@ async function lattePresenterVariableType(
   return mergeLatteResolvedTypes(resolved);
 }
 
-/** Priority 4: the element type of the innermost `{foreach}` binding the variable belongs to. */
+/** Priority 5: the element type of the innermost `{foreach}` binding the variable belongs to. */
 async function latteForeachVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
@@ -2292,6 +2430,127 @@ async function scanNetteViewDataEntries(
   };
 
   return entries;
+}
+
+async function loadNetteTemplateTypeProperties(
+  context: LatteExpressionResolutionContext,
+  typeName: string,
+): Promise<LatteTemplateTypePropertySighting[]> {
+  const { requestedRoot, templateTypeCache, templateTypeInFlight } = context;
+  const cached = templateTypeCache[requestedRoot];
+
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    Object.prototype.hasOwnProperty.call(cached.sightingsByTypeName, typeName)
+  ) {
+    return cached.sightingsByTypeName[typeName] ?? [];
+  }
+
+  const key = `${requestedRoot}\0${typeName}`;
+  const inFlight = templateTypeInFlight.get(key);
+
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const load = scanNetteTemplateTypeProperties(context, typeName).finally(() => {
+    if (templateTypeInFlight.get(key) === load) {
+      templateTypeInFlight.delete(key);
+    }
+  });
+
+  templateTypeInFlight.set(key, load);
+
+  return load;
+}
+
+async function scanNetteTemplateTypeProperties(
+  context: LatteExpressionResolutionContext,
+  typeName: string,
+): Promise<LatteTemplateTypePropertySighting[]> {
+  const {
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+    templateTypeCache,
+  } = context;
+  const shortName = shortTypeName(typeName);
+
+  if (!shortName) {
+    return [];
+  }
+
+  const results = await deps.searchText(
+    requestedRoot,
+    `class ${shortName}`,
+    LATTE_TEMPLATE_TYPE_SEARCH_LIMIT,
+  );
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  const visitedPaths = new Set<string>();
+  const sightings: LatteTemplateTypePropertySighting[] = [];
+
+  for (const result of results) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (visitedPaths.has(result.path) || !result.path.endsWith(PHP_EXTENSION)) {
+      continue;
+    }
+
+    visitedPaths.add(result.path);
+
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(result.path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (!phpSourceDefinesType(content, typeName)) {
+      continue;
+    }
+
+    for (const property of netteTemplateClassPropertiesFromSource(
+      content,
+      shortName,
+    )) {
+      sightings.push({ property, source: content });
+    }
+  }
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  const existing =
+    templateTypeCache[requestedRoot]?.expiresAt > Date.now()
+      ? templateTypeCache[requestedRoot]?.sightingsByTypeName
+      : undefined;
+
+  templateTypeCache[requestedRoot] = {
+    expiresAt: Date.now() + LATTE_TEMPLATE_TYPE_CACHE_TTL_MS,
+    sightingsByTypeName: {
+      ...(existing ?? {}),
+      [typeName]: sightings,
+    },
+  };
+
+  return sightings;
 }
 
 /**
@@ -2542,6 +2801,43 @@ function shortTypeName(typeName: string | null): string | null {
   return shortName.length > 0 ? shortName : null;
 }
 
+function phpSourceDefinesType(source: string, typeName: string): boolean {
+  const normalizedType = typeName.replace(/^\\+/, "");
+  const shortName = shortTypeName(typeName);
+
+  if (!shortName) {
+    return false;
+  }
+
+  const namespace = phpNamespaceName(source);
+  const classPattern = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+
+  for (const match of source.matchAll(classPattern)) {
+    const className = match[1] ?? "";
+
+    if (className !== shortName) {
+      continue;
+    }
+
+    if (!normalizedType.includes("\\")) {
+      return true;
+    }
+
+    const fullyQualifiedName = namespace ? `${namespace}\\${className}` : className;
+
+    return fullyQualifiedName === normalizedType;
+  }
+
+  return false;
+}
+
+function phpNamespaceName(source: string): string | null {
+  const match = /\bnamespace\s+([^;{]+)\s*[;{]/.exec(source);
+  const namespace = match?.[1]?.trim() ?? "";
+
+  return namespace.length > 0 ? namespace : null;
+}
+
 function endPositionOf(source: string): EditorPosition {
   return editorPositionAtOffset(source, source.length);
 }
@@ -2751,6 +3047,7 @@ function latteIncludeCandidateNames(
   currentTemplateRelativePath: string,
 ): string[] {
   const currentDirectory = dirnameOf(currentTemplateRelativePath);
+  const moduleTemplatesRoot = moduleTemplatesRootOf(currentTemplateRelativePath);
   const names = new Set<string>();
 
   for (const relativePath of relativePaths) {
@@ -2759,9 +3056,33 @@ function latteIncludeCandidateNames(
     }
 
     names.add(relativeReference(currentDirectory, relativePath));
+
+    const moduleRootReference = moduleTemplatesRootReference(
+      moduleTemplatesRoot,
+      relativePath,
+    );
+
+    if (moduleRootReference) {
+      names.add(moduleRootReference);
+    }
   }
 
   return Array.from(names).sort((left, right) => left.localeCompare(right));
+}
+
+function moduleTemplatesRootReference(
+  moduleTemplatesRoot: string | null,
+  targetPath: string,
+): string | null {
+  if (!moduleTemplatesRoot) {
+    return null;
+  }
+
+  if (!targetPath.startsWith(`${moduleTemplatesRoot}/`)) {
+    return null;
+  }
+
+  return targetPath.slice(moduleTemplatesRoot.length + 1);
 }
 
 /**

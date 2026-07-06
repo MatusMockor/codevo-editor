@@ -390,8 +390,9 @@ function assignmentTypeForVariable(
  */
 export function netteTemplateClassPropertiesFromSource(
   source: string,
+  className?: string,
 ): NetteTemplateProperty[] {
-  const templateClass = netteTemplateClassRange(source);
+  const templateClass = netteTemplateClassRange(source, className);
 
   if (!templateClass) {
     return [];
@@ -433,13 +434,21 @@ interface NetteTemplateClassRange {
 
 function netteTemplateClassRange(
   source: string,
+  targetClassName?: string,
 ): NetteTemplateClassRange | null {
   const pattern =
     /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+extends\s+([\\A-Za-z0-9_]+))?/g;
+  const targetShortName = targetClassName
+    ? shortClassName(targetClassName)
+    : null;
 
   for (const match of source.matchAll(pattern)) {
     const className = match[1] ?? "";
     const baseName = match[2] ?? "";
+
+    if (targetShortName !== null && className !== targetShortName) {
+      continue;
+    }
 
     if (!isTemplateClassName(className) && !isTemplateClassName(baseName)) {
       continue;
@@ -463,8 +472,12 @@ function netteTemplateClassRange(
   return null;
 }
 
+function shortClassName(className: string): string {
+  return className.replace(/^\\+/, "").split("\\").pop() ?? "";
+}
+
 function isTemplateClassName(className: string): boolean {
-  const lastSegment = className.replace(/^\\+/, "").split("\\").pop() ?? "";
+  const lastSegment = shortClassName(className);
 
   return lastSegment.length > 0 && lastSegment.endsWith("Template");
 }

@@ -113,6 +113,24 @@ describe("detectLatteReferenceAt", () => {
     expect(detectLatteReferenceAt(source, offset)?.kind).toBe("template");
   });
 
+  it("detects unquoted file-taking tag paths when they look like templates", () => {
+    const source = "{extends ../@layout.latte}";
+    const offset = offsetOf(source, "@layout.latte", 2);
+
+    expect(detectLatteReferenceAt(source, offset)).toMatchObject({
+      kind: "template",
+      name: "../@layout.latte",
+      tag: "extends",
+    });
+  });
+
+  it("keeps non-path layout arguments non-navigable", () => {
+    const source = "{layout none}";
+    const offset = offsetOf(source, "none", 1);
+
+    expect(detectLatteReferenceAt(source, offset)).toBeNull();
+  });
+
   it("detects a {sandbox '...'} template reference", () => {
     const source = "{sandbox 'untrusted.latte'}";
     const offset = offsetOf(source, "untrusted.latte", 1);

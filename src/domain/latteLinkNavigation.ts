@@ -255,15 +255,25 @@ export function nettePresenterClassCandidatePathsForLink(
     return [];
   }
 
+  const currentClassicModuleBase = currentClassicTemplatePresenterBase(
+    currentRelativePath,
+  );
   const appRoot = detectAppRoot(currentRelativePath);
   const convention = detectConvention(currentRelativePath);
+  const currentClassicModule = parsed.absolute
+    ? []
+    : currentClassicModulePresenterCandidates(
+        presenter,
+        parsed.module,
+        currentClassicModuleBase,
+      );
   const fallback = presenterClassPathsForModule(
     appRoot,
     presenter,
     parsed.module,
     convention,
   );
-  const moduleAware = parsed.absolute
+  const moduleAware = parsed.absolute || currentClassicModuleBase !== null
     ? []
     : moduleAwareCandidates(
         appRoot,
@@ -274,7 +284,9 @@ export function nettePresenterClassCandidatePathsForLink(
       );
 
   return dedupe(
-    [...moduleAware, ...fallback].filter((path) => path.length > 0),
+    [...currentClassicModule, ...moduleAware, ...fallback].filter(
+      (path) => path.length > 0,
+    ),
   );
 }
 
@@ -446,6 +458,77 @@ function classicPresenterClassPaths(
   ];
 }
 
+function currentClassicModulePresenterCandidates(
+  presenter: string,
+  targetModule: string | null,
+  base: string | null,
+): string[] {
+  if (base === null) {
+    return [];
+  }
+
+  const moduleBase = targetModule
+    ? joinSegments([
+        base,
+        ...targetModule.split(":").map((segment) => `${ucfirst(segment)}Module`),
+      ])
+    : base;
+
+  return classicPresenterClassPathsFromBase(moduleBase, presenter);
+}
+
+/**
+ * Classic module template convention used by older Nette apps:
+ * `app/modules/productsModule/templates/ProductsAdmin/default.latte` maps back
+ * to `app/modules/productsModule/Presenters/ProductsAdminPresenter.php`.
+ */
+function currentClassicTemplatePresenterBase(
+  currentRelativePath: string,
+): string | null {
+  const path = normalizeSlashes(currentRelativePath).trim();
+  const marker = "/templates/";
+  const templatesIndex = path.indexOf(marker);
+
+  if (templatesIndex < 0 || !path.endsWith(LATTE_EXTENSION)) {
+    return null;
+  }
+
+  const base = path.slice(0, templatesIndex);
+  const afterTemplates = path.slice(templatesIndex + marker.length);
+  const presenterSegment = afterTemplates.split("/")[0] ?? "";
+
+  if (
+    base.length === 0 ||
+    !isClassicModuleBase(base) ||
+    !IDENTIFIER.test(presenterSegment)
+  ) {
+    return null;
+  }
+
+  return base;
+}
+
+function isClassicModuleBase(path: string): boolean {
+  return basenameOf(path).endsWith("Module");
+}
+
+function classicPresenterClassPathsFromBase(
+  presenterBase: string,
+  presenter: string,
+): string[] {
+  const file = `${presenter}${PRESENTER_SUFFIX}`;
+
+  if (basenameOf(presenterBase).toLowerCase() === "presenters") {
+    return [joinRelative(presenterBase, file)];
+  }
+
+  return [
+    joinRelative(presenterBase, `presenters/${file}`),
+    joinRelative(presenterBase, `Presenters/${file}`),
+    joinRelative(presenterBase, file),
+  ];
+}
+
 /**
  * Derives the application root directory from the current file's path — the
  * segment just before the first `UI` / `Presenters` / `presenters` / `*Module`
@@ -459,6 +542,13 @@ function detectAppRoot(currentRelativePath: string): string {
     .filter((segment) => segment.length > 0);
 
   for (let index = 0; index < segments.length; index += 1) {
+    if (
+      segments[index]?.endsWith("Module") &&
+      segments[index - 1]?.toLowerCase() === "modules"
+    ) {
+      return segments.slice(0, index - 1).join("/");
+    }
+
     if (isConventionMarker(segments[index] ?? "")) {
       return segments.slice(0, index).join("/");
     }
@@ -1086,6 +1176,16 @@ function joinSegments(parts: string[]): string {
 
 function joinRelative(dir: string, tail: string): string {
   return dir.length > 0 ? `${dir}/${tail}` : tail;
+}
+
+function basenameOf(path: string): string {
+  const index = path.lastIndexOf("/");
+
+  if (index < 0) {
+    return path;
+  }
+
+  return path.slice(index + 1);
 }
 
 function ucfirst(value: string): string {

@@ -168,6 +168,33 @@ describe("createLatteIntelligence definition", () => {
     );
   });
 
+  it("navigates ebox-crm style module template paths from the module templates root", async () => {
+    const { readFileContent } = buildWorkspace([
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+    ]);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/efabricaSubscriptionsModule/templates/Dashboard/default.latte`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{include 'SubscriptionTypeGroupAdmin/partials/@showHeader.latte'}";
+    const offset = source.indexOf("@showHeader");
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+      { column: 1, lineNumber: 1 },
+      "SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+    );
+  });
+
   it("does not auto-lookup a {layout none} (an explicit argument)", async () => {
     const { readFileContent } = buildWorkspace(["app/UI/@layout.latte"]);
     const openTarget = vi.fn(async () => true);
@@ -316,6 +343,30 @@ describe("createLatteIntelligence completions", () => {
     expect(completions.map((completion) => completion.insertText)).toEqual([
       "partials/menu.latte",
     ]);
+  });
+
+  it("offers module templates-root include candidates in module templates", async () => {
+    const { listDirectory } = buildWorkspace([
+      "app/modules/efabricaSubscriptionsModule/templates/Dashboard/default.latte",
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+    ]);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/efabricaSubscriptionsModule/templates/Dashboard/default.latte`,
+      }),
+      listDirectory,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{include 'SubscriptionTypeGroupAdmin/'}";
+    const offset = source.indexOf("'}");
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.insertText)).toContain(
+      "SubscriptionTypeGroupAdmin/partials/@showHeader.latte",
+    );
   });
 
   it("caches the template listing per root across include requests", async () => {
@@ -688,6 +739,175 @@ function buildNettePresenterWorkspace(
 }
 
 describe("createLatteIntelligence member completion ({$var->})", () => {
+  it("resolves a {templateType} property and dispatches typed member completion", async () => {
+    const templateSource = `<?php
+namespace App\\UI\\Product;
+
+use App\\Model\\Product;
+use Nette\\Bridges\\ApplicationLatte\\Template;
+
+class ProductTemplate extends Template
+{
+    public Product $product;
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "class ProductTemplate"
+        ? [{ path: `${ROOT}/app/UI/Product/ProductTemplate.php` }]
+        : [],
+    );
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/app/UI/Product/ProductTemplate.php`) {
+        return templateSource;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Product",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    const resolveDeclaredType = vi.fn((source: string, typeHint: string | null) =>
+      typeHint === "Product" && source.includes("namespace App\\UI\\Product")
+        ? "App\\Model\\Product"
+        : typeHint,
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolveDeclaredType,
+      resolvePhpReceiverCompletions,
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{templateType App\\UI\\Product\\ProductTemplate}\n{$product->}";
+    const offset = source.indexOf("->") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(searchText).toHaveBeenCalledWith(
+      ROOT,
+      "class ProductTemplate",
+      50,
+    );
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "App\\Model\\Product",
+    );
+    expect(completions.map((completion) => completion.label)).toContain(
+      "getName",
+    );
+  });
+
+  it("prefers an inline {varType} declaration over a {templateType} property", async () => {
+    const searchText = vi.fn(async () => [
+      { path: `${ROOT}/app/UI/Product/ProductTemplate.php` },
+    ]);
+    const readFileContent = vi.fn(async () => `<?php
+namespace App\\UI\\Product;
+
+use Nette\\Bridges\\ApplicationLatte\\Template;
+
+class ProductTemplate extends Template
+{
+    public TemplateProduct $product;
+}
+`);
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{templateType App\\UI\\Product\\ProductTemplate}\n" +
+      "{varType App\\Model\\InlineProduct $product}\n" +
+      "{$product->}";
+    const offset = source.lastIndexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "App\\Model\\InlineProduct",
+    );
+    expect(searchText).not.toHaveBeenCalled();
+    expect(readFileContent).not.toHaveBeenCalled();
+  });
+
+  it("targets the requested {templateType} class when a PHP file contains multiple Template classes", async () => {
+    const templateSource = `<?php
+namespace App\\UI\\Product;
+
+use Nette\\Bridges\\ApplicationLatte\\Template;
+
+class OtherTemplate extends Template
+{
+    public OtherProduct $product;
+}
+
+class ProductTemplate extends Template
+{
+    public Product $product;
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "class ProductTemplate"
+        ? [{ path: `${ROOT}/app/UI/Product/Templates.php` }]
+        : [],
+    );
+    const readFileContent = vi.fn(async () => templateSource);
+    const resolveDeclaredType = vi.fn((source: string, typeHint: string | null) =>
+      typeHint === "Product" && source.includes("namespace App\\UI\\Product")
+        ? "App\\Model\\Product"
+        : typeHint,
+    );
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      readFileContent,
+      resolveDeclaredType,
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{templateType App\\UI\\Product\\ProductTemplate}\n{$product->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "App\\Model\\Product",
+    );
+  });
+
   it("resolves a presenter variable's type and dispatches member completion via the dep", async () => {
     const { readFileContent, searchText } = buildNettePresenterWorkspace({
       "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
@@ -863,6 +1083,87 @@ describe("createLatteIntelligence member completion ({$var->})", () => {
 });
 
 describe("createLatteIntelligence variable + filter completion", () => {
+  it("lists variables declared by a {templateType} Template class", async () => {
+    const templateSource = `<?php
+namespace App\\UI\\Product;
+
+use App\\Model\\Job;
+use App\\Model\\Product;
+use Nette\\Application\\UI\\Form;
+use Nette\\Bridges\\ApplicationLatte\\Template;
+
+/**
+ * @property-read Form $form
+ */
+class ProductTemplate extends Template
+{
+    public Job $job;
+    public Product $product;
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "class ProductTemplate"
+        ? [{ path: `${ROOT}/app/UI/Product/ProductTemplate.php` }]
+        : [],
+    );
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/app/UI/Product/ProductTemplate.php`) {
+        return templateSource;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    });
+    const deps = makeDeps({ readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{templateType App\\UI\\Product\\ProductTemplate}\n{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toEqual(expect.arrayContaining(["$job", "$product", "$form"]));
+    expect(completions.find((completion) => completion.label === "$product"))
+      .toMatchObject({ detail: "template type · Product" });
+  });
+
+  it("keeps an inline variable display type when {templateType} declares the same variable", async () => {
+    const templateSource = `<?php
+namespace App\\UI\\Product;
+
+use Nette\\Bridges\\ApplicationLatte\\Template;
+
+class ProductTemplate extends Template
+{
+    public TemplateProduct $product;
+    public TemplateJob $job;
+}
+`;
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "class ProductTemplate"
+        ? [{ path: `${ROOT}/app/UI/Product/ProductTemplate.php` }]
+        : [],
+    );
+    const readFileContent = vi.fn(async () => templateSource);
+    const deps = makeDeps({ readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source =
+      "{templateType App\\UI\\Product\\ProductTemplate}\n" +
+      "{parameters App\\Model\\InlineProduct $product}\n" +
+      "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.find((completion) => completion.label === "$product"))
+      .toMatchObject({ detail: "template parameters · InlineProduct" });
+    expect(completions.find((completion) => completion.label === "$job"))
+      .toMatchObject({ detail: "template type · TemplateJob" });
+  });
+
   it("lists in-scope variables from varType, {foreach} and presenter data", async () => {
     const { readFileContent, searchText } = buildNettePresenterWorkspace({
       "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
@@ -1268,6 +1569,21 @@ class ProductPresenter extends Presenter
 }
 `;
 
+const PRODUCTS_ADMIN_PRESENTER_SOURCE = `<?php
+namespace App\\ProductsModule\\Presenters;
+
+class ProductsAdminPresenter extends AdminPresenter
+{
+    public function actionCreate(): void
+    {
+    }
+
+    public function renderDefault(): void
+    {
+    }
+}
+`;
+
 describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
   it("navigates a {link Product:show} to the presenter renderShow method", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
@@ -1348,6 +1664,39 @@ describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
       "Product:delete!",
     );
   });
+
+  it.each([
+    ["n:href", '<a n:href="ProductsAdmin:create">Create</a>'],
+    ["{link}", "{link ProductsAdmin:create}"],
+    ["{plink}", "{plink ProductsAdmin:create}"],
+  ])(
+    "navigates %s ProductsAdmin:create inside a classic module template",
+    async (_kind, source) => {
+      const { readFileContent } = buildContentWorkspace({
+        "app/modules/productsModule/Presenters/ProductsAdminPresenter.php":
+          PRODUCTS_ADMIN_PRESENTER_SOURCE,
+      });
+      const openTarget = vi.fn(async () => true);
+      const deps = makeDeps({
+        getActiveDocument: () => ({
+          path: `${ROOT}/app/modules/productsModule/templates/Home/default.latte`,
+        }),
+        openTarget,
+        readFileContent,
+      });
+      const latte = createLatteIntelligence(() => deps);
+      const offset = source.indexOf("ProductsAdmin:create") + 2;
+
+      await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+        true,
+      );
+      expect(openTarget).toHaveBeenCalledWith(
+        "/ws/app/modules/productsModule/Presenters/ProductsAdminPresenter.php",
+        expect.objectContaining({ lineNumber: 6 }),
+        "ProductsAdmin:create",
+      );
+    },
+  );
 
   it("resolves a relative action to the current template's presenter", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
@@ -1628,6 +1977,29 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     expect(completions.map((completion) => completion.label)).toContain(
       "Home:default",
     );
+  });
+
+  it("offers classic-module presenter actions inside n:href", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/modules/productsModule/Presenters/ProductsAdminPresenter.php":
+        PRODUCTS_ADMIN_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<a n:href="ProductsAdmin:c">';
+    const offset = source.indexOf("ProductsAdmin:c") + "ProductsAdmin:c".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "ProductsAdmin:create",
+    ]);
+    expect(completions[0]).toMatchObject({
+      insertText: "ProductsAdmin:create",
+      kind: "link",
+    });
   });
 
   it("caches presenter discovery across completion requests", async () => {

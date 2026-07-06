@@ -279,6 +279,36 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
     ]);
   });
 
+  it("keeps explicit presenter links inside the current classic module template base", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({ action: "create", presenter: "ProductsAdmin" }),
+        "app/modules/productsModule/templates/Home/default.latte",
+      ),
+    ).toEqual([
+      "app/modules/productsModule/presenters/ProductsAdminPresenter.php",
+      "app/modules/productsModule/Presenters/ProductsAdminPresenter.php",
+      "app/modules/productsModule/ProductsAdminPresenter.php",
+      "app/Presenters/ProductsAdminPresenter.php",
+      "app/UI/ProductsAdmin/ProductsAdminPresenter.php",
+    ]);
+  });
+
+  it("does not treat an arbitrary templates directory as a classic module template base", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({ presenter: "Product" }),
+        "app/UI/Admin/templates/Home/default.latte",
+      ),
+    ).toEqual([
+      "app/UI/Admin/Templates/Product/ProductPresenter.php",
+      "app/AdminModule/TemplatesModule/presenters/ProductPresenter.php",
+      "app/AdminModule/TemplatesModule/Presenters/ProductPresenter.php",
+      "app/UI/Product/ProductPresenter.php",
+      "app/Presenters/ProductPresenter.php",
+    ]);
+  });
+
   it("detects a non-standard app root from the current path", () => {
     expect(
       nettePresenterClassCandidatePathsForLink(

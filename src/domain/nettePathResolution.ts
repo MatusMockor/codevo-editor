@@ -67,14 +67,17 @@ export function resolveLatteTemplateCandidatePaths(
     return [];
   }
 
-  const path = segments.join("/");
-  const lastSegment = segments[segments.length - 1] ?? "";
+  const candidates = [lattePathWithExtension(segments)];
+  const moduleTemplatesRootSegments = moduleTemplatesRootRelativeSegments(
+    ref,
+    currentTemplateRelativePath,
+  );
 
-  if (lastSegment.includes(".")) {
-    return [path];
+  if (moduleTemplatesRootSegments) {
+    candidates.push(lattePathWithExtension(moduleTemplatesRootSegments));
   }
 
-  return [`${path}${LATTE_EXTENSION}`];
+  return dedupe(candidates);
 }
 
 /**
@@ -338,6 +341,68 @@ function parentDirOf(dir: string): string {
   }
 
   return dir.slice(0, index);
+}
+
+function lattePathWithExtension(segments: string[]): string {
+  const path = segments.join("/");
+  const lastSegment = segments[segments.length - 1] ?? "";
+
+  if (lastSegment.includes(".")) {
+    return path;
+  }
+
+  return `${path}${LATTE_EXTENSION}`;
+}
+
+/**
+ * Some legacy modular Nette apps (including ebox-crm-style layouts) refer to
+ * templates from the module's `templates/` root:
+ * `templates/Current/default.latte` can include
+ * `Other/partials/header.latte`. Keep normal Latte-relative resolution first,
+ * then try this module-template-root form as a conservative fallback.
+ */
+function moduleTemplatesRootRelativeSegments(
+  reference: string,
+  currentTemplateRelativePath: string,
+): string[] | null {
+  if (rootRelative(reference)) {
+    return null;
+  }
+
+  if (reference.startsWith(".") || reference.startsWith("../")) {
+    return null;
+  }
+
+  const templatesRoot = moduleTemplatesRootOf(
+    normalizeSlashes(currentTemplateRelativePath).trim(),
+  );
+
+  if (!templatesRoot) {
+    return null;
+  }
+
+  return collapseRelative(`${templatesRoot}/${reference}`);
+}
+
+export function moduleTemplatesRootOf(path: string): string | null {
+  const segments = normalizeSlashes(path)
+    .trim()
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  const templatesIndex = segments.lastIndexOf("templates");
+
+  if (templatesIndex <= 0) {
+    return null;
+  }
+
+  const ancestors = segments.slice(0, templatesIndex);
+  const insideModule = ancestors.some((segment) => segment.endsWith("Module"));
+
+  if (!insideModule) {
+    return null;
+  }
+
+  return segments.slice(0, templatesIndex + 1).join("/");
 }
 
 function joinRelative(dir: string, tail: string): string {

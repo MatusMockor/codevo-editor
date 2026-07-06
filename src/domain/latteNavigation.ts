@@ -126,7 +126,18 @@ export function detectLatteReferenceAt(
   }
 
   if (FILE_TAGS.has(macro.tag)) {
-    return quotedTemplateReference(source, offset, macro.tag, macro.argStart);
+    const quoted = quotedTemplateReference(
+      source,
+      offset,
+      macro.tag,
+      macro.argStart,
+    );
+
+    if (quoted) {
+      return quoted;
+    }
+
+    return bareTemplateReference(source, offset, macro.tag, macro.argStart);
   }
 
   if (macro.tag === "include") {
