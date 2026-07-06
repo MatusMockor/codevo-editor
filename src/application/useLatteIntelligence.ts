@@ -246,7 +246,7 @@ interface LatteTemplateCacheEntry {
 export type LatteTemplateCache = Record<string, LatteTemplateCacheEntry>;
 
 interface LatteViewDataCacheEntry {
-  entries: PhpFrameworkViewDataEntry[];
+  entries: LatteNetteViewDataEntry[];
   expiresAt: number;
 }
 
@@ -260,7 +260,11 @@ interface LatteViewDataCacheEntry {
 export type LatteViewDataCache = Record<string, LatteViewDataCacheEntry>;
 
 /** In-flight view-data loads keyed by requested root (concurrent callers join). */
-type LatteViewDataInFlight = Map<string, Promise<PhpFrameworkViewDataEntry[]>>;
+type LatteViewDataInFlight = Map<string, Promise<LatteNetteViewDataEntry[]>>;
+
+interface LatteNetteViewDataEntry extends PhpFrameworkViewDataEntry {
+  sourcePath?: string;
+}
 
 interface LatteTemplateTypePropertySighting {
   property: NetteTemplateProperty;
@@ -552,6 +556,24 @@ export function createLatteIntelligence(
     );
 
     if (controlHandled) {
+      return true;
+    }
+
+    const variableHandled = await resolveNettePresenterVariableDefinition(
+      {
+        deps,
+        isRequestedRootActive,
+        requestedRoot,
+        templateTypeCache,
+        templateTypeInFlight,
+        viewDataCache,
+        viewDataInFlight,
+      },
+      source,
+      offset,
+    );
+
+    if (variableHandled) {
       return true;
     }
 
@@ -1707,6 +1729,99 @@ function latteTagCompletions(
 // --- expression completions (member / filter / variable) -------------------
 
 /**
+ * Cmd+B on a Latte template variable (`{$invoice}`, `{if $invoice}`) opens the
+ * presenter/control sighting that fed that variable into the active template.
+ * This intentionally reuses the same conservative presenter-data cache and
+ * template-path matching used by `{$invoice->}` member completion.
+ */
+async function resolveNettePresenterVariableDefinition(
+  context: LatteExpressionResolutionContext,
+  source: string,
+  offset: number,
+): Promise<boolean> {
+  const variableName = latteVariableNameAt(source, offset);
+
+  if (!variableName) {
+    return false;
+  }
+
+  const { deps, isRequestedRootActive, requestedRoot } = context;
+  const entries = await loadNetteViewDataEntries(context);
+
+  if (!isRequestedRootActive() || entries.length === 0) {
+    return false;
+  }
+
+  const target = `$${variableName}`;
+  const viewNames = latteCandidateViewNames(deps, requestedRoot);
+
+  for (const entry of entries) {
+    if (!entry.sourcePath) {
+      continue;
+    }
+
+    for (const binding of entry.bindings) {
+      if (!matchesLatteViewName(binding.viewName, viewNames)) {
+        continue;
+      }
+
+      for (const variable of binding.variables) {
+        if (variable.name !== target) {
+          continue;
+        }
+
+        const position = editorPositionAtOffset(
+          entry.source,
+          variable.valueOffset ?? 0,
+        );
+
+        return deps.openTarget(entry.sourcePath, position, variable.name);
+      }
+    }
+  }
+
+  return false;
+}
+
+const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+function latteVariableNameAt(source: string, offset: number): string | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return null;
+  }
+
+  const expression = source.slice(span.expressionStart, span.contentEnd);
+  const relativeOffset = offset - span.expressionStart;
+  const before = expression.slice(0, Math.max(0, relativeOffset));
+
+  if (hasUnclosedStringLiteral(before)) {
+    return null;
+  }
+
+  for (const match of expression.matchAll(LATTE_VARIABLE_REFERENCE)) {
+    const name = match[1] ?? "";
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+
+    if (relativeOffset < start || relativeOffset > end) {
+      continue;
+    }
+
+    const previous = expression[start - 1] ?? "";
+
+    if (/[A-Za-z0-9_>]/.test(previous)) {
+      continue;
+    }
+
+    return name || null;
+  }
+
+  return null;
+}
+
+/**
  * Completions inside a Latte PHP-like expression (`{$...}`, `{if ...}`,
  * `{foreach ...}`, `{= ...}`): `{$var->}` member access, a `|filter` name, or
  * the `{$var}` template-variable list - in that precedence order. Inert unless
@@ -2482,7 +2597,7 @@ async function latteForeachVariableType(
  */
 async function loadNetteViewDataEntries(
   context: LatteExpressionResolutionContext,
-): Promise<PhpFrameworkViewDataEntry[]> {
+): Promise<LatteNetteViewDataEntry[]> {
   const { requestedRoot, viewDataCache, viewDataInFlight } = context;
   const cached = viewDataCache[requestedRoot];
 
@@ -2515,7 +2630,7 @@ async function loadNetteViewDataEntries(
  */
 async function scanNetteViewDataEntries(
   context: LatteExpressionResolutionContext,
-): Promise<PhpFrameworkViewDataEntry[]> {
+): Promise<LatteNetteViewDataEntry[]> {
   const { deps, isRequestedRootActive, requestedRoot, viewDataCache } = context;
 
   const searchResults = await Promise.all(
@@ -2529,7 +2644,7 @@ async function scanNetteViewDataEntries(
   }
 
   const visitedPaths = new Set<string>();
-  const entries: PhpFrameworkViewDataEntry[] = [];
+  const entries: LatteNetteViewDataEntry[] = [];
 
   for (const result of searchResults.flat()) {
     if (!isRequestedRootActive()) {
@@ -2558,7 +2673,10 @@ async function scanNetteViewDataEntries(
       return [];
     }
 
-    const entry = netteViewDataEntryFromSource(content);
+    const entry: LatteNetteViewDataEntry = {
+      ...netteViewDataEntryFromSource(content),
+      sourcePath: result.path,
+    };
 
     if (entry.bindings.length > 0) {
       entries.push(entry);

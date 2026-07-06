@@ -72,6 +72,33 @@ export const qaSmokeProfiles = {
       "src/application/useWorkbenchController.preview.test.tsx",
     ],
   },
+  vitestNette: {
+    description:
+      "Targeted Nette smoke for Latte presenter links, quoted controls, NEON service references, DI completions, and Latte variable/member completions.",
+    command: [
+      "npm",
+      "test",
+      "--",
+      "src/domain/latteLinkNavigation.test.ts",
+      "src/domain/netteComponents.test.ts",
+      "src/domain/neonConfig.test.ts",
+      "src/domain/netteDiContainer.test.ts",
+      "src/application/useLatteIntelligence.test.tsx",
+      "src/application/useNeonIntelligence.test.tsx",
+      "src/components/languageServerMonacoProviders.test.ts",
+      "-t",
+      "n:href|quoted static \\{control|@service|service reference|service completions|generated service|typed @|parameter and service completions|presenter link completion|presenter link definition|variable \\+ filter completion|member completion|registerLanguageServerMonacoProviders latte providers|registerLanguageServerMonacoProviders neon providers",
+    ],
+    files: [
+      "src/domain/latteLinkNavigation.test.ts",
+      "src/domain/netteComponents.test.ts",
+      "src/domain/neonConfig.test.ts",
+      "src/domain/netteDiContainer.test.ts",
+      "src/application/useLatteIntelligence.test.tsx",
+      "src/application/useNeonIntelligence.test.tsx",
+      "src/components/languageServerMonacoProviders.test.ts",
+    ],
+  },
   vitestExtended: {
     description:
       "Slower frontend regression profile for runtime observability panel behavior, the Quick Open empty-tab editor race, and broad workbench per-project isolation regressions.",
@@ -142,10 +169,18 @@ const fastSteps = [
   profileStep("Blade/Laravel view Vitest smoke", qaSmokeProfiles.vitestBladeLaravelViews, {
     timeoutMs: minutes(5),
   }),
+  profileStep("Nette Vitest smoke", qaSmokeProfiles.vitestNette, {
+    timeoutMs: minutes(5),
+  }),
 ];
 
 const modeSteps = {
   fast: fastSteps,
+  nette: [
+    profileStep("Nette Vitest smoke", qaSmokeProfiles.vitestNette, {
+      timeoutMs: minutes(5),
+    }),
+  ],
   extended: [
     profileStep("Extended Vitest regression profile", qaSmokeProfiles.vitestExtended, {
       timeoutMs: minutes(10),
@@ -233,6 +268,7 @@ function printHelp() {
 
 Modes:
   fast      TypeScript check and targeted Vitest smoke. Default.
+  nette     Targeted Nette Vitest smoke.
   extended  Slower Vitest regression files for editor/workbench races.
   full      TypeScript check, full Vitest, backend smoke, and build.
   desktop   Debug Tauri build, short desktop boot, and process cleanup smoke.

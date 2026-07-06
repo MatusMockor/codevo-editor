@@ -27,11 +27,17 @@ function makeDeps(
       throw new Error("no directory");
     }),
     openClassTarget: vi.fn(async () => true),
+    openDirectPhpMethodTarget: vi.fn(async () => true),
     openTarget: vi.fn(async () => true),
     readFileContent: vi.fn(async () => {
       throw new Error("missing");
     }),
+    resolvePhpReceiverCompletions: vi.fn(async () => []),
     searchClassNames: vi.fn(async () => []),
+    synthesizeTypedReceiverSource: (variableName, typeName) => ({
+      position: { column: variableName.length + 4, lineNumber: 2 },
+      source: `<?php\n/** @var ${typeName} $${variableName} */\n$${variableName}->`,
+    }),
     toRelativePath: (root, path) =>
       path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path,
     workspaceRoot: ROOT,
@@ -609,6 +615,23 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
   });
 });
 
+describe("createNeonIntelligence setup method definition", () => {
+  it("navigates a setup method to the owning service class method", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openDirectPhpMethodTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - setLogger(@logger)\n";
+    const offset = source.indexOf("setLogger") + 3;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Mail\\Mailer",
+      "setLogger",
+    );
+  });
+});
+
 describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () => {
   it("offers merged same-file + cross-file parameter names after %", async () => {
     const { listDirectory, readFileContent } = buildNeonWorkspace({
@@ -709,6 +732,59 @@ describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () =>
     expect(labels).toContain(
       "Crm\\PaymentsModule\\Helper\\PaymentTemplateHelper",
     );
+  });
+
+  it("offers PHP method completions for a setup call on the owning service", async () => {
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Mail\\Mailer",
+        name: "setLogger",
+        parameters: "Logger $logger",
+        returnType: "void",
+      },
+      {
+        declaringClassName: "App\\Mail\\Mailer",
+        kind: "property" as const,
+        name: "logger",
+        parameters: "",
+        returnType: "Logger",
+      },
+    ]);
+    const synthesizeTypedReceiverSource = vi.fn((variableName, typeName) => ({
+      position: { column: 11, lineNumber: 2 },
+      source: `<?php\n/** @var ${typeName} $${variableName} */\n$${variableName}->`,
+    }));
+    const deps = makeDeps({
+      resolvePhpReceiverCompletions,
+      synthesizeTypedReceiverSource,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - setLog";
+    const completions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, source.length),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "service",
+      "App\\Mail\\Mailer",
+    );
+    expect(resolvePhpReceiverCompletions).toHaveBeenCalledWith(
+      expect.stringContaining("@var App\\Mail\\Mailer $service"),
+      { column: 11, lineNumber: 2 },
+      "$service->",
+    );
+    expect(completions).toEqual([
+      {
+        detail: "App\\Mail\\Mailer::setLogger(Logger $logger): void",
+        insertText: "setLogger()",
+        kind: "method",
+        label: "setLogger",
+        replaceEnd: source.length,
+        replaceStart: source.indexOf("setLog"),
+      },
+    ]);
   });
 
   it("returns nothing for %param% completion when Nette is inactive", async () => {

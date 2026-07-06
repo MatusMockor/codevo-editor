@@ -8155,8 +8155,10 @@ export function useWorkbenchController(
     listDirectory: (path) => workspaceFiles.readDirectory(path),
     openClassTarget: (className) =>
       openPhpClassTarget(className, className.split("\\").pop() ?? className),
+    openDirectPhpMethodTarget,
     openTarget: openNavigationTarget,
     readFileContent: readNavigationFileContent,
+    resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
     searchClassNames: async (root, prefix, maxResults) => {
       const symbols = await projectSymbolSearch.searchProjectSymbols(
         root,
@@ -8168,6 +8170,7 @@ export function useWorkbenchController(
         .filter(isTypeProjectSymbol)
         .map((symbol) => symbol.fullyQualifiedName);
     },
+    synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
     toRelativePath: relativeWorkspacePath,
     workspaceRoot,
   });

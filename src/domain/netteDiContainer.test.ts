@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   detectNeonParameterReferenceAt,
   detectNeonServiceReferenceAt,
+  detectNeonServiceSetupMethodAt,
   neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
   neonServiceReferenceCompletionContextAt,
+  neonServiceSetupMethodCompletionContextAt,
   neonServicesFromSource,
   netteInjectedPropertyTypes,
 } from "./netteDiContainer";
@@ -282,6 +284,34 @@ describe("neonServicesFromSource", () => {
     ]);
   });
 
+  it("captures a factory key static factory in a block service", () => {
+    const source =
+      "services:\n    router:\n        factory: App\\Router\\RouterFactory::createRouter\n";
+
+    expect(neonServicesFromSource(source)).toEqual([
+      {
+        serviceName: "router",
+        className: null,
+        factory: "App\\Router\\RouterFactory::createRouter",
+        offset: offsetOf(source, "router"),
+      },
+    ]);
+  });
+
+  it("uses an explicit type key as the service class reference", () => {
+    const source =
+      "services:\n    logger:\n        type: App\\Logging\\LoggerInterface\n        factory: @loggerFactory::create\n";
+
+    expect(neonServicesFromSource(source)).toEqual([
+      {
+        serviceName: "logger",
+        className: "App\\Logging\\LoggerInterface",
+        factory: null,
+        offset: offsetOf(source, "logger"),
+      },
+    ]);
+  });
+
   it("parses an inline map with factory + setup", () => {
     const source =
       "services:\n    - { factory: App\\Model\\Factory, setup: [setDebug(@logger)] }\n";
@@ -448,6 +478,101 @@ describe("neonServiceReferenceCompletionContextAt", () => {
     const cursor = offsetOf(source, "@ex") + 3;
 
     expect(neonServiceReferenceCompletionContextAt(source, cursor)).toBeNull();
+  });
+});
+
+describe("detectNeonServiceSetupMethodAt", () => {
+  it("detects a setup method in a block setup list with its owning service", () => {
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - setLogger(@logger)\n";
+    const onMethod = offsetOf(source, "setLogger", 4);
+
+    expect(detectNeonServiceSetupMethodAt(source, onMethod)).toEqual({
+      methodName: "setLogger",
+      span: spanOf(source, "setLogger"),
+      service: {
+        serviceName: "mailer",
+        className: "App\\Mail\\Mailer",
+        factory: null,
+        offset: offsetOf(source, "mailer"),
+      },
+    });
+  });
+
+  it("detects a setup method in an inline service map", () => {
+    const source =
+      "services:\n    - { factory: App\\Model\\Factory, setup: [setDebug(@logger)] }\n";
+    const onMethod = offsetOf(source, "setDebug", 3);
+
+    expect(detectNeonServiceSetupMethodAt(source, onMethod)).toEqual({
+      methodName: "setDebug",
+      span: spanOf(source, "setDebug"),
+      service: {
+        serviceName: null,
+        className: "App\\Model\\Factory",
+        factory: null,
+        offset: offsetOf(source, "App\\Model\\Factory"),
+      },
+    });
+  });
+
+  it("does not treat service-reference method calls as receiver setup methods", () => {
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - @logger::setMailer()\n";
+    const onMethod = offsetOf(source, "setMailer", 3);
+
+    expect(detectNeonServiceSetupMethodAt(source, onMethod)).toBeNull();
+  });
+});
+
+describe("neonServiceSetupMethodCompletionContextAt", () => {
+  it("offers completion for a partially typed setup method", () => {
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - setLog";
+    const cursor = source.length;
+
+    expect(neonServiceSetupMethodCompletionContextAt(source, cursor)).toEqual({
+      prefix: "setLog",
+      span: spanOf(source, "setLog"),
+      service: {
+        serviceName: "mailer",
+        className: "App\\Mail\\Mailer",
+        factory: null,
+        offset: offsetOf(source, "mailer"),
+      },
+    });
+  });
+
+  it("offers completion in a one-line setup value", () => {
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup: setLog";
+    const cursor = source.length;
+
+    expect(neonServiceSetupMethodCompletionContextAt(source, cursor)).toEqual({
+      prefix: "setLog",
+      span: spanOf(source, "setLog"),
+      service: {
+        serviceName: "mailer",
+        className: "App\\Mail\\Mailer",
+        factory: null,
+        offset: offsetOf(source, "mailer"),
+      },
+    });
+  });
+
+  it("does not offer method completion inside a setup argument", () => {
+    const source =
+      "services:\n    mailer:\n        class: App\\Mail\\Mailer\n        setup:\n            - setLogger(log";
+    const cursor = source.length;
+
+    expect(neonServiceSetupMethodCompletionContextAt(source, cursor)).toBeNull();
+  });
+
+  it("does not offer method completion outside setup", () => {
+    const source = "services:\n    mailer: App\\Mail\\Mailer(setLog";
+    const cursor = source.length;
+
+    expect(neonServiceSetupMethodCompletionContextAt(source, cursor)).toBeNull();
   });
 });
 

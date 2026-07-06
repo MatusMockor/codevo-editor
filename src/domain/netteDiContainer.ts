@@ -114,6 +114,24 @@ export interface NeonServiceReferenceCompletionContext {
   span: NeonSpan;
 }
 
+export interface NeonServiceSetupMethod {
+  /** The setup method name (`setLogger`, `addExtension`, ...). */
+  methodName: string;
+  /** The method-name token range, excluding the opening parenthesis. */
+  span: NeonSpan;
+  /** The service whose setup block contains the method call. */
+  service: NeonService;
+}
+
+export interface NeonServiceSetupMethodCompletionContext {
+  /** The method-name characters already typed at the cursor. */
+  prefix: string;
+  /** The range the completion replaces (the partial method name). */
+  span: NeonSpan;
+  /** The service whose setup block contains the method call. */
+  service: NeonService;
+}
+
 /** A typed injected identifier (property or constructor/inject-method param). */
 export interface NetteInjectedProperty {
   /** The identifier without its `$` (`foo`, `products`). */
@@ -149,6 +167,16 @@ const PHP_BUILTIN_TYPES: ReadonlySet<string> = new Set([
   "never",
 ]);
 
+const SERVICE_CLASS_KEYS: ReadonlySet<string> = new Set([
+  "class",
+  "type",
+]);
+
+const SERVICE_FACTORY_KEYS: ReadonlySet<string> = new Set([
+  "create",
+  "factory",
+]);
+
 function isSpace(character: string): boolean {
   return character === " " || character === "\t";
 }
@@ -171,6 +199,10 @@ function isClassTokenChar(character: string): boolean {
 
 function isIdentifierContinuation(character: string): boolean {
   return /[A-Za-z0-9_]/.test(character);
+}
+
+function isMethodNameStart(character: string): boolean {
+  return /[A-Za-z_]/.test(character);
 }
 
 /**
@@ -885,6 +917,11 @@ interface ServiceSource {
   valueEnd: number;
 }
 
+interface SetupSource {
+  valueStart: number;
+  valueEnd: number;
+}
+
 interface ClassifiedValue {
   className: string | null;
   factory: string | null;
@@ -1054,7 +1091,7 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
   for (const entry of sources) {
     const classified = classifyServiceValue(source, entry.valueStart, entry.valueEnd);
 
-    if (entry.key === "class") {
+    if (entry.key !== null && SERVICE_CLASS_KEYS.has(entry.key)) {
       if (classified.className !== null && className === null) {
         className = classified.className;
         classOffset = classified.tokenOffset;
@@ -1063,7 +1100,7 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
       continue;
     }
 
-    if (entry.key === null || entry.key === "factory" || entry.key === "create") {
+    if (entry.key === null || SERVICE_FACTORY_KEYS.has(entry.key)) {
       if (classified.factory !== null && factory === null) {
         factory = classified.factory;
 
@@ -1091,6 +1128,58 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
         : head.contentStart;
 
   return { serviceName, className, factory, offset };
+}
+
+function collectInlineSetupSources(
+  source: string,
+  regionStart: number,
+  regionEnd: number,
+  out: SetupSource[],
+): void {
+  const mapSources: ServiceSource[] = [];
+  collectMapSources(source, regionStart, regionEnd, mapSources);
+
+  for (const entry of mapSources) {
+    if (entry.key === "setup") {
+      out.push({ valueStart: entry.valueStart, valueEnd: entry.valueEnd });
+    }
+  }
+}
+
+function setupSources(source: string, head: NeonLine, body: NeonLine[]): SetupSource[] {
+  const sources: SetupSource[] = [];
+  const headTrimmed = source.slice(head.valueStart, head.commentStart).trim();
+
+  if (headTrimmed.startsWith("{")) {
+    collectInlineSetupSources(source, head.valueStart, head.commentStart, sources);
+  }
+
+  for (let index = 0; index < body.length; index += 1) {
+    const line = body[index] as NeonLine;
+
+    if (line.keyNameRaw === null || line.keyNameRaw.toLowerCase() !== "setup") {
+      continue;
+    }
+
+    if (line.valueStart < line.commentStart) {
+      sources.push({ valueStart: line.valueStart, valueEnd: line.commentStart });
+    }
+
+    for (let nestedIndex = index + 1; nestedIndex < body.length; nestedIndex += 1) {
+      const nested = body[nestedIndex] as NeonLine;
+
+      if (nested.indent <= line.indent) {
+        break;
+      }
+
+      sources.push({
+        valueStart: nested.valueStart,
+        valueEnd: nested.commentStart,
+      });
+    }
+  }
+
+  return sources;
 }
 
 /** Every service registered in `source`, in document order. */
@@ -1129,6 +1218,231 @@ export function neonGeneratedServiceNamesFromServices(
   }
 
   return names;
+}
+
+// --- setup method contexts ----------------------------------------------------
+
+function isSetupMethodBoundary(source: string, start: number): boolean {
+  const previous = source[start - 1] ?? "";
+
+  return (
+    previous !== "@" &&
+    previous !== "\\" &&
+    previous !== ":" &&
+    previous !== "(" &&
+    !isIdentifierContinuation(previous)
+  );
+}
+
+function parenDepthBefore(source: string, start: number, end: number): number {
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = source[index] ?? "";
+
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth;
+}
+
+function methodCallSpanAt(
+  source: string,
+  runStart: number,
+  start: number,
+  end: number,
+): NeonSpan | null {
+  if (!isMethodNameStart(source[start] ?? "")) {
+    return null;
+  }
+
+  if (!isSetupMethodBoundary(source, start)) {
+    return null;
+  }
+
+  if (parenDepthBefore(source, runStart, start) > 0) {
+    return null;
+  }
+
+  let cursor = start + 1;
+
+  while (cursor < end && isIdentifierContinuation(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  let openParen = cursor;
+
+  while (openParen < end && isSpace(source[openParen] ?? "")) {
+    openParen += 1;
+  }
+
+  if (source[openParen] !== "(") {
+    return null;
+  }
+
+  return { start, end: cursor };
+}
+
+function setupMethodCallsInRun(
+  source: string,
+  start: number,
+  end: number,
+  service: NeonService,
+  out: NeonServiceSetupMethod[],
+): void {
+  let index = start;
+
+  while (index < end) {
+    const span = methodCallSpanAt(source, start, index, end);
+
+    if (!span) {
+      index += 1;
+      continue;
+    }
+
+    out.push({
+      methodName: source.slice(span.start, span.end),
+      span,
+      service,
+    });
+    index = span.end;
+  }
+}
+
+function setupMethodCompletionInRun(
+  source: string,
+  offset: number,
+  run: NeonSpan,
+  service: NeonService,
+): NeonServiceSetupMethodCompletionContext | null {
+  let start = offset;
+
+  while (start > run.start && isIdentifierContinuation(source[start - 1] ?? "")) {
+    start -= 1;
+  }
+
+  if (!isMethodNameStart(source[start] ?? "")) {
+    return null;
+  }
+
+  if (!isSetupMethodBoundary(source, start)) {
+    return null;
+  }
+
+  if (parenDepthBefore(source, run.start, start) > 0) {
+    return null;
+  }
+
+  let end = offset;
+
+  while (end < run.end && isIdentifierContinuation(source[end] ?? "")) {
+    end += 1;
+  }
+
+  let next = end;
+
+  while (next < run.end && isSpace(source[next] ?? "")) {
+    next += 1;
+  }
+
+  if (next < run.end && source[next] !== "(") {
+    return null;
+  }
+
+  return {
+    prefix: source.slice(start, offset),
+    span: { start, end },
+    service,
+  };
+}
+
+function neonServiceSetupMethods(source: string): NeonServiceSetupMethod[] {
+  const lines = buildLines(source);
+  const methods: NeonServiceSetupMethod[] = [];
+
+  for (const group of serviceGroups(lines)) {
+    const service = parseServiceGroup(source, group.head, group.body);
+
+    if (!service) {
+      continue;
+    }
+
+    for (const setupSource of setupSources(source, group.head, group.body)) {
+      for (const run of stringFreeRuns(source, setupSource.valueStart, setupSource.valueEnd)) {
+        setupMethodCallsInRun(source, run.start, run.end, service, methods);
+      }
+    }
+  }
+
+  return methods;
+}
+
+/** The setup method call at `offset`, including the owning service, or `null`. */
+export function detectNeonServiceSetupMethodAt(
+  source: string,
+  offset: number,
+): NeonServiceSetupMethod | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  for (const method of neonServiceSetupMethods(source)) {
+    if (offset >= method.span.start && offset <= method.span.end) {
+      return method;
+    }
+  }
+
+  return null;
+}
+
+/** The setup method completion context at `offset`, or `null`. */
+export function neonServiceSetupMethodCompletionContextAt(
+  source: string,
+  offset: number,
+): NeonServiceSetupMethodCompletionContext | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  const lines = buildLines(source);
+
+  for (const group of serviceGroups(lines)) {
+    const service = parseServiceGroup(source, group.head, group.body);
+
+    if (!service) {
+      continue;
+    }
+
+    for (const setupSource of setupSources(source, group.head, group.body)) {
+      if (offset < setupSource.valueStart || offset > setupSource.valueEnd) {
+        continue;
+      }
+
+      const run = runContaining(
+        stringFreeRuns(source, setupSource.valueStart, setupSource.valueEnd),
+        offset,
+      );
+
+      if (!run) {
+        continue;
+      }
+
+      const completion = setupMethodCompletionInRun(source, offset, run, service);
+
+      if (completion) {
+        return completion;
+      }
+    }
+  }
+
+  return null;
 }
 
 // --- @service references + completion -----------------------------------------

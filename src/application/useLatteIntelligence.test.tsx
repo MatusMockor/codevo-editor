@@ -222,6 +222,52 @@ describe("createLatteIntelligence definition", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
+  it("navigates a Latte variable to its render-method presenter assignment", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget, readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "<h1>{$invoice}</h1>";
+    const offset = source.indexOf("$invoice") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      positionAtOffset(
+        HOME_PRESENTER_SOURCE,
+        HOME_PRESENTER_SOURCE.indexOf("$invoice;"),
+      ),
+      "$invoice",
+    );
+  });
+
+  it("navigates a Latte variable to wildcard presenter data from beforeRender", async () => {
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openTarget, readFileContent, searchText });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{if $menu}{$menu}{/if}";
+    const offset = source.indexOf("$menu") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      positionAtOffset(
+        HOME_PRESENTER_SOURCE,
+        HOME_PRESENTER_SOURCE.indexOf("$menu;"),
+      ),
+      "$menu",
+    );
+  });
+
   it("does nothing when the Nette framework is not active", async () => {
     const { readFileContent } = buildWorkspace([
       "app/UI/Home/partials/menu.latte",

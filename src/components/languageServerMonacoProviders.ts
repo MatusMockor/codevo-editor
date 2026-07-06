@@ -331,7 +331,7 @@ export interface LatteCompletion {
  * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
  * `%param%` parameter reference, or an `@service` reference.
  */
-export type NeonCompletionKind = "class" | "parameter" | "service";
+export type NeonCompletionKind = "class" | "method" | "parameter" | "service";
 
 /**
  * A single NEON completion item produced by the controller. Like Latte, NEON has
@@ -1675,6 +1675,10 @@ function monacoNeonCompletionKind(
 
   if (kind === "service") {
     return monaco.languages.CompletionItemKind.Value;
+  }
+
+  if (kind === "method") {
+    return monaco.languages.CompletionItemKind.Method;
   }
 
   return monaco.languages.CompletionItemKind.Class;

@@ -36,19 +36,27 @@ import {
 import {
   detectNeonParameterReferenceAt,
   detectNeonServiceReferenceAt,
+  detectNeonServiceSetupMethodAt,
   neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
   neonServiceReferenceCompletionContextAt,
+  neonServiceSetupMethodCompletionContextAt,
   neonServicesFromSource,
 } from "../domain/netteDiContainer";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
  * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
  * `%param%` parameter reference, or an `@service` reference.
  */
-export type NeonCompletionItemKind = "class" | "parameter" | "service";
+export type NeonCompletionItemKind =
+  | "class"
+  | "method"
+  | "parameter"
+  | "service";
 
 /**
  * A NEON completion the hook hands to the Monaco "neon" provider. Structurally
@@ -105,6 +113,10 @@ export interface NeonIntelligenceDependencies {
    * service class navigates exactly like a PHP class reference.
    */
   openClassTarget(className: string): Promise<boolean>;
+  openDirectPhpMethodTarget(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
   openTarget(
     path: string,
     position: EditorPosition,
@@ -122,6 +134,15 @@ export interface NeonIntelligenceDependencies {
     prefix: string,
     maxResults: number,
   ): Promise<string[]>;
+  resolvePhpReceiverCompletions(
+    source: string,
+    position: EditorPosition,
+    receiverExpression: string,
+  ): Promise<PhpMethodCompletion[]>;
+  synthesizeTypedReceiverSource(
+    variableName: string,
+    typeName: string,
+  ): { position: EditorPosition; source: string };
   toRelativePath(rootPath: string, path: string): string;
   /** The requested workspace root, captured up front by each async flow. */
   workspaceRoot: string | null;
@@ -256,6 +277,12 @@ export function createNeonIntelligence(
       return resolveNeonServiceDefinition(context, source, serviceReference.name);
     }
 
+    const setupMethod = detectNeonServiceSetupMethodAt(source, offset);
+
+    if (setupMethod) {
+      return resolveNeonSetupMethodDefinition(context, setupMethod);
+    }
+
     const include = detectNeonIncludeAt(source, offset);
 
     if (include) {
@@ -311,6 +338,18 @@ export function createNeonIntelligence(
 
     if (serviceCompletion) {
       return neonServiceReferenceCompletions(context, source, serviceCompletion);
+    }
+
+    const setupMethodCompletion = neonServiceSetupMethodCompletionContextAt(
+      source,
+      offset,
+    );
+
+    if (setupMethodCompletion) {
+      return neonServiceSetupMethodCompletions(
+        context,
+        setupMethodCompletion,
+      );
     }
 
     const classContext = neonServiceClassCompletionContextAt(source, offset);
@@ -486,6 +525,30 @@ async function resolveNeonServiceDefinition(
   return deps.openClassTarget(normalizedType);
 }
 
+/**
+ * Navigates a `setup:` method call (`- setLogger(...)`) to the method on the
+ * owning service class. The domain detector already rejects delegated calls such
+ * as `@logger::setMailer()`, so this stays bound to the configured service.
+ */
+async function resolveNeonSetupMethodDefinition(
+  context: NeonRequestContext,
+  setupMethod: {
+    methodName: string;
+    service: { className: string | null; factory: string | null };
+  },
+): Promise<boolean> {
+  const serviceType = neonSetupServiceType(setupMethod.service);
+
+  if (!serviceType) {
+    return false;
+  }
+
+  return context.deps.openDirectPhpMethodTarget(
+    serviceType,
+    setupMethod.methodName,
+  );
+}
+
 /** The offset of the first `parameters:` leaf named `name` in `source`, or `null`. */
 function neonParameterOffsetInSource(source: string, name: string): number | null {
   for (const parameter of neonParametersFromSource(source)) {
@@ -590,6 +653,97 @@ async function neonServiceReferenceCompletions(
       replaceEnd: completion.span.end,
       replaceStart: completion.span.start,
     }));
+}
+
+/**
+ * `setup:` method completion: infer the owning service class from the service
+ * entry (`class:`, `type:`, class-valued `factory:` / `create:`), then reuse the
+ * PHP member-completion engine through a synthetic typed receiver. This keeps
+ * Nette config completion consistent with `$service->` in PHP without adding a
+ * second method-index implementation here.
+ */
+async function neonServiceSetupMethodCompletions(
+  context: NeonRequestContext,
+  completion: {
+    prefix: string;
+    service: { className: string | null; factory: string | null };
+    span: { end: number; start: number };
+  },
+): Promise<NeonCompletionItem[]> {
+  const serviceType = neonSetupServiceType(completion.service);
+
+  if (!serviceType) {
+    return [];
+  }
+
+  const synthetic = context.deps.synthesizeTypedReceiverSource(
+    "service",
+    serviceType,
+  );
+  const members = await context.deps.resolvePhpReceiverCompletions(
+    synthetic.source,
+    synthetic.position,
+    "$service->",
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return orderPhpMemberCompletionsByCategory(members)
+    .filter(isCallablePhpMethodCompletion)
+    .filter((member) => member.name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, NEON_MAX_COMPLETIONS)
+    .map((member) => ({
+      detail: neonSetupMethodCompletionDetail(member),
+      insertText: neonSetupMethodCompletionInsertText(member),
+      kind: "method" as const,
+      label: member.name,
+      replaceEnd: completion.span.end,
+      replaceStart: completion.span.start,
+    }));
+}
+
+function isCallablePhpMethodCompletion(member: PhpMethodCompletion): boolean {
+  return member.kind !== "property" && member.kind !== "relation";
+}
+
+function neonSetupServiceType(service: {
+  className: string | null;
+  factory: string | null;
+}): string | null {
+  if (service.className) {
+    return normalizeNeonServiceType(service.className);
+  }
+
+  if (!service.factory) {
+    return null;
+  }
+
+  const factoryClass = service.factory.split("::")[0]?.trim() ?? "";
+
+  if (!factoryClass || factoryClass.startsWith("@")) {
+    return null;
+  }
+
+  return normalizeNeonServiceType(factoryClass);
+}
+
+function neonSetupMethodCompletionInsertText(member: PhpMethodCompletion): string {
+  if (member.insertText) {
+    return member.insertText;
+  }
+
+  return `${member.name}()`;
+}
+
+function neonSetupMethodCompletionDetail(member: PhpMethodCompletion): string {
+  const parameters = member.parameters ? `(${member.parameters})` : "()";
+  const returnType = member.returnType ? `: ${member.returnType}` : "";
+
+  return `${member.declaringClassName}::${member.name}${parameters}${returnType}`;
 }
 
 /** Merged parameter names: current file (no I/O) unioned with the project config. */
