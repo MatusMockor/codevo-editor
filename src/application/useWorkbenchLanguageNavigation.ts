@@ -98,6 +98,10 @@ export interface WorkbenchLanguageNavigationDependencies {
     source: string,
     offset: number,
   ) => Promise<boolean>;
+  shouldBlockLatteDefinitionFallback: (
+    source: string,
+    offset: number,
+  ) => boolean;
   reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
     source: string,
@@ -167,6 +171,7 @@ export function useWorkbenchLanguageNavigation(
     openPathForNavigation,
     provideBladeDefinition,
     provideLatteDefinition,
+    shouldBlockLatteDefinitionFallback,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     currentNavigationLocation,
@@ -687,12 +692,19 @@ export function useWorkbenchLanguageNavigation(
     }
 
     if (document?.path.endsWith(".latte") && editorPosition) {
+      const offset = documentOffsetAtEditorPosition(
+        document.content,
+        editorPosition,
+      );
       const openedLatteTarget = await provideLatteDefinition(
         document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
+        offset,
       );
 
-      if (openedLatteTarget) {
+      if (
+        openedLatteTarget ||
+        shouldBlockLatteDefinitionFallback(document.content, offset)
+      ) {
         return;
       }
     }
@@ -733,6 +745,7 @@ export function useWorkbenchLanguageNavigation(
     goToLanguageServerLocation,
     provideBladeDefinition,
     provideLatteDefinition,
+    shouldBlockLatteDefinitionFallback,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {

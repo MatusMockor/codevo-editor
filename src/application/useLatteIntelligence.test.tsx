@@ -87,6 +87,8 @@ function makeDeps(
     listDirectory: vi.fn(async () => {
       throw new Error("no directory");
     }),
+    openPhpMethodTarget: vi.fn(async () => false),
+    openPhpPropertyTarget: vi.fn(async () => false),
     openTarget: vi.fn(async () => true),
     readFileContent: vi.fn(async () => {
       throw new Error("missing");
@@ -266,6 +268,59 @@ describe("createLatteIntelligence definition", () => {
       ),
       "$menu",
     );
+  });
+
+  it("navigates a Latte property expression through the typed PHP member context", async () => {
+    const openPhpPropertyTarget = vi.fn(async () => true);
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Model\\Consent",
+        kind: "property" as const,
+        name: "name",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    const deps = makeDeps({
+      openPhpPropertyTarget,
+      resolvePhpReceiverCompletions,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
+    const offset = source.indexOf("name") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(resolvePhpReceiverCompletions).toHaveBeenCalledWith(
+      expect.stringContaining("App\\Model\\Consent"),
+      { column: 1, lineNumber: 3 },
+      "$consent",
+    );
+    expect(openPhpPropertyTarget).toHaveBeenCalledWith(
+      "App\\Model\\Consent",
+      "name",
+    );
+    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
+  });
+
+  it("blocks generic fallback for an unresolved Latte property expression", async () => {
+    const resolvePhpReceiverCompletions = vi.fn(async () => []);
+    const openPhpPropertyTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openPhpPropertyTarget,
+      resolvePhpReceiverCompletions,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
+    const offset = source.indexOf("name") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(resolvePhpReceiverCompletions).toHaveBeenCalled();
+    expect(openPhpPropertyTarget).not.toHaveBeenCalled();
+    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
   });
 
   it("does nothing when the Nette framework is not active", async () => {

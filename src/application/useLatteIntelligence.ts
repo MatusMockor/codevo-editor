@@ -148,6 +148,11 @@ export interface LatteIntelligenceDependencies {
     position: EditorPosition,
     label: string,
   ): Promise<boolean>;
+  openPhpMethodTarget(className: string, methodName: string): Promise<boolean>;
+  openPhpPropertyTarget(
+    className: string,
+    propertyName: string,
+  ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
   /**
    * Resolves a declared type hint (a short class name written in the presenter,
@@ -211,6 +216,7 @@ export interface LatteIntelligence {
     position: EditorPosition,
   ): Promise<LatteCompletionItem[]>;
   provideLatteDefinition(source: string, offset: number): Promise<boolean>;
+  shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
   /**
    * Cmd+B on a PHP presenter link (`$this->link('Product:show')`,
    * `->redirect(...)`, `->forward(...)`, ...): resolves the target the same way
@@ -577,6 +583,24 @@ export function createLatteIntelligence(
       return true;
     }
 
+    const memberHandled = await resolveLatteMemberDefinition(
+      {
+        deps,
+        isRequestedRootActive,
+        requestedRoot,
+        templateTypeCache,
+        templateTypeInFlight,
+        viewDataCache,
+        viewDataInFlight,
+      },
+      source,
+      offset,
+    );
+
+    if (memberHandled) {
+      return true;
+    }
+
     const reference = detectLatteReferenceAt(source, offset);
 
     if (reference?.kind === "control") {
@@ -831,6 +855,7 @@ export function createLatteIntelligence(
     provideLatteDefinition,
     provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition,
+    shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
   };
 }
 
@@ -1783,6 +1808,85 @@ async function resolveNettePresenterVariableDefinition(
   return false;
 }
 
+/**
+ * Cmd+B on a Latte member/property expression (`{$consent->name}`) uses the same
+ * Nette/PHP receiver typing path as member completion. A resolved member opens
+ * the PHP declaration; an unresolved member returns false, with
+ * `shouldBlockLatteDefinitionFallback` stopping generic symbol fallback from
+ * jumping to unrelated JS/PHP symbols with the same short name.
+ */
+async function resolveLatteMemberDefinition(
+  context: LatteExpressionResolutionContext,
+  source: string,
+  offset: number,
+): Promise<boolean> {
+  const member = latteMemberReferenceAt(source, offset);
+
+  if (!member) {
+    return false;
+  }
+
+  const { deps, isRequestedRootActive } = context;
+  const receiverType = await resolveLatteVariableType(
+    context,
+    source,
+    offset,
+    member.variableName,
+    0,
+  );
+
+  if (!isRequestedRootActive() || !receiverType) {
+    return false;
+  }
+
+  const synthetic = deps.synthesizeTypedReceiverSource(
+    member.variableName,
+    receiverType,
+  );
+  const members = await deps.resolvePhpReceiverCompletions(
+    synthetic.source,
+    synthetic.position,
+    member.receiverExpression,
+  );
+
+  if (!isRequestedRootActive()) {
+    return false;
+  }
+
+  const resolved = orderPhpMemberCompletionsByCategory(members).find(
+    (entry) => entry.name === member.memberName,
+  );
+
+  if (!resolved) {
+    return false;
+  }
+
+  if (resolved.kind === "property") {
+    return deps.openPhpPropertyTarget(
+      resolved.declaringClassName || receiverType,
+      member.memberName,
+    );
+  }
+
+  const methodOpened = await deps.openPhpMethodTarget(
+    resolved.declaringClassName || receiverType,
+    member.memberName,
+  );
+
+  if (!isRequestedRootActive() || methodOpened) {
+    return methodOpened;
+  }
+
+  if (resolved.kind === "relation") {
+    return deps.openPhpPropertyTarget(
+      resolved.declaringClassName || receiverType,
+      member.memberName,
+    );
+  }
+
+  return false;
+}
+
 const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 function latteVariableNameAt(source: string, offset: number): string | null {
@@ -1917,6 +2021,63 @@ interface LatteMemberAccess {
 
 const LATTE_MEMBER_ACCESS =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
+
+interface LatteMemberReference {
+  memberName: string;
+  receiverExpression: string;
+  variableName: string;
+}
+
+const LATTE_MEMBER_REFERENCE =
+  /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+
+function isLatteMemberReferenceAt(source: string, offset: number): boolean {
+  return latteMemberReferenceAt(source, offset) !== null;
+}
+
+function latteMemberReferenceAt(
+  source: string,
+  offset: number,
+): LatteMemberReference | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return null;
+  }
+
+  const expression = source.slice(span.expressionStart, span.contentEnd);
+  const relativeOffset = offset - span.expressionStart;
+  const before = expression.slice(0, Math.max(0, relativeOffset));
+
+  if (hasUnclosedStringLiteral(before)) {
+    return null;
+  }
+
+  for (const match of expression.matchAll(LATTE_MEMBER_REFERENCE)) {
+    const receiver = match[1];
+    const variableName = match[2];
+    const memberName = match[3];
+
+    if (!receiver || !variableName || !memberName || match.index === undefined) {
+      continue;
+    }
+
+    const memberStart = match.index + match[0].lastIndexOf(memberName);
+    const memberEnd = memberStart + memberName.length;
+
+    if (relativeOffset < memberStart || relativeOffset > memberEnd) {
+      continue;
+    }
+
+    return {
+      memberName,
+      receiverExpression: receiver.replace(/\s*\??->\s*/g, "->"),
+      variableName,
+    };
+  }
+
+  return null;
+}
 
 /**
  * Detects a `{$var->}` / `{$var->rel->prop}` member access ending at `offset`
