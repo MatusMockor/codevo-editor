@@ -1094,6 +1094,28 @@ Completed worker integrations:
      - `npm run check` passed.
      - Full preview test passed: 867 tests.
      - Full suite passed: 239 files, 5159 tests.
+42. `019f365a-5c66-74b0-820e-9892867696e5`
+   - Title: Audit controller decomposition.
+   - Result: read-only audit.
+   - Recommendation: stop controller decomposition and shift to higher
+     product-value work.
+   - Rationale:
+     - `useWorkbenchController.ts` is down to 14,085 lines after many verified
+       slices.
+     - Remaining large regions are mostly coupled orchestration:
+       `providePhpMethodCompletions`, PHP/Laravel navigation callbacks,
+       settings/runtime/index orchestration, file-opening callbacks,
+       modified-document safety, command/floating-surface wiring, and git diff
+       pseudo-doc helpers.
+     - Further micro-extractions would mostly move private glue and increase
+       dependency bags without meaningful product value.
+   - Strict stop boundary:
+     - do not continue decomposition for line-count reduction alone,
+     - do not move whole PHP method completions, PHP/Laravel navigation,
+       file-opening callbacks, git diff pseudo-doc behavior, or general UI
+       lifecycle without a new concrete product bug or feature forcing it,
+     - next work should target product-visible behavior, real UI QA, or focused
+       bug fixes.
 
 Integration order:
 
@@ -1116,22 +1138,25 @@ Integration order:
     verified.
 11. Do not revisit trait `$this` completion parser extraction; it is integrated
     and verified.
-12. Do not move PHP method completions or PHP/Laravel navigation without a new
-   audit, because those still mix Laravel collectors/provider caches and
-   file-opening side effects.
-13. Follow-up focused hook tests for newly extracted provider/registry modules
-   are acceptable only as separate, non-overlapping worker slices.
+12. Stop controller decomposition for now. Shift to higher product-value work.
+13. Do not move PHP method completions, PHP/Laravel navigation,
+    file-opening callbacks, git diff pseudo-doc behavior, or general UI
+    lifecycle for line-count reduction alone.
+14. Follow-up focused hook tests for newly extracted modules are acceptable only
+    when tied to a real bug, product feature, or regression risk.
 
 Current operational goal:
 
-- Work toward shrinking `useWorkbenchController.ts` without regressing product
-  behavior.
+- Controller decomposition campaign is closed unless a future concrete bug or
+  feature exposes a clearly isolated slice.
+- Shift to product-visible work: PHP/Laravel IDE smartness, Blade/Laravel view
+  intelligence, real UI QA, and focused bug fixes.
 - Use Codex threads for delegable audit/implementation/review slices.
 - The main thread should not manually implement delegable work. It should
   orchestrate: create/poll threads, review diffs, integrate narrowly, run tests,
   update this plan, commit, and push.
-- After each completed slice, reassess whether another decomposition slice is
-  still safer than shifting to higher product-value work.
+- Before any future decomposition work, run a fresh read-only audit and require
+  product value beyond line-count reduction.
 - After every compaction, read this section first to avoid repeating completed
   slices.
 
