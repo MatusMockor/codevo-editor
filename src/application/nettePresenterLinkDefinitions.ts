@@ -1,8 +1,8 @@
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
-import { phpMethodPositionInSource } from "./phpMethodPosition";
 import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
+import { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export type {
   NettePresenterDiscoveryContext,

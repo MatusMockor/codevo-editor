@@ -19,7 +19,7 @@ import {
 } from "./netteControlComponents";
 import {
   resolveNetteLinkDefinition,
-} from "./nettePresenterLinks";
+} from "./nettePresenterLinkDefinitions";
 import {
   isLatteScanSkippedDirectory,
   resolveLatteTemplateDefinition,

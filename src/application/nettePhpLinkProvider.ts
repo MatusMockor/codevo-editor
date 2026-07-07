@@ -9,7 +9,7 @@ import { resolveNetteCreateComponentReverse } from "./netteControlComponents";
 import {
   lattePresenterLinkCompletions,
 } from "./nettePresenterLinkCompletions";
-import { resolveNettePresenterLink } from "./nettePresenterLinks";
+import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
 import { isLatteScanSkippedDirectory } from "./netteTemplates";
 import {
   evictLatteProviderCaches,
