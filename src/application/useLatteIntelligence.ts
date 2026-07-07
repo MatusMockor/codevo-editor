@@ -81,7 +81,6 @@ import {
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   factoryDerivedLatteCandidateViewNames,
-  netteCreateComponentViewDataEntryFromSource,
   phpTypeNamesEqual,
 } from "./netteCreateComponentViewData";
 import {
@@ -118,6 +117,13 @@ import {
   type LatteMemberAccess,
   type LatteVariableCompletionContext,
 } from "./latteExpressionDetection";
+import {
+  hasNetteFrameworkProvider,
+  loadNetteViewDataEntries,
+  type NetteViewDataCache,
+  type NetteViewDataEntry,
+  type NetteViewDataInFlight,
+} from "./netteViewDataEntries";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
@@ -330,26 +336,9 @@ export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
   viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
 };
 
-interface LatteViewDataCacheEntry {
-  entries: LatteNetteViewDataEntry[];
-  expiresAt: number;
-}
-
-/**
- * Per-root cache of the parsed Nette presenter/control view-data entries (keyed
- * by requested root). Hook-owned - the strangler mount stays thin - and subject
- * to the same TTL + cross-root eviction the template cache uses, so a single
- * active project holds at most one entry and switching projects never leaks a
- * previous root's presenter data.
- */
-export type LatteViewDataCache = Record<string, LatteViewDataCacheEntry>;
-
-/** In-flight view-data loads keyed by requested root (concurrent callers join). */
-type LatteViewDataInFlight = Map<string, Promise<LatteNetteViewDataEntry[]>>;
-
-interface LatteNetteViewDataEntry extends PhpFrameworkViewDataEntry {
-  sourcePath?: string;
-}
+export type LatteViewDataCache = NetteViewDataCache;
+type LatteViewDataInFlight = NetteViewDataInFlight;
+type LatteNetteViewDataEntry = NetteViewDataEntry;
 
 interface LatteTemplateTypePropertySighting {
   property: NetteTemplateProperty;
@@ -1018,7 +1007,7 @@ async function resolveNettePresenterVariableDefinition(
   }
 
   const { deps, isRequestedRootActive } = context;
-  const entries = await loadNetteViewDataEntries(context);
+  const entries = await loadLatteViewDataEntries(context);
 
   if (!isRequestedRootActive() || entries.length === 0) {
     return false;
@@ -1411,7 +1400,7 @@ async function collectLatteVariableCandidates(
     add(variable.name, variable.detail, variable.typeHint);
   }
 
-  const entries = await loadNetteViewDataEntries(context);
+  const entries = await loadLatteViewDataEntries(context);
 
   if (!isRequestedRootActive()) {
     return [];
@@ -1856,7 +1845,7 @@ async function lattePresenterVariableType(
   variableName: string,
 ): Promise<string | null> {
   const { deps, isRequestedRootActive } = context;
-  const entries = await loadNetteViewDataEntries(context);
+  const entries = await loadLatteViewDataEntries(context);
 
   if (!isRequestedRootActive() || entries.length === 0) {
     return null;
@@ -1968,214 +1957,30 @@ async function latteForeachVariableType(
   return extractLatteElementType(chainType);
 }
 
-/**
- * Loads (and per-root caches) the Nette presenter/control view-data entries.
- * Concurrent callers for the same root share one in-flight scan (Monaco fires a
- * completion per keystroke - without the registry each keystroke would launch
- * its own full text search + file-read sweep, mirroring the controller's Blade
- * `bladeViewDataEntriesLoadInFlightRef` pattern).
- */
-async function loadNetteViewDataEntries(
-  context: LatteExpressionResolutionContext,
-): Promise<LatteNetteViewDataEntry[]> {
-  const { requestedRoot, viewDataCache, viewDataInFlight } = context;
-  const cached = viewDataCache[requestedRoot];
-
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.entries;
-  }
-
-  const inFlight = viewDataInFlight.get(requestedRoot);
-
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const load = scanNetteViewDataEntries(context).finally(() => {
-    if (viewDataInFlight.get(requestedRoot) === load) {
-      viewDataInFlight.delete(requestedRoot);
-    }
-  });
-
-  viewDataInFlight.set(requestedRoot, load);
-
-  return load;
-}
-
-/**
- * The actual view-data scan: one text search per anchor, each unique PHP hit
- * parsed once. Per-project isolation: `requestedRoot` was captured by the
- * caller and is re-checked after EVERY await; a stale root drops the result
- * without writing the cache.
- */
-async function scanNetteViewDataEntries(
+function loadLatteViewDataEntries(
   context: LatteExpressionResolutionContext,
 ): Promise<LatteNetteViewDataEntry[]> {
   const {
+    viewDataCache,
     deps,
     frameworkCapabilities,
     isRequestedRootActive,
     requestedRoot,
-    viewDataCache,
+    viewDataInFlight,
   } = context;
-  const providers = deps.frameworkIntelligence.providers;
-  const searchQueries = frameworkCapabilities.viewDataSearchQueries(providers);
-  const shouldScanCreateComponentContexts =
-    hasNetteFrameworkProvider(providers);
 
-  if (searchQueries.length === 0 && !shouldScanCreateComponentContexts) {
-    viewDataCache[requestedRoot] = {
-      entries: [],
-      expiresAt: Date.now() + LATTE_VIEW_DATA_CACHE_TTL_MS,
-    };
-
-    return [];
-  }
-
-  const searchResults = await Promise.all(
-    searchQueries.map((query) =>
-      deps.searchText(requestedRoot, query, LATTE_VIEW_DATA_SEARCH_LIMIT),
-    ),
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const visitedPaths = new Set<string>();
-  const visitedSources = new Map<string, string>();
-  const entries: LatteNetteViewDataEntry[] = [];
-
-  for (const result of searchResults.flat()) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (visitedPaths.has(result.path) || !result.path.endsWith(PHP_EXTENSION)) {
-      continue;
-    }
-
-    visitedPaths.add(result.path);
-
-    let content: string;
-
-    try {
-      content = await deps.readFileContent(result.path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    visitedSources.set(result.path, content);
-
-    const parsedEntry = frameworkCapabilities.viewDataEntryFromSource(
-      content,
-      providers,
-    );
-
-    if (!parsedEntry) {
-      continue;
-    }
-
-    const entry: LatteNetteViewDataEntry = {
-      ...parsedEntry,
-      sourcePath: result.path,
-    };
-
-    if (entry.bindings.length > 0) {
-      entries.push(entry);
-    }
-  }
-
-  if (shouldScanCreateComponentContexts) {
-    entries.push(
-      ...(await scanNetteCreateComponentViewDataEntries(context, visitedSources)),
-    );
-  }
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  viewDataCache[requestedRoot] = {
-    entries,
-    expiresAt: Date.now() + LATTE_VIEW_DATA_CACHE_TTL_MS,
-  };
-
-  return entries;
-}
-
-async function scanNetteCreateComponentViewDataEntries(
-  context: LatteExpressionResolutionContext,
-  knownSources: ReadonlyMap<string, string>,
-): Promise<LatteNetteViewDataEntry[]> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const results = await deps.searchText(
+  return loadNetteViewDataEntries({
+    cache: viewDataCache,
+    deps,
+    frameworkCapabilities,
+    inFlight: viewDataInFlight,
+    isRequestedRootActive,
+    phpExtension: PHP_EXTENSION,
+    providers: deps.frameworkIntelligence.providers,
     requestedRoot,
-    LATTE_CREATE_COMPONENT_CONTEXT_SEARCH_QUERY,
-    LATTE_VIEW_DATA_SEARCH_LIMIT,
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const visitedPaths = new Set<string>();
-  const entries: LatteNetteViewDataEntry[] = [];
-
-  for (const result of results) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (visitedPaths.has(result.path) || !result.path.endsWith(PHP_EXTENSION)) {
-      continue;
-    }
-
-    visitedPaths.add(result.path);
-
-    let content = knownSources.get(result.path);
-
-    if (content === undefined) {
-      try {
-        content = await deps.readFileContent(result.path);
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        continue;
-      }
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    const parsedEntry = netteCreateComponentViewDataEntryFromSource(
-      deps,
-      content,
-    );
-
-    if (parsedEntry.bindings.length > 0) {
-      entries.push({ ...parsedEntry, sourcePath: result.path });
-    }
-  }
-
-  return entries;
-}
-
-function hasNetteFrameworkProvider(
-  providers: readonly PhpFrameworkProvider[],
-): boolean {
-  return providers.some((provider) => provider.id === "nette");
+    searchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
+    ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
+  });
 }
 
 async function loadNetteTemplateTypeProperties(
