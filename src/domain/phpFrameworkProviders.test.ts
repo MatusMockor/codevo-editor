@@ -21,6 +21,7 @@ import {
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsLatteTemplateIntelligence,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsNeonConfigIntelligence,
@@ -1327,6 +1328,18 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(phpFrameworkSupportsNeonConfigIntelligence([])).toBe(false);
       expect(
         phpFrameworkSupportsNeonConfigIntelligence([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(false);
+    });
+
+    it("exposes Nette Latte template intelligence through the provider capability", () => {
+      expect(phpFrameworkSupportsLatteTemplateIntelligence(providers)).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsLatteTemplateIntelligence([])).toBe(false);
+      expect(
+        phpFrameworkSupportsLatteTemplateIntelligence([
           phpLaravelFrameworkProvider,
         ]),
       ).toBe(false);

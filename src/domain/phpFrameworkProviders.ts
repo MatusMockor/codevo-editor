@@ -438,6 +438,15 @@ export interface PhpFrameworkProvider {
      */
     supportsConfigIntelligence: true;
   };
+  latte?: {
+    /**
+     * Provider-owned opt-in for semantic Latte template intelligence. The
+     * application hook still owns template scans, presenter/view-data caches,
+     * and editor navigation; this capability is the framework gate so Latte
+     * semantics are enabled by provider dispatch, not a hardcoded profile flag.
+     */
+    supportsTemplateIntelligence: true;
+  };
   semantics?: {
     propertyTypeFromSource?: (
       context: PhpFrameworkPropertyTypeContext,
@@ -650,6 +659,8 @@ export const NETTE_MAGIC_DIAGNOSTIC_SOURCE = "nette-magic";
  *     for Blade (no framework-specific branch in the controller).
  *   - `neon`: NEON config navigation/completions are enabled through provider
  *     dispatch instead of direct Nette checks in the application hook.
+ *   - `latte`: Latte template navigation/completions are enabled through
+ *     provider dispatch instead of direct Nette checks in the application hook.
  *   - `diagnostics`: METHOD-level Nette magic suppression (spec §4.6), labelled
  *     `nette-magic`.
  * Other capabilities (templating references, routes, config) land in later
@@ -691,6 +702,9 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   },
   neon: {
     supportsConfigIntelligence: true,
+  },
+  latte: {
+    supportsTemplateIntelligence: true,
   },
 };
 
@@ -1188,6 +1202,19 @@ export function phpFrameworkSupportsNeonConfigIntelligence(
 ): boolean {
   return providers.some(
     (provider) => provider.neon?.supportsConfigIntelligence === true,
+  );
+}
+
+/**
+ * Whether any active provider ships semantic Latte template intelligence. Today
+ * this is a Nette capability, but the application layer only asks the provider
+ * boundary.
+ */
+export function phpFrameworkSupportsLatteTemplateIntelligence(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) => provider.latte?.supportsTemplateIntelligence === true,
   );
 }
 

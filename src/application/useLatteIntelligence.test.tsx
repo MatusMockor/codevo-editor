@@ -26,6 +26,11 @@ const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
   profile: "generic",
   providers: [],
 });
+const STALE_NETTE_PROFILE_WITHOUT_PROVIDER = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "nette",
+  providers: [],
+});
 
 /**
  * Builds an in-memory workspace tree from a list of workspace-relative `.latte`
@@ -504,7 +509,28 @@ describe("createLatteIntelligence completions", () => {
     const { listDirectory } = buildWorkspace([
       "app/UI/Home/partials/menu.latte",
     ]);
-    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, listDirectory });
+    const deps = makeDeps({
+      frameworkIntelligence: GENERIC_FRAMEWORK,
+      listDirectory,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{include ''}";
+    const offset = source.indexOf("''") + 1;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("returns nothing for a stale Nette profile without the provider capability", async () => {
+    const listDirectory = vi.fn(async () => {
+      throw new Error("should not scan without the provider capability");
+    });
+    const deps = makeDeps({
+      frameworkIntelligence: STALE_NETTE_PROFILE_WITHOUT_PROVIDER,
+      listDirectory,
+    });
     const latte = createLatteIntelligence(() => deps);
     const source = "{include ''}";
     const offset = source.indexOf("''") + 1;

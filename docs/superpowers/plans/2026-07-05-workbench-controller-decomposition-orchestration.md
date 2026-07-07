@@ -1168,6 +1168,16 @@ Integration order:
     - Verified with focused literal navigation, lifecycle, Git diff close,
       Latte/NEON/provider tests, full `useWorkbenchController.preview.test.tsx`,
       `npm run check`, and full suite.
+17. Third post-stop product-boundary slice completed:
+    - Framework literal completions for route/view/config/translation/env now
+      dispatch through `src/application/phpFrameworkLiteralCompletions.ts`.
+    - Semantic Latte template intelligence now gates through the framework
+      provider capability `phpFrameworkSupportsLatteTemplateIntelligence`.
+    - Workspace session persistence helpers now live in
+      `src/application/documentSessionState.ts` instead of the controller.
+    - Verified with focused completion/navigation, Latte/provider, session/Git
+      diff tests, full `useWorkbenchController.preview.test.tsx`, `npm run
+      check`, and full suite.
 
 Current operational goal:
 

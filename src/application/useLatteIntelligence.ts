@@ -69,9 +69,10 @@ import {
   netteViewDataEntryFromSource,
 } from "../domain/netteViewData";
 import type { NetteTemplateProperty } from "../domain/netteViewData";
-import type {
-  PhpFrameworkViewDataEntry,
-  PhpFrameworkViewDataVariable,
+import {
+  phpFrameworkSupportsLatteTemplateIntelligence,
+  type PhpFrameworkViewDataEntry,
+  type PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
 import {
   orderPhpMemberCompletionsByCategory,
@@ -893,7 +894,12 @@ export function useLatteIntelligence(
 }
 
 function isLatteSemanticActive(deps: LatteIntelligenceDependencies): boolean {
-  return deps.frameworkIntelligence.isNette && deps.isSemanticIntelligenceActive;
+  return (
+    deps.isSemanticIntelligenceActive &&
+    phpFrameworkSupportsLatteTemplateIntelligence(
+      deps.frameworkIntelligence.providers,
+    )
+  );
 }
 
 /**

@@ -22,6 +22,14 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import {
+  currentWorkspaceSession,
+  isPersistableEditorDocumentPath,
+  isSessionPathInWorkspace,
+  restoredActivePath,
+  restoredBottomPanelView,
+  workspaceSessionsEqual,
+} from "./documentSessionState";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
@@ -72,6 +80,7 @@ import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
+import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import {
@@ -318,11 +327,6 @@ import {
   phpLaravelDatabaseConnectionReferenceContextAt,
 } from "../domain/phpLaravelDatabase";
 import {
-  phpLaravelConfigCompletionInsertText,
-} from "../domain/phpLaravelConfig";
-import {
-  phpLaravelEnvCompletionInsertText,
-  phpLaravelEnvReferenceContextAt,
   phpLaravelEnvTargetFromSource,
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
@@ -351,24 +355,13 @@ import {
   phpLaravelStorageDiskReferenceContextAt,
 } from "../domain/phpLaravelStorage";
 import {
-  phpLaravelJsonTranslationCompletionInsertText,
-  phpLaravelTranslationCompletionInsertText,
-} from "../domain/phpLaravelTranslations";
-import {
-  phpLaravelViewCompletionInsertText,
-} from "../domain/phpLaravelViews";
-import {
   phpCurrentClassName,
 } from "../domain/phpSemanticEngine";
 import {
-  phpFrameworkConfigReferenceAt,
-  phpFrameworkRouteReferenceAt,
   phpFrameworkSupportsRoutes,
-  phpFrameworkTranslationReferenceAt,
   phpFrameworkSupportsViews,
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
-  phpFrameworkViewReferenceAt,
   phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
@@ -5568,133 +5561,31 @@ export function useWorkbenchController(
         return [];
       }
 
-      const namedRouteContext = phpFrameworkRouteReferenceAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
-      );
-
-      if (namedRouteContext && activeDocument) {
-        const normalizedPrefix = namedRouteContext.prefix.toLowerCase();
-        const routes = await collectPhpLaravelNamedRouteTargets(
+      const literalCompletions = await resolvePhpFrameworkLiteralCompletions(
+        {
+          activeDocument: activeDocument
+            ? {
+                content: source,
+                path: activeDocument.path,
+              }
+            : null,
+          isLaravelFrameworkActive,
+          position,
+          providers: activePhpFrameworkProviders,
           source,
-          activeDocument.path,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return routes
-          .filter((route) =>
-            route.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((route) => ({
-            declaringClassName: route.relativePath ?? getFileName(route.path),
-            insertText: phpNamedRouteCompletionInsertText(
-              route.name,
-              namedRouteContext.prefix,
-            ),
-            kind: "route",
-            name: route.name,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const translationContext = phpFrameworkTranslationReferenceAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
+        },
+        {
+          collectConfigTargets: collectPhpLaravelConfigTargets,
+          collectEnvTargets: collectPhpLaravelEnvTargets,
+          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
+          collectTranslationTargets: collectPhpLaravelTranslationTargets,
+          collectViewTargets: collectPhpLaravelViewTargets,
+          isRequestStillCurrent: isRequestedRootActive,
+        },
       );
 
-      if (translationContext && activeDocument) {
-        const normalizedPrefix = translationContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelTranslationTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.key.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: target.relativePath.endsWith(".json")
-              ? phpLaravelJsonTranslationCompletionInsertText(
-                  target.key,
-                  translationContext.prefix,
-                )
-              : phpLaravelTranslationCompletionInsertText(
-                  target.key,
-                  translationContext.prefix,
-                ),
-            kind: "translation",
-            name: target.key,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const envContext = phpLaravelEnvReferenceContextAt(source, position);
-
-      if (isLaravelFrameworkActive && envContext && activeDocument) {
-        const normalizedPrefix = envContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelEnvTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelEnvCompletionInsertText(target.name),
-            kind: "env",
-            name: target.name,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const configContext = phpFrameworkConfigReferenceAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
-      );
-
-      if (configContext && activeDocument) {
-        const normalizedPrefix = configContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelConfigTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.key.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelConfigCompletionInsertText(
-              target.key,
-              configContext.prefix,
-            ),
-            kind: "config",
-            name: target.key,
-            parameters: "",
-            returnType: null,
-          }));
+      if (literalCompletions !== null) {
+        return literalCompletions;
       }
 
       const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
@@ -6064,36 +5955,6 @@ export function useWorkbenchController(
             ),
             kind: "config",
             name: target.diskName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const viewContext = phpFrameworkViewReferenceAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
-      );
-
-      if (viewContext && activeDocument) {
-        const normalizedPrefix = viewContext.prefix.toLowerCase();
-        const views = await collectPhpLaravelViewTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return views
-          .filter((view) => view.name.toLowerCase().startsWith(normalizedPrefix))
-          .slice(0, 80)
-          .map((view) => ({
-            declaringClassName: view.relativePath,
-            insertText: phpLaravelViewCompletionInsertText(
-              view.name,
-              viewContext.prefix,
-            ),
-            kind: "view",
-            name: view.name,
             parameters: "",
             returnType: null,
           }));
@@ -13494,88 +13355,6 @@ function reindexStartMessage(mode: WorkspaceReindexMode): string {
   return "Index scan started.";
 }
 
-function restoredActivePath(
-  activePath: string | null,
-  restoredPaths: string[],
-): string | null {
-  if (activePath && restoredPaths.includes(activePath)) {
-    return activePath;
-  }
-
-  return restoredPaths[0] || null;
-}
-
-function isPersistableEditorDocumentPath(path: string): boolean {
-  return !path.startsWith("mockor-git-diff:") &&
-    !path.startsWith("mockor-git-history-diff:");
-}
-
-function currentWorkspaceSession(
-  rootPath: string,
-  openPaths: string[],
-  activePath: string | null,
-  sidebarView: SidebarView,
-  bottomPanelView: BottomPanelView,
-): WorkspaceSessionState {
-  const sessionPaths = openPaths.filter(
-    (path) =>
-      isPersistableEditorDocumentPath(path) &&
-      isSessionPathInWorkspace(rootPath, path),
-  );
-
-  return {
-    activePath:
-      activePath && sessionPaths.includes(activePath) ? activePath : null,
-    bottomPanelView: persistedBottomPanelView(bottomPanelView),
-    openPaths: sessionPaths,
-    sidebarView,
-  };
-}
-
-function restoredBottomPanelView(
-  view: WorkspaceSessionState["bottomPanelView"],
-): WorkspaceSessionState["bottomPanelView"] {
-  if (view === "terminal") {
-    return "problems";
-  }
-
-  return view;
-}
-
-function persistedBottomPanelView(
-  view: WorkspaceSessionState["bottomPanelView"],
-): WorkspaceSessionState["bottomPanelView"] {
-  if (view === "terminal") {
-    return "problems";
-  }
-
-  return view;
-}
-
-function workspaceSessionsEqual(
-  left: WorkspaceSessionState,
-  right: WorkspaceSessionState,
-): boolean {
-  return (
-    left.activePath === right.activePath &&
-    left.bottomPanelView === right.bottomPanelView &&
-    left.sidebarView === right.sidebarView &&
-    left.openPaths.length === right.openPaths.length &&
-    left.openPaths.every((path, index) => path === right.openPaths[index])
-  );
-}
-
-function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
-  const root = normalizedSessionPath(rootPath);
-  const candidate = normalizedSessionPath(path);
-
-  if (candidate === root) {
-    return true;
-  }
-
-  return candidate.startsWith(`${root}/`);
-}
-
 function isJavaScriptTypeScriptDocumentSyncableForRoot(
   rootPath: string,
   document: EditorDocument,
@@ -13610,19 +13389,6 @@ function isJavaScriptTypeScriptNavigationPath(path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
-}
-
-function phpNamedRouteCompletionInsertText(
-  routeName: string,
-  prefix: string,
-): string {
-  const lastDotIndex = prefix.lastIndexOf(".");
-
-  if (lastDotIndex < 0) {
-    return routeName;
-  }
-
-  return routeName.slice(lastDotIndex + 1);
 }
 
 function javaScriptTypeScriptLanguageServerConfiguration(
