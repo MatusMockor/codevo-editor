@@ -469,6 +469,7 @@ const LATTE_TEMPLATE_TYPE_CACHE_TTL_MS = 5_000;
 const MAX_LATTE_TYPE_RESOLUTION_DEPTH = 8;
 const PHP_EXTENSION = ".php";
 const PRESENTER_SUFFIX = "Presenter.php";
+const CONTROL_SUFFIX = "Control.php";
 
 /**
  * TTL for the per-root discovered `Presenter:action` link-target listing (spec
@@ -3231,11 +3232,10 @@ async function scanNetteTemplateTypeProperties(
  * (`beforeRender`, bare `render()`), so a variable shared across every action is
  * matched too. Derived from the template path via the inverse presenter mapping.
  *
- * SCOPE: presenters only. The extractor also emits bindings for `*Control`
- * classes, but a component's template lives beside its `SomethingControl.php`
- * with no path-mapping convention this inverse lookup covers yet, so control
- * templates get no presenter data in this slice - component/control template
- * intelligence is the spec's Phase 2 (`createComponent*` factories, §9).
+ * Component/control templates are included through the colocated
+ * `SomethingControl.php` inverse mapping, so view data assigned by a control's
+ * `render*` / lifecycle methods feeds both `$variable` completion and
+ * `{$variable->}` member completion in `something.latte`.
  */
 function latteCandidateViewNames(
   deps: LatteIntelligenceDependencies,
@@ -3250,19 +3250,30 @@ function latteCandidateViewNames(
   const action = latteActionFromTemplatePath(templateRelativePath);
   const names = new Set<string>();
 
-  for (const presenterPath of presenterCandidatePathsForTemplate(
-    templateRelativePath,
-  )) {
+  for (const presenterPath of [
+    ...presenterCandidatePathsForTemplate(templateRelativePath),
+    ...componentClassCandidatePathsForTemplate(templateRelativePath),
+  ]) {
     const fileName = presenterPath.split("/").pop() ?? "";
+    const isControl = fileName.endsWith(CONTROL_SUFFIX);
+    const suffix = fileName.endsWith(PRESENTER_SUFFIX)
+      ? PRESENTER_SUFFIX
+      : isControl
+        ? CONTROL_SUFFIX
+        : null;
 
-    if (!fileName.endsWith(PRESENTER_SUFFIX)) {
+    if (!suffix) {
       continue;
     }
 
-    const shortName = fileName.slice(0, -PRESENTER_SUFFIX.length);
+    const shortName = fileName.slice(0, -suffix.length);
 
     names.add(`${shortName}:${action}`);
     names.add(`${shortName}:*`);
+
+    if (isControl) {
+      names.add(`${shortName}:default`);
+    }
   }
 
   return Array.from(names);

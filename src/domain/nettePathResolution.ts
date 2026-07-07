@@ -218,9 +218,11 @@ export function presenterCandidatePathsForTemplate(
  *
  * Nette projects commonly keep component templates next to their backing class:
  * `Components/ApiConsoleControl/api_console.latte` is rendered by
- * `Components/ApiConsoleControl/ApiConsoleControl.php`. This is intentionally a
- * conservative colocated-only strategy; parent presenters and service factories
- * are still resolved by the integration layer's existing presenter candidates.
+ * `Components/ApiConsoleControl/ApiConsoleControl.php`. Some projects put the
+ * same files under a nested `templates/` directory; that remains colocated with
+ * the parent component directory. This is intentionally a conservative
+ * colocated-only strategy; parent presenters and service factories are still
+ * resolved by the integration layer's existing presenter candidates.
  */
 export function componentClassCandidatePathsForTemplate(
   templateRelativePath: string,
@@ -285,11 +287,14 @@ function modernPresenterCandidate(dir: string): string[] {
 }
 
 function componentClassCandidate(dir: string, fileName: string): string[] {
-  if (!hasComponentsSegment(dir)) {
+  const candidateDir =
+    basenameOf(dir) === "templates" ? parentDirOf(dir) : dir;
+
+  if (!hasComponentsSegment(candidateDir)) {
     return [];
   }
 
-  const dirName = basenameOf(dir);
+  const dirName = basenameOf(candidateDir);
 
   if (!isUsableIdentifier(dirName)) {
     return [];
@@ -323,7 +328,7 @@ function componentClassCandidate(dir: string, fileName: string): string[] {
   return dedupe(
     candidates
       .filter(isUsableIdentifier)
-      .map((candidate) => joinRelative(dir, `${candidate}.php`)),
+      .map((candidate) => joinRelative(candidateDir, `${candidate}.php`)),
   );
 }
 

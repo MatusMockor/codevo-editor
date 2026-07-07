@@ -1354,6 +1354,50 @@ class UsersAdminPresenter extends BasePresenter
     );
   });
 
+  it("resolves component template variables from the colocated control class", async () => {
+    const controlSource = `<?php
+namespace App\\Components\\ProductList;
+
+class ProductListControl extends Nette\\Application\\UI\\Control
+{
+    public function render(): void
+    {
+        /** @var \\App\\Model\\Product $product */
+        $product = $this->products->get(1);
+        $this->template->product = $product;
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/Components/ProductList/ProductListControl.php": controlSource,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/Components/ProductList/product_list.latte`,
+      }),
+      readFileContent,
+      resolvePhpReceiverCompletions: vi.fn(async () => []),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$product->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "product",
+      "\\App\\Model\\Product",
+    );
+  });
+
   it("matches a wildcard presenter binding (beforeRender applies to every action)", async () => {
     const { readFileContent, searchText } = buildNettePresenterWorkspace({
       "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
@@ -1642,6 +1686,42 @@ class ParentalControlsAdminPresenter extends BasePresenter
     expect(searchText).toHaveBeenCalledWith(ROOT, "template->add(", 200);
     expect(completions.find((completion) => completion.label === "$range"))
       .toMatchObject({ detail: "presenter data" });
+  });
+
+  it("lists variables assigned by a colocated control class in its component template", async () => {
+    const controlSource = `<?php
+namespace App\\Components\\ProductList;
+
+class ProductListControl extends Nette\\Application\\UI\\Control
+{
+    public function render(): void
+    {
+        /** @var \\App\\Model\\Product $product */
+        $product = $this->products->get(1);
+        $this->template->product = $product;
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/Components/ProductList/ProductListControl.php": controlSource,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/Components/ProductList/product_list.latte`,
+      }),
+      readFileContent,
+      searchText,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.find((completion) => completion.label === "$product"))
+      .toMatchObject({ detail: "presenter data · Product" });
   });
 
   it("lists named render/action parameters from a parameter-only presenter", async () => {

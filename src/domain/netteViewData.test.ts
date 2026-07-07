@@ -358,6 +358,62 @@ class GalleryPresenter extends BasePresenter
     ]);
   });
 
+  it("maps bare Control::render() template assignments to the default component template", () => {
+    const source = `<?php
+
+class CartSummaryControl extends Nette\\Application\\UI\\Control
+{
+    public function render(): void
+    {
+        $this->template->cart = $this->cart;
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "CartSummary:default",
+        variables: [
+          {
+            detail: "template data",
+            name: "$cart",
+            typeHint: null,
+            valueExpression: "$this->cart",
+            valueOffset: source.indexOf("$this->cart;"),
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps bare Presenter::render() assignments as wildcard view data", () => {
+    const source = `<?php
+
+class ProductPresenter extends BasePresenter
+{
+    public function render(): void
+    {
+        $this->template->shared = $this->shared;
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "Product:*",
+        variables: [
+          {
+            detail: "template data",
+            name: "$shared",
+            typeHint: null,
+            valueExpression: "$this->shared",
+            valueOffset: source.indexOf("$this->shared;"),
+          },
+        ],
+      },
+    ]);
+  });
+
   it("infers a display type hint from a local new-instance assignment", () => {
     const source = `<?php
 

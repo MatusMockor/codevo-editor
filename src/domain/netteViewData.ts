@@ -11,18 +11,19 @@
  *
  * ## viewName format (documented contract)
  *
- * Every binding's `viewName` is `"<Presenter>:<action>"` where:
- *   - `<Presenter>` is the class short name with a trailing `Presenter`/`Control`
+ * Every binding's `viewName` is `"<Owner>:<action>"` where:
+ *   - `<Owner>` is the class short name with a trailing `Presenter`/`Control`
  *     suffix stripped (`ProductPresenter` -> `Product`), matching the Nette link
  *     target convention. The controller pairs it with a template file through
  *     `nettePathResolution`.
  *   - `<action>` is derived from the assigning method:
  *       * `renderShow` / `actionShow`  -> `show` (first letter lowercased).
  *       * `renderDefault` / `actionDefault` -> `default`.
+ *       * control `render()` -> `default` (the colocated component template).
  *       * bare `render()` / `action()`, `startup`, `beforeRender`, or any other
- *         (helper) method -> `*` (a WILDCARD action: the variable applies to
- *         EVERY action of that presenter, because these run for all actions and
- *         the concrete action cannot be known statically).
+ *         presenter/helper method -> `*` (a WILDCARD action: the variable
+ *         applies to EVERY action of that presenter, because these run for all
+ *         actions and the concrete action cannot be known statically).
  *
  * So `Product:show` binds variables of the `show` action; `Product:*` binds
  * variables shared by every action of `ProductPresenter`.
@@ -85,6 +86,13 @@ interface NetteViewDataSighting {
   viewName: string;
 }
 
+type NetteViewOwnerKind = "presenter" | "control";
+
+interface NetteViewOwner {
+  kind: NetteViewOwnerKind;
+  name: string;
+}
+
 const TEMPLATE_RECEIVER = String.raw`\$(?:this\s*->\s*template|template)`;
 const TEMPLATE_PROPERTY_ASSIGNMENT = new RegExp(
   TEMPLATE_RECEIVER + String.raw`\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?![=>])`,
@@ -111,18 +119,18 @@ export function netteViewDataEntryFromSource(
 }
 
 function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
-  const presenterName = nettePresenterShortName(source);
+  const owner = netteViewOwner(source);
 
-  if (!presenterName) {
+  if (!owner) {
     return [];
   }
 
-  const ranges = presenterMethodRanges(source);
+  const ranges = presenterMethodRanges(source, owner.kind);
   const sightings = [
-    ...propertyAssignmentSightings(source, ranges, presenterName),
-    ...addCallSightings(source, ranges, presenterName),
-    ...setParametersSightings(source, ranges, presenterName),
-    ...methodParameterSightings(ranges, presenterName),
+    ...propertyAssignmentSightings(source, ranges, owner.name),
+    ...addCallSightings(source, ranges, owner.name),
+    ...setParametersSightings(source, ranges, owner.name),
+    ...methodParameterSightings(ranges, owner.name),
   ].sort((left, right) => left.offset - right.offset);
 
   const bindings = new Map<string, Map<string, PhpFrameworkViewDataVariable>>();
@@ -795,34 +803,43 @@ function typedPublicProperties(body: string): NetteTemplateProperty[] {
 }
 
 /**
- * Returns the short name of the FIRST class in `source` whose name ends with
- * `Presenter` / `Control` (the suffix stripped), or `null` when no such class
- * exists. Conservative on two fronts: an unrelated class declared earlier in
- * the file (a `*Template` entity, a helper service) is skipped rather than
- * mistaken for the presenter, and an anonymous `new class extends X { ... }`
- * expression is never matched at all - `(?!extends\b|implements\b)` rejects a
- * "class" token immediately followed by `extends`/`implements` with no name
- * in between, which is exactly the anonymous-class shape.
+ * Returns the FIRST view-owning class in `source` whose name ends with
+ * `Presenter` / `Control`, or `null` when no such class exists. Conservative on
+ * two fronts: an unrelated class declared earlier in the file (a `*Template`
+ * entity, a helper service) is skipped rather than mistaken for the owner, and
+ * an anonymous `new class extends X { ... }` expression is never matched at all
+ * - `(?!extends\b|implements\b)` rejects a "class" token immediately followed
+ * by `extends`/`implements` with no name in between, which is exactly the
+ * anonymous-class shape.
  */
-function nettePresenterShortName(source: string): string | null {
+function netteViewOwner(source: string): NetteViewOwner | null {
   const pattern = /\bclass\s+(?!extends\b|implements\b)([A-Za-z_][A-Za-z0-9_]*)/g;
 
   for (const match of source.matchAll(pattern)) {
     const className = match[1] ?? "";
 
     if (className.endsWith("Presenter")) {
-      return className.slice(0, -"Presenter".length);
+      return {
+        kind: "presenter",
+        name: className.slice(0, -"Presenter".length),
+      };
     }
 
     if (className.endsWith("Control")) {
-      return className.slice(0, -"Control".length);
+      return {
+        kind: "control",
+        name: className.slice(0, -"Control".length),
+      };
     }
   }
 
   return null;
 }
 
-function presenterMethodRanges(source: string): NetteMethodRange[] {
+function presenterMethodRanges(
+  source: string,
+  ownerKind: NetteViewOwnerKind,
+): NetteMethodRange[] {
   const ranges: NetteMethodRange[] = [];
   const pattern = /\bfunction\s+&?([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
@@ -847,7 +864,7 @@ function presenterMethodRanges(source: string): NetteMethodRange[] {
     }
 
     ranges.push({
-      action: actionFromMethodName(match[1] ?? ""),
+      action: actionFromMethodName(match[1] ?? "", ownerKind),
       bodyEnd,
       bodyStart,
       methodName: match[1] ?? "",
@@ -949,11 +966,18 @@ function methodParameterType(beforeVariable: string): string | null {
   return type && type !== "function" ? type : null;
 }
 
-function actionFromMethodName(name: string): string {
+function actionFromMethodName(
+  name: string,
+  ownerKind: NetteViewOwnerKind,
+): string {
   const match = /^(?:render|action)([A-Z][A-Za-z0-9_]*)$/.exec(name);
   const suffix = match?.[1] ?? "";
 
   if (!suffix) {
+    if (ownerKind === "control" && name === "render") {
+      return "default";
+    }
+
     return "*";
   }
 

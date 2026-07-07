@@ -320,6 +320,16 @@ describe("componentClassCandidatePathsForTemplate", () => {
       "app/modules/apiModule/Components/ApiConsole/ApiConsoleWidget.php",
     ]);
   });
+
+  it("maps a nested component templates/default.latte file to the parent control class", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/modules/shopModule/Components/CartSummaryControl/templates/default.latte",
+      ),
+    ).toEqual([
+      "app/modules/shopModule/Components/CartSummaryControl/CartSummaryControl.php",
+    ]);
+  });
 });
 
 describe("componentTemplateCandidatePathsForClass", () => {
