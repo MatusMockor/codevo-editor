@@ -33,7 +33,6 @@
 import { useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
-  LATTE_TAGS,
   detectLatteIncludeCompletionAt,
   detectLatteReferenceAt,
   detectLatteTagCompletionAt,
@@ -51,9 +50,6 @@ import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
 import {
   detectNetteCreateComponentAt,
 } from "../domain/netteComponents";
-import {
-  LATTE_BUILTIN_FILTERS,
-} from "../domain/latteSyntax";
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
@@ -102,10 +98,15 @@ import {
   latteExpressionCompletionTargetAt,
   latteMemberReferenceAt,
   latteVariableNameAt,
-  type LatteFilterCompletionContext,
   type LatteMemberAccess,
   type LatteVariableCompletionContext,
 } from "./latteExpressionDetection";
+import {
+  latteFilterCompletions as buildLatteFilterCompletions,
+  latteMemberCompletionItem,
+  latteTagCompletions as buildLatteTagCompletions,
+  type LatteCompletionItem,
+} from "./latteCompletionItems";
 import {
   latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
@@ -127,34 +128,10 @@ import {
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
-
-/**
- * The Monaco icon bucket a Latte completion maps to: tag → keyword,
- * template → file, variable → `{$var}` template variable, member → `{$var->}`
- * property/method, filter → `|filter` name.
- */
-export type LatteCompletionItemKind =
-  | "tag"
-  | "template"
-  | "variable"
-  | "member"
-  | "filter"
-  | "link"
-  | "component";
-
-/**
- * A Latte completion the hook hands to the Monaco "latte" provider. Structurally
- * compatible with the provider's `LatteCompletion`; kept local so the application
- * layer does not depend on the components layer (mirrors `BladeCompletionItem`).
- */
-export interface LatteCompletionItem {
-  detail?: string;
-  insertText: string;
-  kind: LatteCompletionItemKind;
-  label: string;
-  replaceStart?: number;
-  replaceEnd?: number;
-}
+export type {
+  LatteCompletionItem,
+  LatteCompletionItemKind,
+} from "./latteCompletionItems";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
 export interface LatteIntelligenceActiveDocument {
@@ -655,7 +632,12 @@ export function createLatteIntelligence(
     const tagCompletion = detectLatteTagCompletionAt(source, offset);
 
     if (tagCompletion) {
-      return latteTagCompletions(tagCompletion.prefix, tagCompletion.start, offset);
+      return buildLatteTagCompletions(
+        tagCompletion.prefix,
+        tagCompletion.start,
+        offset,
+        LATTE_MAX_COMPLETIONS,
+      );
     }
 
     if (isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
@@ -936,27 +918,6 @@ function evictOtherRootCacheEntries<Entry>(
   }
 }
 
-function latteTagCompletions(
-  prefix: string,
-  braceStart: number,
-  offset: number,
-): LatteCompletionItem[] {
-  const normalizedPrefix = prefix.toLowerCase();
-
-  return LATTE_TAGS.filter((tag) =>
-    tag.toLowerCase().startsWith(normalizedPrefix),
-  )
-    .slice(0, LATTE_MAX_COMPLETIONS)
-    .map((tag) => ({
-      detail: "Latte tag",
-      insertText: tag,
-      kind: "tag" as const,
-      label: tag,
-      replaceEnd: offset,
-      replaceStart: braceStart + 1,
-    }));
-}
-
 // --- expression completions (member / filter / variable) -------------------
 
 /**
@@ -1138,7 +1099,7 @@ async function latteExpressionCompletions(
   }
 
   if (target.kind === "filter") {
-    return latteFilterCompletions(target.filter);
+    return buildLatteFilterCompletions(target.filter, LATTE_MAX_COMPLETIONS);
   }
 
   return latteVariableCompletions(context, source, offset, target.variable);
@@ -1189,26 +1150,6 @@ async function latteMemberCompletions(
     .filter((entry) => entry.name.toLowerCase().startsWith(normalizedPrefix))
     .slice(0, LATTE_MAX_COMPLETIONS)
     .map((entry) => latteMemberCompletionItem(entry, member.start, member.end));
-}
-
-/** `|filter` completion from the static Latte 3 built-in filter list. */
-function latteFilterCompletions(
-  filter: LatteFilterCompletionContext,
-): LatteCompletionItem[] {
-  const normalizedPrefix = filter.prefix.toLowerCase();
-
-  return LATTE_BUILTIN_FILTERS.filter((name) =>
-    name.toLowerCase().startsWith(normalizedPrefix),
-  )
-    .slice(0, LATTE_MAX_COMPLETIONS)
-    .map((name) => ({
-      detail: "Latte filter",
-      insertText: name,
-      kind: "filter" as const,
-      label: name,
-      replaceEnd: filter.end,
-      replaceStart: filter.start,
-    }));
 }
 
 /**
@@ -1402,45 +1343,6 @@ async function latteCandidateViewNames(
     requestedRoot,
     templateRelativePath,
   });
-}
-
-function latteMemberCompletionItem(
-  member: PhpMethodCompletion,
-  start: number,
-  end: number,
-): LatteCompletionItem {
-  return {
-    detail: latteMemberCompletionDetail(member),
-    insertText: latteMemberCompletionInsertText(member),
-    kind: "member",
-    label: member.name,
-    replaceEnd: end,
-    replaceStart: start,
-  };
-}
-
-function latteMemberCompletionInsertText(member: PhpMethodCompletion): string {
-  if (member.insertText) {
-    return member.insertText;
-  }
-
-  if (member.kind === "property" || member.kind === "relation") {
-    return member.name;
-  }
-
-  return `${member.name}()`;
-}
-
-function latteMemberCompletionDetail(member: PhpMethodCompletion): string {
-  const returnType = member.returnType ? `: ${member.returnType}` : "";
-
-  if (member.kind === "property" || member.kind === "relation") {
-    return `${member.declaringClassName}::${member.name}${returnType}`;
-  }
-
-  const parameters = member.parameters ? `(${member.parameters})` : "()";
-
-  return `${member.declaringClassName}::${member.name}${parameters}${returnType}`;
 }
 
 function resolveLatteBlockDefinition(
