@@ -29,6 +29,13 @@ class ProductPresenter extends BasePresenter
         viewName: "Product:show",
         variables: [
           {
+            detail: "render/action parameter",
+            name: "$id",
+            typeHint: "int",
+            valueExpression: "$id",
+            valueOffset: source.indexOf("$id"),
+          },
+          {
             detail: "template data",
             name: "$product",
             typeHint: "Product",
@@ -68,6 +75,13 @@ class OrderPresenter extends BasePresenter
         viewName: "Order:detail",
         variables: [
           {
+            detail: "render/action parameter",
+            name: "$id",
+            typeHint: "int",
+            valueExpression: "$id",
+            valueOffset: source.indexOf("$id"),
+          },
+          {
             detail: "template setParameters()",
             name: "$order",
             typeHint: null,
@@ -106,6 +120,13 @@ class ParentalControlsAdminPresenter extends BasePresenter
       {
         viewName: "ParentalControlsAdmin:show",
         variables: [
+          {
+            detail: "render/action parameter",
+            name: "$id",
+            typeHint: "string",
+            valueExpression: "$id",
+            valueOffset: source.indexOf("$id"),
+          },
           {
             detail: "template add()",
             name: "$range",
@@ -168,6 +189,78 @@ class ProfilePresenter extends BasePresenter
         typeHint: "TypedCurrentUser",
         valueExpression: "$this->currentUser",
         valueOffset: source.indexOf("$this->currentUser;"),
+      },
+    ]);
+  });
+
+  it("exposes named render/action method parameters as template variables", () => {
+    const source = `<?php
+
+use App\\Model\\Product;
+
+class ProductPresenter extends BasePresenter
+{
+    public function actionShow(int $id): void
+    {
+    }
+
+    public function renderShow(Product $product, ?string $tab = null): void
+    {
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "Product:show",
+        variables: [
+          {
+            detail: "render/action parameter",
+            name: "$id",
+            typeHint: "int",
+            valueExpression: "$id",
+            valueOffset: source.indexOf("$id"),
+          },
+          {
+            detail: "render/action parameter",
+            name: "$product",
+            typeHint: "Product",
+            valueExpression: "$product",
+            valueOffset: source.indexOf("$product"),
+          },
+          {
+            detail: "render/action parameter",
+            name: "$tab",
+            typeHint: "?string",
+            valueExpression: "$tab",
+            valueOffset: source.indexOf("$tab"),
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("lets explicit template assignments override same-named render parameters", () => {
+    const source = `<?php
+
+class ProductPresenter extends BasePresenter
+{
+    public function renderShow(Product $product): void
+    {
+        $this->template->product = $this->products->decorate($product);
+    }
+}
+`;
+
+    const [binding] = netteViewDataEntryFromSource(source).bindings;
+
+    expect(binding?.variables).toEqual([
+      {
+        detail: "template data",
+        name: "$product",
+        typeHint: null,
+        valueExpression: "$this->products->decorate($product)",
+        valueOffset: source.indexOf("$this->products"),
       },
     ]);
   });
@@ -385,6 +478,8 @@ class CommentController
       "->template->",
       "template->add(",
       "setParameters(",
+      "function render",
+      "function action",
     ]);
   });
 });

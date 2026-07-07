@@ -629,6 +629,53 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
+  it("navigates a same-file @alias::method reference to the aliased service type method", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openDirectPhpMethodTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = [
+      "services:",
+      "    mailer: App\\Mail\\Mailer",
+      "    publicMailer: @mailer",
+      "    consumer: @publicMailer::send",
+    ].join("\n");
+    const offset = source.indexOf("send") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Mail\\Mailer",
+      "send",
+    );
+  });
+
+  it("navigates a cross-file @alias::method reference to the aliased service type method", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    consumer: @publicMailer::send\n",
+      "config/services.neon": [
+        "services:",
+        "    mailer: App\\Mail\\Mailer",
+        "    publicMailer: @mailer",
+      ].join("\n"),
+    });
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openDirectPhpMethodTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    consumer: @publicMailer::send\n";
+    const offset = source.indexOf("send") + 2;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Mail\\Mailer",
+      "send",
+    );
+  });
+
   it("navigates a class-typed @service to an anonymous service in a module config", async () => {
     const { listDirectory, readFileContent } = buildNeonWorkspace({
       "config/config.neon":

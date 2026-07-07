@@ -40,6 +40,14 @@ export interface PhpFrameworkMemberMethodContext {
   source: string;
 }
 
+export interface PhpFrameworkMemberPropertyContext {
+  propertyName: string;
+  receiverClassName?: string | null;
+  receiverExpression: string;
+  sourceContext?: PhpFrameworkSourceContext;
+  source: string;
+}
+
 export interface PhpFrameworkPropertyTypeContext {
   propertyName: string;
   receiverType: string | null;
@@ -376,6 +384,9 @@ export interface PhpFrameworkProvider {
   };
   diagnostics?: {
     isKnownMemberMethod?: (context: PhpFrameworkMemberMethodContext) => boolean;
+    isKnownMemberProperty?: (
+      context: PhpFrameworkMemberPropertyContext,
+    ) => boolean;
     isKnownStaticMethod?: (context: PhpFrameworkStaticMethodContext) => boolean;
     /**
      * Optional diagnostic `source` label stamped on a framework-magic hint when
@@ -677,6 +688,31 @@ export function phpFrameworkMemberMethodMagicDiagnostic(
     if (
       provider.diagnostics?.isKnownMemberMethod?.({
         methodName,
+        receiverClassName,
+        receiverExpression,
+        source,
+        sourceContext,
+      })
+    ) {
+      return { source: provider.diagnostics.magicSource ?? null };
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkMemberPropertyMagicDiagnostic(
+  source: string,
+  receiverExpression: string,
+  propertyName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
+  receiverClassName?: string | null,
+): PhpFrameworkMagicDiagnosticMatch | null {
+  for (const provider of providers) {
+    if (
+      provider.diagnostics?.isKnownMemberProperty?.({
+        propertyName,
         receiverClassName,
         receiverExpression,
         source,

@@ -24,9 +24,9 @@
  *       receiverExpression,
  *     })
  *
- * The (future) known-PROPERTY capability wraps `isNetteTemplateMagicMember` and
- * `isNetteSmartObjectMagicProperty` the same way with the property name as
- * `memberName`.
+ * The known-PROPERTY capability wraps `isNetteTemplateMagicMember` the same way
+ * with the property name as `memberName`; SmartObject property support stays
+ * opt-in until the filter can bind annotations to the exact receiver class.
  */
 
 /**

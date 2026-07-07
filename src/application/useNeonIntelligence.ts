@@ -42,6 +42,7 @@ import {
   neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
+  neonServiceAliasesFromSource,
   neonServiceReferenceCompletionContextAt,
   neonServiceSetupMethodCompletionContextAt,
   neonServicesFromSource,
@@ -194,6 +195,7 @@ interface NeonDefinitionLocation {
 interface NeonProjectConfig {
   parameterNames: string[];
   parameters: Map<string, NeonDefinitionLocation>;
+  serviceAliases: Map<string, string>;
   serviceNameTypes: Map<string, string>;
   serviceNames: string[];
   services: Map<string, NeonDefinitionLocation>;
@@ -620,7 +622,11 @@ async function resolveNeonServiceType(
     return null;
   }
 
-  return config.serviceNameTypes.get(serviceName) ?? null;
+  return resolveNeonServiceTypeFromMaps(
+    serviceName,
+    config.serviceNameTypes,
+    config.serviceAliases,
+  );
 }
 
 /** The offset of the first `parameters:` leaf named `name` in `source`, or `null`. */
@@ -669,6 +675,7 @@ function neonServiceTypeInSource(source: string, name: string): string | null {
   const normalizedType = name.includes("\\")
     ? normalizeNeonServiceType(name)
     : null;
+  const serviceNameTypes = new Map<string, string>();
 
   for (const service of services) {
     const serviceType = neonResolvableServiceType(service);
@@ -677,17 +684,84 @@ function neonServiceTypeInSource(source: string, name: string): string | null {
       return serviceType;
     }
 
+    if (
+      service.serviceName &&
+      serviceType &&
+      !serviceNameTypes.has(service.serviceName)
+    ) {
+      serviceNameTypes.set(service.serviceName, serviceType);
+    }
+
     if (normalizedType && serviceType === normalizedType) {
       return serviceType;
     }
   }
 
   for (const generated of neonGeneratedServiceNamesFromServices(services)) {
-    if (generated.name !== name) {
+    const generatedType = neonResolvableServiceType(generated.service);
+
+    if (generated.name === name) {
+      return generatedType;
+    }
+
+    if (!generatedType || serviceNameTypes.has(generated.name)) {
       continue;
     }
 
-    return neonResolvableServiceType(generated.service);
+    serviceNameTypes.set(generated.name, generatedType);
+  }
+
+  return resolveNeonServiceTypeFromMaps(
+    name,
+    serviceNameTypes,
+    neonServiceAliasMapFromSource(source),
+  );
+}
+
+function neonServiceAliasMapFromSource(source: string): Map<string, string> {
+  const aliases = new Map<string, string>();
+
+  for (const alias of neonServiceAliasesFromSource(source)) {
+    if (!aliases.has(alias.serviceName)) {
+      aliases.set(alias.serviceName, alias.targetName);
+    }
+  }
+
+  return aliases;
+}
+
+function resolveNeonServiceTypeFromMaps(
+  name: string,
+  serviceNameTypes: ReadonlyMap<string, string>,
+  serviceAliases: ReadonlyMap<string, string>,
+): string | null {
+  let currentName = name;
+  const seen = new Set<string>();
+
+  for (let depth = 0; depth < 20; depth += 1) {
+    if (currentName.includes("\\")) {
+      return normalizeNeonServiceType(currentName);
+    }
+
+    const directType = serviceNameTypes.get(currentName);
+
+    if (directType) {
+      return directType;
+    }
+
+    if (seen.has(currentName)) {
+      return null;
+    }
+
+    seen.add(currentName);
+
+    const targetName = serviceAliases.get(currentName);
+
+    if (!targetName) {
+      return null;
+    }
+
+    currentName = targetName;
   }
 
   return null;
@@ -957,6 +1031,7 @@ function emptyNeonProjectConfig(): NeonProjectConfig {
   return {
     parameterNames: [],
     parameters: new Map(),
+    serviceAliases: new Map(),
     serviceNameTypes: new Map(),
     serviceNames: [],
     services: new Map(),
@@ -982,6 +1057,7 @@ async function scanNeonProjectConfig(
   }
 
   const parameters = new Map<string, NeonDefinitionLocation>();
+  const serviceAliases = new Map<string, string>();
   const serviceNameTypes = new Map<string, string>();
   const services = new Map<string, NeonDefinitionLocation>();
   const serviceTypes = new Map<string, NeonDefinitionLocation>();
@@ -1065,10 +1141,32 @@ async function scanNeonProjectConfig(
         serviceNameTypes.set(entry.name, generatedType);
       }
     }
+
+    for (const alias of neonServiceAliasesFromSource(content)) {
+      if (!serviceAliases.has(alias.serviceName)) {
+        serviceAliases.set(alias.serviceName, alias.targetName);
+      }
+    }
   }
 
   if (!isRequestedRootActive()) {
     return emptyNeonProjectConfig();
+  }
+
+  for (const [aliasName] of serviceAliases) {
+    if (serviceNameTypes.has(aliasName)) {
+      continue;
+    }
+
+    const aliasType = resolveNeonServiceTypeFromMaps(
+      aliasName,
+      serviceNameTypes,
+      serviceAliases,
+    );
+
+    if (aliasType) {
+      serviceNameTypes.set(aliasName, aliasType);
+    }
   }
 
   const config: NeonProjectConfig = {
@@ -1076,6 +1174,7 @@ async function scanNeonProjectConfig(
       left.localeCompare(right),
     ),
     parameters,
+    serviceAliases,
     serviceNameTypes,
     serviceNames: Array.from(services.keys()).sort((left, right) =>
       left.localeCompare(right),

@@ -47,7 +47,7 @@ export function isNettePhpProject(php: PhpProjectDescriptor): boolean {
  *     dispatch instead of direct Nette checks in the application hook.
  *   - `latte`: Latte template navigation/completions are enabled through
  *     provider dispatch instead of direct Nette checks in the application hook.
- *   - `diagnostics`: METHOD-level Nette magic suppression (spec §4.6), labelled
+ *   - `diagnostics`: Nette magic suppression (spec §4.6), labelled
  *     `nette-magic`.
  * Other capabilities (templating references, routes, config) land in later
  * slices; every dispatcher treats an absent capability as a safe no-op via
@@ -63,16 +63,14 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
     },
   ],
   diagnostics: {
-    // Method-level Nette magic suppression (spec §4.6): a call on the Latte
-    // template object (`$this->template->foo()`) or on a magically-obtained
-    // component (`$this->getComponent('x')->bar()`, `$this['x']->bar()`) is
-    // framework-provided at runtime, so phpactor's "does not exist" is a false
-    // positive - downgraded to a soft `nette-magic` hint, never dropped. The
-    // predicates default to false whenever the source lacks a
-    // presenter/control/component context, so a plain service is untouched.
-    // Bare magic PROPERTIES (`$this->template->invoice`) need the known-PROPERTY
-    // provider seam (a documented follow-up per the netteMagicDiagnostics
-    // header), and Nette has no static magic to suppress, so
+    // Nette magic suppression (spec §4.6): calls/properties on the Latte
+    // template object (`$this->template->foo`, `$this->template->foo()`) and
+    // calls on magically-obtained components (`$this->getComponent('x')->bar()`,
+    // `$this['x']->bar()`) are framework-provided at runtime, so phpactor's
+    // "does not exist" is a false positive - downgraded to a soft
+    // `nette-magic` hint, never dropped. The predicates default to false
+    // whenever the source lacks a presenter/control/component context, so a
+    // plain service is untouched. Nette has no static magic to suppress, so
     // `isKnownStaticMethod` is intentionally absent.
     isKnownMemberMethod: ({
       methodName,
@@ -83,6 +81,17 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       isNetteComponentAccess(source, { methodName, receiverExpression }) ||
       isNetteTemplateMagicMember(source, {
         memberName: methodName,
+        receiverClassName,
+        receiverExpression,
+      }),
+    isKnownMemberProperty: ({
+      propertyName,
+      receiverClassName,
+      receiverExpression,
+      source,
+    }) =>
+      isNetteTemplateMagicMember(source, {
+        memberName: propertyName,
         receiverClassName,
         receiverExpression,
       }),

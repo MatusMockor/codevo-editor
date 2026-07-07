@@ -49,14 +49,17 @@ import type {
  * `$this->template->x = ...` assignment idiom (and the `$template->x` form once
  * `$template = $this->template`); `template->add(` catches the Nette
  * `DefaultTemplate::add()` helper used in older CRM modules; `setParameters(`
- * matches the array form. Owned here (not the controller) so view-data
- * knowledge stays framework-owned, mirroring Laravel's
- * `laravelViewDataSearchQueries`.
+ * matches the array form. `function render` / `function action` discover
+ * parameter-only presenters whose action/render parameters are still part of
+ * the Latte context. Owned here (not the controller) so view-data knowledge
+ * stays framework-owned, mirroring Laravel's `laravelViewDataSearchQueries`.
  */
 export const NETTE_VIEW_DATA_SEARCH_QUERIES: readonly string[] = [
   "->template->",
   "template->add(",
   "setParameters(",
+  "function render",
+  "function action",
 ];
 
 /** A typed template property discovered on a custom Nette `Template` class. */
@@ -71,6 +74,9 @@ interface NetteMethodRange {
   action: string;
   bodyEnd: number;
   bodyStart: number;
+  methodName: string;
+  parameters: string;
+  parametersOffset: number;
 }
 
 interface NetteViewDataSighting {
@@ -116,6 +122,7 @@ function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
     ...propertyAssignmentSightings(source, ranges, presenterName),
     ...addCallSightings(source, ranges, presenterName),
     ...setParametersSightings(source, ranges, presenterName),
+    ...methodParameterSightings(ranges, presenterName),
   ].sort((left, right) => left.offset - right.offset);
 
   const bindings = new Map<string, Map<string, PhpFrameworkViewDataVariable>>();
@@ -131,6 +138,41 @@ function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
     variables: Array.from(variables.values()),
     viewName,
   }));
+}
+
+function methodParameterSightings(
+  ranges: readonly NetteMethodRange[],
+  presenterName: string,
+): NetteViewDataSighting[] {
+  const sightings: NetteViewDataSighting[] = [];
+
+  for (const range of ranges) {
+    if (!/^(?:render|action)[A-Z][A-Za-z0-9_]*$/.test(range.methodName)) {
+      continue;
+    }
+
+    for (const parameter of methodParameters(range.parameters)) {
+      if (!isSafeVariableName(parameter.name)) {
+        continue;
+      }
+
+      const valueOffset = range.parametersOffset + parameter.variableOffset;
+
+      sightings.push({
+        offset: valueOffset,
+        variable: {
+          detail: "render/action parameter",
+          name: `$${parameter.name}`,
+          typeHint: parameter.type,
+          valueExpression: `$${parameter.name}`,
+          valueOffset,
+        },
+        viewName: `${presenterName}:${range.action}`,
+      });
+    }
+  }
+
+  return sightings;
 }
 
 function addCallSightings(
@@ -808,10 +850,103 @@ function presenterMethodRanges(source: string): NetteMethodRange[] {
       action: actionFromMethodName(match[1] ?? ""),
       bodyEnd,
       bodyStart,
+      methodName: match[1] ?? "",
+      parameters: source.slice(parenOpen + 1, parenClose),
+      parametersOffset: parenOpen + 1,
     });
   }
 
   return ranges;
+}
+
+interface MethodParameter {
+  name: string;
+  type: string | null;
+  variableOffset: number;
+}
+
+function methodParameters(parameters: string): MethodParameter[] {
+  const parsed: MethodParameter[] = [];
+
+  for (const part of splitTopLevelParts(parameters, ",")) {
+    const withoutDefault = stripParameterDefault(part.text).trim();
+    const variableMatch = /\$(\w+)\b/.exec(withoutDefault);
+
+    if (!variableMatch?.[1] || variableMatch.index === undefined) {
+      continue;
+    }
+
+    const beforeVariable = withoutDefault.slice(0, variableMatch.index).trim();
+    const type = methodParameterType(beforeVariable);
+
+    parsed.push({
+      name: variableMatch[1],
+      type,
+      variableOffset:
+        part.offset + part.text.indexOf(variableMatch[0], variableMatch.index),
+    });
+  }
+
+  return parsed;
+}
+
+function stripParameterDefault(parameter: string): string {
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < parameter.length; index += 1) {
+    const character = parameter[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "=" && depth === 0) {
+      return parameter.slice(0, index);
+    }
+  }
+
+  return parameter;
+}
+
+function methodParameterType(beforeVariable: string): string | null {
+  const withoutPromotedVisibility = beforeVariable
+    .replace(/\b(?:public|protected|private|readonly)\s+/g, "")
+    .replace(/&\s*$/, "")
+    .replace(/\.\.\.\s*$/, "")
+    .trim();
+
+  if (!withoutPromotedVisibility) {
+    return null;
+  }
+
+  const type = normalizeType(withoutPromotedVisibility);
+
+  return type && type !== "function" ? type : null;
 }
 
 function actionFromMethodName(name: string): string {

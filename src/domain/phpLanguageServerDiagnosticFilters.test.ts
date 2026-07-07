@@ -98,6 +98,54 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
     expect(classified?.source).not.toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
   });
 
+  it("stamps a Nette template magic property with the nette-magic source label", () => {
+    const source = `<?php
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        $this->template->product = $this->product;
+    }
+}
+`;
+    const magic = diagnosticAt(source, "product = $this->product", {
+      message:
+        'Property "$product" does not exist on class "Nette\\Bridges\\ApplicationLatte\\DefaultTemplate"',
+    });
+
+    const [classified, ...rest] = filterPhpLanguageServerDiagnostics(
+      source,
+      [magic],
+      { frameworkProviders: [phpNetteFrameworkProvider] },
+    );
+
+    expect(rest).toEqual([]);
+    expect(classified?.severity).toBe("hint");
+    expect(classified?.source).toBe(NETTE_MAGIC_DIAGNOSTIC_SOURCE);
+    expect(classified?.source).not.toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
+  });
+
+  it("keeps Nette-looking template property diagnostics outside presenter/control context", () => {
+    const source = `<?php
+class ProductService
+{
+    public function run(): void
+    {
+        $this->template->product = 1;
+    }
+}
+`;
+    const unresolved = diagnosticAt(source, "product = 1", {
+      message: 'Property "$product" does not exist on class "ProductService"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [phpNetteFrameworkProvider],
+      }),
+    ).toEqual([unresolved]);
+  });
+
   it("uses the matching provider label when Laravel and Nette providers coexist", () => {
     const source = `<?php
 use App\\Models\\Album;
@@ -802,6 +850,7 @@ $comment?->missing();
       phpUnresolvedMemberPropertyDiagnosticContext(source, confirmed),
     ).toEqual({
       propertyName: "content",
+      receiverClassName: "App\\Models\\Comment",
       receiverExpression: "$comment",
     });
     expect(
@@ -975,6 +1024,7 @@ $post->localPosts->each(function (Post $localPost): void {
       ),
     ).toEqual({
       propertyName: "localPosts",
+      receiverClassName: "App\\Models\\Post",
       receiverExpression: "$post",
     });
   });

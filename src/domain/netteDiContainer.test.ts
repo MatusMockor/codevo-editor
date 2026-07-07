@@ -7,6 +7,7 @@ import {
   neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
   neonParametersFromSource,
+  neonServiceAliasesFromSource,
   neonServiceReferenceCompletionContextAt,
   neonServiceSetupMethodCompletionContextAt,
   neonServicesFromSource,
@@ -360,6 +361,29 @@ describe("neonServicesFromSource", () => {
       ["02", "Crm\\ApplicationModule\\Widget\\WidgetManager"],
       ["03", "Crm\\ApplicationModule\\Translator\\FrontendTranslator"],
     ]);
+  });
+});
+
+describe("neonServiceAliasesFromSource", () => {
+  it("extracts a named service alias target", () => {
+    const source =
+      "services:\n    mailer: App\\Mail\\Mailer\n    publicMailer: @mailer\n";
+
+    expect(neonServiceAliasesFromSource(source)).toEqual([
+      {
+        serviceName: "publicMailer",
+        targetName: "mailer",
+        offset: offsetOf(source, "publicMailer"),
+        targetSpan: spanOf(source, "@mailer"),
+      },
+    ]);
+  });
+
+  it("does not treat a factory service call as a plain alias", () => {
+    const source =
+      "services:\n    router: @routerFactory::createRouter\n";
+
+    expect(neonServiceAliasesFromSource(source)).toEqual([]);
   });
 });
 

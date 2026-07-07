@@ -1644,6 +1644,47 @@ class ParentalControlsAdminPresenter extends BasePresenter
       .toMatchObject({ detail: "presenter data" });
   });
 
+  it("lists named render/action parameters from a parameter-only presenter", async () => {
+    const presenterSource = `<?php
+namespace App\\UI\\Product;
+
+class ProductPresenter extends BasePresenter
+{
+    public function actionShow(int $id): void
+    {
+    }
+
+    public function renderShow(\\App\\Model\\Product $product): void
+    {
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/Product/ProductPresenter.php": presenterSource,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Product/show.latte`,
+      }),
+      readFileContent,
+      searchText,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(searchText).toHaveBeenCalledWith(ROOT, "function render", 200);
+    expect(searchText).toHaveBeenCalledWith(ROOT, "function action", 200);
+    expect(completions.find((completion) => completion.label === "$id"))
+      .toMatchObject({ detail: "presenter data · int" });
+    expect(completions.find((completion) => completion.label === "$product"))
+      .toMatchObject({ detail: "presenter data · Product" });
+  });
+
   it("loads Latte view data through the active provider capability", async () => {
     const presenterSource = "<?php\n$custom = new Custom();\nassignView();\n";
     const searchText = vi.fn(async (_root: string, query: string) =>
@@ -1819,7 +1860,7 @@ describe("createLatteIntelligence view-data cache lifecycle", () => {
     ]);
 
     // One call per search anchor, not one per anchor per request.
-    expect(searchText.mock.calls.length).toBe(3);
+    expect(searchText.mock.calls.length).toBe(5);
   });
 });
 

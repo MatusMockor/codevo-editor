@@ -100,6 +100,17 @@ export interface NeonGeneratedServiceName {
   service: NeonService;
 }
 
+export interface NeonServiceAlias {
+  /** The named service alias (`publicMailer` in `publicMailer: @mailer`). */
+  serviceName: string;
+  /** The referenced service name/type without the leading `@`. */
+  targetName: string;
+  /** Go-to-definition anchor: the start of the alias service key. */
+  offset: number;
+  /** The `@target` source range, including the `@`. */
+  targetSpan: NeonSpan;
+}
+
 export interface NeonServiceReference {
   /** The referenced name/type without the leading `@` (`logger`, `\App\Repo`). */
   name: string;
@@ -994,6 +1005,45 @@ function classifyServiceValue(
   return { className: token, factory: null, tokenOffset: range.start };
 }
 
+function serviceAliasTargetInValue(
+  source: string,
+  start: number,
+  end: number,
+): { targetName: string; targetSpan: NeonSpan } | null {
+  const range = trimRange(source, start, end);
+
+  if (range.start >= range.end || source[range.start] !== "@") {
+    return null;
+  }
+
+  const nameStart = range.start + 1;
+
+  if (nameStart >= range.end || !isServiceNameStart(source[nameStart] ?? "")) {
+    return null;
+  }
+
+  let cursor = nameStart;
+
+  while (cursor < range.end && isServiceNameChar(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  if (source[cursor] === ":" && source[cursor + 1] === ":") {
+    return null;
+  }
+
+  const rest = source.slice(cursor, range.end).trim();
+
+  if (rest.length > 0) {
+    return null;
+  }
+
+  return {
+    targetName: source.slice(nameStart, cursor),
+    targetSpan: { start: range.start, end: cursor },
+  };
+}
+
 /** Expands an inline `{ … }` service map into class/factory value sources. */
 function collectMapSources(
   source: string,
@@ -1229,6 +1279,46 @@ export function neonGeneratedServiceNamesFromServices(
   }
 
   return names;
+}
+
+/** Every named `service: @target` alias registered in `source`. */
+export function neonServiceAliasesFromSource(source: string): NeonServiceAlias[] {
+  const lines = buildLines(source);
+  const aliases: NeonServiceAlias[] = [];
+
+  for (const group of serviceGroups(lines)) {
+    const serviceName = group.head.isListItem ? null : group.head.keyNameRaw;
+
+    if (!serviceName || group.head.keyStart === null) {
+      continue;
+    }
+
+    for (const entry of serviceSources(source, group.head, group.body)) {
+      if (entry.key !== null) {
+        continue;
+      }
+
+      const alias = serviceAliasTargetInValue(
+        source,
+        entry.valueStart,
+        entry.valueEnd,
+      );
+
+      if (!alias) {
+        continue;
+      }
+
+      aliases.push({
+        serviceName,
+        targetName: alias.targetName,
+        offset: group.head.keyStart,
+        targetSpan: alias.targetSpan,
+      });
+      break;
+    }
+  }
+
+  return aliases;
 }
 
 // --- setup method contexts ----------------------------------------------------

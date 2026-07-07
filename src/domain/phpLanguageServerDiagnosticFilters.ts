@@ -2,6 +2,7 @@ import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import {
   defaultPhpFrameworkProviders,
   phpFrameworkMemberMethodMagicDiagnostic,
+  phpFrameworkMemberPropertyMagicDiagnostic,
   phpFrameworkStaticMethodMagicDiagnostic,
   type PhpFrameworkMagicDiagnosticMatch,
   type PhpFrameworkProvider,
@@ -39,6 +40,7 @@ export interface PhpMemberMethodDiagnosticContext {
 
 export interface PhpMemberPropertyDiagnosticContext {
   propertyName: string;
+  receiverClassName: string | null;
   receiverExpression: string;
 }
 
@@ -209,6 +211,21 @@ function classifyPhpLanguageServerDiagnosticWithProvider(
     return { reason: "contextual-existing" };
   }
 
+  const memberPropertyMagic = phpFrameworkMemberPropertyDiagnosticMatch(
+    source,
+    diagnostic,
+    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkSourceContext,
+  );
+
+  if (memberPropertyMagic) {
+    return {
+      magicSource:
+        memberPropertyMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      reason: "framework-magic",
+    };
+  }
+
   const memberMethodMagic = phpFrameworkMemberMethodDiagnosticMatch(
     source,
     diagnostic,
@@ -364,6 +381,31 @@ function phpFrameworkMemberMethodDiagnosticMatch(
     source,
     context.receiverExpression,
     context.methodName,
+    frameworkProviders,
+    sourceContext,
+    context.receiverClassName,
+  );
+}
+
+function phpFrameworkMemberPropertyDiagnosticMatch(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  frameworkProviders: readonly PhpFrameworkProvider[],
+  sourceContext?: PhpFrameworkSourceContext,
+): PhpFrameworkMagicDiagnosticMatch | null {
+  const context = phpUnresolvedMemberPropertyDiagnosticContext(
+    source,
+    diagnostic,
+  );
+
+  if (!context) {
+    return null;
+  }
+
+  return phpFrameworkMemberPropertyMagicDiagnostic(
+    source,
+    context.receiverExpression,
+    context.propertyName,
     frameworkProviders,
     sourceContext,
     context.receiverClassName,
@@ -834,12 +876,28 @@ export function phpUnresolvedMemberPropertyDiagnosticContext(
     ) {
       return {
         propertyName,
+        receiverClassName: phpUnresolvedMemberPropertyDiagnosticReceiverClassName(
+          diagnostic.message,
+        ),
         receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
       };
     }
   }
 
   return null;
+}
+
+function phpUnresolvedMemberPropertyDiagnosticReceiverClassName(
+  message: string,
+): string | null {
+  const match =
+    /\bon\s+(?:class|trait|interface)\s+["']([^"']+)["']/i.exec(message) ??
+    /\b(?:class|trait|interface)\s+["']([^"']+)["'].*\bproperty\b/i.exec(
+      message,
+    );
+  const className = match?.[1]?.trim() ?? "";
+
+  return className || null;
 }
 
 export function phpUnresolvedStaticMethodDiagnosticContext(
