@@ -50,7 +50,6 @@ import {
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
 import {
   detectNetteCreateComponentAt,
-  netteCreateComponentFactoryContexts,
 } from "../domain/netteComponents";
 import {
   LATTE_BUILTIN_FILTERS,
@@ -67,14 +66,7 @@ import {
   orderPhpMemberCompletionsByCategory,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
-import {
-  componentClassCandidatePathsForTemplate,
-  presenterCandidatePathsForTemplate,
-} from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  phpTypeNamesEqual,
-} from "./netteCreateComponentViewData";
 import {
   latteControlCompletionAt,
   latteControlCompletions,
@@ -94,6 +86,11 @@ import {
   type NettePresenterInFlight,
 } from "./nettePresenterLinks";
 import {
+  currentNetteControlClassName as resolveCurrentNetteControlClassName,
+  currentNettePresenterClassName as resolveCurrentNettePresenterClassName,
+  resolveNetteControlVariableDefinition as resolveNetteCurrentControlVariableDefinition,
+} from "./netteCurrentClasses";
+import {
   isLatteScanSkippedDirectory,
   latteTemplateCompletions,
   resolveLatteTemplateDefinition,
@@ -110,7 +107,6 @@ import {
   type LatteVariableCompletionContext,
 } from "./latteExpressionDetection";
 import {
-  hasNetteFrameworkProvider,
   latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
   matchesLatteViewName,
@@ -397,7 +393,6 @@ const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
 const LATTE_TEMPLATE_TYPE_SEARCH_LIMIT = 50;
 const LATTE_TEMPLATE_TYPE_CACHE_TTL_MS = 5_000;
-const LATTE_CREATE_COMPONENT_CONTEXT_SEARCH_QUERY = "createComponent";
 
 /**
  * Bound on the recursion that resolves a `{foreach}` element type through nested
@@ -1030,50 +1025,13 @@ async function resolveNettePresenterVariableDefinition(
 async function resolveNetteControlVariableDefinition(
   context: LatteExpressionResolutionContext,
 ): Promise<boolean> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const currentClassContext = netteCurrentClassContext(context);
 
-  if (!templateRelativePath) {
+  if (!currentClassContext) {
     return false;
   }
 
-  for (const relativePath of componentClassCandidatePathsForTemplate(
-    templateRelativePath,
-  )) {
-    if (!isRequestedRootActive()) {
-      return false;
-    }
-
-    const path = deps.joinPath(requestedRoot, relativePath);
-    let source: string;
-
-    try {
-      source = await deps.readFileContent(path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return false;
-    }
-
-    const className = phpPrimaryClassName(source);
-    const position = className
-      ? phpClassPositionInSource(source, className)
-      : null;
-
-    return deps.openTarget(
-      path,
-      position ?? { column: 1, lineNumber: 1 },
-      "$control",
-    );
-  }
-
-  return false;
+  return resolveNetteCurrentControlVariableDefinition(currentClassContext);
 }
 
 /**
@@ -1339,55 +1297,28 @@ function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
 async function currentNetteControlClassName(
   context: LatteExpressionResolutionContext,
 ): Promise<string | null> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const currentClassContext = netteCurrentClassContext(context);
 
-  if (!templateRelativePath) {
+  if (!currentClassContext) {
     return null;
   }
 
-  for (const relativePath of componentClassCandidatePathsForTemplate(
-    templateRelativePath,
-  )) {
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    let source: string;
-
-    try {
-      source = await deps.readFileContent(
-        deps.joinPath(requestedRoot, relativePath),
-      );
-    } catch {
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    const className = phpPrimaryClassName(source);
-
-    if (!className) {
-      continue;
-    }
-
-    const namespace = phpNamespaceName(source);
-
-    return namespace ? `${namespace}\\${className}` : className;
-  }
-
-  return null;
+  return resolveCurrentNetteControlClassName(currentClassContext);
 }
 
 async function currentNettePresenterClassName(
   context: LatteExpressionResolutionContext,
 ): Promise<string | null> {
+  const currentClassContext = netteCurrentClassContext(context);
+
+  if (!currentClassContext) {
+    return null;
+  }
+
+  return resolveCurrentNettePresenterClassName(currentClassContext);
+}
+
+function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
   const { deps, isRequestedRootActive, requestedRoot } = context;
   const templateRelativePath = currentTemplatePath(deps, requestedRoot);
 
@@ -1395,129 +1326,15 @@ async function currentNettePresenterClassName(
     return null;
   }
 
-  for (const relativePath of presenterCandidatePathsForTemplate(
-    templateRelativePath,
-  )) {
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    let source: string;
-
-    try {
-      source = await deps.readFileContent(
-        deps.joinPath(requestedRoot, relativePath),
-      );
-    } catch {
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    const className = phpPrimaryClassName(source);
-
-    if (!className) {
-      continue;
-    }
-
-    const namespace = phpNamespaceName(source);
-
-    return namespace ? `${namespace}\\${className}` : className;
-  }
-
-  return currentNetteFactoryPresenterClassName(context);
-}
-
-async function currentNetteFactoryPresenterClassName(
-  context: LatteExpressionResolutionContext,
-): Promise<string | null> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-
-  if (!hasNetteFrameworkProvider(deps.frameworkIntelligence.providers)) {
-    return null;
-  }
-
-  const controlClassName = await currentNetteControlClassName(context);
-
-  if (!isRequestedRootActive() || !controlClassName) {
-    return null;
-  }
-
-  const results = await deps.searchText(
+  return {
+    createComponentSearchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
+    deps,
+    isRequestedRootActive,
+    phpExtension: PHP_EXTENSION,
+    providers: deps.frameworkIntelligence.providers,
     requestedRoot,
-    LATTE_CREATE_COMPONENT_CONTEXT_SEARCH_QUERY,
-    LATTE_VIEW_DATA_SEARCH_LIMIT,
-  );
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  const visitedPaths = new Set<string>();
-
-  for (const result of results) {
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    if (visitedPaths.has(result.path) || !result.path.endsWith(PHP_EXTENSION)) {
-      continue;
-    }
-
-    visitedPaths.add(result.path);
-
-    let source: string;
-
-    try {
-      source = await deps.readFileContent(result.path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    const presenterClassName = phpPrimaryClassName(source);
-
-    if (!presenterClassName?.endsWith("Presenter")) {
-      continue;
-    }
-
-    const matchedFactory = netteCreateComponentFactoryContexts(source).some(
-      (factory) => {
-        if (!factory.controlClass) {
-          return false;
-        }
-
-        const resolved =
-          deps.resolveDeclaredType(source, factory.controlClass) ??
-          factory.controlClass;
-
-        return phpTypeNamesEqual(resolved, controlClassName);
-      },
-    );
-
-    if (!matchedFactory) {
-      continue;
-    }
-
-    const namespace = phpNamespaceName(source);
-
-    return namespace ? `${namespace}\\${presenterClassName}` : presenterClassName;
-  }
-
-  return null;
+    templateRelativePath,
+  };
 }
 
 function loadLatteViewDataEntries(
@@ -1624,37 +1441,6 @@ function latteMemberCompletionDetail(member: PhpMethodCompletion): string {
   const parameters = member.parameters ? `(${member.parameters})` : "()";
 
   return `${member.declaringClassName}::${member.name}${parameters}${returnType}`;
-}
-
-function phpPrimaryClassName(source: string): string | null {
-  const match = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(source);
-  const className = match?.[1]?.trim() ?? "";
-
-  return className.length > 0 ? className : null;
-}
-
-function phpClassPositionInSource(
-  source: string,
-  className: string,
-): EditorPosition | null {
-  const pattern = new RegExp(`\\bclass\\s+${escapeRegExp(className)}\\b`);
-  const match = pattern.exec(source);
-
-  if (!match) {
-    return null;
-  }
-
-  return editorPositionAtOffset(
-    source,
-    match.index + match[0].length - className.length,
-  );
-}
-
-function phpNamespaceName(source: string): string | null {
-  const match = /\bnamespace\s+([^;{]+)\s*[;{]/.exec(source);
-  const namespace = match?.[1]?.trim() ?? "";
-
-  return namespace.length > 0 ? namespace : null;
 }
 
 function resolveLatteBlockDefinition(
