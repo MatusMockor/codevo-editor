@@ -5,11 +5,23 @@ import {
   moduleTemplatesRootOf,
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
+import {
+  listLatteTemplateRelativePaths,
+} from "./netteTemplateDiscovery";
+import type {
+  LatteDirectoryEntry,
+  LatteTemplateCache,
+} from "./netteTemplateDiscovery";
 
-export interface LatteDirectoryEntry {
-  kind: "directory" | "file";
-  path: string;
-}
+export {
+  isLatteScanSkippedDirectory,
+  listLatteTemplateRelativePaths,
+} from "./netteTemplateDiscovery";
+export type {
+  LatteDirectoryEntry,
+  LatteTemplateCache,
+  NetteTemplateCacheEntry,
+} from "./netteTemplateDiscovery";
 
 export interface NetteTemplateDependencies {
   joinPath(rootPath: string, relativePath: string): string;
@@ -22,13 +34,6 @@ export interface NetteTemplateDependencies {
   readFileContent(path: string): Promise<string>;
   toRelativePath(rootPath: string, path: string): string;
 }
-
-export interface NetteTemplateCacheEntry {
-  expiresAt: number;
-  relativePaths: string[];
-}
-
-export type LatteTemplateCache = Record<string, NetteTemplateCacheEntry>;
 
 export interface NetteTemplateCompletionItem {
   detail?: string;
@@ -56,24 +61,8 @@ export interface NetteTemplateCompletionContext
   ttlMs: number;
 }
 
-interface TemplateScanState {
-  templatesFound: number;
-  visitedDirectories: Set<string>;
-}
-
-const LATTE_TEMPLATE_EXTENSION = ".latte";
 const LAYOUT_NAVIGATION_LABEL = "@layout";
 const MAX_BARE_LAYOUT_SCAN = 2_000;
-const LATTE_SCAN_SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
-  ".git",
-  ".idea",
-  ".vscode",
-  "assets",
-  "log",
-  "node_modules",
-  "temp",
-  "vendor",
-]);
 
 export async function resolveLatteTemplateDefinition(
   context: NetteTemplateResolutionContext,
@@ -142,134 +131,6 @@ export async function latteTemplateCompletions(
       replaceEnd: includeCompletion.replaceEnd,
       replaceStart: includeCompletion.replaceStart,
     }));
-}
-
-export function isLatteScanSkippedDirectory(path: string): boolean {
-  const segments = path.split("/");
-  const basename = segments[segments.length - 1] ?? "";
-
-  return LATTE_SCAN_SKIPPED_DIRECTORIES.has(basename);
-}
-
-async function listLatteTemplateRelativePaths(
-  context: NetteTemplateCompletionContext,
-): Promise<string[]> {
-  const {
-    cache,
-    deps,
-    isRequestedRootActive,
-    maxTemplates,
-    requestedRoot,
-    scanDirectories,
-    ttlMs,
-  } = context;
-  const cached = cache[requestedRoot];
-
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.relativePaths;
-  }
-
-  const relativePaths = new Set<string>();
-  const scanState: TemplateScanState = {
-    templatesFound: 0,
-    visitedDirectories: new Set<string>(),
-  };
-
-  for (const directory of scanDirectories) {
-    await collectLatteTemplates(
-      context,
-      deps.joinPath(requestedRoot, directory),
-      relativePaths,
-      0,
-      scanState,
-    );
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (scanState.templatesFound >= maxTemplates) {
-      break;
-    }
-  }
-
-  const sorted = Array.from(relativePaths).sort((left, right) =>
-    left.localeCompare(right),
-  );
-  cache[requestedRoot] = {
-    expiresAt: Date.now() + ttlMs,
-    relativePaths: sorted,
-  };
-
-  return sorted;
-}
-
-async function collectLatteTemplates(
-  context: NetteTemplateCompletionContext,
-  directory: string,
-  into: Set<string>,
-  depth: number,
-  scanState: TemplateScanState,
-): Promise<void> {
-  const {
-    deps,
-    isRequestedRootActive,
-    maxDepth,
-    maxTemplates,
-    requestedRoot,
-  } = context;
-
-  if (depth > maxDepth) {
-    return;
-  }
-
-  if (scanState.templatesFound >= maxTemplates) {
-    return;
-  }
-
-  if (scanState.visitedDirectories.has(directory)) {
-    return;
-  }
-
-  scanState.visitedDirectories.add(directory);
-
-  let entries: LatteDirectoryEntry[];
-
-  try {
-    entries = await deps.listDirectory(directory);
-  } catch {
-    return;
-  }
-
-  if (!isRequestedRootActive()) {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!isRequestedRootActive()) {
-      return;
-    }
-
-    if (scanState.templatesFound >= maxTemplates) {
-      return;
-    }
-
-    if (entry.kind === "directory") {
-      if (isLatteScanSkippedDirectory(entry.path)) {
-        continue;
-      }
-
-      await collectLatteTemplates(context, entry.path, into, depth + 1, scanState);
-      continue;
-    }
-
-    if (!entry.path.endsWith(LATTE_TEMPLATE_EXTENSION)) {
-      continue;
-    }
-
-    into.add(deps.toRelativePath(requestedRoot, entry.path));
-    scanState.templatesFound += 1;
-  }
 }
 
 async function fileExists(
