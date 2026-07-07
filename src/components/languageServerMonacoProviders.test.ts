@@ -10809,6 +10809,7 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
     expect(registered.latteCompletionProvider.triggerCharacters).toEqual([
       "{",
       "$",
+      "-",
       ">",
       "|",
       "'",

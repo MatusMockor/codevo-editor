@@ -82,6 +82,16 @@ interface FakeEditor {
         },
       ) => void)
     | null;
+  modelContentChangeHandlers: Array<
+    (event: {
+      changes: Array<{
+        range?: {
+          startLineNumber: number;
+        };
+        text: string;
+      }>;
+    }) => void
+  >;
   modelChangeHandler: (() => void) | null;
   modelChangeHandlers: Array<() => void>;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
@@ -305,6 +315,54 @@ describe("EditorSurface", () => {
         quickSuggestionsDelay: 10,
         suggestOnTriggerCharacters: true,
       }),
+    );
+  });
+
+  it("opens Latte member suggestions while typing a member prefix", async () => {
+    const activeDocument: EditorDocument = {
+      content: "{varType App\\Model\\Group $group}\n\n{$group->}\n",
+      language: "latte",
+      name: "template.latte",
+      path: "/workspace/templates/template.latte",
+      savedContent: "",
+    };
+    const lines = [
+      "{varType App\\Model\\Group $group}",
+      "",
+      "{$group->i}",
+    ];
+    const model: FakeModel = {
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 11,
+      lineNumber: 3,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, memoGuardProps(activeDocument)));
+      await Promise.resolve();
+    });
+
+    editor.trigger.mockClear();
+
+    act(() => {
+      editor.modelContentChangeHandler?.({
+        changes: [{ text: "i" }],
+      });
+    });
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "mockor.latteMemberCompletion",
+      "editor.action.triggerSuggest",
+      {},
     );
   });
 
@@ -10957,6 +11015,7 @@ function createEditor(model: FakeModel): FakeEditor {
     mouseDownHandler: null,
     mouseMoveHandler: null,
     modelContentChangeHandler: null,
+    modelContentChangeHandlers: [],
     modelChangeHandler: null,
     modelChangeHandlers: [],
     onDidChangeCursorPosition: vi.fn(
@@ -10983,10 +11042,31 @@ function createEditor(model: FakeModel): FakeEditor {
       };
     }),
     onDidChangeModelContent: vi.fn(
-      (handler: (event: { changes: Array<{ text: string }> }) => void) => {
-        editor.modelContentChangeHandler = handler;
+      (
+        handler: (event: {
+          changes: Array<{
+            range?: {
+              startLineNumber: number;
+            };
+            text: string;
+          }>;
+        }) => void,
+      ) => {
+        editor.modelContentChangeHandlers.push(handler);
+        editor.modelContentChangeHandler = (event) => {
+          editor.modelContentChangeHandlers.forEach((registeredHandler) =>
+            registeredHandler(event),
+          );
+        };
 
-        return { dispose: vi.fn() };
+        return {
+          dispose: vi.fn(() => {
+            editor.modelContentChangeHandlers =
+              editor.modelContentChangeHandlers.filter(
+                (registeredHandler) => registeredHandler !== handler,
+              );
+          }),
+        };
       },
     ),
     onKeyDown: vi.fn((handler: (event: FakeKeyDownEvent) => void) => {

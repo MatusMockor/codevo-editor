@@ -139,6 +139,35 @@ interface ChangePreviewState {
   hunk: EditorChangeHunk;
 }
 
+function shouldTriggerLatteMemberSuggest(
+  language: EditorDocument["language"],
+  model: Monaco.editor.ITextModel,
+  position: EditorPosition,
+  changes: readonly { text: string }[],
+): boolean {
+  if (language !== "latte") {
+    return false;
+  }
+
+  if (!changes.some((change) => /[\w>-]/.test(change.text))) {
+    return false;
+  }
+
+  const linePrefix = model
+    .getLineContent(position.lineNumber)
+    .slice(0, Math.max(0, position.column - 1));
+  const lastOpenBrace = linePrefix.lastIndexOf("{");
+  const lastCloseBrace = linePrefix.lastIndexOf("}");
+
+  if (lastOpenBrace <= lastCloseBrace) {
+    return false;
+  }
+
+  return /\$[A-Za-z_]\w*(?:\[[^\]]+\]|\->[A-Za-z_]\w*)*->\w*$/.test(
+    linePrefix.slice(lastOpenBrace + 1),
+  );
+}
+
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   /**
@@ -1158,6 +1187,46 @@ function EditorSurfaceComponent({
     languageServerFeaturesGateway,
     workspaceRoot,
   ]);
+
+  useEffect(() => {
+    if (!activeDocument || !editorApi) {
+      return;
+    }
+
+    if (activeDocument.language !== "latte") {
+      return;
+    }
+
+    const activeDocumentLanguage = activeDocument.language;
+    const activeDocumentPath = activeDocument.path;
+    const disposable = editorApi.onDidChangeModelContent((event) => {
+      const model = editorApi.getModel();
+      const position = editorApi.getPosition();
+
+      if (!model || !position || modelPath(model) !== activeDocumentPath) {
+        return;
+      }
+
+      if (
+        !shouldTriggerLatteMemberSuggest(
+          activeDocumentLanguage,
+          model,
+          position,
+          event.changes,
+        )
+      ) {
+        return;
+      }
+
+      editorApi.trigger(
+        "mockor.latteMemberCompletion",
+        "editor.action.triggerSuggest",
+        {},
+      );
+    });
+
+    return () => disposable.dispose();
+  }, [activeDocument?.language, activeDocument?.path, editorApi]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {

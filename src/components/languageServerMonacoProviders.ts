@@ -1094,10 +1094,9 @@ export function registerLanguageServerMonacoProviders(
     {
       // `{` opens the tag list, `'`/`"` open the `{include '...'}` template list,
       // `.`/`/` keep it refreshing as a dotted / nested path is typed, `$` opens
-      // the `{$var}` variable list, `>` opens `{$var->}` member completion (the
-      // `-` before it is already a word char Monaco keeps typing through), and
-      // `|` opens the filter list.
-      triggerCharacters: ["{", "$", ">", "|", "'", "\"", ".", "/"],
+      // the `{$var}` variable list, `-`/`>` open and refresh `{$var->}` member
+      // completion during natural typing, and `|` opens the filter list.
+      triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/"],
       provideCompletionItems: (model, position) =>
         provideLatteCompletionItems(monaco, context, model, position),
     },
