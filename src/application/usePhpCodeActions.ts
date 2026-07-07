@@ -7,11 +7,6 @@ import {
   phpShortNameIsImported,
   planPhpAddImport,
 } from "../domain/phpAddImport";
-import { planAddParameter } from "../domain/phpAddParameter";
-import {
-  planAddParameterType,
-  planAddReturnType,
-} from "../domain/phpAddTypeHint";
 import {
   parsePhpClassStructure,
   type PhpClassStructure,
@@ -42,9 +37,6 @@ import {
   renderGeneratedPhpDoc,
 } from "../domain/phpDocGen";
 import { planExtractInterface } from "../domain/phpExtractInterface";
-import { planExtractMethod } from "../domain/phpExtractMethod";
-import { planExtractVariable } from "../domain/phpExtractVariable";
-import { planInlineVariable } from "../domain/phpInlineVariable";
 import {
   phpUnusedImportRemovalAt,
   phpUnusedPrivateMethodRemovalAt,
@@ -58,10 +50,6 @@ import {
   offsetToPosition,
 } from "../domain/phpInsertionPoint";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
-import {
-  planIntroduceConstant,
-  planIntroduceField,
-} from "../domain/phpIntroduceMember";
 import {
   phpMixinClassNames,
   phpTraitClassNames,
@@ -83,63 +71,34 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { zeroLengthPhpEditRange } from "./phpCodeActionEdits";
+import type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionRange,
+  PhpCodeActionTextEdit,
+} from "./phpCodeActionTypes";
+import {
+  phpAddParameterCodeAction,
+  phpAddParameterTypeCodeAction,
+  phpAddReturnTypeCodeAction,
+  phpExtractMethodCodeAction,
+  phpExtractVariableCodeAction,
+  phpInlineVariableCodeAction,
+  phpIntroduceConstantCodeAction,
+  phpIntroduceFieldCodeAction,
+} from "./phpLocalRefactorCodeActions";
+
+export type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionNewFile,
+  PhpCodeActionRange,
+  PhpCodeActionTextEdit,
+  PhpCodeActionTextEditRange,
+} from "./phpCodeActionTypes";
 
 export interface AbstractMemberToImplement {
   declaringSource: string;
   member: PhpMethodMember;
-}
-
-interface PhpCodeActionTextEditRange {
-  endColumn: number;
-  endLineNumber: number;
-  startColumn: number;
-  startLineNumber: number;
-}
-
-interface PhpCodeActionTextEdit {
-  range: PhpCodeActionTextEditRange;
-  text: string;
-}
-
-/**
- * A brand-new file a code action creates as part of its workspace edit (e.g.
- * "Extract interface" writes a sibling `<Class>Interface.php`). Carried
- * alongside the in-document `edits` so the monaco mapper can emit a file-create
- * resource edit plus the content insertion. The path is an absolute filesystem
- * path; the action is only ever offered with a path inside the active root, so
- * applying it stays within per-workspace isolation.
- */
-export interface PhpCodeActionNewFile {
-  content: string;
-  path: string;
-  title?: string;
-}
-
-export interface PhpCodeActionDescriptor {
-  edits: PhpCodeActionTextEdit[];
-  /**
-   * When true, marks this action as the single most-likely choice for the
-   * current cursor / selection (PhpStorm Alt+Enter "most likely first"). Monaco
-   * floats a preferred action to the top of the code-action list and surfaces it
-   * as the auto-fix. Set on a contextual quickfix (Create method/property from
-   * usage, Import class) - never on a class-level generate action.
-   */
-  isPreferred?: boolean;
-  kind?: string;
-  newFile?: PhpCodeActionNewFile;
-  title: string;
-}
-
-/**
- * Cursor / selection that a PHP code-action request covers, expressed as 0-based
- * character offsets into the source. `start === end` is a bare cursor; a
- * non-empty selection has `start < end`. Position-aware actions consume it
- * ("Create method / property from usage" reads the cursor; "Extract variable"
- * reads the selection span); class-level actions ignore it.
- */
-export interface PhpCodeActionRange {
-  end: number;
-  start: number;
 }
 
 type PhpAbstractMembersCollector = (
@@ -1490,106 +1449,6 @@ function isPhpBuiltinTypeName(fqn: string): boolean {
 }
 
 /**
- * Offers "Extract variable" when the request carries a non-empty selection that
- * `planExtractVariable` confirms is a usable expression. The plan yields two
- * non-overlapping edits applied against the original document: a declaration
- * inserted on its own line before the enclosing statement, and a replacement of
- * the selected expression with the new variable reference. Returns `null` for
- * an empty selection or any selection the conservative planner rejects.
- */
-function phpExtractVariableCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  if (range.start >= range.end) {
-    return null;
-  }
-
-  const plan = planExtractVariable(source, range.start, range.end);
-
-  if (!plan) {
-    return null;
-  }
-
-  const declarationPosition = offsetToPosition(source, plan.declarationOffset);
-  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
-  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(declarationPosition),
-        text: plan.declarationText,
-      },
-      {
-        range: {
-          endColumn: replaceEndPosition.column + 1,
-          endLineNumber: replaceEndPosition.line + 1,
-          startColumn: replaceStartPosition.column + 1,
-          startLineNumber: replaceStartPosition.line + 1,
-        },
-        text: plan.replacementText,
-      },
-    ],
-    kind: "refactor.extract",
-    title: "Extract variable",
-  };
-}
-
-/**
- * Offers "Extract method" when the request carries a non-empty selection of one
- * or more whole statements inside a class method that `planExtractMethod`
- * confirms is safe to lift. The plan yields two non-overlapping edits against
- * the original document: the selected statements are replaced by a call to a new
- * private method (`$this->extracted(...)`, optionally assigned to the single
- * returned variable), and the method definition is inserted immediately after
- * the enclosing method. Returns `null` for an empty selection or any selection
- * the conservative planner rejects (cross-boundary, partial block, multiple
- * outputs, control-flow escape, heredoc, ...).
- */
-function phpExtractMethodCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  if (range.start >= range.end) {
-    return null;
-  }
-
-  const plan = planExtractMethod(source, range.start, range.end);
-
-  if (!plan) {
-    return null;
-  }
-
-  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
-  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
-  const insertionPosition = offsetToPosition(
-    source,
-    plan.methodInsertionOffset,
-  );
-
-  return {
-    edits: [
-      {
-        range: {
-          endColumn: replaceEndPosition.column + 1,
-          endLineNumber: replaceEndPosition.line + 1,
-          startColumn: replaceStartPosition.column + 1,
-          startLineNumber: replaceStartPosition.line + 1,
-        },
-        text: plan.replacementText,
-      },
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: plan.methodText,
-      },
-    ],
-    kind: "refactor.extract",
-    title: "Extract method",
-  };
-}
-
-/**
  * Offers "Extract interface" (PhpStorm) when the cursor sits on a concrete
  * `class` declaration that exposes at least one public instance method. The
  * `planExtractInterface` planner synthesises a sibling `<Class>Interface.php`
@@ -1638,239 +1497,6 @@ function phpExtractInterfaceCodeAction(
     },
     title: "Extract interface",
   };
-}
-
-/**
- * Offers "Add parameter" (Change Signature - slice 1) when the request's cursor
- * sits on the signature or inside the body of a class method or free function
- * that `planAddParameter` confirms can safely receive an appended OPTIONAL
- * parameter. The plan is a single zero-length insertion that appends a
- * placeholder `$parameter = null` to the END of the parameter list. Because the
- * appended parameter is optional (carries a default), every existing call-site
- * stays valid - so this is a pure single-file refactor with no cross-file edits.
- * Returns `null` for any shape the conservative planner rejects (abstract /
- * interface declaration, trailing variadic, unbalanced signature, cursor not on
- * a function) so the action is never offered where it could corrupt the file or
- * require call-site changes.
- */
-function phpAddParameterCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planAddParameter(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  const insertionPosition = offsetToPosition(source, plan.insertOffset);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: plan.insertText,
-      },
-    ],
-    kind: "refactor.rewrite",
-    title: "Add parameter",
-  };
-}
-
-/**
- * Offers "Add return type" when the cursor sits on a method / function (or an
- * abstract / interface declaration) that declares NO return type and whose type
- * `planAddReturnType` can infer UNAMBIGUOUSLY - from a PHPDoc `@return`, or from
- * literal-only `return` statements that all agree (`void`, a `new Foo()` class,
- * `static`, or a scalar/array literal). The plan is a single zero-length
- * insertion of `: Type` after the close `)`. Returns `null` for any shape the
- * conservative planner rejects (a mixed / variable / call return, a lone
- * `return null`, an already-typed signature, the cursor off any function) so a
- * wrong type is never inserted.
- */
-function phpAddReturnTypeCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planAddReturnType(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  const insertionPosition = offsetToPosition(source, plan.insertOffset);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: plan.insertText,
-      },
-    ],
-    kind: "refactor.rewrite",
-    title: "Add return type",
-  };
-}
-
-/**
- * Offers "Add type hint" when the cursor sits inside the parameter list, on a
- * parameter that declares NO type and whose type `planAddParameterType` can
- * infer UNAMBIGUOUSLY - from a PHPDoc `@param`, or from a literal default value
- * (`[]` -> `array`, `'x'` -> `string`, `123` -> `int`, `1.5` -> `float`,
- * `true`/`false` -> `bool`). The plan is a single zero-length insertion of
- * `Type ` before the parameter token (after any promotion modifiers). Returns
- * `null` for an already-typed parameter, an ambiguous `= null` default, a
- * parameter with no usable signal, or the cursor outside the parameter list.
- */
-function phpAddParameterTypeCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planAddParameterType(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  const insertionPosition = offsetToPosition(source, plan.insertOffset);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: plan.insertText,
-      },
-    ],
-    kind: "refactor.rewrite",
-    title: "Add type hint",
-  };
-}
-
-/**
- * Offers "Inline variable" when the request's cursor (the start offset) sits on
- * a local variable that `planInlineVariable` confirms has a single, plain
- * `$var = <expr>;` declaration. The plan yields non-overlapping edits against the
- * original document: the declaration line is deleted and every usage of `$var`
- * is replaced with `<expr>` (parenthesised where precedence requires). Returns
- * `null` for any position the conservative planner rejects (multiple
- * assignments, compound/foreach declaration, side-effecting value used more than
- * once, …) so the action is never offered when inlining could change behaviour.
- */
-function phpInlineVariableCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planInlineVariable(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  return {
-    edits: plan.edits.map((edit) => {
-      const startPosition = offsetToPosition(source, edit.start);
-      const endPosition = offsetToPosition(source, edit.end);
-
-      return {
-        range: {
-          endColumn: endPosition.column + 1,
-          endLineNumber: endPosition.line + 1,
-          startColumn: startPosition.column + 1,
-          startLineNumber: startPosition.line + 1,
-        },
-        text: edit.text,
-      };
-    }),
-    kind: "refactor.inline",
-    title: "Inline variable",
-  };
-}
-
-/**
- * Offers "Introduce constant" when the request's cursor (the start offset) sits
- * on a scalar literal inside a class body. The plan yields two non-overlapping
- * edits against the original document: a `private const NAME = <literal>;`
- * declaration inserted at the top of the class body, and a replacement of the
- * literal with `self::NAME`. Returns `null` when the conservative planner
- * rejects the position (no literal, outside a class).
- */
-function phpIntroduceConstantCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planIntroduceConstant(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  return {
-    edits: phpIntroduceMemberEdits(source, plan),
-    kind: "refactor.extract",
-    title: "Introduce constant",
-  };
-}
-
-/**
- * Offers "Introduce field" when the request's cursor sits on a scalar literal
- * (lifted to a `private <type?> $name = <literal>;` property) or on a local
- * variable assignment (promoted to a `private <type?> $name;` property with the
- * assignment target rewritten). The plan yields a declaration inserted at the
- * top of the class body and a replacement of the literal / variable with
- * `$this->name`. Returns `null` when the conservative planner rejects the
- * position.
- */
-function phpIntroduceFieldCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const plan = planIntroduceField(source, range.start);
-
-  if (!plan) {
-    return null;
-  }
-
-  return {
-    edits: phpIntroduceMemberEdits(source, plan),
-    kind: "refactor.extract",
-    title: "Introduce field",
-  };
-}
-
-/**
- * Translates an introduce-member plan (shared shape between constant and field)
- * into the two Monaco text edits: a zero-length declaration insert at the top of
- * the class body and a span replacement of the original literal / variable.
- */
-function phpIntroduceMemberEdits(
-  source: string,
-  plan: {
-    declarationOffset: number;
-    declarationText: string;
-    replaceStart: number;
-    replaceEnd: number;
-    replacementText: string;
-  },
-): PhpCodeActionTextEdit[] {
-  const declarationPosition = offsetToPosition(source, plan.declarationOffset);
-  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
-  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
-
-  return [
-    {
-      range: zeroLengthPhpEditRange(declarationPosition),
-      text: plan.declarationText,
-    },
-    {
-      range: {
-        endColumn: replaceEndPosition.column + 1,
-        endLineNumber: replaceEndPosition.line + 1,
-        startColumn: replaceStartPosition.column + 1,
-        startLineNumber: replaceStartPosition.line + 1,
-      },
-      text: plan.replacementText,
-    },
-  ];
 }
 
 /**
@@ -2307,18 +1933,6 @@ function phpMaskStringsAndComments(source: string): string {
   }
 
   return output;
-}
-
-function zeroLengthPhpEditRange(position: {
-  column: number;
-  line: number;
-}): PhpCodeActionTextEditRange {
-  return {
-    endColumn: position.column + 1,
-    endLineNumber: position.line + 1,
-    startColumn: position.column + 1,
-    startLineNumber: position.line + 1,
-  };
 }
 
 function shortPhpName(className: string): string {
