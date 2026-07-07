@@ -23,7 +23,7 @@ import {
 } from "./netteControlComponents";
 import {
   lattePresenterLinkCompletions,
-} from "./nettePresenterLinks";
+} from "./nettePresenterLinkCompletions";
 import {
   isLatteScanSkippedDirectory,
   latteTemplateCompletions,

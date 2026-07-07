@@ -8,8 +8,8 @@ import {
 import { resolveNetteCreateComponentReverse } from "./netteControlComponents";
 import {
   lattePresenterLinkCompletions,
-  resolveNettePresenterLink,
-} from "./nettePresenterLinks";
+} from "./nettePresenterLinkCompletions";
+import { resolveNettePresenterLink } from "./nettePresenterLinks";
 import { isLatteScanSkippedDirectory } from "./netteTemplates";
 import {
   evictLatteProviderCaches,
