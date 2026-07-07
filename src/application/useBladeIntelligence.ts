@@ -54,11 +54,6 @@ import {
   resolveLaravelViewTarget,
 } from "../domain/laravelPathResolution";
 import { phpLaravelCollectionModelTypeCandidate } from "../domain/phpFrameworkLaravel";
-import {
-  phpFrameworkSupportsViewData,
-  phpFrameworkViewDataEntryFromSource,
-  phpFrameworkViewDataSearchQueries,
-} from "../domain/phpFrameworkProviders";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import {
   phpLaravelConfigCompletionInsertText,
@@ -91,6 +86,10 @@ import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
+import {
+  ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
+  invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
+} from "./bladeViewDataCache";
 
 export type {
   BladeCompletionItem,
@@ -162,107 +161,21 @@ export function useBladeIntelligence(
   // writes the cache. Concurrent callers share the same in-flight promise.
   const ensureBladeViewDataEntriesLoaded = useCallback(
     async (requestedRoot: string): Promise<BladeViewDataEntry[] | null> => {
-      if (
-        !requestedRoot ||
-        !phpFrameworkSupportsViewData(activePhpFrameworkProviders)
-      ) {
-        return null;
-      }
-
-      const cached = bladeViewDataEntriesByRootRef.current[requestedRoot];
-
-      if (cached) {
-        return cached;
-      }
-
-      const inFlight =
-        bladeViewDataEntriesLoadInFlightRef.current.get(requestedRoot);
-
-      if (inFlight) {
-        return inFlight;
-      }
-
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      // `load` is only compared against the in-flight registry AFTER the first
-      // await inside the closure, i.e. strictly after the assignment below.
-      let load: Promise<BladeViewDataEntry[] | null> | null = null;
-      const isRegisteredLoad = () =>
-        load !== null &&
-        bladeViewDataEntriesLoadInFlightRef.current.get(requestedRoot) === load;
-
-      load = (async (): Promise<BladeViewDataEntry[] | null> => {
-        try {
-          const searchResults = await Promise.all(
-            phpFrameworkViewDataSearchQueries(activePhpFrameworkProviders).map(
-              (query) => textSearch.searchText(requestedRoot, query, 200),
-            ),
-          );
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          const visitedPaths = new Set<string>();
-          const entries: BladeViewDataEntry[] = [];
-
-          for (const result of searchResults.flat()) {
-            if (!isRequestedRootActive()) {
-              return null;
-            }
-
-            if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-              continue;
-            }
-
-            visitedPaths.add(result.path);
-
-            try {
-              const content = await readNavigationFileContent(result.path);
-
-              if (!isRequestedRootActive()) {
-                return null;
-              }
-
-              const entry = phpFrameworkViewDataEntryFromSource(
-                content,
-                activePhpFrameworkProviders,
-              );
-
-              if (entry && entry.bindings.length > 0) {
-                entries.push(entry);
-              }
-            } catch {
-              if (!isRequestedRootActive()) {
-                return null;
-              }
-            }
-          }
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          // Write the cache only while this load is still the registered one
-          // for the root: a file-change invalidation that raced the load must
-          // not be resurrected by stale results.
-          if (isRegisteredLoad()) {
-            bladeViewDataEntriesByRootRef.current[requestedRoot] = entries;
-          }
-
-          return entries;
-        } finally {
-          if (isRegisteredLoad()) {
-            bladeViewDataEntriesLoadInFlightRef.current.delete(requestedRoot);
-          }
-        }
-      })();
-
-      bladeViewDataEntriesLoadInFlightRef.current.set(requestedRoot, load);
-
-      return load;
+      return loadBladeViewDataEntries(requestedRoot, {
+        currentWorkspaceRootRef,
+        entriesByRootRef: bladeViewDataEntriesByRootRef,
+        frameworkProviders: activePhpFrameworkProviders,
+        loadInFlightRef: bladeViewDataEntriesLoadInFlightRef,
+        readNavigationFileContent,
+        textSearch,
+      });
     },
-    [activePhpFrameworkProviders, readNavigationFileContent, textSearch],
+    [
+      activePhpFrameworkProviders,
+      currentWorkspaceRootRef,
+      readNavigationFileContent,
+      textSearch,
+    ],
   );
 
   // Drops the cached view-data entries for `root` when any PHP file changes
@@ -272,12 +185,12 @@ export function useBladeIntelligence(
   // caching pre-change sources.
   const invalidateBladeViewDataEntriesForPath = useCallback(
     (root: string, path: string): void => {
-      if (!isPhpPath(path)) {
-        return;
-      }
-
-      delete bladeViewDataEntriesByRootRef.current[root];
-      bladeViewDataEntriesLoadInFlightRef.current.delete(root);
+      invalidateBladeViewDataEntriesForCachePath(
+        bladeViewDataEntriesByRootRef,
+        bladeViewDataEntriesLoadInFlightRef,
+        root,
+        path,
+      );
     },
     [],
   );
@@ -1642,10 +1555,6 @@ function editorPositionAtOffset(source: string, offset: number): EditorPosition 
     column: clampedOffset - lineStart + 1,
     lineNumber,
   };
-}
-
-function isPhpPath(path: string): boolean {
-  return path.toLowerCase().endsWith(".php");
 }
 
 function phpNamedRouteCompletionInsertText(
