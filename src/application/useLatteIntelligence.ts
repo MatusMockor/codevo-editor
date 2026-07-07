@@ -242,7 +242,7 @@ export interface LatteIntelligence {
   provideNettePhpLinkCompletions(
     source: string,
     offset: number,
-  ): Promise<LatteCompletionItem[]>;
+  ): Promise<LatteCompletionItem[] | null>;
 }
 
 export interface LatteFrameworkCapabilities {
@@ -873,7 +873,7 @@ export function createLatteIntelligence(
   const provideNettePhpLinkCompletions = async (
     source: string,
     offset: number,
-  ): Promise<LatteCompletionItem[]> => {
+  ): Promise<LatteCompletionItem[] | null> => {
     const deps = getDependencies();
     evictOtherRootCacheEntries(templateCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(viewDataCache, deps.workspaceRoot);
@@ -885,13 +885,13 @@ export function createLatteIntelligence(
       !isLatteSemanticActive(deps, frameworkCapabilities) ||
       !isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)
     ) {
-      return [];
+      return null;
     }
 
     const requestedRoot = deps.workspaceRoot;
 
     if (!requestedRoot) {
-      return [];
+      return null;
     }
 
     const linkCompletion = frameworkCapabilities.presenterLinkCompletionContextAt(
@@ -901,7 +901,7 @@ export function createLatteIntelligence(
     );
 
     if (!linkCompletion) {
-      return [];
+      return null;
     }
 
     const isRequestedRootActive = () =>

@@ -473,13 +473,14 @@ export interface LanguageServerMonacoProviderContext {
    * `->redirect(...)`, `->forward(...)`, ...). Like
    * {@link provideNettePhpLinkDefinition}, this is a dedicated callback (not
    * folded into {@link providePhpMethodCompletions}) so the Laravel-heavy
-   * method-completion collector stays untouched; inert outside a Nette
-   * semantic project.
+   * method-completion collector stays untouched. Returns `null` when the active
+   * workspace is not a Nette semantic project so the regular PHP pipeline can
+   * continue; returns an array (possibly empty) only when Nette owns the context.
    */
   provideNettePhpLinkCompletions?(
     source: string,
     offset: number,
-  ): Promise<LatteCompletion[]>;
+  ): Promise<LatteCompletion[] | null>;
   isPhpFrameworkStringCompletionContext?(
     source: string,
     position: MonacoPosition,
@@ -4991,14 +4992,13 @@ function phpPostfixCompletionSuggestions(
  * regex scan), so a cursor anywhere else in the document — the overwhelming
  * majority of keystrokes, and every keystroke in a Laravel/generic project —
  * costs nothing and never reaches the controller. Only a cursor inside such a
- * link-call's string argument awaits `context.provideNettePhpLinkCompletions`,
- * which owns the framework/semantic-tier gating and the per-root presenter
- * discovery cache (shared with the Latte-side `{link}` completion). Returns
- * `null` when the cursor is NOT on a link target — so the caller falls through
- * to the regular phpactor / method / variable / snippet pipeline — or an array
- * (possibly empty) when it IS, which the caller returns directly, exactly like
- * a matched postfix context: phpactor is never also consulted for a position
- * that is unambiguously a Nette link-target string literal.
+   * link-call's string argument awaits `context.provideNettePhpLinkCompletions`,
+   * which owns the framework/semantic-tier gating and the per-root presenter
+   * discovery cache (shared with the Latte-side `{link}` completion). Returns
+   * `null` when the cursor is NOT on a link target OR the active framework is
+   * not Nette — so the caller falls through to the regular phpactor / method /
+   * variable / snippet pipeline — or an array (possibly empty) when Nette owns
+   * the context.
  */
 async function phpNettePresenterLinkCompletionSuggestions(
   monaco: MonacoApi,
@@ -5025,6 +5025,10 @@ async function phpNettePresenterLinkCompletionSuggestions(
       source,
       offset,
     );
+
+    if (completions === null) {
+      return null;
+    }
 
     if (!isPhpDocumentContextActive(context, request)) {
       return [];

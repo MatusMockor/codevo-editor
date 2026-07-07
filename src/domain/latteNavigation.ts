@@ -245,9 +245,11 @@ export function detectLatteTagCompletionAt(
 }
 
 /**
- * Returns the template-name completion context when `offset` sits inside the
- * quoted literal of a file-taking tag (`include`, `layout`, `extends`,
- * `import`, `embed`, `sandbox`), or `null` otherwise.
+ * Returns the template-name completion context when `offset` sits inside a
+ * file-taking tag (`include`, `layout`, `extends`, `import`, `embed`,
+ * `sandbox`), or `null` otherwise. Quoted literals are always file paths; bare
+ * values complete only when they already look path-like, so `{include sidebar}`
+ * remains a block include.
  */
 export function detectLatteIncludeCompletionAt(
   source: string,
@@ -275,7 +277,7 @@ export function detectLatteIncludeCompletionAt(
   const quote = source[quoteStart] ?? "";
 
   if (quote !== "'" && quote !== "\"") {
-    return null;
+    return bareTemplateCompletion(source, offset, macro.tag, macro.argStart);
   }
 
   const end = stringLiteralEnd(source, quoteStart);
@@ -290,6 +292,38 @@ export function detectLatteIncludeCompletionAt(
     prefix: source.slice(replaceStart, offset),
     replaceStart,
     replaceEnd: end,
+  };
+}
+
+function bareTemplateCompletion(
+  source: string,
+  offset: number,
+  tag: string,
+  argStart: number,
+): LatteIncludeCompletion | null {
+  let index = skipSpaces(source, argStart);
+  const nameStart = index;
+
+  while (index < source.length && isTemplatePathChar(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const nameEnd = index;
+  const prefix = source.slice(nameStart, offset);
+
+  if (
+    offset < nameStart ||
+    offset > nameEnd ||
+    !looksLikeTemplatePath(prefix)
+  ) {
+    return null;
+  }
+
+  return {
+    tag,
+    prefix,
+    replaceStart: nameStart,
+    replaceEnd: nameEnd,
   };
 }
 

@@ -343,6 +343,27 @@ describe("nettePresenterClassCandidatePathsForLink", () => {
     ]);
   });
 
+  it("resolves absolute module links from ebox-style modules through app/modules/*Module", () => {
+    expect(
+      nettePresenterClassCandidatePathsForLink(
+        target({
+          absolute: true,
+          action: "Show",
+          module: "Users",
+          presenter: "UsersAdmin",
+        }),
+        "app/modules/profileModule/templates/ProfilesAdmin/update.latte",
+      ),
+    ).toEqual([
+      "app/modules/usersModule/Presenters/UsersAdminPresenter.php",
+      "app/modules/usersModule/presenters/UsersAdminPresenter.php",
+      "app/modules/usersModule/UsersAdminPresenter.php",
+      "app/UsersModule/presenters/UsersAdminPresenter.php",
+      "app/UsersModule/Presenters/UsersAdminPresenter.php",
+      "app/UI/Users/UsersAdmin/UsersAdminPresenter.php",
+    ]);
+  });
+
   it("does not treat an arbitrary templates directory as a classic module template base", () => {
     expect(
       nettePresenterClassCandidatePathsForLink(

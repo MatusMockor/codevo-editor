@@ -271,7 +271,7 @@ interface EditorSurfaceProps {
   provideNettePhpLinkCompletions?(
     source: string,
     offset: number,
-  ): Promise<LatteCompletion[]>;
+  ): Promise<LatteCompletion[] | null>;
   isPhpFrameworkStringCompletionContext?(
     source: string,
     position: EditorPosition,
@@ -375,7 +375,7 @@ function EditorSurfaceComponent({
   provideNeonCompletions = async () => [],
   provideNeonDefinition = async () => false,
   provideNettePhpLinkDefinition = async () => false,
-  provideNettePhpLinkCompletions = async () => [],
+  provideNettePhpLinkCompletions = async () => null,
   isPhpFrameworkStringCompletionContext = () => false,
   providePhpCodeActions = async () => [],
   providePhpFrameworkDefinition,

@@ -410,6 +410,32 @@ describe("detectLatteIncludeCompletionAt", () => {
     expect(detectLatteIncludeCompletionAt(source, offset)?.prefix).toBe("ba");
   });
 
+  it("detects a completion inside a bare path-like include", () => {
+    const source = "{include partials/@showHeader.latte}";
+    const offset = offsetOf(source, "@show") + "@show".length;
+
+    expect(detectLatteIncludeCompletionAt(source, offset)).toEqual({
+      tag: "include",
+      prefix: "partials/@show",
+      replaceStart: source.indexOf("partials/@showHeader.latte"),
+      replaceEnd:
+        source.indexOf("partials/@showHeader.latte") +
+        "partials/@showHeader.latte".length,
+    });
+  });
+
+  it("detects a completion inside a bare include path before named arguments", () => {
+    const source = "{include partials/@showSubmenu.latte 'group' => $group}";
+    const offset = offsetOf(source, "@show") + "@show".length;
+
+    expect(detectLatteIncludeCompletionAt(source, offset)?.prefix).toBe(
+      "partials/@show",
+    );
+    expect(detectLatteIncludeCompletionAt(source, offset)?.replaceEnd).toBe(
+      source.indexOf(" 'group'"),
+    );
+  });
+
   it("returns null for a bare block include (no quote)", () => {
     const source = "{include sideb}";
     const offset = offsetOf(source, "sideb") + "sideb".length;

@@ -267,6 +267,13 @@ export function nettePresenterClassCandidatePathsForLink(
         parsed.module,
         currentClassicModuleBase,
       );
+  const absoluteClassicModules = parsed.absolute
+    ? absoluteClassicModulesPresenterCandidates(
+        presenter,
+        parsed.module,
+        currentRelativePath,
+      )
+    : [];
   const fallback = presenterClassPathsForModule(
     appRoot,
     presenter,
@@ -284,7 +291,12 @@ export function nettePresenterClassCandidatePathsForLink(
       );
 
   return dedupe(
-    [...currentClassicModule, ...moduleAware, ...fallback].filter(
+    [
+      ...currentClassicModule,
+      ...absoluteClassicModules,
+      ...moduleAware,
+      ...fallback,
+    ].filter(
       (path) => path.length > 0,
     ),
   );
@@ -475,6 +487,53 @@ function currentClassicModulePresenterCandidates(
     : base;
 
   return classicPresenterClassPathsFromBase(moduleBase, presenter);
+}
+
+function absoluteClassicModulesPresenterCandidates(
+  presenter: string,
+  targetModule: string | null,
+  currentRelativePath: string,
+): string[] {
+  if (!targetModule) {
+    return [];
+  }
+
+  const modulesRoot = currentClassicModulesRoot(currentRelativePath);
+
+  if (modulesRoot === null) {
+    return [];
+  }
+
+  const moduleBase = joinSegments([
+    modulesRoot,
+    ...targetModule
+      .split(":")
+      .map((segment) => `${lcfirst(segment)}Module`),
+  ]);
+
+  return classicPresenterClassPathsFromBase(moduleBase, presenter);
+}
+
+function currentClassicModulesRoot(currentRelativePath: string): string | null {
+  const segments = normalizeSlashes(currentRelativePath)
+    .trim()
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  const modulesIndex = segments.findIndex(
+    (segment) => segment.toLowerCase() === "modules",
+  );
+
+  if (modulesIndex < 0) {
+    return null;
+  }
+
+  const moduleSegment = segments[modulesIndex + 1] ?? "";
+
+  if (!isClassicModuleBase(moduleSegment)) {
+    return null;
+  }
+
+  return segments.slice(0, modulesIndex + 1).join("/");
 }
 
 /**
@@ -1198,6 +1257,10 @@ function basenameOf(path: string): string {
 
 function ucfirst(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function lcfirst(value: string): string {
+  return value.charAt(0).toLowerCase() + value.slice(1);
 }
 
 function dedupe(paths: string[]): string[] {

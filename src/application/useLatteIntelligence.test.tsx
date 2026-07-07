@@ -2513,6 +2513,9 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
       source,
       offset,
     );
+    if (!completions) {
+      throw new Error("Expected Nette PHP link completions.");
+    }
     const labels = completions.map((completion) => completion.label);
 
     expect(labels).toContain("Product:show");
@@ -2594,13 +2597,16 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
       source,
       offset,
     );
+    if (!completions) {
+      throw new Error("Expected filtered Nette PHP link completions.");
+    }
 
     expect(completions.map((completion) => completion.label)).toEqual([
       "Product:show",
     ]);
   });
 
-  it("returns [] when the cursor is not on a link-call string argument", async () => {
+  it("returns null when the cursor is not on a link-call string argument", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({ listDirectory, readFileContent });
     const latte = createLatteIntelligence(() => deps);
@@ -2608,7 +2614,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
 
     await expect(
       latte.provideNettePhpLinkCompletions(source, source.indexOf("get")),
-    ).resolves.toEqual([]);
+    ).resolves.toBeNull();
     expect(listDirectory).not.toHaveBeenCalled();
   });
 
@@ -2630,6 +2636,9 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
       phpSource,
       phpSource.indexOf("P'"),
     );
+    if (!phpCompletions) {
+      throw new Error("Expected cached Nette PHP link completions.");
+    }
 
     // Same requested root, same cache entry still warm: no additional scan.
     expect(listDirectory.mock.calls.length).toBe(scansAfterLatteSide);
@@ -2638,7 +2647,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
   });
 
-  it("returns [] fast when the Nette framework is inactive (no scan)", async () => {
+  it("returns null fast when the Nette framework is inactive (no scan)", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({
       frameworkIntelligence: GENERIC_FRAMEWORK,
@@ -2650,7 +2659,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
 
     await expect(
       latte.provideNettePhpLinkCompletions(source, source.indexOf("P'")),
-    ).resolves.toEqual([]);
+    ).resolves.toBeNull();
     expect(listDirectory).not.toHaveBeenCalled();
   });
 

@@ -11333,6 +11333,54 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     expect(gateway.completion).toHaveBeenCalled();
   });
 
+  it("falls through to phpactor when the Nette callback reports an inactive context", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    const provideNettePhpLinkCompletions = vi.fn(async () => null);
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      provideNettePhpLinkCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(provideNettePhpLinkCompletions).toHaveBeenCalledWith(source, offset);
+    expect(gateway.completion).toHaveBeenCalled();
+  });
+
+  it("keeps an empty Nette completion list authoritative when the context is active", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$this->link('Pro');\n";
+    const offset = source.indexOf("Pro") + 2;
+    const provideNettePhpLinkCompletions = vi.fn(async () => []);
+    const gateway = featuresGateway({
+      completion: { isIncomplete: false, items: [] },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      provideNettePhpLinkCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source, path: "/project/src/User.php" }),
+        positionForOffset(source, offset),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(provideNettePhpLinkCompletions).toHaveBeenCalledWith(source, offset);
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
   it("reports an error from the completion callback without falling back to phpactor", async () => {
     const registered = createRegisteredProviders();
     const source = "<?php\n$this->link('Pro');\n";
