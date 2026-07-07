@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   hasNetteFrameworkProvider,
+  latteCandidateViewNames,
   loadNetteViewDataEntries,
   type NetteViewDataCache,
   type NetteViewDataDependencies,
@@ -41,6 +42,7 @@ function makeDeps(
   overrides: Partial<NetteViewDataDependencies> = {},
 ): NetteViewDataDependencies {
   return {
+    joinPath: (root, relativePath) => `${root}/${relativePath}`,
     readFileContent: vi.fn(async (path: string) => {
       if (path === PHP_FILE) {
         return "<?php $this->template->invoice = $invoice;";
@@ -246,5 +248,65 @@ describe("hasNetteFrameworkProvider", () => {
   it("detects Nette by provider id only", () => {
     expect(hasNetteFrameworkProvider([CUSTOM_PROVIDER])).toBe(false);
     expect(hasNetteFrameworkProvider([CUSTOM_PROVIDER, NETTE_PROVIDER])).toBe(true);
+  });
+});
+
+describe("latteCandidateViewNames", () => {
+  it("maps modern presenter templates to action and wildcard view names", async () => {
+    await expect(
+      latteCandidateViewNames({
+        controlSuffix: "Control.php",
+        deps: makeDeps(),
+        isRequestedRootActive: () => true,
+        presenterSuffix: "Presenter.php",
+        requestedRoot: ROOT,
+        templateRelativePath: "app/UI/Home/default.latte",
+      }),
+    ).resolves.toEqual(["Home:default", "Home:*"]);
+  });
+
+  it("maps colocated control templates to owner view names", async () => {
+    await expect(
+      latteCandidateViewNames({
+        controlSuffix: "Control.php",
+        deps: makeDeps(),
+        isRequestedRootActive: () => true,
+        presenterSuffix: "Presenter.php",
+        requestedRoot: ROOT,
+        templateRelativePath: "app/UI/Grid/ProductListControl/product_list.latte",
+      }),
+    ).resolves.toEqual(["ProductListControl:product_list", "ProductListControl:*"]);
+  });
+
+  it("adds factory-derived owner names for legacy component templates", async () => {
+    const presenterSource = `<?php
+class HomePresenter
+{
+    protected function createComponentProductList(): App\\Components\\ProductListControl
+    {
+        return new App\\Components\\ProductListControl();
+    }
+}
+`;
+    const deps = makeDeps({
+      readFileContent: vi.fn(async (path: string) => {
+        if (path === `${ROOT}/app/UI/Home/HomePresenter.php`) {
+          return presenterSource;
+        }
+
+        throw new Error(`missing ${path}`);
+      }),
+    });
+
+    await expect(
+      latteCandidateViewNames({
+        controlSuffix: "Control.php",
+        deps,
+        isRequestedRootActive: () => true,
+        presenterSuffix: "Presenter.php",
+        requestedRoot: ROOT,
+        templateRelativePath: "app/UI/Home/product_list.latte",
+      }),
+    ).resolves.toContain("ProductList:product_list");
   });
 });

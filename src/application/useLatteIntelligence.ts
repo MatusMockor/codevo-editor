@@ -78,7 +78,6 @@ import {
 } from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
-  factoryDerivedLatteCandidateViewNames,
   phpTypeNamesEqual,
 } from "./netteCreateComponentViewData";
 import {
@@ -117,7 +116,10 @@ import {
 } from "./latteExpressionDetection";
 import {
   hasNetteFrameworkProvider,
+  latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
+  matchesLatteViewName,
+  netteViewDataVariablesForViews,
   type NetteViewDataCache,
   type NetteViewDataEntry,
   type NetteViewDataInFlight,
@@ -370,7 +372,6 @@ interface LatteExpressionResolutionContext {
  * (`app/UI/<Name>`) conventions without walking `vendor` / `node_modules`.
  */
 const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = ["app", "templates"];
-const LATTE_TEMPLATE_EXTENSION = ".latte";
 
 /**
  * Time-to-live for the per-root template listing. Invalidation stays simple
@@ -1942,17 +1943,6 @@ function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {
   };
 }
 
-/**
- * The `"<Presenter>:<action>"` view names that could render the active template,
- * plus the `"<Presenter>:*"` wildcard the extractor emits for helper methods
- * (`beforeRender`, bare `render()`), so a variable shared across every action is
- * matched too. Derived from the template path via the inverse presenter mapping.
- *
- * Component/control templates are included through the colocated
- * `SomethingControl.php` inverse mapping, so view data assigned by a control's
- * `render*` / lifecycle methods feeds both `$variable` completion and
- * `{$variable->}` member completion in `something.latte`.
- */
 async function latteCandidateViewNames(
   context: LatteExpressionResolutionContext,
 ): Promise<string[]> {
@@ -1963,91 +1953,14 @@ async function latteCandidateViewNames(
     return [];
   }
 
-  const action = latteActionFromTemplatePath(templateRelativePath);
-  const names = new Set<string>();
-
-  for (const presenterPath of [
-    ...presenterCandidatePathsForTemplate(templateRelativePath),
-    ...componentClassCandidatePathsForTemplate(templateRelativePath),
-  ]) {
-    const fileName = presenterPath.split("/").pop() ?? "";
-    const isControl = fileName.endsWith(CONTROL_SUFFIX);
-    const suffix = fileName.endsWith(PRESENTER_SUFFIX)
-      ? PRESENTER_SUFFIX
-      : isControl
-        ? CONTROL_SUFFIX
-        : null;
-
-    if (!suffix) {
-      continue;
-    }
-
-    const shortName = fileName.slice(0, -suffix.length);
-
-    names.add(`${shortName}:${action}`);
-    names.add(`${shortName}:*`);
-
-    if (isControl) {
-      names.add(`${shortName}:default`);
-    }
-  }
-
-  for (const name of await factoryDerivedLatteCandidateViewNames({
-    action,
+  return resolveLatteCandidateViewNames({
     deps,
     isRequestedRootActive,
+    presenterSuffix: PRESENTER_SUFFIX,
+    controlSuffix: CONTROL_SUFFIX,
     requestedRoot,
     templateRelativePath,
-  })) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    names.add(name);
-  }
-
-  return Array.from(names);
-}
-
-/**
- * The view/action name a template file renders: the base name without the
- * `.latte` extension, and for the classic dotted `Product.show.latte` form the
- * segment after the final dot (`show`).
- */
-function latteActionFromTemplatePath(templateRelativePath: string): string {
-  const fileName = templateRelativePath.split("/").pop() ?? "";
-  const base = fileName.endsWith(LATTE_TEMPLATE_EXTENSION)
-    ? fileName.slice(0, -LATTE_TEMPLATE_EXTENSION.length)
-    : fileName;
-  const dotIndex = base.lastIndexOf(".");
-
-  return dotIndex >= 0 ? base.slice(dotIndex + 1) : base;
-}
-
-function matchesLatteViewName(
-  bindingViewName: string,
-  candidateViewNames: readonly string[],
-): boolean {
-  return candidateViewNames.includes(bindingViewName);
-}
-
-function netteViewDataVariablesForViews(
-  entries: readonly PhpFrameworkViewDataEntry[],
-  viewNames: readonly string[],
-): PhpFrameworkViewDataVariable[] {
-  const variables: PhpFrameworkViewDataVariable[] = [];
-
-  for (const entry of entries) {
-    for (const binding of entry.bindings) {
-      if (!matchesLatteViewName(binding.viewName, viewNames)) {
-        continue;
-      }
-
-      variables.push(...binding.variables);
-    }
-  }
-
-  return variables;
+  });
 }
 
 /**
