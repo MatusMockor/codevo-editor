@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
-import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import {
   phpCurrentNamespace,
   phpShortNameIsImported,
@@ -11,14 +10,12 @@ import {
   parsePhpClassStructure,
   type PhpClassStructure,
   type PhpMethodMember,
-  type PhpPropertyMember,
 } from "../domain/phpClassStructure";
 import {
   renderImplementMethodsStubs,
   renderOverrideMethodsStubs,
   renderUseImports,
 } from "../domain/phpCodeGen";
-import { renderConstructor } from "../domain/phpConstructorCodeGen";
 import {
   detectUnknownClassReference,
   phpCreateClassDestination,
@@ -32,10 +29,6 @@ import {
   renderCreatePropertyStub,
   type MissingThisMember,
 } from "../domain/phpCreateFromUsage";
-import {
-  generatedPhpDocHasContent,
-  renderGeneratedPhpDoc,
-} from "../domain/phpDocGen";
 import { planExtractInterface } from "../domain/phpExtractInterface";
 import {
   phpUnusedImportRemovalAt,
@@ -43,10 +36,8 @@ import {
   phpUnusedVariableRemovalAt,
 } from "../domain/phpInspections";
 import {
-  detectClassMemberIndent,
   findClassBodyInsertionOffset,
   findUseImportInsertionOffset,
-  indentLines,
   offsetToPosition,
 } from "../domain/phpInsertionPoint";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
@@ -71,6 +62,13 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  phpClassBodyInsertionAction,
+  phpGenerateAccessorsCodeAction,
+  phpGenerateConstructorCodeAction,
+  phpGenerateConstructorWithPromotionCodeAction,
+  phpGeneratePhpDocCodeAction,
+} from "./phpClassGenerateCodeActions";
 import { zeroLengthPhpEditRange } from "./phpCodeActionEdits";
 import type {
   PhpCodeActionDescriptor,
@@ -834,266 +832,6 @@ async function phpOverrideMethodsCodeAction(
   }
 
   return { edits, kind: "refactor.rewrite", title: "Override methods" };
-}
-
-/**
- * Offers "Generate getters and setters" for instance properties that are still
- * missing an accessor. Conservative: a property is skipped when the class
- * already declares any matching `getX` / `isX` (getter) AND `setX` (setter),
- * and the whole action is suppressed when nothing is missing.
- */
-function phpGenerateAccessorsCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-): PhpCodeActionDescriptor | null {
-  const instanceProperties = structure.properties.filter(
-    (property) => !property.isStatic,
-  );
-
-  if (instanceProperties.length === 0) {
-    return null;
-  }
-
-  const methodNames = new Set(
-    structure.methods.map((method) => method.name.toLowerCase()),
-  );
-  const missingProperties = instanceProperties.filter(
-    (property) => !phpPropertyHasAllAccessors(property, methodNames),
-  );
-
-  if (missingProperties.length === 0) {
-    return null;
-  }
-
-  return phpClassBodyInsertionAction(
-    source,
-    renderAccessors(missingProperties, { mode: "both" }),
-    "Generate getters and setters",
-  );
-}
-
-function phpPropertyHasAllAccessors(
-  property: PhpPropertyMember,
-  methodNames: ReadonlySet<string>,
-): boolean {
-  const pascalName = phpPascalCasePropertyName(property.name);
-  const hasGetter =
-    methodNames.has(`get${pascalName}`.toLowerCase()) ||
-    methodNames.has(`is${pascalName}`.toLowerCase());
-
-  if (!hasGetter) {
-    return false;
-  }
-
-  if (property.isReadonly) {
-    return true;
-  }
-
-  return methodNames.has(`set${pascalName}`.toLowerCase());
-}
-
-function phpPascalCasePropertyName(name: string): string {
-  return name
-    .split(/[_\s-]+/)
-    .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join("");
-}
-
-/**
- * Offers "Generate constructor" when the class has instance properties and no
- * existing `__construct`.
- */
-function phpGenerateConstructorCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-): PhpCodeActionDescriptor | null {
-  const instanceProperties = structure.properties.filter(
-    (property) => !property.isStatic,
-  );
-
-  if (instanceProperties.length === 0) {
-    return null;
-  }
-
-  const hasConstructor = structure.methods.some(
-    (method) => method.name.toLowerCase() === "__construct",
-  );
-
-  if (hasConstructor) {
-    return null;
-  }
-
-  return phpClassBodyInsertionAction(
-    source,
-    renderConstructor(instanceProperties),
-    "Generate constructor",
-  );
-}
-
-/**
- * Sibling of `phpGenerateConstructorCodeAction` that renders a PHP 8 constructor
- * with property promotion (each parameter carries the property's visibility /
- * `readonly` so the body stays empty). Offered under the SAME guard as the
- * classic action — a class with instance properties and no `__construct` — so
- * both variants appear together and the user picks the style. Conservative: a
- * class with no instance properties, or one that already declares a constructor,
- * yields no action.
- */
-function phpGenerateConstructorWithPromotionCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-): PhpCodeActionDescriptor | null {
-  const instanceProperties = structure.properties.filter(
-    (property) => !property.isStatic,
-  );
-
-  if (instanceProperties.length === 0) {
-    return null;
-  }
-
-  const hasConstructor = structure.methods.some(
-    (method) => method.name.toLowerCase() === "__construct",
-  );
-
-  if (hasConstructor) {
-    return null;
-  }
-
-  return phpClassBodyInsertionAction(
-    source,
-    renderConstructor(instanceProperties, { promotion: true }),
-    "Generate constructor with promotion",
-  );
-}
-
-/**
- * Offers "Generate PHPDoc" (PhpStorm Generate -> PHPDoc) when the cursor sits on
- * a method that has no docblock. The docblock is synthesized from the native
- * signature (`@param` per parameter, `@return` from the return type) and spliced
- * as a zero-length insertion at the start of the method's declaration line, so it
- * lands directly above the method with the method's own indentation. Conservative:
- * a cursor not on any method, or a method that already carries a docblock, yields
- * no action (we never overwrite an existing docblock).
- */
-function phpGeneratePhpDocCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const method = phpMethodAtOffset(structure, range.start);
-
-  if (!method || method.phpDoc) {
-    return null;
-  }
-
-  // A no-parameter `void` / `never` method would render an empty `/** *\/`;
-  // PhpStorm offers nothing for that, so neither do we.
-  if (!generatedPhpDocHasContent(method)) {
-    return null;
-  }
-
-  const lineStart = phpLineStartOffset(source, method.declarationOffset);
-  const indent = phpLeadingIndent(source, lineStart);
-  const docBlock = renderGeneratedPhpDoc(method, indent);
-  const insertionPosition = offsetToPosition(source, lineStart);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: `${docBlock}\n`,
-      },
-    ],
-    kind: "refactor.rewrite",
-    title: "Generate PHPDoc",
-  };
-}
-
-/**
- * Selects the method whose span (the member start - which covers any leading
- * attributes and modifier keywords above the `function` keyword - through to
- * just before the next method's member start, or the end of source) contains
- * the cursor offset. This lets "Generate PHPDoc" fire whether the cursor is on a
- * leading `#[Attribute]` line, a modifier (`public`) line, the signature, or
- * anywhere inside the body. Returns `null` when the cursor sits before the first
- * method (e.g. on the class declaration).
- */
-function phpMethodAtOffset(
-  structure: PhpClassStructure,
-  offset: number,
-): PhpMethodMember | null {
-  const ordered = [...structure.methods].sort(
-    (a, b) => a.memberStartOffset - b.memberStartOffset,
-  );
-
-  let match: PhpMethodMember | null = null;
-
-  for (const method of ordered) {
-    if (method.memberStartOffset > offset) {
-      break;
-    }
-
-    match = method;
-  }
-
-  return match;
-}
-
-function phpLineStartOffset(source: string, offset: number): number {
-  const previousNewline = source.lastIndexOf("\n", offset - 1);
-
-  return previousNewline + 1;
-}
-
-function phpLeadingIndent(source: string, lineStart: number): string {
-  const indentMatch = /^[ \t]*/.exec(source.slice(lineStart));
-
-  return indentMatch?.[0] ?? "";
-}
-
-/**
- * Wraps a rendered class-body block in a zero-length insertion edit at the end
- * of the class body, matching the spacing convention of "Implement methods".
- */
-function phpClassBodyInsertionAction(
-  source: string,
-  block: string,
-  title: string,
-  className?: string,
-): PhpCodeActionDescriptor | null {
-  const insertionPoint = findClassBodyInsertionOffset(source, className);
-
-  if (!insertionPoint) {
-    return null;
-  }
-
-  // The renderers emit column-0 member text; indent it to the class's own
-  // member level (detected from the existing members, falling back to four
-  // spaces) so generated methods line up like PhpStorm's, instead of landing at
-  // column 1 in front of the closing brace.
-  const indentedBlock = indentLines(
-    block,
-    detectClassMemberIndent(source, className),
-  );
-  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
-  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
-  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(insertionPosition),
-        text: `${leadingBlankLine}${indentedBlock}\n${trailingBlankLine}`,
-      },
-    ],
-    // Class-body generators ("Generate constructor / accessors") read as the
-    // PhpStorm Generate family - a "refactor" in the action widget (distinct
-    // icon / group from the quickfix lightbulb). "Create method/property from
-    // usage" reuses this builder but re-stamps itself a preferred quickfix.
-    kind: "refactor.rewrite",
-    title,
-  };
 }
 
 /**
