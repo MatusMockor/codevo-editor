@@ -115,6 +115,10 @@ export interface PhpFrameworkSourceContext {
   workspaceSources?: readonly string[];
 }
 
+export interface PhpFrameworkMagicDiagnosticMatch {
+  source: string | null;
+}
+
 /**
  * A named-route reference detected at the cursor (e.g. the `route('x')`
  * argument). Framework-agnostic mirror of the Laravel route reference so the
@@ -929,15 +933,38 @@ export function isKnownPhpFrameworkStaticMethod(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
   sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
-  return providers.some(
-    (provider) =>
+  return Boolean(
+    phpFrameworkStaticMethodMagicDiagnostic(
+      source,
+      className,
+      methodName,
+      providers,
+      sourceContext,
+    ),
+  );
+}
+
+export function phpFrameworkStaticMethodMagicDiagnostic(
+  source: string,
+  className: string,
+  methodName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
+): PhpFrameworkMagicDiagnosticMatch | null {
+  for (const provider of providers) {
+    if (
       provider.diagnostics?.isKnownStaticMethod?.({
         className,
         methodName,
         source,
         sourceContext,
-      }) ?? false,
-  );
+      })
+    ) {
+      return { source: provider.diagnostics.magicSource ?? null };
+    }
+  }
+
+  return null;
 }
 
 export function isKnownPhpFrameworkMemberMethod(
@@ -948,16 +975,41 @@ export function isKnownPhpFrameworkMemberMethod(
   sourceContext?: PhpFrameworkSourceContext,
   receiverClassName?: string | null,
 ): boolean {
-  return providers.some(
-    (provider) =>
+  return Boolean(
+    phpFrameworkMemberMethodMagicDiagnostic(
+      source,
+      receiverExpression,
+      methodName,
+      providers,
+      sourceContext,
+      receiverClassName,
+    ),
+  );
+}
+
+export function phpFrameworkMemberMethodMagicDiagnostic(
+  source: string,
+  receiverExpression: string,
+  methodName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  sourceContext?: PhpFrameworkSourceContext,
+  receiverClassName?: string | null,
+): PhpFrameworkMagicDiagnosticMatch | null {
+  for (const provider of providers) {
+    if (
       provider.diagnostics?.isKnownMemberMethod?.({
         methodName,
         receiverClassName,
         receiverExpression,
         source,
         sourceContext,
-      }) ?? false,
-  );
+      })
+    ) {
+      return { source: provider.diagnostics.magicSource ?? null };
+    }
+  }
+
+  return null;
 }
 
 /**

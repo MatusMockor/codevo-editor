@@ -1,8 +1,9 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import {
   defaultPhpFrameworkProviders,
-  isKnownPhpFrameworkMemberMethod,
-  isKnownPhpFrameworkStaticMethod,
+  phpFrameworkMemberMethodMagicDiagnostic,
+  phpFrameworkStaticMethodMagicDiagnostic,
+  type PhpFrameworkMagicDiagnosticMatch,
   type PhpFrameworkProvider,
   type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
@@ -79,6 +80,11 @@ export type PhpDiagnosticClassificationReason =
   | "contextual-existing"
   | "framework-magic";
 
+interface PhpDiagnosticClassification {
+  magicSource?: string;
+  reason: PhpDiagnosticClassificationReason;
+}
+
 export interface PhpLanguageServerDiagnosticFilterOptions {
   allowDependencyTraitFallback?: boolean;
   contextualExistingMethods?: ReadonlySet<string>;
@@ -124,61 +130,53 @@ export function filterPhpLanguageServerDiagnostics(
   diagnostics: LanguageServerDiagnostic[],
   options: PhpLanguageServerDiagnosticFilterOptions = {},
 ): LanguageServerDiagnostic[] {
-  const magicSource = frameworkMagicDiagnosticSource(
-    options.frameworkProviders ?? defaultPhpFrameworkProviders,
-  );
-
   return diagnostics.flatMap((diagnostic) =>
     applyPhpDiagnosticClassification(
       diagnostic,
-      classifyPhpLanguageServerDiagnostic(source, diagnostic, options),
-      magicSource,
+      classifyPhpLanguageServerDiagnosticWithProvider(
+        source,
+        diagnostic,
+        options,
+      ),
     ),
   );
-}
-
-/**
- * The diagnostic `source` label to stamp on a downgraded framework-magic hint:
- * the first active provider's own `diagnostics.magicSource`, else the shared
- * `laravel-magic` marker. Framework resolution is EXCLUSIVE (at most one active
- * provider), so the label is unambiguous - a Nette project yields `nette-magic`,
- * a Laravel project (no override) keeps `laravel-magic` byte-for-byte.
- */
-function frameworkMagicDiagnosticSource(
-  providers: readonly PhpFrameworkProvider[],
-): string {
-  for (const provider of providers) {
-    const magicSource = provider.diagnostics?.magicSource;
-
-    if (magicSource) {
-      return magicSource;
-    }
-  }
-
-  return LARAVEL_MAGIC_DIAGNOSTIC_SOURCE;
 }
 
 /**
  * Classifies a single diagnostic by the FIRST matching reason, in the same
  * precedence order the previous suppression filter used: parse artifacts and
  * contextually-confirmed members win over a framework-magic guess, so a
- * confirmed false positive is dropped rather than surfaced as a hint.
+ * confirmed false positive is dropped rather than surfaced as a hint. The
+ * filter's internal classifier keeps the matched provider label beside
+ * framework magic so a later provider cannot inherit an earlier provider's
+ * diagnostic source.
  */
 export function classifyPhpLanguageServerDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
   options: PhpLanguageServerDiagnosticFilterOptions = {},
 ): PhpDiagnosticClassificationReason | null {
+  return (
+    classifyPhpLanguageServerDiagnosticWithProvider(source, diagnostic, options)
+      ?.reason ?? null
+  );
+}
+
+function classifyPhpLanguageServerDiagnosticWithProvider(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  options: PhpLanguageServerDiagnosticFilterOptions = {},
+): PhpDiagnosticClassification | null {
   if (isIgnoredPhpactorDocblockDiagnostic(diagnostic)) {
-    return "parse-artifact";
+    return { reason: "parse-artifact" };
   }
 
   if (isPhpactorKeywordMethodDiagnostic(source, diagnostic)) {
-    return "parse-artifact";
+    return { reason: "parse-artifact" };
   }
 
   if (isPhpactorStaleReturnParseDiagnostic(source, diagnostic)) {
-    return "parse-artifact";
+    return { reason: "parse-artifact" };
   }
 
   if (
@@ -188,7 +186,7 @@ export function classifyPhpLanguageServerDiagnostic(
       options.contextualExistingMethods,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
   if (
@@ -198,7 +196,7 @@ export function classifyPhpLanguageServerDiagnostic(
       options.contextualMemberMethods,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
   if (
@@ -208,18 +206,21 @@ export function classifyPhpLanguageServerDiagnostic(
       options.contextualMemberProperties,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
-  if (
-    isKnownPhpFrameworkMemberMethodDiagnostic(
-      source,
-      diagnostic,
-      options.frameworkProviders ?? defaultPhpFrameworkProviders,
-      options.frameworkSourceContext,
-    )
-  ) {
-    return "framework-magic";
+  const memberMethodMagic = phpFrameworkMemberMethodDiagnosticMatch(
+    source,
+    diagnostic,
+    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkSourceContext,
+  );
+
+  if (memberMethodMagic) {
+    return {
+      magicSource: memberMethodMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      reason: "framework-magic",
+    };
   }
 
   if (
@@ -231,7 +232,7 @@ export function classifyPhpLanguageServerDiagnostic(
       options.path,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
   if (
@@ -241,7 +242,7 @@ export function classifyPhpLanguageServerDiagnostic(
       options.contextualTraitHostConstants,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
   if (
@@ -251,18 +252,21 @@ export function classifyPhpLanguageServerDiagnostic(
       options.contextualTraitHostProperties,
     )
   ) {
-    return "contextual-existing";
+    return { reason: "contextual-existing" };
   }
 
-  if (
-    isKnownPhpFrameworkStaticMethodDiagnostic(
-      source,
-      diagnostic,
-      options.frameworkProviders ?? defaultPhpFrameworkProviders,
-      options.frameworkSourceContext,
-    )
-  ) {
-    return "framework-magic";
+  const staticMethodMagic = phpFrameworkStaticMethodDiagnosticMatch(
+    source,
+    diagnostic,
+    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkSourceContext,
+  );
+
+  if (staticMethodMagic) {
+    return {
+      magicSource: staticMethodMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      reason: "framework-magic",
+    };
   }
 
   return null;
@@ -274,19 +278,23 @@ export function classifyPhpLanguageServerDiagnostic(
  */
 function applyPhpDiagnosticClassification(
   diagnostic: LanguageServerDiagnostic,
-  reason: PhpDiagnosticClassificationReason | null,
-  magicSource: string,
+  classification: PhpDiagnosticClassification | null,
 ): LanguageServerDiagnostic[] {
-  if (reason === "parse-artifact") {
+  if (classification?.reason === "parse-artifact") {
     return [];
   }
 
-  if (reason === "contextual-existing") {
+  if (classification?.reason === "contextual-existing") {
     return [];
   }
 
-  if (reason === "framework-magic") {
-    return [downgradePhpDiagnosticToFrameworkMagicHint(diagnostic, magicSource)];
+  if (classification?.reason === "framework-magic") {
+    return [
+      downgradePhpDiagnosticToFrameworkMagicHint(
+        diagnostic,
+        classification.magicSource ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      ),
+    ];
   }
 
   return [diagnostic];
@@ -319,44 +327,46 @@ function isIgnoredPhpactorDocblockDiagnostic(
   );
 }
 
-function isKnownPhpFrameworkStaticMethodDiagnostic(
+function phpFrameworkStaticMethodDiagnosticMatch(
   source: string,
   diagnostic: LanguageServerDiagnostic,
   frameworkProviders: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
-): boolean {
+): PhpFrameworkMagicDiagnosticMatch | null {
   const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
 
-  return Boolean(
-    context &&
-      isKnownPhpFrameworkStaticMethod(
-        source,
-        context.className,
-        context.methodName,
-        frameworkProviders,
-        sourceContext,
-      ),
+  if (!context) {
+    return null;
+  }
+
+  return phpFrameworkStaticMethodMagicDiagnostic(
+    source,
+    context.className,
+    context.methodName,
+    frameworkProviders,
+    sourceContext,
   );
 }
 
-function isKnownPhpFrameworkMemberMethodDiagnostic(
+function phpFrameworkMemberMethodDiagnosticMatch(
   source: string,
   diagnostic: LanguageServerDiagnostic,
   frameworkProviders: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
-): boolean {
+): PhpFrameworkMagicDiagnosticMatch | null {
   const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
 
-  return Boolean(
-    context &&
-      isKnownPhpFrameworkMemberMethod(
-        source,
-        context.receiverExpression,
-        context.methodName,
-        frameworkProviders,
-        sourceContext,
-        context.receiverClassName,
-      ),
+  if (!context) {
+    return null;
+  }
+
+  return phpFrameworkMemberMethodMagicDiagnostic(
+    source,
+    context.receiverExpression,
+    context.methodName,
+    frameworkProviders,
+    sourceContext,
+    context.receiverClassName,
   );
 }
 

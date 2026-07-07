@@ -98,6 +98,47 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
     expect(classified?.source).not.toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
   });
 
+  it("uses the matching provider label when Laravel and Nette providers coexist", () => {
+    const source = `<?php
+use App\\Models\\Album;
+
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    public function renderShow(): void
+    {
+        Album::whereNull('parent_id');
+        $this->template->renderInvoice();
+    }
+}
+`;
+    const laravelMagic = diagnosticAt(source, "whereNull", {
+      message: "Method Album::whereNull() does not exist",
+    });
+    const netteMagic = diagnosticAt(source, "renderInvoice", {
+      message: "Method 'renderInvoice' does not exist",
+    });
+
+    const diagnostics = filterPhpLanguageServerDiagnostics(
+      source,
+      [laravelMagic, netteMagic],
+      {
+        frameworkProviders: [
+          phpLaravelFrameworkProvider,
+          phpNetteFrameworkProvider,
+        ],
+      },
+    );
+
+    expect(diagnostics).toEqual([
+      frameworkMagicHint(laravelMagic),
+      {
+        ...netteMagic,
+        severity: "hint",
+        source: NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+      },
+    ]);
+  });
+
   it("keeps a real unresolved error as an error alongside downgraded framework magic", () => {
     const source = `<?php
 use App\\Models\\Album;
