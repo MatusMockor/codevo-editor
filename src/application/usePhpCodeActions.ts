@@ -54,6 +54,7 @@ import type {
   PhpCodeActionRange,
   PhpCodeActionTextEdit,
 } from "./phpCodeActionTypes";
+import { orderPhpCodeActions } from "./phpCodeActionOrdering";
 import { phpCreateFromUsageCodeAction } from "./phpCreateMemberCodeActions";
 import {
   phpAddParameterCodeAction,
@@ -822,78 +823,6 @@ async function phpOverrideMethodsCodeAction(
   }
 
   return { edits, kind: "refactor.rewrite", title: "Override methods" };
-}
-
-/**
- * Orders the aggregated PHP code actions so the most-likely action for the
- * cursor / selection leads the list (PhpStorm Alt+Enter "most likely first").
- * The order is a STABLE sort by kind family - contextual quickfixes, then
- * `extract` refactors, then `inline`, then `rewrite` (generate family + add
- * type), then the organize-imports source action, then anything unkinded -
- * which preserves each family's existing relative order (e.g. the alphabetical
- * import candidates) while floating the lightbulb fixes to the top. A single
- * `isPreferred` quickfix (Create method/property/Import) therefore wins the
- * first slot, matching the action Monaco offers as the lightbulb's auto-fix.
- */
-function orderPhpCodeActions(
-  actions: PhpCodeActionDescriptor[],
-): PhpCodeActionDescriptor[] {
-  return actions
-    .map((action, index) => ({ action, index }))
-    .sort((left, right) => {
-      const byFamily =
-        phpCodeActionFamilyRank(left.action) -
-        phpCodeActionFamilyRank(right.action);
-
-      if (byFamily !== 0) {
-        return byFamily;
-      }
-
-      // Within a family a preferred action (the contextual fix) leads; ties keep
-      // their original insertion order so nothing else is reshuffled.
-      const byPreferred =
-        Number(right.action.isPreferred ?? false) -
-        Number(left.action.isPreferred ?? false);
-
-      if (byPreferred !== 0) {
-        return byPreferred;
-      }
-
-      return left.index - right.index;
-    })
-    .map((entry) => entry.action);
-}
-
-/**
- * Ranks a code action's kind family for "most likely first" ordering: contextual
- * quickfixes (0) lead, then extract (1) / inline (2) / rewrite (3) refactors, the
- * organize-imports source action (4), and any unkinded action (5) trails. The
- * kind defaults to `quickfix` to mirror the Monaco mapper's fallback.
- */
-function phpCodeActionFamilyRank(action: PhpCodeActionDescriptor): number {
-  const kind = action.kind ?? "quickfix";
-
-  if (kind.startsWith("quickfix")) {
-    return 0;
-  }
-
-  if (kind.startsWith("refactor.extract")) {
-    return 1;
-  }
-
-  if (kind.startsWith("refactor.inline")) {
-    return 2;
-  }
-
-  if (kind.startsWith("refactor")) {
-    return 3;
-  }
-
-  if (kind.startsWith("source")) {
-    return 4;
-  }
-
-  return 5;
 }
 
 /**
