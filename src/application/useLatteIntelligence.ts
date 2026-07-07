@@ -37,7 +37,6 @@ import {
   detectLatteReferenceAt,
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
-import type { LatteReference } from "../domain/latteNavigation";
 import {
   detectLatteLinkAt,
   detectPhpPresenterLinkAt,
@@ -107,6 +106,9 @@ import {
   latteTagCompletions as buildLatteTagCompletions,
   type LatteCompletionItem,
 } from "./latteCompletionItems";
+import {
+  resolveLatteBlockDefinition,
+} from "./latteBlockDefinitions";
 import {
   latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
@@ -1343,64 +1345,6 @@ async function latteCandidateViewNames(
     requestedRoot,
     templateRelativePath,
   });
-}
-
-function resolveLatteBlockDefinition(
-  deps: LatteIntelligenceDependencies,
-  source: string,
-  reference: LatteReference,
-  currentTemplateRelativePath: string | null,
-): Promise<boolean> {
-  if (!currentTemplateRelativePath) {
-    return Promise.resolve(false);
-  }
-
-  const definitionOffset = latteBlockDefinitionOffset(source, reference);
-
-  if (definitionOffset === null) {
-    return Promise.resolve(false);
-  }
-
-  const activeDocumentPath = deps.getActiveDocument()?.path ?? null;
-
-  if (!activeDocumentPath) {
-    return Promise.resolve(false);
-  }
-
-  return deps.openTarget(
-    activeDocumentPath,
-    editorPositionAtOffset(source, definitionOffset),
-    reference.name,
-  );
-}
-
-function latteBlockDefinitionOffset(
-  source: string,
-  reference: LatteReference,
-): number | null {
-  const blockReference = new RegExp(
-    String.raw`\{(?:block|define)\s+#?${escapeRegExp(reference.name)}(?=[\s,}/])`,
-    "g",
-  );
-
-  for (const match of source.matchAll(blockReference)) {
-    const start = match.index ?? 0;
-    const nameStart = start + match[0].lastIndexOf(reference.name);
-
-    if (reference.tag !== "include" && nameStart === reference.nameStart) {
-      return nameStart;
-    }
-
-    if (reference.tag === "include") {
-      return nameStart;
-    }
-  }
-
-  return null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {
