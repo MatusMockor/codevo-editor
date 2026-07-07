@@ -10,28 +10,14 @@ import type {
   LatteIntelligence,
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
-import { isLatteMemberReferenceAt } from "./latteExpressionDetection";
-import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
-  createLatteProviderFlows,
-  type LatteProviderFlowCaches,
-  type LatteProviderFlowInFlight,
+  createLatteIntelligence,
 } from "./latteProviderFlows";
 import type { NetteControlCache } from "./netteControlComponents";
-import type {
-  NettePresenterCache,
-  NettePresenterInFlight,
-} from "./nettePresenterLinks";
+import type { NettePresenterCache } from "./nettePresenterLinks";
 import type { LatteTemplateCache } from "./netteTemplates";
-import type {
-  LatteTemplateTypeCache,
-  LatteTemplateTypeInFlight,
-} from "./netteTemplateTypes";
-import type {
-  LatteViewDataCache,
-  LatteViewDataInFlight,
-} from "./latteExpressionIntelligence";
-import type { LatteFrameworkCapabilities } from "./latteIntelligenceContracts";
+import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
+import type { LatteViewDataCache } from "./latteExpressionIntelligence";
 
 export type {
   LatteFrameworkCapabilities,
@@ -46,39 +32,7 @@ export type {
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
 export type { LatteViewDataCache } from "./latteExpressionIntelligence";
 export { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
-
-export function createLatteIntelligence(
-  getDependencies: () => LatteIntelligenceDependencies,
-  templateCache: LatteTemplateCache = {},
-  viewDataCache: LatteViewDataCache = {},
-  presenterCache: NettePresenterCache = {},
-  componentCache: NetteControlCache = {},
-  templateTypeCache: LatteTemplateTypeCache = {},
-  frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
-): LatteIntelligence {
-  const inFlight: LatteProviderFlowInFlight = {
-    presenterInFlight: new Map(),
-    templateTypeInFlight: new Map(),
-    viewDataInFlight: new Map(),
-  };
-  const flows = createLatteProviderFlows({
-    caches: {
-      componentCache,
-      presenterCache,
-      templateCache,
-      templateTypeCache,
-      viewDataCache,
-    },
-    frameworkCapabilities,
-    getDependencies,
-    inFlight,
-  });
-
-  return {
-    ...flows,
-    shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
-  };
-}
+export { createLatteIntelligence } from "./latteProviderFlows";
 
 export function useLatteIntelligence(
   dependencies: LatteIntelligenceDependencies,
@@ -90,32 +44,17 @@ export function useLatteIntelligence(
   const presenterCacheRef = useRef<NettePresenterCache>({});
   const componentCacheRef = useRef<NetteControlCache>({});
   const templateTypeCacheRef = useRef<LatteTemplateTypeCache>({});
-  const inFlightRef = useRef<LatteProviderFlowInFlight>({
-    presenterInFlight: new Map() as NettePresenterInFlight,
-    templateTypeInFlight: new Map() as LatteTemplateTypeInFlight,
-    viewDataInFlight: new Map() as LatteViewDataInFlight,
-  });
   const apiRef = useRef<LatteIntelligence | null>(null);
 
   if (!apiRef.current) {
-    const caches: LatteProviderFlowCaches = {
-      componentCache: componentCacheRef.current,
-      presenterCache: presenterCacheRef.current,
-      templateCache: templateCacheRef.current,
-      templateTypeCache: templateTypeCacheRef.current,
-      viewDataCache: viewDataCacheRef.current,
-    };
-    const flows = createLatteProviderFlows({
-      caches,
-      frameworkCapabilities: netteLatteFrameworkCapabilities,
-      getDependencies: () => dependenciesRef.current,
-      inFlight: inFlightRef.current,
-    });
-
-    apiRef.current = {
-      ...flows,
-      shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
-    };
+    apiRef.current = createLatteIntelligence(
+      () => dependenciesRef.current,
+      templateCacheRef.current,
+      viewDataCacheRef.current,
+      presenterCacheRef.current,
+      componentCacheRef.current,
+      templateTypeCacheRef.current,
+    );
   }
 
   return apiRef.current;

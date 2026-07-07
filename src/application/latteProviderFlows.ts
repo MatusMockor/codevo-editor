@@ -33,6 +33,8 @@ import {
   latteTagCompletions as buildLatteTagCompletions,
   type LatteCompletionItem,
 } from "./latteCompletionItems";
+import { isLatteMemberReferenceAt } from "./latteExpressionDetection";
+import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
   resolveLatteBlockDefinition,
 } from "./latteBlockDefinitions";
@@ -56,6 +58,7 @@ import {
 } from "./latteIntelligenceRuntime";
 import type {
   LatteFrameworkCapabilities,
+  LatteIntelligence,
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
 
@@ -102,6 +105,38 @@ export interface LatteProviderFlows {
     source: string,
     offset: number,
   ): Promise<boolean>;
+}
+
+export function createLatteIntelligence(
+  getDependencies: () => LatteIntelligenceDependencies,
+  templateCache: LatteTemplateCache = {},
+  viewDataCache: LatteViewDataCache = {},
+  presenterCache: NettePresenterCache = {},
+  componentCache: NetteControlCache = {},
+  templateTypeCache: LatteTemplateTypeCache = {},
+  frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
+): LatteIntelligence {
+  const flows = createLatteProviderFlows({
+    caches: {
+      componentCache,
+      presenterCache,
+      templateCache,
+      templateTypeCache,
+      viewDataCache,
+    },
+    frameworkCapabilities,
+    getDependencies,
+    inFlight: {
+      presenterInFlight: new Map(),
+      templateTypeInFlight: new Map(),
+      viewDataInFlight: new Map(),
+    },
+  });
+
+  return {
+    ...flows,
+    shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
+  };
 }
 
 export function createLatteProviderFlows(
