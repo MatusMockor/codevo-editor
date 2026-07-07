@@ -16,7 +16,7 @@ import {
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
-import { useLaravelTargets } from "./useLaravelTargets";
+import { usePhpFrameworkTargets } from "./useLaravelTargets";
 import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
@@ -1786,7 +1786,7 @@ export function useWorkbenchController(
       resetPhpClassMemberCacheRef.current();
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
-      invalidatePhpLaravelTargetCache();
+      invalidateFrameworkTargetCache();
       resetPhpLaravelSourceRegistries();
       resetBladeIntelligenceCaches();
       setIndexProgress((current) =>
@@ -1907,7 +1907,7 @@ export function useWorkbenchController(
     resetPhpClassMemberCacheRef.current();
     phpFrameworkBindingCacheRef.current = {};
     phpLaravelMorphMapModelTypeCacheRef.current = {};
-    invalidatePhpLaravelTargetCache();
+    invalidateFrameworkTargetCache();
     resetPhpLaravelSourceRegistries();
     resetBladeIntelligenceCaches();
     setIndexProgress(initialIndexProgress());
@@ -2855,7 +2855,7 @@ export function useWorkbenchController(
       resetPhpClassMemberCacheRef.current();
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
-      invalidatePhpLaravelTargetCache();
+      invalidateFrameworkTargetCache();
       resetPhpLaravelSourceRegistries();
       resetBladeIntelligenceCaches();
       setPhpIdeReadinessVersion(0);
@@ -5211,38 +5211,38 @@ export function useWorkbenchController(
   );
 
   const {
-    collectPhpLaravelNamedRouteTargets,
-    collectPhpLaravelGateAbilityTargets,
-    collectPhpLaravelMiddlewareAliasTargets,
-    collectPhpLaravelEnvTargets,
-    collectPhpLaravelViewTargets,
-    collectPhpLaravelConfigTargets,
-    collectPhpLaravelTranslationTargets,
-    collectPhpLaravelAuthGuardTargets,
-    collectPhpLaravelCacheStoreTargets,
-    collectPhpLaravelDatabaseConnectionTargets,
-    collectPhpLaravelBroadcastConnectionTargets,
-    collectPhpLaravelQueueConnectionTargets,
-    collectPhpLaravelRedisConnectionTargets,
-    collectPhpLaravelMailMailerTargets,
-    collectPhpLaravelPasswordBrokerTargets,
-    collectPhpLaravelLogChannelTargets,
-    collectPhpLaravelStorageDiskTargets,
-    findPhpLaravelViewTarget,
-    findPhpLaravelConfigTarget,
-    findPhpLaravelTranslationTarget,
-    findPhpLaravelAuthGuardTarget,
-    findPhpLaravelCacheStoreTarget,
-    findPhpLaravelDatabaseConnectionTarget,
-    findPhpLaravelBroadcastConnectionTarget,
-    findPhpLaravelQueueConnectionTarget,
-    findPhpLaravelRedisConnectionTarget,
-    findPhpLaravelMailMailerTarget,
-    findPhpLaravelPasswordBrokerTarget,
-    findPhpLaravelLogChannelTarget,
-    findPhpLaravelStorageDiskTarget,
-    invalidatePhpLaravelTargetCache,
-  } = useLaravelTargets({
+    collectNamedRouteTargets,
+    collectAuthorizationAbilityTargets,
+    collectMiddlewareAliasTargets,
+    collectEnvironmentTargets,
+    collectViewTargets,
+    collectConfigTargets,
+    collectTranslationTargets,
+    collectAuthGuardTargets,
+    collectCacheStoreTargets,
+    collectDatabaseConnectionTargets,
+    collectBroadcastConnectionTargets,
+    collectQueueConnectionTargets,
+    collectRedisConnectionTargets,
+    collectMailMailerTargets,
+    collectPasswordBrokerTargets,
+    collectLogChannelTargets,
+    collectStorageDiskTargets,
+    findViewTarget,
+    findConfigTarget,
+    findTranslationTarget,
+    findAuthGuardTarget,
+    findCacheStoreTarget,
+    findDatabaseConnectionTarget,
+    findBroadcastConnectionTarget,
+    findQueueConnectionTarget,
+    findRedisConnectionTarget,
+    findMailMailerTarget,
+    findPasswordBrokerTarget,
+    findLogChannelTarget,
+    findStorageDiskTarget,
+    invalidateTargetCache: invalidateFrameworkTargetCache,
+  } = usePhpFrameworkTargets({
     currentWorkspaceRootRef,
     workspaceRoot,
     textSearch,
@@ -5252,7 +5252,6 @@ export function useWorkbenchController(
     joinWorkspacePath,
     isPhpPath,
     activePhpFrameworkProviders,
-    isLaravelFrameworkActive,
   });
 
   const findPhpLaravelEnvTarget = useCallback(
@@ -5528,11 +5527,11 @@ export function useWorkbenchController(
           source,
         },
         {
-          collectConfigTargets: collectPhpLaravelConfigTargets,
-          collectEnvTargets: collectPhpLaravelEnvTargets,
-          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
-          collectTranslationTargets: collectPhpLaravelTranslationTargets,
-          collectViewTargets: collectPhpLaravelViewTargets,
+          collectConfigTargets,
+          collectEnvTargets: collectEnvironmentTargets,
+          collectNamedRouteTargets,
+          collectTranslationTargets,
+          collectViewTargets,
           isRequestStillCurrent: isRequestedRootActive,
         },
       );
@@ -5553,20 +5552,20 @@ export function useWorkbenchController(
           source,
         },
         {
-          collectAuthGuardTargets: collectPhpLaravelAuthGuardTargets,
+          collectAuthGuardTargets,
           collectBroadcastConnectionTargets:
-            collectPhpLaravelBroadcastConnectionTargets,
-          collectCacheStoreTargets: collectPhpLaravelCacheStoreTargets,
+            collectBroadcastConnectionTargets,
+          collectCacheStoreTargets,
           collectDatabaseConnectionTargets:
-            collectPhpLaravelDatabaseConnectionTargets,
-          collectGateAbilityTargets: collectPhpLaravelGateAbilityTargets,
-          collectLogChannelTargets: collectPhpLaravelLogChannelTargets,
-          collectMailMailerTargets: collectPhpLaravelMailMailerTargets,
-          collectMiddlewareAliasTargets: collectPhpLaravelMiddlewareAliasTargets,
-          collectPasswordBrokerTargets: collectPhpLaravelPasswordBrokerTargets,
-          collectQueueConnectionTargets: collectPhpLaravelQueueConnectionTargets,
-          collectRedisConnectionTargets: collectPhpLaravelRedisConnectionTargets,
-          collectStorageDiskTargets: collectPhpLaravelStorageDiskTargets,
+            collectDatabaseConnectionTargets,
+          collectGateAbilityTargets: collectAuthorizationAbilityTargets,
+          collectLogChannelTargets,
+          collectMailMailerTargets,
+          collectMiddlewareAliasTargets,
+          collectPasswordBrokerTargets,
+          collectQueueConnectionTargets,
+          collectRedisConnectionTargets,
+          collectStorageDiskTargets,
           isRequestStillCurrent: isRequestedRootActive,
         },
       );
@@ -5775,24 +5774,24 @@ export function useWorkbenchController(
       );
     },
     [
-      collectPhpLaravelAuthGuardTargets,
-      collectPhpLaravelCacheStoreTargets,
-      collectPhpLaravelBroadcastConnectionTargets,
-      collectPhpLaravelConfigTargets,
-      collectPhpLaravelDatabaseConnectionTargets,
-      collectPhpLaravelEnvTargets,
-      collectPhpLaravelLogChannelTargets,
-      collectPhpLaravelMailMailerTargets,
-      collectPhpLaravelPasswordBrokerTargets,
-      collectPhpLaravelQueueConnectionTargets,
-      collectPhpLaravelRedisConnectionTargets,
-      collectPhpLaravelStorageDiskTargets,
-      collectPhpLaravelTranslationTargets,
+      collectAuthGuardTargets,
+      collectCacheStoreTargets,
+      collectBroadcastConnectionTargets,
+      collectConfigTargets,
+      collectDatabaseConnectionTargets,
+      collectEnvironmentTargets,
+      collectLogChannelTargets,
+      collectMailMailerTargets,
+      collectPasswordBrokerTargets,
+      collectQueueConnectionTargets,
+      collectRedisConnectionTargets,
+      collectStorageDiskTargets,
+      collectTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
-      collectPhpLaravelNamedRouteTargets,
-      collectPhpLaravelGateAbilityTargets,
-      collectPhpLaravelMiddlewareAliasTargets,
-      collectPhpLaravelViewTargets,
+      collectNamedRouteTargets,
+      collectAuthorizationAbilityTargets,
+      collectMiddlewareAliasTargets,
+      collectViewTargets,
       collectPhpMethodsForClass,
       activeDocument,
       activePhpFrameworkProviders,
@@ -5830,7 +5829,7 @@ export function useWorkbenchController(
   const { createMissingBladeViewCodeAction, providePhpCodeActions } =
     usePhpCodeActionProvider({
       activeDocumentPath: activeDocument?.path ?? null,
-      collectPhpLaravelViewTargets,
+      collectPhpLaravelViewTargets: collectViewTargets,
       currentWorkspaceRootRef,
       intelligenceMode,
       isLaravelFrameworkActive,
@@ -6363,11 +6362,11 @@ export function useWorkbenchController(
           source,
         },
         {
-          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
-          findConfigTarget: findPhpLaravelConfigTarget,
+          collectNamedRouteTargets,
+          findConfigTarget,
           findEnvTarget: findPhpLaravelEnvTarget,
-          findTranslationTarget: findPhpLaravelTranslationTarget,
-          findViewTarget: findPhpLaravelViewTarget,
+          findTranslationTarget,
+          findViewTarget,
         },
       );
 
@@ -6389,11 +6388,11 @@ export function useWorkbenchController(
     [
       activeDocument,
       activePhpFrameworkProviders,
-      collectPhpLaravelNamedRouteTargets,
-      findPhpLaravelConfigTarget,
+      collectNamedRouteTargets,
+      findConfigTarget,
       findPhpLaravelEnvTarget,
-      findPhpLaravelTranslationTarget,
-      findPhpLaravelViewTarget,
+      findTranslationTarget,
+      findViewTarget,
       goToPhpLaravelDispatchDefinition,
       isLaravelFrameworkActive,
       openNavigationTarget,
@@ -6436,7 +6435,7 @@ export function useWorkbenchController(
       return;
     }
 
-    const viewTargets = await collectPhpLaravelViewTargets();
+    const viewTargets = await collectViewTargets();
 
     if (!isRequestedStateActive()) {
       return;
@@ -6463,7 +6462,7 @@ export function useWorkbenchController(
       };
     });
   }, [
-    collectPhpLaravelViewTargets,
+    collectViewTargets,
     isLaravelFrameworkActive,
     workspaceRoot,
   ]);
@@ -7317,17 +7316,17 @@ export function useWorkbenchController(
     resetBladeIntelligenceCaches,
   } = useBladeIntelligence({
     activeDocument,
-    collectPhpLaravelConfigTargets,
-    collectPhpLaravelNamedRouteTargets,
-    collectPhpLaravelTranslationTargets,
-    collectPhpLaravelViewTargets,
+    collectPhpLaravelConfigTargets: collectConfigTargets,
+    collectPhpLaravelNamedRouteTargets: collectNamedRouteTargets,
+    collectPhpLaravelTranslationTargets: collectTranslationTargets,
+    collectPhpLaravelViewTargets: collectViewTargets,
     createMissingBladeViewCodeAction,
     currentWorkspaceRootRef,
     ensurePhpLaravelMigrationSourcesLoaded,
     ensurePhpLaravelProviderSourcesLoaded,
-    findPhpLaravelConfigTarget,
-    findPhpLaravelTranslationTarget,
-    findPhpLaravelViewTarget,
+    findPhpLaravelConfigTarget: findConfigTarget,
+    findPhpLaravelTranslationTarget: findTranslationTarget,
+    findPhpLaravelViewTarget: findViewTarget,
     frameworkIntelligence: phpFrameworkIntelligence,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
@@ -7956,7 +7955,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const routes = await collectPhpLaravelNamedRouteTargets(
+      const routes = await collectNamedRouteTargets(
         activeDocument.content,
         activeDocument.path,
       );
@@ -7983,7 +7982,7 @@ export function useWorkbenchController(
     [
       activeDocument,
       activePhpFrameworkProviders,
-      collectPhpLaravelNamedRouteTargets,
+      collectNamedRouteTargets,
       openNavigationTarget,
       workspaceRoot,
     ],
@@ -8004,7 +8003,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const abilities = await collectPhpLaravelGateAbilityTargets(
+      const abilities = await collectAuthorizationAbilityTargets(
         activeDocument.content,
         activeDocument.path,
       );
@@ -8032,7 +8031,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      collectPhpLaravelGateAbilityTargets,
+      collectAuthorizationAbilityTargets,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8054,7 +8053,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const aliases = await collectPhpLaravelMiddlewareAliasTargets(
+      const aliases = await collectMiddlewareAliasTargets(
         activeDocument.content,
         activeDocument.path,
       );
@@ -8078,7 +8077,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      collectPhpLaravelMiddlewareAliasTargets,
+      collectMiddlewareAliasTargets,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8101,7 +8100,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelViewTarget(context.viewName);
+      const target = await findViewTarget(context.viewName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8117,7 +8116,7 @@ export function useWorkbenchController(
     [
       activeDocument,
       activePhpFrameworkProviders,
-      findPhpLaravelViewTarget,
+      findViewTarget,
       openNavigationTarget,
       workspaceRoot,
     ],
@@ -8135,7 +8134,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelConfigTarget(context.configKey);
+      const target = await findConfigTarget(context.configKey);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8150,7 +8149,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelConfigTarget,
+      findConfigTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8172,7 +8171,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelAuthGuardTarget(context.guardName);
+      const target = await findAuthGuardTarget(context.guardName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8187,7 +8186,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelAuthGuardTarget,
+      findAuthGuardTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8209,7 +8208,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelCacheStoreTarget(context.storeName);
+      const target = await findCacheStoreTarget(context.storeName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8224,7 +8223,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelCacheStoreTarget,
+      findCacheStoreTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8246,7 +8245,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelDatabaseConnectionTarget(
+      const target = await findDatabaseConnectionTarget(
         context.connectionName,
       );
 
@@ -8269,7 +8268,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelDatabaseConnectionTarget,
+      findDatabaseConnectionTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8291,7 +8290,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelBroadcastConnectionTarget(
+      const target = await findBroadcastConnectionTarget(
         context.connectionName,
       );
 
@@ -8314,7 +8313,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelBroadcastConnectionTarget,
+      findBroadcastConnectionTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8336,7 +8335,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelQueueConnectionTarget(
+      const target = await findQueueConnectionTarget(
         context.connectionName,
       );
 
@@ -8359,7 +8358,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelQueueConnectionTarget,
+      findQueueConnectionTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8381,7 +8380,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelRedisConnectionTarget(
+      const target = await findRedisConnectionTarget(
         context.connectionName,
       );
 
@@ -8404,7 +8403,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelRedisConnectionTarget,
+      findRedisConnectionTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8426,7 +8425,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelMailMailerTarget(context.mailerName);
+      const target = await findMailMailerTarget(context.mailerName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8441,7 +8440,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelMailMailerTarget,
+      findMailMailerTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8463,7 +8462,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelPasswordBrokerTarget(
+      const target = await findPasswordBrokerTarget(
         context.brokerName,
       );
 
@@ -8480,7 +8479,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelPasswordBrokerTarget,
+      findPasswordBrokerTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8502,7 +8501,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelLogChannelTarget(context.channelName);
+      const target = await findLogChannelTarget(context.channelName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8521,7 +8520,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelLogChannelTarget,
+      findLogChannelTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8543,7 +8542,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelStorageDiskTarget(context.diskName);
+      const target = await findStorageDiskTarget(context.diskName);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -8558,7 +8557,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelStorageDiskTarget,
+      findStorageDiskTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
@@ -8614,7 +8613,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      const target = await findPhpLaravelTranslationTarget(
+      const target = await findTranslationTarget(
         context.translationKey,
       );
 
@@ -8631,7 +8630,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
-      findPhpLaravelTranslationTarget,
+      findTranslationTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
       workspaceRoot,
