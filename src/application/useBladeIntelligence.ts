@@ -69,6 +69,9 @@ import type {
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 import {
+  provideBladeCodeActions as provideBladeCodeActionsFromProvider,
+} from "./bladeCodeActionProvider";
+import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
@@ -883,28 +886,13 @@ export function useBladeIntelligence(
       source: string,
       range: PhpCodeActionRange = { end: 0, start: 0 },
     ): Promise<PhpCodeActionDescriptor[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return [];
-      }
-
-      const action = await createMissingBladeViewCodeAction(
-        source,
-        range,
-        "blade",
-        isRequestedRootActive,
-      );
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      return action ? [action] : [];
+      return provideBladeCodeActionsFromProvider(source, range, {
+        createMissingBladeViewCodeAction,
+        currentWorkspaceRootRef,
+        workspaceRoot,
+      });
     },
-    [createMissingBladeViewCodeAction, workspaceRoot],
+    [createMissingBladeViewCodeAction, currentWorkspaceRootRef, workspaceRoot],
   );
 
   // Cmd+Click navigation for `.blade.php` documents. detectBladeReferenceAt
