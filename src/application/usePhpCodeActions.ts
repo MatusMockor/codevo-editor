@@ -21,14 +21,6 @@ import {
   phpCreateClassDestination,
   renderPhpTypeSkeleton,
 } from "../domain/phpCreateClass";
-import {
-  detectMissingThisMember,
-  phpClassDeclaresMember,
-  renderCreateConstantStub,
-  renderCreateMethodStub,
-  renderCreatePropertyStub,
-  type MissingThisMember,
-} from "../domain/phpCreateFromUsage";
 import { planExtractInterface } from "../domain/phpExtractInterface";
 import {
   phpUnusedImportRemovalAt,
@@ -63,7 +55,6 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
-  phpClassBodyInsertionAction,
   phpGenerateAccessorsCodeAction,
   phpGenerateConstructorCodeAction,
   phpGenerateConstructorWithPromotionCodeAction,
@@ -75,6 +66,7 @@ import type {
   PhpCodeActionRange,
   PhpCodeActionTextEdit,
 } from "./phpCodeActionTypes";
+import { phpCreateFromUsageCodeAction } from "./phpCreateMemberCodeActions";
 import {
   phpAddParameterCodeAction,
   phpAddParameterTypeCodeAction,
@@ -904,175 +896,6 @@ function phpCodeActionFamilyRank(action: PhpCodeActionDescriptor): number {
   }
 
   return 5;
-}
-
-/**
- * Offers "Create method '<name>'" / "Create property '<name>'" when the cursor
- * (the start of the request range) sits on a `$this->member(...)` call or a
- * `$this->member` access whose member does not yet exist on the enclosing class.
- * The member stub is synthesized from the usage (method parameter types inferred
- * conservatively from the call arguments) and spliced into the class body via
- * the same insertion point as the other class-body actions. Returns `null` when
- * the cursor is not on an unresolved member (the conservative detector decides).
- */
-function phpCreateFromUsageCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-): PhpCodeActionDescriptor | null {
-  const member = detectMissingThisMember(source, range.start);
-
-  if (!member) {
-    return null;
-  }
-
-  // A `parent::` usage targets the parent class's body. Only a SAME-FILE parent
-  // is handled here: it is a pure single-file edit reusing the class-body
-  // insertion (targeted at the parent class). A parent declared in another file
-  // would need a cross-file write the in-document edit channel cannot express,
-  // so it is conservatively dropped (no offer) - never a wrong / partial edit.
-  if (member.target === "parent") {
-    return phpCreateParentMemberCodeAction(source, member);
-  }
-
-  return phpCreateSelfMemberCodeAction(source, member);
-}
-
-/**
- * Build the "Create ..." action for a `$this->` / `self::` / `static::` usage -
- * a member synthesized into the enclosing class itself (single-file). Static
- * receivers stamp the `static` modifier on a method; a non-call `self::IDENT`
- * is a class constant; a `$this->prop = <typed expr>` carries an inferred type.
- */
-function phpCreateSelfMemberCodeAction(
-  source: string,
-  member: MissingThisMember,
-): PhpCodeActionDescriptor | null {
-  if (member.kind === "constant") {
-    return phpPreferredQuickfix(
-      phpClassBodyInsertionAction(
-        source,
-        renderCreateConstantStub(member.name, { indent: "" }),
-        `Create constant '${member.name}'`,
-      ),
-    );
-  }
-
-  if (member.kind === "method") {
-    return phpPreferredQuickfix(
-      phpClassBodyInsertionAction(
-        source,
-        renderCreateMethodStub(member.name, member.argTypes ?? [], {
-          indent: "",
-          isStatic: member.isStatic,
-        }),
-        `Create method '${member.name}'`,
-      ),
-    );
-  }
-
-  return phpPreferredQuickfix(
-    phpClassBodyInsertionAction(
-      source,
-      renderCreatePropertyStub(member.name, {
-        indent: "",
-        type: member.propertyType ?? null,
-      }),
-      `Create property '${member.name}'`,
-    ),
-  );
-}
-
-/**
- * Build the "Create ..." action for a `parent::` usage when the parent class is
- * declared in the SAME file. Resolves the parent's short name (the in-file
- * insertion is keyed by class name) and inserts the member into the parent's
- * body. Returns `null` (no offer) when the parent is not present in this file -
- * a cross-file parent edit is conservatively out of scope.
- */
-function phpCreateParentMemberCodeAction(
-  source: string,
-  member: MissingThisMember,
-): PhpCodeActionDescriptor | null {
-  const parentName = member.parentClass;
-
-  if (!parentName) {
-    return null;
-  }
-
-  const parentShortName = phpShortClassName(parentName);
-  const insertion = findClassBodyInsertionOffset(source, parentShortName);
-
-  if (!insertion) {
-    return null;
-  }
-
-  // A same-file parent may already declare the member (its body is in this
-  // source); suppress the offer in that case so we never create a duplicate.
-  // The check is scoped to the parent class so a sibling class's member of the
-  // same name does not falsely suppress it.
-  if (
-    phpClassDeclaresMember(source, member.name, member.kind, parentShortName)
-  ) {
-    return null;
-  }
-
-  if (member.kind === "constant") {
-    return phpPreferredQuickfix(
-      phpClassBodyInsertionAction(
-        source,
-        renderCreateConstantStub(member.name, { indent: "" }),
-        `Create constant '${member.name}' in '${parentShortName}'`,
-        parentShortName,
-      ),
-    );
-  }
-
-  if (member.kind === "method") {
-    return phpPreferredQuickfix(
-      phpClassBodyInsertionAction(
-        source,
-        renderCreateMethodStub(member.name, member.argTypes ?? [], {
-          indent: "",
-        }),
-        `Create method '${member.name}' in '${parentShortName}'`,
-        parentShortName,
-      ),
-    );
-  }
-
-  // PHP has no `parent::$property` access, so a parent target is only ever a
-  // method or a constant. Anything else is dropped defensively (no offer)
-  // rather than emitting a property that could never have been referenced.
-  return null;
-}
-
-/**
- * Short (un-namespaced) class name for an `extends` reference like
- * `App\Base\Service` or `\Service`. The in-file class-body insertion locates a
- * class by its declared (short) name, so a namespaced parent reference is
- * reduced to its last segment.
- */
-function phpShortClassName(reference: string): string {
-  const segments = reference
-    .split("\\")
-    .filter((segment) => segment.length > 0);
-
-  return segments[segments.length - 1] ?? reference;
-}
-
-/**
- * Stamps a class-body insertion action as a preferred quickfix (the contextual
- * fix for an unresolved symbol). Passes a `null` plan through unchanged so the
- * conservative "offer nothing" path is preserved.
- */
-function phpPreferredQuickfix(
-  action: PhpCodeActionDescriptor | null,
-): PhpCodeActionDescriptor | null {
-  if (!action) {
-    return null;
-  }
-
-  return { ...action, isPreferred: true, kind: "quickfix" };
 }
 
 /**
