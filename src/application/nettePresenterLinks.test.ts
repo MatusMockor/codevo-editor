@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   nettePresenterLinkTargetsFromSource,
-} from "./nettePresenterLinks";
+} from "./nettePresenterLinkDiscovery";
 
 describe("nettePresenterLinkTargetsFromSource", () => {
   it("extracts action, render, handle and route targets from presenter sources", () => {

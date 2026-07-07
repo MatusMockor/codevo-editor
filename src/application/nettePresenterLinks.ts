@@ -4,27 +4,9 @@ import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
 
-export {
-  isNettePresenterDiscoverySourcePath,
-  loadNettePresenterLinkTargets,
-  nettePresenterLinkTargetsFromSource,
-  scanNettePresenterLinkTargets,
-} from "./nettePresenterLinkDiscovery";
 export type {
-  NettePresenterLinkCompletionItem,
-} from "./nettePresenterLinkCompletions";
-export {
-  lattePresenterLinkCompletions,
-} from "./nettePresenterLinkCompletions";
-export type {
-  NettePresenterCache,
-  NettePresenterCacheEntry,
   NettePresenterDiscoveryContext,
-  NettePresenterInFlight,
-  NettePresenterLinkCapabilities,
-  NettePresenterLinkDependencies,
 } from "./nettePresenterLinkDiscovery";
-export { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export interface NettePresenterLinkDetection {
   target: string;
