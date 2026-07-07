@@ -54,10 +54,6 @@ import {
 } from "../domain/netteComponents";
 import {
   LATTE_BUILTIN_FILTERS,
-  latteForeachLoopBindingsAt,
-  latteVariableDeclarations,
-  parseLatteForeachCollection,
-  type LatteVariableDeclaration,
 } from "../domain/latteSyntax";
 import {
   phpFrameworkViewDataEntryFromSource,
@@ -65,7 +61,6 @@ import {
   phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   type PhpFrameworkViewDataEntry,
-  type PhpFrameworkViewDataVariable,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -119,19 +114,20 @@ import {
   latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
   matchesLatteViewName,
-  netteViewDataVariablesForViews,
   type NetteViewDataCache,
   type NetteViewDataEntry,
   type NetteViewDataInFlight,
 } from "./netteViewDataEntries";
 import {
   latteTemplateTypePropertySightings as netteTemplateTypePropertySightings,
-  latteTemplateTypeVariableType as netteTemplateTypeVariableType,
-  mergeLatteResolvedTypes,
   type LatteTemplateTypeCache,
   type LatteTemplateTypeInFlight,
-  type LatteTemplateTypePropertySighting,
 } from "./netteTemplateTypes";
+import {
+  collectLatteVariableCandidates as collectNetteLatteVariableCandidates,
+  resolveLatteVariableType as resolveNetteLatteVariableType,
+  type LatteVariableCandidate,
+} from "./latteVariableTypes";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
@@ -1295,121 +1291,18 @@ async function latteVariableCompletions(
     }));
 }
 
-interface LatteVariableCandidate {
-  detail: string;
-  name: string;
-  typeHint: string | null;
-}
-
-const NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE = "Nette\\Application\\UI\\Control";
-
-const NETTE_TEMPLATE_IMPLICIT_VARIABLES = [
-  {
-    detail: "Nette template context",
-    name: "$presenter",
-    typeHint: "Presenter",
-  },
-  {
-    detail: "Nette template context",
-    name: "$control",
-    typeHint: "Control",
-  },
-] satisfies LatteVariableCandidate[];
-
-/**
- * Gathers the in-scope template variables for the `{$}` list, first sighting of
- * a name wins (inline declarations > template type > loop bindings > presenter
- * data), matching the resolution precedence used for member completion.
- */
 async function collectLatteVariableCandidates(
   context: LatteExpressionResolutionContext,
   source: string,
   offset: number,
 ): Promise<LatteVariableCandidate[]> {
-  const { isRequestedRootActive } = context;
-  const byName = new Map<string, LatteVariableCandidate>();
-  const add = (name: string, detail: string, typeHint: string | null) => {
-    if (byName.has(name)) {
-      return;
-    }
-
-    byName.set(name, { detail, name, typeHint });
-  };
-
-  for (const declaration of latteVariableDeclarations(source)) {
-    if (
-      !declaration.variableName ||
-      !isLatteDeclarationVisibleAt(declaration, offset)
-    ) {
-      continue;
-    }
-
-    const declaredType =
-      declaration.kind === "varType" || declaration.kind === "parameters"
-        ? declaration.typeName
-        : null;
-
-    add(
-      `$${declaration.variableName}`,
-      `template ${declaration.kind}`,
-      shortTypeName(declaredType),
-    );
-  }
-
-  for (const sighting of await loadLatteTemplateTypePropertySightings(
-    context,
+  return collectNetteLatteVariableCandidates(
+    latteVariableTypeContext(context),
     source,
-  )) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    add(
-      sighting.property.name,
-      "template type",
-      shortTypeName(sighting.property.type),
-    );
-  }
-
-  for (const binding of latteForeachLoopBindingsAt(source, offset)) {
-    add(`$${binding.loopVariableName}`, "foreach item", null);
-
-    if (binding.keyVariableName) {
-      add(`$${binding.keyVariableName}`, "foreach key", null);
-    }
-  }
-
-  for (const variable of NETTE_TEMPLATE_IMPLICIT_VARIABLES) {
-    add(variable.name, variable.detail, variable.typeHint);
-  }
-
-  const entries = await loadLatteViewDataEntries(context);
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const viewNames = await latteCandidateViewNames(context);
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  for (const variable of netteViewDataVariablesForViews(entries, viewNames)) {
-    add(variable.name, "presenter data", shortTypeName(variable.typeHint));
-  }
-
-  return Array.from(byName.values());
+    offset,
+  );
 }
 
-/**
- * Resolves the receiver type of a Latte variable through the §4.4 priority
- * chain: (1) `{varType}` / `{parameters}` inline type, (2) typed properties on
- * an explicit `{templateType FooTemplate}` class, (3) `{var}` / `{default}`
- * local expression, (4) presenter view-data, (5) enclosing `{foreach}` element
- * type. Bounded by `MAX_LATTE_TYPE_RESOLUTION_DEPTH` (foreach root variables
- * recurse). Conservative: an unresolved variable yields `null`, never a guess.
- */
 async function resolveLatteVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
@@ -1417,86 +1310,30 @@ async function resolveLatteVariableType(
   variableName: string,
   depth: number,
 ): Promise<string | null> {
-  const { isRequestedRootActive } = context;
-
-  if (depth > MAX_LATTE_TYPE_RESOLUTION_DEPTH) {
-    return null;
-  }
-
-  const declaredType = latteDeclaredVariableType(source, variableName);
-
-  if (declaredType) {
-    return declaredType;
-  }
-
-  const templateType = await resolveLatteTemplateTypeVariableType(
-    context,
-    source,
-    variableName,
-  );
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  if (templateType) {
-    return templateType;
-  }
-
-  const localType = await latteLocalVariableType(
-    context,
+  return resolveNetteLatteVariableType(
+    latteVariableTypeContext(context),
     source,
     offset,
     variableName,
+    depth,
   );
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  if (localType) {
-    return localType;
-  }
-
-  const implicitType = await latteImplicitVariableType(context, variableName);
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  if (implicitType) {
-    return implicitType;
-  }
-
-  const presenterType = await lattePresenterVariableType(context, variableName);
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  if (presenterType) {
-    return presenterType;
-  }
-
-  return latteForeachVariableType(context, source, offset, variableName, depth);
 }
 
-async function latteImplicitVariableType(
-  context: LatteExpressionResolutionContext,
-  variableName: string,
-): Promise<string | null> {
-  if (variableName === "control") {
-    return (
-      (await currentNetteControlClassName(context)) ??
-      NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE
-    );
-  }
-
-  if (variableName !== "presenter") {
-    return null;
-  }
-
-  return currentNettePresenterClassName(context);
+function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
+  return {
+    currentControlClassName: () => currentNetteControlClassName(context),
+    currentPresenterClassName: () => currentNettePresenterClassName(context),
+    deps: context.deps,
+    isRequestedRootActive: context.isRequestedRootActive,
+    loadTemplateTypePropertySightings: (source: string) =>
+      netteTemplateTypePropertySightings(
+        latteTemplateTypeContext(context),
+        source,
+      ),
+    loadViewDataEntries: () => loadLatteViewDataEntries(context),
+    maxTypeResolutionDepth: MAX_LATTE_TYPE_RESOLUTION_DEPTH,
+    viewNames: () => latteCandidateViewNames(context),
+  };
 }
 
 async function currentNetteControlClassName(
@@ -1683,219 +1520,6 @@ async function currentNetteFactoryPresenterClassName(
   return null;
 }
 
-/** Priority 2: typed properties on an explicit `{templateType FooTemplate}` class. */
-async function resolveLatteTemplateTypeVariableType(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  variableName: string,
-): Promise<string | null> {
-  return netteTemplateTypeVariableType(
-    latteTemplateTypeContext(context),
-    source,
-    variableName,
-  );
-}
-
-function loadLatteTemplateTypePropertySightings(
-  context: LatteExpressionResolutionContext,
-  source: string,
-): Promise<LatteTemplateTypePropertySighting[]> {
-  return netteTemplateTypePropertySightings(
-    latteTemplateTypeContext(context),
-    source,
-  );
-}
-
-/** Priority 1: the first `{varType}` / `{parameters}` type for the variable. */
-function latteDeclaredVariableType(
-  source: string,
-  variableName: string,
-): string | null {
-  for (const declaration of latteVariableDeclarations(source)) {
-    if (declaration.kind !== "varType" && declaration.kind !== "parameters") {
-      continue;
-    }
-
-    if (declaration.variableName === variableName && declaration.typeName) {
-      return declaration.typeName;
-    }
-  }
-
-  return null;
-}
-
-/** Priority 3: the resolved type of a `{var}` / `{default}` value expression. */
-async function latteLocalVariableType(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-  variableName: string,
-): Promise<string | null> {
-  const { deps, isRequestedRootActive } = context;
-
-  for (const declaration of latteVariableDeclarations(source)) {
-    if (declaration.kind !== "var" && declaration.kind !== "default") {
-      continue;
-    }
-
-    if (!isLatteDeclarationVisibleAt(declaration, offset)) {
-      continue;
-    }
-
-    if (declaration.variableName !== variableName || !declaration.expression) {
-      continue;
-    }
-
-    const document = `<?php\n${declaration.expression};\n`;
-    const type = await deps.resolveExpressionType(
-      document,
-      endPositionOf(document),
-      declaration.expression,
-    );
-
-    // Live-root re-check after the engine await: a switched root stops the
-    // per-declaration loop from burning further engine calls.
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-
-    if (type) {
-      return type;
-    }
-  }
-
-  return null;
-}
-
-function isLatteDeclarationVisibleAt(
-  declaration: LatteVariableDeclaration,
-  offset: number,
-): boolean {
-  if (declaration.kind !== "var" && declaration.kind !== "default") {
-    return true;
-  }
-
-  return declaration.offset < offset;
-}
-
-/** Priority 4: the merged type across the presenter sightings for the variable. */
-async function lattePresenterVariableType(
-  context: LatteExpressionResolutionContext,
-  variableName: string,
-): Promise<string | null> {
-  const { deps, isRequestedRootActive } = context;
-  const entries = await loadLatteViewDataEntries(context);
-
-  if (!isRequestedRootActive() || entries.length === 0) {
-    return null;
-  }
-
-  const viewNames = await latteCandidateViewNames(context);
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  const target = `$${variableName}`;
-  const sightings: Array<{
-    source: string;
-    variable: PhpFrameworkViewDataVariable;
-  }> = [];
-
-  for (const entry of entries) {
-    for (const binding of entry.bindings) {
-      if (!matchesLatteViewName(binding.viewName, viewNames)) {
-        continue;
-      }
-
-      for (const variable of binding.variables) {
-        if (variable.name === target) {
-          sightings.push({ source: entry.source, variable });
-        }
-      }
-    }
-  }
-
-  if (sightings.length === 0) {
-    return null;
-  }
-
-  const resolved: (string | null)[] = [];
-
-  for (const sighting of sightings) {
-    resolved.push(await resolveNetteSightingType(deps, sighting));
-
-    if (!isRequestedRootActive()) {
-      return null;
-    }
-  }
-
-  return mergeLatteResolvedTypes(resolved);
-}
-
-/** Priority 5: the element type of the innermost `{foreach}` binding the variable belongs to. */
-async function latteForeachVariableType(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-  variableName: string,
-  depth: number,
-): Promise<string | null> {
-  const { deps, isRequestedRootActive } = context;
-  let collectionExpression: string | null = null;
-
-  // Bindings arrive outermost-first, so the LAST match is the innermost loop.
-  for (const binding of latteForeachLoopBindingsAt(source, offset)) {
-    if (binding.loopVariableName === variableName) {
-      collectionExpression = binding.collectionExpression;
-    }
-  }
-
-  if (collectionExpression === null) {
-    return null;
-  }
-
-  const collection = parseLatteForeachCollection(collectionExpression);
-
-  if (!collection || collection.rootVariableName === variableName) {
-    return null;
-  }
-
-  const rootType = await resolveLatteVariableType(
-    context,
-    source,
-    offset,
-    collection.rootVariableName,
-    depth + 1,
-  );
-
-  if (!isRequestedRootActive() || !rootType) {
-    return null;
-  }
-
-  if (collection.relationNames.length === 0) {
-    return extractLatteElementType(rootType);
-  }
-
-  const chainExpression = `$${collection.rootVariableName}${collection.relationNames
-    .map((relation) => `->${relation}`)
-    .join("")}`;
-  const document = `<?php\n/** @var \\${rootType.replace(/^\\+/, "")} $${
-    collection.rootVariableName
-  } */\n${chainExpression};\n`;
-  const chainType = await deps.resolveExpressionType(
-    document,
-    endPositionOf(document),
-    chainExpression,
-  );
-
-  if (!isRequestedRootActive() || !chainType) {
-    return null;
-  }
-
-  return extractLatteElementType(chainType);
-}
-
 function loadLatteViewDataEntries(
   context: LatteExpressionResolutionContext,
 ): Promise<LatteNetteViewDataEntry[]> {
@@ -1963,97 +1587,6 @@ async function latteCandidateViewNames(
   });
 }
 
-/**
- * The type of one presenter sighting: full expression inference on its
- * `valueExpression` (resolved in the presenter source at the value offset), then
- * the cheap declared `typeHint` as a fallback - mirroring the Blade view-data
- * resolver. The fallback hint is a SHORT name as written in the presenter, so it
- * is resolved through `resolveDeclaredType` against that source's namespace /
- * use-statements before use - a raw `Product` must never be treated as a
- * root-namespace `\Product` (wrong-class completions) nor mismatch an
- * engine-resolved FQN from another sighting in the conservative merge.
- */
-async function resolveNetteSightingType(
-  deps: LatteIntelligenceDependencies,
-  sighting: { source: string; variable: PhpFrameworkViewDataVariable },
-): Promise<string | null> {
-  const { source, variable } = sighting;
-
-  if (variable.valueExpression) {
-    const expressionType = await deps.resolveExpressionType(
-      source,
-      editorPositionAtOffset(
-        source,
-        variable.valueOffset ?? source.length,
-      ),
-      variable.valueExpression,
-    );
-
-    if (expressionType) {
-      return expressionType;
-    }
-  }
-
-  return deps.resolveDeclaredType(source, variable.typeHint);
-}
-
-/**
- * The element type of a collection type: `X[]` → `X`, a generic
- * `iterable<X>` / `Collection<int, X>` → its last type argument. A type with no
- * recognisable element shape yields `null` (conservative - no member completion
- * rather than a wrong one).
- */
-function extractLatteElementType(collectionType: string): string | null {
-  const trimmed = collectionType.trim();
-
-  if (trimmed.endsWith("[]")) {
-    const element = trimmed.slice(0, -2).trim();
-
-    return element.length > 0 ? element : null;
-  }
-
-  const angleStart = trimmed.indexOf("<");
-
-  if (angleStart < 0 || !trimmed.endsWith(">")) {
-    return null;
-  }
-
-  const args = splitTopLevelTypeArguments(trimmed.slice(angleStart + 1, -1));
-  const last = args[args.length - 1]?.trim() ?? "";
-
-  return last.length > 0 ? last : null;
-}
-
-/** Splits generic type arguments on top-level commas, tracking nested `<>`. */
-function splitTopLevelTypeArguments(inner: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-
-  for (let index = 0; index < inner.length; index += 1) {
-    const character = inner[index];
-
-    if (character === "<") {
-      depth += 1;
-      continue;
-    }
-
-    if (character === ">") {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-
-    if (character === "," && depth === 0) {
-      parts.push(inner.slice(start, index));
-      start = index + 1;
-    }
-  }
-
-  parts.push(inner.slice(start));
-
-  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
-}
-
 function latteMemberCompletionItem(
   member: PhpMethodCompletion,
   start: number,
@@ -2093,19 +1626,6 @@ function latteMemberCompletionDetail(member: PhpMethodCompletion): string {
   return `${member.declaringClassName}::${member.name}${parameters}${returnType}`;
 }
 
-/** Short display name for a (possibly namespaced / generic) PHP type. */
-function shortTypeName(typeName: string | null): string | null {
-  if (!typeName) {
-    return null;
-  }
-
-  const baseType = typeName.split("<")[0] ?? typeName;
-  const segments = baseType.replace(/^\\+/, "").split("\\");
-  const shortName = segments[segments.length - 1]?.trim() ?? "";
-
-  return shortName.length > 0 ? shortName : null;
-}
-
 function phpPrimaryClassName(source: string): string | null {
   const match = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(source);
   const className = match?.[1]?.trim() ?? "";
@@ -2135,10 +1655,6 @@ function phpNamespaceName(source: string): string | null {
   const namespace = match?.[1]?.trim() ?? "";
 
   return namespace.length > 0 ? namespace : null;
-}
-
-function endPositionOf(source: string): EditorPosition {
-  return editorPositionAtOffset(source, source.length);
 }
 
 function resolveLatteBlockDefinition(
