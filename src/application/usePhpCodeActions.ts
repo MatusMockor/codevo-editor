@@ -1,31 +1,9 @@
 import { useCallback } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
-import {
-  parsePhpClassStructure,
-  type PhpClassStructure,
-  type PhpMethodMember,
-} from "../domain/phpClassStructure";
-import {
-  renderImplementMethodsStubs,
-  renderOverrideMethodsStubs,
-  renderUseImports,
-} from "../domain/phpCodeGen";
+import { parsePhpClassStructure } from "../domain/phpClassStructure";
 import { planExtractInterface } from "../domain/phpExtractInterface";
-import {
-  findClassBodyInsertionOffset,
-  findUseImportInsertionOffset,
-  offsetToPosition,
-} from "../domain/phpInsertionPoint";
-import {
-  phpMixinClassNames,
-  phpTraitClassNames,
-} from "../domain/phpMethodCompletions";
-import {
-  phpCurrentTypeKind,
-  phpExtendsClassName,
-  phpSuperTypeReferences,
-  resolvePhpClassName,
-} from "../domain/phpNavigation";
+import { offsetToPosition } from "../domain/phpInsertionPoint";
+import { phpCurrentTypeKind } from "../domain/phpNavigation";
 import {
   isTypeProjectSymbol,
   type ProjectSymbolSearchGateway,
@@ -47,7 +25,6 @@ import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeActi
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
-  PhpCodeActionTextEdit,
 } from "./phpCodeActionTypes";
 import { orderPhpCodeActions } from "./phpCodeActionOrdering";
 import { phpCreateFromUsageCodeAction } from "./phpCreateMemberCodeActions";
@@ -71,6 +48,19 @@ import {
   phpImportClassShortNameAt,
   phpOptimizeImportsCodeAction,
 } from "./phpImportCodeActions";
+import {
+  phpImplementMethodsCodeAction,
+  phpOverrideMethodsCodeAction,
+  type PhpAbstractMembersCollector,
+  type PhpOverridableParentMethodsCollector,
+} from "./phpInheritedMemberCodeActions";
+
+export {
+  isPhpOverridableParentMethod,
+  phpSuperMethodHierarchyReferences,
+} from "./phpInheritedMemberCodeActions";
+
+export type { AbstractMemberToImplement } from "./phpInheritedMemberCodeActions";
 
 export type {
   PhpCodeActionDescriptor,
@@ -79,24 +69,6 @@ export type {
   PhpCodeActionTextEdit,
   PhpCodeActionTextEditRange,
 } from "./phpCodeActionTypes";
-
-export interface AbstractMemberToImplement {
-  declaringSource: string;
-  member: PhpMethodMember;
-}
-
-type PhpAbstractMembersCollector = (
-  source: string,
-  isRequestedRootActive: () => boolean,
-) => Promise<{
-  abstractMembers: Map<string, AbstractMemberToImplement>;
-  satisfiedNames: Set<string>;
-} | null>;
-
-type PhpOverridableParentMethodsCollector = (
-  source: string,
-  isRequestedRootActive: () => boolean,
-) => Promise<Map<string, AbstractMemberToImplement> | null>;
 
 export type CreateMissingBladeViewCodeAction = (
   source: string,
@@ -383,9 +355,12 @@ export function usePhpCodeActions({
         actions.push(introduceFieldAction);
       }
 
+      const declaredMethodNames = new Set(
+        structure.methods.map((method) => method.name.toLowerCase()),
+      );
       const implementMethodsAction = await phpImplementMethodsCodeAction(
         source,
-        structure,
+        declaredMethodNames,
         collectPhpAbstractMembersToImplement,
         isRequestedRootActive,
       );
@@ -400,7 +375,7 @@ export function usePhpCodeActions({
 
       const overrideMethodsAction = await phpOverrideMethodsCodeAction(
         source,
-        structure,
+        declaredMethodNames,
         collectPhpOverridableParentMethods,
         isRequestedRootActive,
       );
@@ -504,189 +479,6 @@ export function usePhpCodeActions({
   return { createMissingBladeViewCodeAction, providePhpCodeActions };
 }
 
-const PHP_BUILTIN_TYPE_NAMES = new Set([
-  "array",
-  "bool",
-  "callable",
-  "false",
-  "float",
-  "int",
-  "iterable",
-  "mixed",
-  "never",
-  "null",
-  "object",
-  "parent",
-  "self",
-  "static",
-  "string",
-  "true",
-  "void",
-]);
-
-/**
- * Builds the "Implement methods" code action by resolving the abstract members
- * inherited from supertypes (cross-file, hence async) that the current class
- * has not yet implemented. Returns `null` when the class has no supertypes,
- * when resolution is dropped for a stale workspace, or when nothing is missing.
- */
-async function phpImplementMethodsCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-  collect: PhpAbstractMembersCollector,
-  isRequestedRootActive: () => boolean,
-): Promise<PhpCodeActionDescriptor | null> {
-  if (phpSuperTypeReferences(source).length === 0) {
-    return null;
-  }
-
-  const collected = await collect(source, isRequestedRootActive);
-
-  if (!isRequestedRootActive() || !collected) {
-    return null;
-  }
-
-  const implementedNames = new Set(
-    structure.methods.map((method) => method.name.toLowerCase()),
-  );
-  const missingMembers = [...collected.abstractMembers.entries()]
-    .filter(
-      ([memberKey]) =>
-        !implementedNames.has(memberKey) &&
-        !collected.satisfiedNames.has(memberKey),
-    )
-    .map(([, entry]) => entry);
-
-  if (missingMembers.length === 0) {
-    return null;
-  }
-
-  const insertionPoint = findClassBodyInsertionOffset(source);
-
-  if (!insertionPoint) {
-    return null;
-  }
-
-  const stubs = renderImplementMethodsStubs(
-    missingMembers.map((entry) => entry.member),
-  );
-  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
-  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
-  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
-  const edits: PhpCodeActionTextEdit[] = [
-    {
-      range: zeroLengthPhpEditRange(insertionPosition),
-      text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
-    },
-  ];
-
-  const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
-
-  if (importEdit) {
-    edits.unshift(importEdit);
-  }
-
-  return { edits, kind: "refactor.rewrite", title: "Implement methods" };
-}
-
-/**
- * Decides whether a parent method may be surfaced by "Override methods". A
- * method is overridable when it is concrete (a body to delegate to via
- * `parent::`), not sealed (`final`), not `private` (private members are not
- * inherited / overridable) and not the constructor (PhpStorm excludes
- * `__construct` from override generation — it is a creation concern, not a
- * behavioural override).
- */
-export function isPhpOverridableParentMethod(member: PhpMethodMember): boolean {
-  if (member.isAbstract || member.isFinal) {
-    return false;
-  }
-
-  if (member.visibility === "private") {
-    return false;
-  }
-
-  return member.name.toLowerCase() !== "__construct";
-}
-
-/**
- * Collects every super-type reference that can carry an overridden method
- * declaration for "Go to Super Method": parent class / interfaces (extends and
- * implements), used traits and PHPDoc `@mixin` types. Walking all four mirrors
- * the resolution already used by direct method navigation and the override
- * code action.
- */
-export function phpSuperMethodHierarchyReferences(source: string): string[] {
-  return [
-    ...phpSuperTypeReferences(source),
-    ...phpTraitClassNames(source),
-    ...phpMixinClassNames(source),
-  ];
-}
-
-/**
- * Builds the "Override methods" code action by resolving the concrete methods
- * inherited from the parent class chain (cross-file, hence async) that the
- * current class has not yet overridden. Each stub delegates to `parent::` so
- * the inherited behaviour is preserved by default. Returns `null` when the
- * class has no parent, when resolution is dropped for a stale workspace, or
- * when nothing overridable remains.
- */
-async function phpOverrideMethodsCodeAction(
-  source: string,
-  structure: PhpClassStructure,
-  collect: PhpOverridableParentMethodsCollector,
-  isRequestedRootActive: () => boolean,
-): Promise<PhpCodeActionDescriptor | null> {
-  if (!phpExtendsClassName(source)) {
-    return null;
-  }
-
-  const overridableMembers = await collect(source, isRequestedRootActive);
-
-  if (!isRequestedRootActive() || !overridableMembers) {
-    return null;
-  }
-
-  const declaredNames = new Set(
-    structure.methods.map((method) => method.name.toLowerCase()),
-  );
-  const missingMembers = [...overridableMembers.entries()]
-    .filter(([memberKey]) => !declaredNames.has(memberKey))
-    .map(([, entry]) => entry);
-
-  if (missingMembers.length === 0) {
-    return null;
-  }
-
-  const insertionPoint = findClassBodyInsertionOffset(source);
-
-  if (!insertionPoint) {
-    return null;
-  }
-
-  const stubs = renderOverrideMethodsStubs(
-    missingMembers.map((entry) => entry.member),
-  );
-  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
-  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
-  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
-  const edits: PhpCodeActionTextEdit[] = [
-    {
-      range: zeroLengthPhpEditRange(insertionPosition),
-      text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
-    },
-  ];
-
-  const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
-
-  if (importEdit) {
-    edits.unshift(importEdit);
-  }
-
-  return { edits, kind: "refactor.rewrite", title: "Override methods" };
-}
-
 /**
  * Offers "Extract interface" (PhpStorm) when the cursor sits on a concrete
  * `class` declaration that exposes at least one public instance method. The
@@ -736,123 +528,4 @@ function phpExtractInterfaceCodeAction(
     },
     title: "Extract interface",
   };
-}
-
-function shortPhpName(className: string): string {
-  const normalized = className.trim().replace(/^\+/, "");
-  const segments = normalized
-    .split("\\")
-    .filter((segment) => segment.length > 0);
-
-  return segments[segments.length - 1] ?? normalized;
-}
-
-function phpImplementMethodsImportEdit(
-  classSource: string,
-  missingMembers: AbstractMemberToImplement[],
-): PhpCodeActionTextEdit | null {
-  const requiredFqns = new Set<string>();
-
-  for (const entry of missingMembers) {
-    for (const token of phpSignatureClassTypeTokens(entry.member)) {
-      const fqn = phpResolvedImportableFqn(entry.declaringSource, token);
-
-      if (!fqn) {
-        continue;
-      }
-
-      if (shortPhpName(fqn).toLowerCase() !== token.toLowerCase()) {
-        continue;
-      }
-
-      if (phpTypeTokenAlreadyResolvable(classSource, token, fqn)) {
-        continue;
-      }
-
-      requiredFqns.add(fqn);
-    }
-  }
-
-  if (requiredFqns.size === 0) {
-    return null;
-  }
-
-  const insertionPoint = findUseImportInsertionOffset(classSource);
-
-  if (!insertionPoint) {
-    return null;
-  }
-
-  const importLines = renderUseImports([...requiredFqns]);
-
-  if (!importLines) {
-    return null;
-  }
-
-  const insertionPosition = offsetToPosition(
-    classSource,
-    insertionPoint.offset,
-  );
-  const leadingNewline = insertionPoint.needsLeadingNewline ? "\n" : "";
-
-  return {
-    range: zeroLengthPhpEditRange(insertionPosition),
-    text: `${leadingNewline}${importLines}\n`,
-  };
-}
-
-function phpSignatureClassTypeTokens(member: PhpMethodMember): string[] {
-  const types = [
-    ...member.parameters.map((parameter) => parameter.type),
-    member.returnType,
-  ];
-
-  return types.flatMap(phpClassTypeTokensFromType);
-}
-
-function phpClassTypeTokensFromType(type: string | null): string[] {
-  if (!type) {
-    return [];
-  }
-
-  return type
-    .replace(/^\?/, "")
-    .split(/[|&]/)
-    .map((part) => part.trim().replace(/^\?/, "").replace(/^\\+/, ""))
-    .filter(
-      (part) =>
-        /^[A-Za-z_][A-Za-z0-9_\\]*$/.test(part) &&
-        !PHP_BUILTIN_TYPE_NAMES.has(part.toLowerCase()),
-    );
-}
-
-function phpResolvedImportableFqn(
-  declaringSource: string,
-  token: string,
-): string | null {
-  const resolved = resolvePhpClassName(declaringSource, token);
-
-  if (!resolved) {
-    return null;
-  }
-
-  const normalized = resolved.trim().replace(/^\\+/, "");
-
-  return normalized.includes("\\") ? normalized : null;
-}
-
-function phpTypeTokenAlreadyResolvable(
-  classSource: string,
-  token: string,
-  fqn: string,
-): boolean {
-  const resolved = resolvePhpClassName(classSource, token);
-
-  if (!resolved) {
-    return false;
-  }
-
-  return (
-    resolved.trim().replace(/^\\+/, "").toLowerCase() === fqn.toLowerCase()
-  );
 }
