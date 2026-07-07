@@ -22,8 +22,10 @@ import {
 } from "./nettePresenterLinkDefinitions";
 import {
   isLatteScanSkippedDirectory,
+} from "./netteTemplateDiscovery";
+import {
   resolveLatteTemplateDefinition,
-} from "./netteTemplates";
+} from "./netteTemplateDefinitions";
 import {
   evictLatteProviderCaches,
   LATTE_MAX_COMPLETIONS,

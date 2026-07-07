@@ -15,7 +15,7 @@ import {
 } from "./latteProviderFlows";
 import type { NetteControlCache } from "./netteControlComponents";
 import type { NettePresenterCache } from "./nettePresenterLinkDiscovery";
-import type { LatteTemplateCache } from "./netteTemplates";
+import type { LatteTemplateCache } from "./netteTemplateDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import type { LatteViewDataCache } from "./latteExpressionIntelligence";
 
@@ -29,7 +29,7 @@ export type {
   LatteCompletionItem,
   LatteCompletionItemKind,
 } from "./latteCompletionItems";
-export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
+export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplateDiscovery";
 export type { LatteViewDataCache } from "./latteExpressionIntelligence";
 export { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 export { createLatteIntelligence } from "./latteProviderFlows";

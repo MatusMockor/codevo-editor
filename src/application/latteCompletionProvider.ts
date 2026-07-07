@@ -26,8 +26,10 @@ import {
 } from "./nettePresenterLinkCompletions";
 import {
   isLatteScanSkippedDirectory,
+} from "./netteTemplateDiscovery";
+import {
   latteTemplateCompletions,
-} from "./netteTemplates";
+} from "./netteTemplateCompletions";
 import {
   evictLatteProviderCaches,
   LATTE_COMPONENT_CACHE_TTL_MS,

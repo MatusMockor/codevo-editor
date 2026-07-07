@@ -10,7 +10,7 @@ import type {
   NettePresenterCache,
   NettePresenterInFlight,
 } from "./nettePresenterLinkDiscovery";
-import type { LatteTemplateCache } from "./netteTemplates";
+import type { LatteTemplateCache } from "./netteTemplateDiscovery";
 import type {
   LatteTemplateTypeCache,
   LatteTemplateTypeInFlight,

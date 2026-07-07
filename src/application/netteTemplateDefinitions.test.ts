@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  isLatteScanSkippedDirectory,
-  resolveLatteTemplateDefinition,
-  type LatteDirectoryEntry,
-  type NetteTemplateDependencies,
-} from "./netteTemplates";
 import { detectLatteReferenceAt } from "../domain/latteNavigation";
+import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
+import {
+  resolveLatteTemplateDefinition,
+  type NetteTemplateDependencies,
+} from "./netteTemplateDefinitions";
 
 const ROOT = "/ws";
 
@@ -43,16 +42,6 @@ function buildWorkspace(relativePaths: string[], root: string = ROOT) {
     }
   }
 
-  const listDirectory = vi.fn(async (path: string): Promise<LatteDirectoryEntry[]> => {
-    const entries = directories.get(path);
-
-    if (!entries) {
-      throw new Error(`no such directory: ${path}`);
-    }
-
-    return Array.from(entries.values());
-  });
-
   const readFileContent = vi.fn(async (path: string): Promise<string> => {
     if (!fileSet.has(path)) {
       throw new Error(`no such file: ${path}`);
@@ -61,7 +50,7 @@ function buildWorkspace(relativePaths: string[], root: string = ROOT) {
     return "template body";
   });
 
-  return { listDirectory, readFileContent };
+  return { readFileContent };
 }
 
 function makeDeps(
@@ -161,13 +150,5 @@ describe("resolveLatteTemplateDefinition", () => {
       ),
     ).resolves.toBe(false);
     expect(openTarget).not.toHaveBeenCalled();
-  });
-});
-
-describe("isLatteScanSkippedDirectory", () => {
-  it("skips generated and dependency directories by basename", () => {
-    expect(isLatteScanSkippedDirectory("/ws/app/vendor")).toBe(true);
-    expect(isLatteScanSkippedDirectory("/ws/app/node_modules")).toBe(true);
-    expect(isLatteScanSkippedDirectory("/ws/app/UI/Home")).toBe(false);
   });
 });

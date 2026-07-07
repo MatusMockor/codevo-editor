@@ -11,7 +11,7 @@ import type {
   nettePresenterLinkCompletionContextAt,
 } from "../domain/latteLinkNavigation";
 import type { LatteCompletionItem } from "./latteCompletionItems";
-import type { LatteDirectoryEntry } from "./netteTemplates";
+import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */

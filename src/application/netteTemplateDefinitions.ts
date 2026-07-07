@@ -4,26 +4,7 @@ import {
   latteLayoutCandidatePaths,
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
-import type {
-  LatteDirectoryEntry,
-} from "./netteTemplateDiscovery";
-
-export {
-  isLatteScanSkippedDirectory,
-  listLatteTemplateRelativePaths,
-} from "./netteTemplateDiscovery";
-export {
-  latteTemplateCompletions,
-} from "./netteTemplateCompletions";
-export type {
-  NetteTemplateCompletionContext,
-  NetteTemplateCompletionItem,
-} from "./netteTemplateCompletions";
-export type {
-  LatteDirectoryEntry,
-  LatteTemplateCache,
-  NetteTemplateCacheEntry,
-} from "./netteTemplateDiscovery";
+import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 
 export interface NetteTemplateDependencies {
   joinPath(rootPath: string, relativePath: string): string;

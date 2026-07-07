@@ -10,7 +10,7 @@ import {
   lattePresenterLinkCompletions,
 } from "./nettePresenterLinkCompletions";
 import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
-import { isLatteScanSkippedDirectory } from "./netteTemplates";
+import { isLatteScanSkippedDirectory } from "./netteTemplateDiscovery";
 import {
   evictLatteProviderCaches,
   LATTE_PRESENTER_CACHE_TTL_MS,
