@@ -9,7 +9,7 @@ import type { NetteControlCache } from "./netteControlComponents";
 import type {
   NettePresenterCache,
   NettePresenterInFlight,
-} from "./nettePresenterLinks";
+} from "./nettePresenterLinkDiscovery";
 import type { LatteTemplateCache } from "./netteTemplates";
 import type {
   LatteTemplateTypeCache,

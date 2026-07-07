@@ -12,8 +12,8 @@ import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
 } from "../domain/phpFrameworkProviders";
-import { isNettePresenterDiscoverySourcePath } from "./nettePresenterLinks";
-import { nettePresenterLinkTargetsFromSource } from "./nettePresenterLinks";
+import { isNettePresenterDiscoverySourcePath } from "./nettePresenterLinkDiscovery";
+import { nettePresenterLinkTargetsFromSource } from "./nettePresenterLinkDiscovery";
 import type { LatteFrameworkCapabilities } from "./latteIntelligenceContracts";
 
 export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {

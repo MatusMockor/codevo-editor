@@ -14,7 +14,7 @@ import {
   createLatteIntelligence,
 } from "./latteProviderFlows";
 import type { NetteControlCache } from "./netteControlComponents";
-import type { NettePresenterCache } from "./nettePresenterLinks";
+import type { NettePresenterCache } from "./nettePresenterLinkDiscovery";
 import type { LatteTemplateCache } from "./netteTemplates";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import type { LatteViewDataCache } from "./latteExpressionIntelligence";
