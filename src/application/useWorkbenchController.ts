@@ -81,6 +81,7 @@ import { useNeonIntelligence } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
+import { resolvePhpFrameworkScopedCompletions } from "./phpFrameworkScopedCompletions";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import {
@@ -303,57 +304,9 @@ import {
   type PhpLaravelDispatchTarget,
 } from "../domain/phpLaravelDispatch";
 import {
-  phpLaravelAuthGuardCompletionInsertText,
-  phpLaravelAuthGuardReferenceContextAt,
-} from "../domain/phpLaravelAuth";
-import {
-  phpLaravelGateAbilityCompletionInsertText,
-  phpLaravelGateAbilityReferenceContextAt,
-} from "../domain/phpLaravelAuthorization";
-import {
-  phpLaravelMiddlewareAliasCompletionInsertText,
-  phpLaravelMiddlewareAliasReferenceContextAt,
-} from "../domain/phpLaravelMiddleware";
-import {
-  phpLaravelBroadcastConnectionCompletionInsertText,
-  phpLaravelBroadcastConnectionReferenceContextAt,
-} from "../domain/phpLaravelBroadcasting";
-import {
-  phpLaravelCacheStoreCompletionInsertText,
-  phpLaravelCacheStoreReferenceContextAt,
-} from "../domain/phpLaravelCache";
-import {
-  phpLaravelDatabaseConnectionCompletionInsertText,
-  phpLaravelDatabaseConnectionReferenceContextAt,
-} from "../domain/phpLaravelDatabase";
-import {
   phpLaravelEnvTargetFromSource,
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
-import {
-  phpLaravelLogChannelCompletionInsertText,
-  phpLaravelLogChannelReferenceContextAt,
-} from "../domain/phpLaravelLog";
-import {
-  phpLaravelMailMailerCompletionInsertText,
-  phpLaravelMailMailerReferenceContextAt,
-} from "../domain/phpLaravelMail";
-import {
-  phpLaravelPasswordBrokerCompletionInsertText,
-  phpLaravelPasswordBrokerReferenceContextAt,
-} from "../domain/phpLaravelPassword";
-import {
-  phpLaravelQueueConnectionCompletionInsertText,
-  phpLaravelQueueConnectionReferenceContextAt,
-} from "../domain/phpLaravelQueue";
-import {
-  phpLaravelRedisConnectionCompletionInsertText,
-  phpLaravelRedisConnectionReferenceContextAt,
-} from "../domain/phpLaravelRedis";
-import {
-  phpLaravelStorageDiskCompletionInsertText,
-  phpLaravelStorageDiskReferenceContextAt,
-} from "../domain/phpLaravelStorage";
 import {
   phpCurrentClassName,
 } from "../domain/phpSemanticEngine";
@@ -5588,376 +5541,38 @@ export function useWorkbenchController(
         return literalCompletions;
       }
 
-      const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && gateAbilityContext && activeDocument) {
-        const normalizedPrefix = gateAbilityContext.prefix.toLowerCase();
-        const abilities = await collectPhpLaravelGateAbilityTargets(
+      const scopedCompletions = await resolvePhpFrameworkScopedCompletions(
+        {
+          activeDocument: activeDocument
+            ? {
+                path: activeDocument.path,
+              }
+            : null,
+          isLaravelFrameworkActive,
+          position,
           source,
-          activeDocument.path,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return abilities
-          .filter((ability) =>
-            ability.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((ability) => ({
-            declaringClassName: ability.relativePath ?? getFileName(ability.path),
-            insertText: phpLaravelGateAbilityCompletionInsertText(ability.name),
-            kind: "config",
-            name: ability.name,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const middlewareAliasContext = phpLaravelMiddlewareAliasReferenceContextAt(
-        source,
-        position,
+        },
+        {
+          collectAuthGuardTargets: collectPhpLaravelAuthGuardTargets,
+          collectBroadcastConnectionTargets:
+            collectPhpLaravelBroadcastConnectionTargets,
+          collectCacheStoreTargets: collectPhpLaravelCacheStoreTargets,
+          collectDatabaseConnectionTargets:
+            collectPhpLaravelDatabaseConnectionTargets,
+          collectGateAbilityTargets: collectPhpLaravelGateAbilityTargets,
+          collectLogChannelTargets: collectPhpLaravelLogChannelTargets,
+          collectMailMailerTargets: collectPhpLaravelMailMailerTargets,
+          collectMiddlewareAliasTargets: collectPhpLaravelMiddlewareAliasTargets,
+          collectPasswordBrokerTargets: collectPhpLaravelPasswordBrokerTargets,
+          collectQueueConnectionTargets: collectPhpLaravelQueueConnectionTargets,
+          collectRedisConnectionTargets: collectPhpLaravelRedisConnectionTargets,
+          collectStorageDiskTargets: collectPhpLaravelStorageDiskTargets,
+          isRequestStillCurrent: isRequestedRootActive,
+        },
       );
 
-      if (
-        isLaravelFrameworkActive &&
-        middlewareAliasContext &&
-        !middlewareAliasContext.aliasParameterStarted &&
-        activeDocument
-      ) {
-        const normalizedPrefix = middlewareAliasContext.alias.toLowerCase();
-        const aliases = await collectPhpLaravelMiddlewareAliasTargets(
-          source,
-          activeDocument.path,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return aliases
-          .filter((alias) =>
-            alias.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((alias) => ({
-            declaringClassName: alias.relativePath ?? getFileName(alias.path),
-            insertText: phpLaravelMiddlewareAliasCompletionInsertText(
-              alias.name,
-            ),
-            kind: "config",
-            name: alias.name,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const authGuardContext = phpLaravelAuthGuardReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && authGuardContext && activeDocument) {
-        const normalizedPrefix = authGuardContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelAuthGuardTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.guardName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelAuthGuardCompletionInsertText(
-              target.guardName,
-            ),
-            kind: "config",
-            name: target.guardName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const cacheStoreContext = phpLaravelCacheStoreReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && cacheStoreContext && activeDocument) {
-        const normalizedPrefix = cacheStoreContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelCacheStoreTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.storeName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelCacheStoreCompletionInsertText(
-              target.storeName,
-            ),
-            kind: "config",
-            name: target.storeName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const databaseConnectionContext =
-        phpLaravelDatabaseConnectionReferenceContextAt(source, position);
-
-      if (
-        isLaravelFrameworkActive &&
-        databaseConnectionContext &&
-        activeDocument
-      ) {
-        const normalizedPrefix =
-          databaseConnectionContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelDatabaseConnectionTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelDatabaseConnectionCompletionInsertText(
-              target.connectionName,
-            ),
-            kind: "config",
-            name: target.connectionName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const broadcastConnectionContext =
-        phpLaravelBroadcastConnectionReferenceContextAt(source, position);
-
-      if (
-        isLaravelFrameworkActive &&
-        broadcastConnectionContext &&
-        activeDocument
-      ) {
-        const normalizedPrefix =
-          broadcastConnectionContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelBroadcastConnectionTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelBroadcastConnectionCompletionInsertText(
-              target.connectionName,
-            ),
-            kind: "config",
-            name: target.connectionName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const queueConnectionContext =
-        phpLaravelQueueConnectionReferenceContextAt(source, position);
-
-      if (isLaravelFrameworkActive && queueConnectionContext && activeDocument) {
-        const normalizedPrefix = queueConnectionContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelQueueConnectionTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelQueueConnectionCompletionInsertText(
-              target.connectionName,
-            ),
-            kind: "config",
-            name: target.connectionName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const redisConnectionContext =
-        phpLaravelRedisConnectionReferenceContextAt(source, position);
-
-      if (isLaravelFrameworkActive && redisConnectionContext && activeDocument) {
-        const normalizedPrefix =
-          redisConnectionContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelRedisConnectionTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelRedisConnectionCompletionInsertText(
-              target.connectionName,
-            ),
-            kind: "config",
-            name: target.connectionName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const mailMailerContext = phpLaravelMailMailerReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && mailMailerContext && activeDocument) {
-        const normalizedPrefix = mailMailerContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelMailMailerTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.mailerName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelMailMailerCompletionInsertText(
-              target.mailerName,
-            ),
-            kind: "config",
-            name: target.mailerName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const passwordBrokerContext = phpLaravelPasswordBrokerReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && passwordBrokerContext && activeDocument) {
-        const normalizedPrefix = passwordBrokerContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelPasswordBrokerTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.brokerName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelPasswordBrokerCompletionInsertText(
-              target.brokerName,
-            ),
-            kind: "config",
-            name: target.brokerName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const logChannelContext = phpLaravelLogChannelReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && logChannelContext && activeDocument) {
-        const normalizedPrefix = logChannelContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelLogChannelTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.channelName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelLogChannelCompletionInsertText(
-              target.channelName,
-            ),
-            kind: "config",
-            name: target.channelName,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && storageDiskContext && activeDocument) {
-        const normalizedPrefix = storageDiskContext.prefix.toLowerCase();
-        const targets = await collectPhpLaravelStorageDiskTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return targets
-          .filter((target) =>
-            target.diskName.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((target) => ({
-            declaringClassName: target.relativePath,
-            insertText: phpLaravelStorageDiskCompletionInsertText(
-              target.diskName,
-            ),
-            kind: "config",
-            name: target.diskName,
-            parameters: "",
-            returnType: null,
-          }));
+      if (scopedCompletions !== null) {
+        return scopedCompletions;
       }
 
       const routeActionContext =

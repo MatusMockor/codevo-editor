@@ -3,7 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import {
   createLatteIntelligence,
   useLatteIntelligence,
@@ -30,6 +33,17 @@ const STALE_NETTE_PROFILE_WITHOUT_PROVIDER = createPhpFrameworkIntelligence({
   matchedProviderIds: [],
   profile: "nette",
   providers: [],
+});
+const CUSTOM_LATTE_TEMPLATE_PROVIDER: PhpFrameworkProvider = {
+  id: "custom-latte-template",
+  latte: {
+    supportsTemplateIntelligence: true,
+  },
+};
+const CUSTOM_LATTE_TEMPLATE_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [CUSTOM_LATTE_TEMPLATE_PROVIDER.id],
+  profile: "generic",
+  providers: [CUSTOM_LATTE_TEMPLATE_PROVIDER],
 });
 
 /**
@@ -185,6 +199,54 @@ describe("createLatteIntelligence definition", () => {
       { column: 1, lineNumber: 1 },
       "@layout",
     );
+  });
+
+  it("lets a custom Latte provider resolve templates without Nette presenter links", async () => {
+    const templateWorkspace = buildWorkspace([
+      "app/UI/Home/partials/menu.latte",
+    ]);
+    const templateOpenTarget = vi.fn(async () => true);
+    const templateDeps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
+      openTarget: templateOpenTarget,
+      readFileContent: templateWorkspace.readFileContent,
+    });
+    const templateLatte = createLatteIntelligence(() => templateDeps);
+    const includeSource = "{include 'partials/menu'}";
+
+    await expect(
+      templateLatte.provideLatteDefinition(
+        includeSource,
+        includeSource.indexOf("menu"),
+      ),
+    ).resolves.toBe(true);
+    expect(templateOpenTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/partials/menu.latte",
+      { column: 1, lineNumber: 1 },
+      "partials/menu",
+    );
+
+    const presenterWorkspace = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const presenterOpenTarget = vi.fn(async () => true);
+    const presenterDeps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
+      listDirectory: presenterWorkspace.listDirectory,
+      openTarget: presenterOpenTarget,
+      readFileContent: presenterWorkspace.readFileContent,
+    });
+    const presenterLatte = createLatteIntelligence(() => presenterDeps);
+    const linkSource = "{link Product:show}";
+
+    await expect(
+      presenterLatte.provideLatteDefinition(
+        linkSource,
+        linkSource.indexOf("Product:show") + 2,
+      ),
+    ).resolves.toBe(false);
+    expect(presenterWorkspace.readFileContent).not.toHaveBeenCalled();
+    expect(presenterOpenTarget).not.toHaveBeenCalled();
   });
 
   it("navigates ebox-crm style module template paths from the module templates root", async () => {

@@ -1178,6 +1178,23 @@ Integration order:
     - Verified with focused completion/navigation, Latte/provider, session/Git
       diff tests, full `useWorkbenchController.preview.test.tsx`, `npm run
       check`, and full suite.
+18. Fourth post-stop product-boundary slice completed:
+    - Remaining Laravel scoped/config-like completions for gate abilities,
+      middleware aliases, auth guards, cache/database/broadcast/queue/redis
+      connections, mailers, password brokers, log channels, and storage disks
+      now dispatch through `src/application/phpFrameworkScopedCompletions.ts`.
+    - Latte presenter-link behavior is a concrete provider capability
+      (`phpFrameworkSupportsLattePresenterLinkIntelligence`) so custom Latte
+      providers can opt into template basics without inheriting Nette routing.
+    - Document session path transitions for pinning, preview replacement, and
+      clean preview selection now live in `src/application/documentSessionState.ts`
+      and are reused by document tabs.
+    - Implemented through three Codex worker threads and integrated by the main
+      orchestrator.
+    - Verified with focused scoped completion/literal completion tests,
+      Latte/provider tests, document session tests, full
+      `useWorkbenchController.preview.test.tsx`, `npm run check`, `git diff
+      --check`, and full suite.
 
 Current operational goal:
 

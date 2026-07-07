@@ -21,6 +21,7 @@ import {
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
@@ -1337,11 +1338,62 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(phpFrameworkSupportsLatteTemplateIntelligence(providers)).toBe(
         true,
       );
+      expect(phpFrameworkSupportsLattePresenterLinkIntelligence(providers)).toBe(
+        true,
+      );
       expect(phpFrameworkSupportsLatteTemplateIntelligence([])).toBe(false);
+      expect(phpFrameworkSupportsLattePresenterLinkIntelligence([])).toBe(false);
       expect(
         phpFrameworkSupportsLatteTemplateIntelligence([
           phpLaravelFrameworkProvider,
         ]),
+      ).toBe(false);
+      expect(
+        phpFrameworkSupportsLattePresenterLinkIntelligence([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(false);
+    });
+
+    it("lets custom providers opt into Latte template and presenter-link intelligence independently", () => {
+      const templateOnlyProvider: PhpFrameworkProvider = {
+        id: "latte-template-only",
+        latte: {
+          supportsTemplateIntelligence: true,
+        },
+      };
+      const presenterLinkProvider: PhpFrameworkProvider = {
+        id: "latte-presenter-links",
+        latte: {
+          supportsPresenterLinkIntelligence: true,
+          supportsTemplateIntelligence: true,
+        },
+      };
+      const noLatteProvider: PhpFrameworkProvider = {
+        id: "no-latte",
+      };
+
+      expect(
+        phpFrameworkSupportsLatteTemplateIntelligence([templateOnlyProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsLattePresenterLinkIntelligence([
+          templateOnlyProvider,
+        ]),
+      ).toBe(false);
+      expect(
+        phpFrameworkSupportsLatteTemplateIntelligence([presenterLinkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsLattePresenterLinkIntelligence([
+          presenterLinkProvider,
+        ]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsLatteTemplateIntelligence([noLatteProvider]),
+      ).toBe(false);
+      expect(
+        phpFrameworkSupportsLattePresenterLinkIntelligence([noLatteProvider]),
       ).toBe(false);
     });
 

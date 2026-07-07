@@ -446,6 +446,14 @@ export interface PhpFrameworkProvider {
      * semantics are enabled by provider dispatch, not a hardcoded profile flag.
      */
     supportsTemplateIntelligence: true;
+    /**
+     * Provider-owned opt-in for Nette-style presenter-link intelligence
+     * (`{link}`, `{plink}`, `n:href`, `$this->link(...)`, redirects). This is a
+     * concrete Latte capability below the broad template-intelligence gate, so
+     * another Latte provider can opt into template basics without inheriting
+     * Nette presenter routing semantics.
+     */
+    supportsPresenterLinkIntelligence?: true;
   };
   semantics?: {
     propertyTypeFromSource?: (
@@ -704,6 +712,7 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
     supportsConfigIntelligence: true,
   },
   latte: {
+    supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,
   },
 };
@@ -1215,6 +1224,21 @@ export function phpFrameworkSupportsLatteTemplateIntelligence(
 ): boolean {
   return providers.some(
     (provider) => provider.latte?.supportsTemplateIntelligence === true,
+  );
+}
+
+/**
+ * Whether any active provider ships Nette-style Latte/PHP presenter-link
+ * intelligence. Today Nette owns this capability; the application layer only
+ * asks the provider boundary before resolving `{link}` / `n:href` /
+ * `$this->link(...)` targets.
+ */
+export function phpFrameworkSupportsLattePresenterLinkIntelligence(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.latte?.supportsPresenterLinkIntelligence === true,
   );
 }
 

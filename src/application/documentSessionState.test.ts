@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   currentWorkspaceSession,
+  documentSessionPathTransitionForOpenedPath,
   isPersistableEditorDocumentPath,
   isSessionPathInWorkspace,
+  pinDocumentSessionPath,
+  replaceableDocumentSessionPreview,
   restoredActivePath,
   restoredBottomPanelView,
   workspaceSessionsEqual,
@@ -82,6 +85,112 @@ describe("documentSessionState", () => {
         "history",
       ).activePath,
     ).toBeNull();
+  });
+
+  it("computes preview replacement paths without dropping pinned tabs", () => {
+    const pinnedPath = "/workspace/Pinned.php";
+    const previousPreviewPath = "/workspace/Preview.php";
+    const nextPath = "/workspace/Next.php";
+
+    expect(
+      documentSessionPathTransitionForOpenedPath({
+        openPaths: [pinnedPath],
+        path: nextPath,
+        pin: false,
+        replacedPath: previousPreviewPath,
+      }),
+    ).toEqual({
+      nextActivePath: nextPath,
+      nextOpenPaths: [pinnedPath],
+      nextPreviewPath: nextPath,
+    });
+  });
+
+  it("replaces a pinned path in-place when a pinned open supersedes it", () => {
+    expect(
+      documentSessionPathTransitionForOpenedPath({
+        openPaths: ["/workspace/A.php", "/workspace/Preview.php"],
+        path: "/workspace/B.php",
+        pin: true,
+        replacedPath: "/workspace/Preview.php",
+      }),
+    ).toEqual({
+      nextActivePath: "/workspace/B.php",
+      nextOpenPaths: ["/workspace/A.php", "/workspace/B.php"],
+      nextPreviewPath: null,
+    });
+  });
+
+  it("pins a preview document by adding it to open paths and clearing preview state", () => {
+    expect(
+      pinDocumentSessionPath(
+        ["/workspace/A.php"],
+        "/workspace/Preview.php",
+        "/workspace/Preview.php",
+      ),
+    ).toEqual({
+      nextOpenPaths: ["/workspace/A.php", "/workspace/Preview.php"],
+      nextPreviewPath: null,
+    });
+  });
+
+  it("selects only clean unpinned preview documents for replacement", () => {
+    const cleanPreview = {
+      content: "<?php\nfinal class Preview {}\n",
+      path: "/workspace/Preview.php",
+      savedContent: "<?php\nfinal class Preview {}\n",
+    };
+    const dirtyPreview = {
+      content: "<?php\nfinal class DirtyChanged {}\n",
+      path: "/workspace/Dirty.php",
+      savedContent: "<?php\nfinal class Dirty {}\n",
+    };
+
+    expect(
+      replaceableDocumentSessionPreview(
+        cleanPreview,
+        { [cleanPreview.path]: cleanPreview },
+        [],
+        cleanPreview.path,
+      ),
+    ).toBe(cleanPreview);
+    expect(
+      replaceableDocumentSessionPreview(
+        cleanPreview,
+        { [cleanPreview.path]: cleanPreview },
+        [cleanPreview.path],
+        cleanPreview.path,
+      ),
+    ).toBeNull();
+    expect(
+      replaceableDocumentSessionPreview(
+        dirtyPreview,
+        { [dirtyPreview.path]: dirtyPreview },
+        [],
+        dirtyPreview.path,
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps transient git diff documents out of persisted sessions even when pinned", () => {
+    expect(
+      currentWorkspaceSession(
+        "/workspace",
+        [
+          "/workspace/A.php",
+          "mockor-git-diff:staged:/workspace/B.php",
+          "mockor-git-history-diff:abc123:/workspace/C.php",
+        ],
+        "mockor-git-diff:staged:/workspace/B.php",
+        "git",
+        "problems",
+      ),
+    ).toEqual({
+      activePath: null,
+      bottomPanelView: "problems",
+      openPaths: ["/workspace/A.php"],
+      sidebarView: "git",
+    });
   });
 
   it("restores terminal bottom panel sessions as problems", () => {

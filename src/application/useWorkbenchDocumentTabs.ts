@@ -18,12 +18,16 @@ import type { AppSettings } from "../domain/settings";
 import {
   detectLanguage,
   getFileName,
-  isDirty,
   type EditorDocument,
   type FileEntry,
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  documentSessionPathTransitionForOpenedPath,
+  pinDocumentSessionPath,
+  replaceableDocumentSessionPreview,
+} from "./documentSessionState";
 
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
@@ -209,16 +213,16 @@ export function useWorkbenchDocumentTabs(
 
   const pinDocument = useCallback(
     (path: string) => {
-      setOpenPaths((current) => {
-        if (current.includes(path)) {
-          return current;
-        }
-
-        return [...current, path];
-      });
-      setPreviewPath((current) => (current === path ? null : current));
+      setOpenPaths((current) =>
+        pinDocumentSessionPath(current, previewPathRef.current, path)
+          .nextOpenPaths,
+      );
+      setPreviewPath((current) =>
+        pinDocumentSessionPath(openPathsRef.current, current, path)
+          .nextPreviewPath,
+      );
     },
-    [setOpenPaths, setPreviewPath],
+    [openPathsRef, previewPathRef, setOpenPaths, setPreviewPath],
   );
 
   const openFile = useCallback(
@@ -501,7 +505,7 @@ export function useWorkbenchDocumentTabs(
 
         // Compute the replacement from live refs after the read resolves, so a
         // rapid preview sequence never acts on a stale closure capture.
-        const replacement = cleanReplacementDocument(
+        const replacement = replaceableDocumentSessionPreview(
           activeDocumentRef.current,
           documentsRef.current,
           openPathsRef.current,
@@ -536,30 +540,17 @@ export function useWorkbenchDocumentTabs(
           delete nextDocuments[replacedPath];
         }
 
-        const nextOpenPaths = (() => {
-          if (shouldPin && !replacedPath) {
-            return openPathsRef.current.includes(entry.path)
-              ? openPathsRef.current
-              : [...openPathsRef.current, entry.path];
-          }
-
-          if (shouldPin && replacedPath) {
-            const mapped = openPathsRef.current.map((openPath) =>
-              openPath === replacedPath ? entry.path : openPath,
-            );
-            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
-          }
-
-          return openPathsRef.current.filter(
-            (openPath) => openPath !== replacedPath,
-          );
-        })();
-        const nextPreviewPath = shouldPin ? null : entry.path;
+        const pathTransition = documentSessionPathTransitionForOpenedPath({
+          openPaths: openPathsRef.current,
+          path: entry.path,
+          pin: shouldPin,
+          replacedPath,
+        });
 
         documentsRef.current = nextDocuments;
         activeDocumentRef.current = document;
-        openPathsRef.current = nextOpenPaths;
-        previewPathRef.current = nextPreviewPath;
+        openPathsRef.current = pathTransition.nextOpenPaths;
+        previewPathRef.current = pathTransition.nextPreviewPath;
         refreshLocalPhpDiagnosticsForContent(
           document.path,
           document.content,
@@ -576,22 +567,14 @@ export function useWorkbenchDocumentTabs(
           return next;
         });
         setOpenPaths((current) => {
-          if (shouldPin && !replacedPath) {
-            return current.includes(entry.path)
-              ? current
-              : [...current, entry.path];
-          }
-
-          if (shouldPin && replacedPath) {
-            const mapped = current.map((openPath) =>
-              openPath === replacedPath ? entry.path : openPath,
-            );
-            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
-          }
-
-          return current.filter((openPath) => openPath !== replacedPath);
+          return documentSessionPathTransitionForOpenedPath({
+            openPaths: current,
+            path: entry.path,
+            pin: shouldPin,
+            replacedPath,
+          }).nextOpenPaths;
         });
-        setPreviewPath(nextPreviewPath);
+        setPreviewPath(pathTransition.nextPreviewPath);
 
         selectedGitChangeRef.current = null;
         setSelectedGitChange(null);
@@ -786,20 +769,26 @@ export function useWorkbenchDocumentTabs(
       activeDocumentRef.current = nextDocument;
 
       if (options.pin === true) {
-        openPathsRef.current = openPathsRef.current.includes(nextDocument.path)
-          ? openPathsRef.current
-          : [...openPathsRef.current, nextDocument.path];
-        previewPathRef.current =
-          previewPathRef.current === nextDocument.path
-            ? null
-            : previewPathRef.current;
+        const pathTransition = pinDocumentSessionPath(
+          openPathsRef.current,
+          previewPathRef.current,
+          nextDocument.path,
+        );
+        openPathsRef.current = pathTransition.nextOpenPaths;
+        previewPathRef.current = pathTransition.nextPreviewPath;
         setOpenPaths((current) =>
-          current.includes(nextDocument.path)
-            ? current
-            : [...current, nextDocument.path],
+          pinDocumentSessionPath(
+            current,
+            previewPathRef.current,
+            nextDocument.path,
+          ).nextOpenPaths,
         );
         setPreviewPath((current) =>
-          current === nextDocument.path ? null : current,
+          pinDocumentSessionPath(
+            openPathsRef.current,
+            current,
+            nextDocument.path,
+          ).nextPreviewPath,
         );
       } else {
         previewPathRef.current = nextDocument.path;
@@ -847,35 +836,4 @@ export function useWorkbenchDocumentTabs(
     prefetchFile,
     cancelFilePrefetch,
   };
-}
-
-function cleanReplacementDocument(
-  activeDocument: EditorDocument | null,
-  documents: Record<string, EditorDocument>,
-  openPaths: string[],
-  previewPath: string | null,
-): EditorDocument | null {
-  if (
-    activeDocument &&
-    !isDirty(activeDocument) &&
-    !openPaths.includes(activeDocument.path)
-  ) {
-    return activeDocument;
-  }
-
-  if (!previewPath) {
-    return null;
-  }
-
-  if (openPaths.includes(previewPath)) {
-    return null;
-  }
-
-  const previewDocument = documents[previewPath] ?? null;
-
-  if (!previewDocument || isDirty(previewDocument)) {
-    return null;
-  }
-
-  return previewDocument;
 }

@@ -70,6 +70,7 @@ import {
 } from "../domain/netteViewData";
 import type { NetteTemplateProperty } from "../domain/netteViewData";
 import {
+  phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   type PhpFrameworkViewDataEntry,
   type PhpFrameworkViewDataVariable,
@@ -543,16 +544,18 @@ export function createLatteIntelligence(
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
     const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
 
-    const linkHandled = await resolveNetteLinkDefinition(
-      deps,
-      requestedRoot,
-      isRequestedRootActive,
-      detectLatteLinkAt(source, offset),
-      currentTemplateRelativePath,
-    );
+    if (isLattePresenterLinkIntelligenceActive(deps)) {
+      const linkHandled = await resolveNetteLinkDefinition(
+        deps,
+        requestedRoot,
+        isRequestedRootActive,
+        detectLatteLinkAt(source, offset),
+        currentTemplateRelativePath,
+      );
 
-    if (linkHandled) {
-      return true;
+      if (linkHandled) {
+        return true;
+      }
     }
 
     const controlHandled = await resolveNetteControlDefinition(
@@ -694,23 +697,25 @@ export function createLatteIntelligence(
       return latteTagCompletions(tagCompletion.prefix, tagCompletion.start, offset);
     }
 
-    const linkCompletion = nettePresenterLinkCompletionContextAt(
-      source,
-      offset,
-      "latte",
-    );
-
-    if (linkCompletion) {
-      return lattePresenterLinkCompletions(
-        {
-          cache: presenterCache,
-          deps,
-          inFlight: presenterInFlight,
-          isRequestedRootActive,
-          requestedRoot,
-        },
-        linkCompletion,
+    if (isLattePresenterLinkIntelligenceActive(deps)) {
+      const linkCompletion = nettePresenterLinkCompletionContextAt(
+        source,
+        offset,
+        "latte",
       );
+
+      if (linkCompletion) {
+        return lattePresenterLinkCompletions(
+          {
+            cache: presenterCache,
+            deps,
+            inFlight: presenterInFlight,
+            isRequestedRootActive,
+            requestedRoot,
+          },
+          linkCompletion,
+        );
+      }
     }
 
     const controlCompletion = latteControlCompletionAt(source, offset);
@@ -782,6 +787,10 @@ export function createLatteIntelligence(
     const detection = detectPhpPresenterLinkAt(source, offset);
 
     if (detection) {
+      if (!isLattePresenterLinkIntelligenceActive(deps)) {
+        return false;
+      }
+
       return resolveNettePresenterLink(
         deps,
         requestedRoot,
@@ -813,7 +822,10 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps)) {
+    if (
+      !isLatteSemanticActive(deps) ||
+      !isLattePresenterLinkIntelligenceActive(deps)
+    ) {
       return [];
     }
 
@@ -899,6 +911,14 @@ function isLatteSemanticActive(deps: LatteIntelligenceDependencies): boolean {
     phpFrameworkSupportsLatteTemplateIntelligence(
       deps.frameworkIntelligence.providers,
     )
+  );
+}
+
+function isLattePresenterLinkIntelligenceActive(
+  deps: LatteIntelligenceDependencies,
+): boolean {
+  return phpFrameworkSupportsLattePresenterLinkIntelligence(
+    deps.frameworkIntelligence.providers,
   );
 }
 
