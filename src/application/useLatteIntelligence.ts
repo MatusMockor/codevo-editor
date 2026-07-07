@@ -38,6 +38,7 @@ import {
   detectLatteReferenceAt,
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
+import type { LatteReference } from "../domain/latteNavigation";
 import {
   detectLatteLinkAt,
   detectPhpPresenterLinkAt,
@@ -63,6 +64,7 @@ import {
   latteForeachLoopBindingsAt,
   latteVariableDeclarations,
   parseLatteForeachCollection,
+  type LatteVariableDeclaration,
 } from "../domain/latteSyntax";
 import { netteTemplateClassPropertiesFromSource } from "../domain/netteViewData";
 import type { NetteTemplateProperty } from "../domain/netteViewData";
@@ -675,8 +677,16 @@ export function createLatteIntelligence(
       );
     }
 
+    if (reference?.kind === "block") {
+      return resolveLatteBlockDefinition(
+        deps,
+        source,
+        reference,
+        currentTemplateRelativePath,
+      );
+    }
+
     if (reference && reference.kind !== "template") {
-      // Block navigation is owned by a later slice.
       return false;
     }
 
@@ -2505,7 +2515,10 @@ async function collectLatteVariableCandidates(
   };
 
   for (const declaration of latteVariableDeclarations(source)) {
-    if (!declaration.variableName) {
+    if (
+      !declaration.variableName ||
+      !isLatteDeclarationVisibleAt(declaration, offset)
+    ) {
       continue;
     }
 
@@ -2604,7 +2617,12 @@ async function resolveLatteVariableType(
     return templateType;
   }
 
-  const localType = await latteLocalVariableType(context, source, variableName);
+  const localType = await latteLocalVariableType(
+    context,
+    source,
+    offset,
+    variableName,
+  );
 
   if (!isRequestedRootActive()) {
     return null;
@@ -2790,12 +2808,17 @@ function latteDeclaredVariableType(
 async function latteLocalVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
+  offset: number,
   variableName: string,
 ): Promise<string | null> {
   const { deps, isRequestedRootActive } = context;
 
   for (const declaration of latteVariableDeclarations(source)) {
     if (declaration.kind !== "var" && declaration.kind !== "default") {
+      continue;
+    }
+
+    if (!isLatteDeclarationVisibleAt(declaration, offset)) {
       continue;
     }
 
@@ -2822,6 +2845,17 @@ async function latteLocalVariableType(
   }
 
   return null;
+}
+
+function isLatteDeclarationVisibleAt(
+  declaration: LatteVariableDeclaration,
+  offset: number,
+): boolean {
+  if (declaration.kind !== "var" && declaration.kind !== "default") {
+    return true;
+  }
+
+  return declaration.offset < offset;
 }
 
 /** Priority 4: the merged type across the presenter sightings for the variable. */
@@ -3485,6 +3519,64 @@ function phpNamespaceName(source: string): string | null {
 
 function endPositionOf(source: string): EditorPosition {
   return editorPositionAtOffset(source, source.length);
+}
+
+function resolveLatteBlockDefinition(
+  deps: LatteIntelligenceDependencies,
+  source: string,
+  reference: LatteReference,
+  currentTemplateRelativePath: string | null,
+): Promise<boolean> {
+  if (!currentTemplateRelativePath) {
+    return Promise.resolve(false);
+  }
+
+  const definitionOffset = latteBlockDefinitionOffset(source, reference);
+
+  if (definitionOffset === null) {
+    return Promise.resolve(false);
+  }
+
+  const activeDocumentPath = deps.getActiveDocument()?.path ?? null;
+
+  if (!activeDocumentPath) {
+    return Promise.resolve(false);
+  }
+
+  return deps.openTarget(
+    activeDocumentPath,
+    editorPositionAtOffset(source, definitionOffset),
+    reference.name,
+  );
+}
+
+function latteBlockDefinitionOffset(
+  source: string,
+  reference: LatteReference,
+): number | null {
+  const blockReference = new RegExp(
+    String.raw`\{(?:block|define)\s+#?${escapeRegExp(reference.name)}(?=[\s,}/])`,
+    "g",
+  );
+
+  for (const match of source.matchAll(blockReference)) {
+    const start = match.index ?? 0;
+    const nameStart = start + match[0].lastIndexOf(reference.name);
+
+    if (reference.tag !== "include" && nameStart === reference.nameStart) {
+      return nameStart;
+    }
+
+    if (reference.tag === "include") {
+      return nameStart;
+    }
+  }
+
+  return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

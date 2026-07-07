@@ -336,18 +336,52 @@ describe("createLatteIntelligence definition", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
-  it("does not navigate block references (later slice)", async () => {
+  it("navigates an {include #block} reference to the matching local block", async () => {
     const { readFileContent } = buildWorkspace([]);
     const openTarget = vi.fn(async () => true);
-    const deps = makeDeps({ readFileContent, openTarget });
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Home/default.latte`,
+      }),
+      readFileContent,
+      openTarget,
+    });
     const latte = createLatteIntelligence(() => deps);
-    const source = "{block content}";
+    const source = "{include #content}\n\n{block content}\n{/block}";
 
     await expect(
       latte.provideLatteDefinition(source, source.indexOf("content")),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
     expect(readFileContent).not.toHaveBeenCalled();
-    expect(openTarget).not.toHaveBeenCalled();
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/default.latte",
+      { column: 8, lineNumber: 3 },
+      "content",
+    );
+  });
+
+  it("navigates a {block} name to its own declaration position", async () => {
+    const { readFileContent } = buildWorkspace([]);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Home/default.latte`,
+      }),
+      readFileContent,
+      openTarget,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{block content}\n{/block}";
+
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("content")),
+    ).resolves.toBe(true);
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/default.latte",
+      { column: 8, lineNumber: 1 },
+      "content",
+    );
   });
 
   it("navigates a Latte variable to its render-method presenter assignment", async () => {
@@ -1558,6 +1592,21 @@ class ProductTemplate extends Template
     );
   });
 
+  it("does not offer a local {var} before its declaration", async () => {
+    const deps = makeDeps();
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}\n{var $future = new Product()}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).not.toContain(
+      "$future",
+    );
+  });
+
   it("lists variables from ebox-style module presenters using Template::add()", async () => {
     const presenterSource = `<?php
 namespace Efabrica\\Crm\\ParentalControlsModule\\Presenters;
@@ -1909,6 +1958,24 @@ describe("createLatteIntelligence type-resolution edge cases", () => {
       "p",
       "App\\Model\\Order",
     );
+  });
+
+  it("does not type member completion from a later {var} declaration", async () => {
+    const synthesizeTypedReceiverSource = trackingSynthesize();
+    const resolveExpressionType = vi.fn(async () => "App\\Model\\Product");
+    const deps = makeDeps({
+      resolveExpressionType,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$p->}\n{var $p = new Product()}";
+    const offset = source.indexOf("$p->") + "$p->".length;
+
+    await expect(
+      latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(resolveExpressionType).not.toHaveBeenCalled();
+    expect(synthesizeTypedReceiverSource).not.toHaveBeenCalled();
   });
 
   it("matches a classic dotted template (Product.show.latte) to Presenter:action", async () => {
