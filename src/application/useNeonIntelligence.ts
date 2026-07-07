@@ -732,6 +732,13 @@ function neonSetupServiceType(service: {
   className: string | null;
   factory: string | null;
 }): string | null {
+  return neonResolvableServiceType(service);
+}
+
+function neonResolvableServiceType(service: {
+  className: string | null;
+  factory: string | null;
+}): string | null {
   if (service.className) {
     return normalizeNeonServiceType(service.className);
   }
@@ -801,8 +808,10 @@ async function collectNeonServiceNames(
       names.add(service.serviceName);
     }
 
-    if (service.className) {
-      names.add(service.className);
+    const serviceType = neonResolvableServiceType(service);
+
+    if (serviceType) {
+      names.add(serviceType);
     }
   }
 
@@ -931,9 +940,7 @@ async function scanNeonProjectConfig(
         });
       }
 
-      const serviceType = service.className
-        ? normalizeNeonServiceType(service.className)
-        : null;
+      const serviceType = neonResolvableServiceType(service);
 
       if (serviceType && !serviceTypes.has(serviceType)) {
         serviceTypes.set(serviceType, {

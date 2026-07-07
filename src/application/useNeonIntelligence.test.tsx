@@ -631,6 +631,39 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
     expect(openClassTarget).not.toHaveBeenCalled();
   });
 
+  it("navigates a class-typed @service to a factory-backed anonymous service", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter\n",
+      "app/modules/applicationModule/config/config.neon": [
+        "services:",
+        "    -",
+        "        create: Crm\\ApplicationModule\\Router\\RouterFactory::createRouter",
+      ].join("\n"),
+    });
+    const openClassTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openClassTarget,
+      openTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter\n";
+    const offset =
+      source.indexOf("@Crm\\ApplicationModule\\Router\\RouterFactory") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/applicationModule/config/config.neon",
+      expect.objectContaining({ lineNumber: 3 }),
+      "@Crm\\ApplicationModule\\Router\\RouterFactory",
+    );
+    expect(openClassTarget).not.toHaveBeenCalled();
+  });
+
   it("navigates a class-shaped NEON service alias from another config file", async () => {
     const { listDirectory, readFileContent } = buildNeonWorkspace({
       "config/config.neon":
@@ -780,6 +813,29 @@ describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () =>
 
     expect(generatedCompletions.map((completion) => completion.label)).toContain(
       "01",
+    );
+  });
+
+  it("offers factory-backed anonymous service type completions after @", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    router: @Crm",
+      "app/modules/applicationModule/config/config.neon": [
+        "services:",
+        "    -",
+        "        create: Crm\\ApplicationModule\\Router\\RouterFactory::createRouter",
+      ].join("\n"),
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "services:\n    router: @Crm";
+    const completions = await neon.provideNeonCompletions(
+      source,
+      positionAtOffset(source, source.length),
+    );
+
+    expect(completions.map((completion) => completion.label)).toContain(
+      "Crm\\ApplicationModule\\Router\\RouterFactory",
     );
   });
 
