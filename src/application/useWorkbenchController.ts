@@ -5847,7 +5847,7 @@ export function useWorkbenchController(
   // false (no navigation) when the class cannot be resolved. Carries the
   // per-workspace isolation guards (requested-root capture + re-check after each
   // await) so stale results are dropped on tab switch. Declared before its
-  // callers (providePhpLaravelDefinition) so the useCallback reference is
+  // callers (providePhpFrameworkDefinition) so the useCallback reference is
   // initialised first.
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
@@ -6231,7 +6231,7 @@ export function useWorkbenchController(
   // Defense in depth: this callback ALSO captures the requested root up front
   // and re-checks it after each finder await (before openNavigationTarget) so a
   // tab switch mid-resolution can never navigate into a stale-workspace file.
-  const providePhpLaravelDefinition = useCallback(
+  const providePhpFrameworkDefinition = useCallback(
     async (source: string, offset: number): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
@@ -12468,7 +12468,7 @@ export function useWorkbenchController(
     provideNettePhpLinkCompletions,
     isPhpFrameworkStringCompletionContext,
     providePhpCodeActions,
-    providePhpLaravelDefinition,
+    providePhpFrameworkDefinition,
     providePhpMethodCompletions,
     providePhpMethodSignature,
     providePhpParameterInlayHints,

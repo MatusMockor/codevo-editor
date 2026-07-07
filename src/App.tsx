@@ -1343,7 +1343,7 @@ function App() {
               workbench.isPhpFrameworkStringCompletionContext
             }
             providePhpCodeActions={workbench.providePhpCodeActions}
-            providePhpFrameworkDefinition={workbench.providePhpLaravelDefinition}
+            providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
             phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}

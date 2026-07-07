@@ -50784,7 +50784,7 @@ return [
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("app.name") + 1,
         );
@@ -50845,7 +50845,7 @@ class DashboardController
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("admin.dashboard") + 1,
         );
@@ -50908,7 +50908,7 @@ class DashboardController
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("admin.dashboard") + 1,
         );
@@ -50980,7 +50980,7 @@ return [
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("messages.welcome") + 1,
         );
@@ -51057,7 +51057,7 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("comments.show") + 1,
         );
@@ -51116,7 +51116,7 @@ class User extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{user}") + 2,
         );
@@ -51191,7 +51191,7 @@ class User extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{user}") + 2,
         );
@@ -51297,7 +51297,7 @@ class User extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{user}") + 2,
         );
@@ -51351,7 +51351,7 @@ class Project extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{project}") + 2,
         );
@@ -51391,7 +51391,7 @@ Route::get('/widgets/{widget}', [WidgetController::class, 'show']);
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{widget}") + 2,
         );
@@ -51440,7 +51440,7 @@ Route::get('/users/{user}', [UserController::class, 'show']);
       let handled = true;
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+        definitionPromise = getWorkbench().providePhpFrameworkDefinition(
           routesSource,
           routesSource.indexOf("{user}") + 2,
         );
@@ -51525,7 +51525,7 @@ class PageRepository
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           serviceSource,
           serviceSource.indexOf("private PageRepository") + 12,
         );
@@ -51595,7 +51595,7 @@ interface PageRepositoryInterface
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           serviceSource,
           serviceSource.indexOf("private PageRepositoryInterface") + 12,
         );
@@ -51651,7 +51651,7 @@ class PageService
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           serviceSource,
           serviceSource.indexOf("private UnknownDependency") + 12,
         );
@@ -51714,7 +51714,7 @@ class PageService
       let handled = true;
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+        definitionPromise = getWorkbench().providePhpFrameworkDefinition(
           serviceSource,
           serviceSource.indexOf("private PageRepository") + 12,
         );
@@ -51791,7 +51791,7 @@ class AppController
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("missing.key") + 1,
         );
@@ -51841,7 +51841,7 @@ class AppController
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("app.name") + 1,
         );
@@ -51899,7 +51899,7 @@ class AppController
 
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+        definitionPromise = getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("app.name") + 1,
         );
@@ -51981,7 +51981,7 @@ class DashboardController
 
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+        definitionPromise = getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("admin.dashboard") + 1,
         );
@@ -52070,7 +52070,7 @@ class ProcessPodcast
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("ProcessPodcast($podcast") + 2,
         );
@@ -52146,7 +52146,7 @@ class ProcessPodcast
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("ProcessPodcast::dispatchSync") + 2,
         );
@@ -52213,7 +52213,7 @@ class ProcessPodcast
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("ProcessPodcast($podcast") + 2,
         );
@@ -52267,7 +52267,7 @@ class PodcastController
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("ProcessPodcast($podcast") + 2,
         );
@@ -52358,7 +52358,7 @@ class SendShipmentNotification
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("OrderShipped($order") + 2,
         );
@@ -52450,7 +52450,7 @@ class SendShipmentNotification
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("OrderShipped($order") + 2,
         );
@@ -52547,7 +52547,7 @@ class SendShipmentNotification
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("OrderShipped::dispatch") + 2,
         );
@@ -52615,7 +52615,7 @@ class EventServiceProvider extends ServiceProvider
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().providePhpLaravelDefinition(
+        handled = await getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("OrderShipped($order") + 2,
         );
@@ -52704,7 +52704,7 @@ class EventServiceProvider extends ServiceProvider
       let handled = true;
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+        definitionPromise = getWorkbench().providePhpFrameworkDefinition(
           controllerSource,
           controllerSource.indexOf("OrderShipped($order") + 2,
         );
@@ -56079,7 +56079,7 @@ class CommentController
 
     let handled = true;
     await act(async () => {
-      handled = await getWorkbench().providePhpLaravelDefinition(
+      handled = await getWorkbench().providePhpFrameworkDefinition(
         controllerSource,
         controllerSource.indexOf("comments.show") + 1,
       );
