@@ -12,7 +12,7 @@ import {
   latteMemberCompletionItem,
   type LatteCompletionItem,
 } from "./latteCompletionItems";
-import type { LatteVariableCandidate } from "./latteVariableTypes";
+import type { LatteVariableCandidate } from "./latteVariableCandidates";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 
 export interface LatteExpressionCompletionDependencies {

@@ -24,9 +24,11 @@ import {
 } from "./netteTemplateTypes";
 import {
   collectLatteVariableCandidates as collectNetteLatteVariableCandidates,
-  resolveLatteVariableType as resolveNetteLatteVariableType,
   type LatteVariableCandidate,
-} from "./latteVariableTypes";
+} from "./latteVariableCandidates";
+import {
+  resolveLatteVariableType as resolveNetteLatteVariableType,
+} from "./latteVariableTypeResolver";
 import {
   currentTemplatePath,
 } from "./latteIntelligenceRuntime";
