@@ -27,13 +27,10 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   bladeComponentNavigationCandidateRelativePaths,
   bladeViewCandidateRelativePaths,
-  detectBladeComponentCompletionAt,
-  detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
   isInsideBladeComment,
 } from "../domain/bladeNavigation";
 import {
-  bladeLaravelHelperCompletionContextAt,
   bladeLaravelStringLiteralHelperAt,
 } from "../domain/bladeLaravelHelperCompletions";
 import {
@@ -55,7 +52,6 @@ import { phpLaravelCollectionModelTypeCandidate } from "../domain/phpFrameworkLa
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
 import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
-import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
@@ -75,32 +71,16 @@ import {
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
 import {
-  bladeMemberCompletionItem,
-  bladeOffsetAtEditorPosition,
-  bladePhpLikeCompletionAt,
-  bladePhpMemberAccessCompletionAt,
   bladeShortTypeName,
   editorPositionAtOffset,
 } from "./bladePhpCompletionContext";
-import {
-  bladeLaravelHelperNameCompletions,
-  provideBladeLaravelHelperCompletionItems,
-} from "./bladeLaravelHelperCompletionItems";
-import {
-  BLADE_BUILT_IN_VARIABLES,
-  bladeVariableCompletionItems,
-} from "./bladeVariableCompletionItems";
-import {
-  bladeComponentCompletionItems,
-  bladeDirectiveCompletionItems,
-} from "./bladeStaticCompletionItems";
 import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
 } from "./bladeViewDataCache";
 import {
-  synthesizePhpTypedReceiverSource as bladeSyntheticPhpMemberAccessSource,
-} from "./phpTypedReceiverSource";
+  provideBladeCompletions as provideBladeCompletionsFromProvider,
+} from "./bladeCompletionProvider";
 
 export type {
   BladeCompletionItem,
@@ -607,242 +587,32 @@ export function useBladeIntelligence(
     ],
   );
 
-  // Completion for `.blade.php` documents: `@directive` names (pure filter of
-  // BLADE_DIRECTIVES), view names for @include/@extends/… literals (reusing the
-  // resources/views scan), and `<x-...>` component names (components scan).
-  // Per-project isolation: capture the requested root and re-check after the
-  // directory scans before returning, so stale results drop on tab switch.
+  // Completion for `.blade.php` documents: `@directive` names, view names,
+  // `<x-...>` component names, Blade variables, and Laravel helper literals.
   const provideBladeCompletions = useCallback(
     async (
       source: string,
       position: EditorPosition,
     ): Promise<BladeCompletionItem[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return [];
-      }
-
-      const offset = bladeOffsetAtEditorPosition(source, position);
-      const directiveCompletion = detectBladeDirectiveCompletionAt(source, offset);
-      const memberCompletion = bladePhpMemberAccessCompletionAt(source, offset);
-      const phpLikeCompletion = bladePhpLikeCompletionAt(source, offset);
-
-      if (directiveCompletion) {
-        return bladeDirectiveCompletionItems(
-          directiveCompletion.directivePrefix,
-          {
-            replaceEnd: offset,
-            replaceStart: directiveCompletion.start + 1,
-          },
-        );
-      }
-
-      if (memberCompletion) {
-        const activePath = activeDocument?.path ?? "";
-        const relativePath = activePath
-          ? relativeWorkspacePath(requestedRoot, activePath)
-          : "";
-        const viewName = phpLaravelViewNameFromRelativePath(relativePath);
-
-        if (!viewName) {
-          return [];
-        }
-
-        if (isLaravelFrameworkActive) {
-          void ensurePhpLaravelMigrationSourcesLoaded(requestedRoot);
-          void ensurePhpLaravelProviderSourcesLoaded(requestedRoot);
-        }
-
-        // The receiver type comes from the reverse `view -> controllers`
-        // mapping: every controller sighting of this variable is resolved
-        // (declared hint first, full expression engine second) and the types
-        // must agree - a conflict or an unknown type yields NO completions
-        // rather than guessed ones. A `@foreach` loop variable is not a view
-        // variable, so it falls back to the enclosing loop's element type.
-        const viewVariableType = await resolveBladeViewVariableTypeForView(
-          viewName,
-          `$${memberCompletion.variableName}`,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const resolvedType =
-          viewVariableType ??
-          (await resolveBladeForeachElementTypeForVariable(
-            viewName,
-            source,
-            offset,
-            memberCompletion.variableName,
-          ));
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (!resolvedType) {
-          return [];
-        }
-
-        const synthetic = bladeSyntheticPhpMemberAccessSource(
-          memberCompletion.variableName,
-          resolvedType,
-        );
-        const members = await resolvePhpReceiverMethodCompletions(
-          synthetic.source,
-          synthetic.position,
-          memberCompletion.receiverExpression,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const normalizedPrefix = memberCompletion.prefix.toLowerCase();
-
-        return orderPhpMemberCompletionsByCategory(members)
-          .filter((member) =>
-            member.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .slice(0, 80)
-          .map((member) =>
-            bladeMemberCompletionItem(member, {
-              replaceEnd: memberCompletion.end,
-              replaceStart: memberCompletion.start,
-            }),
-          );
-      }
-
-      if (phpLikeCompletion?.kind === "variable") {
-        const activePath = activeDocument?.path ?? "";
-        const relativePath = activePath
-          ? relativeWorkspacePath(requestedRoot, activePath)
-          : "";
-        const viewName = phpLaravelViewNameFromRelativePath(relativePath);
-        const variables = viewName
-          ? await collectBladeViewVariablesWithDisplayTypes(viewName)
-          : [];
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        // `@foreach` loop variables are locals, not view data, so they are
-        // surfaced separately (with the enclosing loop's element type when it
-        // resolves) ahead of the view variables and built-ins - so the moment
-        // `$` is typed the user sees every in-scope name and its type.
-        const foreachVariables = viewName
-          ? await collectBladeForeachLoopVariables(
-              viewName,
-              source,
-              offset,
-              variables,
-            )
-          : [];
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        // `collectBladeForeachLoopVariables` already excludes any name present
-        // in `variables`, so the three lists never overlap and a plain
-        // concatenation keeps each name once (loop vars first for visibility).
-        const candidates = [
-          ...foreachVariables,
-          ...variables,
-          ...BLADE_BUILT_IN_VARIABLES,
-        ];
-
-        return bladeVariableCompletionItems(candidates, phpLikeCompletion.prefix, {
-          replaceEnd: phpLikeCompletion.end,
-          replaceStart: phpLikeCompletion.start,
-        });
-      }
-
-      if (phpLikeCompletion?.kind === "helper") {
-        return bladeLaravelHelperNameCompletions(phpLikeCompletion.prefix, {
-          replaceEnd: phpLikeCompletion.end,
-          replaceStart: phpLikeCompletion.start,
-        });
-      }
-
-      if (isLaravelFrameworkActive) {
-        const helperCompletion = bladeLaravelHelperCompletionContextAt(
-          source,
-          position,
-        );
-
-        if (helperCompletion) {
-          return provideBladeLaravelHelperCompletionItems(
-            helperCompletion,
-            offset,
-            {
-              collectPhpLaravelConfigTargets,
-              collectPhpLaravelNamedRouteTargets,
-              collectPhpLaravelTranslationTargets,
-              currentDocumentContent: source,
-              currentDocumentPath: activeDocument?.path ?? "",
-              isRequestedRootActive,
-            },
-          );
-        }
-      }
-
-      const reference = detectBladeReferenceAt(source, offset);
-
-      if (reference?.kind === "view") {
-        const targets = await collectPhpLaravelViewTargets();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const normalizedPrefix = reference.name.toLowerCase();
-
-        return targets
-          .filter((target) => target.name.toLowerCase().startsWith(normalizedPrefix))
-          .slice(0, 100)
-          .map((target) => ({
-            detail: target.relativePath,
-            insertText: target.name,
-            kind: "view",
-            label: target.name,
-            replaceEnd: reference.nameEnd,
-            replaceStart: reference.nameStart,
-          }));
-      }
-
-      // Component tags use a dedicated completion detector so the list appears
-      // the moment `<x-` is typed (empty prefix) and keeps appearing after a
-      // trailing segment dot (`<x-forms.`), unlike the conservative navigation
-      // reference detector.
-      const componentCompletion = detectBladeComponentCompletionAt(
-        source,
-        offset,
-      );
-
-      if (componentCompletion) {
-        const componentNames = await collectBladeComponentNames();
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return bladeComponentCompletionItems(
-          componentNames,
-          componentCompletion.prefix,
-          {
-            replaceEnd: componentCompletion.replaceEnd,
-            replaceStart: componentCompletion.replaceStart,
-          },
-        );
-      }
-
-      return [];
+      return provideBladeCompletionsFromProvider(source, position, {
+        activeDocument,
+        collectBladeComponentNames,
+        collectBladeForeachLoopVariables,
+        collectBladeViewVariablesWithDisplayTypes,
+        collectPhpLaravelConfigTargets,
+        collectPhpLaravelNamedRouteTargets,
+        collectPhpLaravelTranslationTargets,
+        collectPhpLaravelViewTargets,
+        currentWorkspaceRootRef,
+        ensurePhpLaravelMigrationSourcesLoaded,
+        ensurePhpLaravelProviderSourcesLoaded,
+        isLaravelFrameworkActive,
+        relativeWorkspacePath,
+        resolveBladeForeachElementTypeForVariable,
+        resolveBladeViewVariableTypeForView,
+        resolvePhpReceiverMethodCompletions,
+        workspaceRoot,
+      });
     },
     [
       activeDocument,
@@ -853,9 +623,11 @@ export function useBladeIntelligence(
       collectPhpLaravelNamedRouteTargets,
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelViewTargets,
+      currentWorkspaceRootRef,
       ensurePhpLaravelMigrationSourcesLoaded,
       ensurePhpLaravelProviderSourcesLoaded,
       isLaravelFrameworkActive,
+      relativeWorkspacePath,
       resolveBladeForeachElementTypeForVariable,
       resolveBladeViewVariableTypeForView,
       resolvePhpReceiverMethodCompletions,
