@@ -117,223 +117,283 @@ export interface PhpFrameworkScopedCompletionRequest {
   source: string;
 }
 
+interface PhpFrameworkScopedCompletionHandlerContext {
+  activeDocument: PhpFrameworkScopedCompletionDocument | null;
+  isRequestStillCurrent: () => boolean;
+  position: EditorPosition;
+  source: string;
+}
+
+type PhpFrameworkScopedCompletionHandler = (
+  context: PhpFrameworkScopedCompletionHandlerContext,
+) => Promise<PhpMethodCompletion[] | null>;
+
+interface PhpFrameworkScopedCompletionProvider {
+  id: string;
+  isActive: (request: PhpFrameworkScopedCompletionRequest) => boolean;
+  resolve: (
+    context: PhpFrameworkScopedCompletionHandlerContext,
+    dependencies: PhpFrameworkScopedCompletionDependencies,
+  ) => Promise<PhpMethodCompletion[] | null>;
+}
+
 export async function resolvePhpFrameworkScopedCompletions(
   request: PhpFrameworkScopedCompletionRequest,
   dependencies: PhpFrameworkScopedCompletionDependencies,
 ): Promise<PhpMethodCompletion[] | null> {
-  const { activeDocument, isLaravelFrameworkActive, position, source } = request;
+  const context: PhpFrameworkScopedCompletionHandlerContext = {
+    activeDocument: request.activeDocument,
+    isRequestStillCurrent: dependencies.isRequestStillCurrent,
+    position: request.position,
+    source: request.source,
+  };
 
-  const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && gateAbilityContext && activeDocument) {
-    const normalizedPrefix = gateAbilityContext.prefix.toLowerCase();
-    const abilities = await dependencies.collectGateAbilityTargets(
-      source,
-      activeDocument.path,
-    );
-
-    if (!dependencies.isRequestStillCurrent()) {
-      return [];
+  for (const provider of phpFrameworkScopedCompletionProviders) {
+    if (!provider.isActive(request)) {
+      continue;
     }
 
-    return abilities
-      .filter((ability) =>
-        ability.name.toLowerCase().startsWith(normalizedPrefix),
-      )
-      .slice(0, 80)
-      .map((ability) => ({
-        declaringClassName: ability.relativePath ?? getFileName(ability.path),
-        insertText: phpLaravelGateAbilityCompletionInsertText(ability.name),
-        kind: "config",
-        name: ability.name,
-        parameters: "",
-        returnType: null,
-      }));
-  }
+    const completions = await provider.resolve(context, dependencies);
 
-  const middlewareAliasContext = phpLaravelMiddlewareAliasReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (
-    isLaravelFrameworkActive &&
-    middlewareAliasContext &&
-    !middlewareAliasContext.aliasParameterStarted &&
-    activeDocument
-  ) {
-    const normalizedPrefix = middlewareAliasContext.alias.toLowerCase();
-    const aliases = await dependencies.collectMiddlewareAliasTargets(
-      source,
-      activeDocument.path,
-    );
-
-    if (!dependencies.isRequestStillCurrent()) {
-      return [];
+    if (completions !== null) {
+      return completions;
     }
-
-    return aliases
-      .filter((alias) => alias.name.toLowerCase().startsWith(normalizedPrefix))
-      .slice(0, 80)
-      .map((alias) => ({
-        declaringClassName: alias.relativePath ?? getFileName(alias.path),
-        insertText: phpLaravelMiddlewareAliasCompletionInsertText(alias.name),
-        kind: "config",
-        name: alias.name,
-        parameters: "",
-        returnType: null,
-      }));
-  }
-
-  const authGuardContext = phpLaravelAuthGuardReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && authGuardContext && activeDocument) {
-    return configDerivedCompletions(
-      authGuardContext.prefix,
-      dependencies.collectAuthGuardTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.guardName,
-      phpLaravelAuthGuardCompletionInsertText,
-    );
-  }
-
-  const cacheStoreContext = phpLaravelCacheStoreReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && cacheStoreContext && activeDocument) {
-    return configDerivedCompletions(
-      cacheStoreContext.prefix,
-      dependencies.collectCacheStoreTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.storeName,
-      phpLaravelCacheStoreCompletionInsertText,
-    );
-  }
-
-  const databaseConnectionContext =
-    phpLaravelDatabaseConnectionReferenceContextAt(source, position);
-
-  if (isLaravelFrameworkActive && databaseConnectionContext && activeDocument) {
-    return configDerivedCompletions(
-      databaseConnectionContext.prefix,
-      dependencies.collectDatabaseConnectionTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.connectionName,
-      phpLaravelDatabaseConnectionCompletionInsertText,
-    );
-  }
-
-  const broadcastConnectionContext =
-    phpLaravelBroadcastConnectionReferenceContextAt(source, position);
-
-  if (isLaravelFrameworkActive && broadcastConnectionContext && activeDocument) {
-    return configDerivedCompletions(
-      broadcastConnectionContext.prefix,
-      dependencies.collectBroadcastConnectionTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.connectionName,
-      phpLaravelBroadcastConnectionCompletionInsertText,
-    );
-  }
-
-  const queueConnectionContext =
-    phpLaravelQueueConnectionReferenceContextAt(source, position);
-
-  if (isLaravelFrameworkActive && queueConnectionContext && activeDocument) {
-    return configDerivedCompletions(
-      queueConnectionContext.prefix,
-      dependencies.collectQueueConnectionTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.connectionName,
-      phpLaravelQueueConnectionCompletionInsertText,
-    );
-  }
-
-  const redisConnectionContext =
-    phpLaravelRedisConnectionReferenceContextAt(source, position);
-
-  if (isLaravelFrameworkActive && redisConnectionContext && activeDocument) {
-    return configDerivedCompletions(
-      redisConnectionContext.prefix,
-      dependencies.collectRedisConnectionTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.connectionName,
-      phpLaravelRedisConnectionCompletionInsertText,
-    );
-  }
-
-  const mailMailerContext = phpLaravelMailMailerReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && mailMailerContext && activeDocument) {
-    return configDerivedCompletions(
-      mailMailerContext.prefix,
-      dependencies.collectMailMailerTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.mailerName,
-      phpLaravelMailMailerCompletionInsertText,
-    );
-  }
-
-  const passwordBrokerContext = phpLaravelPasswordBrokerReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && passwordBrokerContext && activeDocument) {
-    return configDerivedCompletions(
-      passwordBrokerContext.prefix,
-      dependencies.collectPasswordBrokerTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.brokerName,
-      phpLaravelPasswordBrokerCompletionInsertText,
-    );
-  }
-
-  const logChannelContext = phpLaravelLogChannelReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && logChannelContext && activeDocument) {
-    return configDerivedCompletions(
-      logChannelContext.prefix,
-      dependencies.collectLogChannelTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.channelName,
-      phpLaravelLogChannelCompletionInsertText,
-    );
-  }
-
-  const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
-    source,
-    position,
-  );
-
-  if (isLaravelFrameworkActive && storageDiskContext && activeDocument) {
-    return configDerivedCompletions(
-      storageDiskContext.prefix,
-      dependencies.collectStorageDiskTargets,
-      dependencies.isRequestStillCurrent,
-      (target) => target.diskName,
-      phpLaravelStorageDiskCompletionInsertText,
-    );
   }
 
   return null;
 }
 
-async function configDerivedCompletions<Target extends { relativePath: string }>(
+const phpLaravelScopedCompletionProvider: PhpFrameworkScopedCompletionProvider = {
+  id: "laravel",
+  isActive: (request) => request.isLaravelFrameworkActive,
+  resolve: (context, dependencies) =>
+    resolveScopedCompletionHandlers(
+      [
+        createLaravelGateAbilityHandler(dependencies),
+        createLaravelMiddlewareAliasHandler(dependencies),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectAuthGuardTargets(),
+          insertTextForName: phpLaravelAuthGuardCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelAuthGuardTarget) =>
+            target.guardName,
+          referenceAt: phpLaravelAuthGuardReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectCacheStoreTargets(),
+          insertTextForName: phpLaravelCacheStoreCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelCacheStoreTarget) =>
+            target.storeName,
+          referenceAt: phpLaravelCacheStoreReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectDatabaseConnectionTargets(),
+          insertTextForName: phpLaravelDatabaseConnectionCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelDatabaseConnectionTarget) =>
+            target.connectionName,
+          referenceAt: phpLaravelDatabaseConnectionReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () =>
+            dependencies.collectBroadcastConnectionTargets(),
+          insertTextForName: phpLaravelBroadcastConnectionCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelBroadcastConnectionTarget) =>
+            target.connectionName,
+          referenceAt: phpLaravelBroadcastConnectionReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectQueueConnectionTargets(),
+          insertTextForName: phpLaravelQueueConnectionCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelQueueConnectionTarget) =>
+            target.connectionName,
+          referenceAt: phpLaravelQueueConnectionReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectRedisConnectionTargets(),
+          insertTextForName: phpLaravelRedisConnectionCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelRedisConnectionTarget) =>
+            target.connectionName,
+          referenceAt: phpLaravelRedisConnectionReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectMailMailerTargets(),
+          insertTextForName: phpLaravelMailMailerCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelMailMailerTarget) =>
+            target.mailerName,
+          referenceAt: phpLaravelMailMailerReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectPasswordBrokerTargets(),
+          insertTextForName: phpLaravelPasswordBrokerCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelPasswordBrokerTarget) =>
+            target.brokerName,
+          referenceAt: phpLaravelPasswordBrokerReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectLogChannelTargets(),
+          insertTextForName: phpLaravelLogChannelCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelLogChannelTarget) =>
+            target.channelName,
+          referenceAt: phpLaravelLogChannelReferenceContextAt,
+        }),
+        createLaravelConfigDerivedHandler({
+          collectTargets: () => dependencies.collectStorageDiskTargets(),
+          insertTextForName: phpLaravelStorageDiskCompletionInsertText,
+          nameFromTarget: (target: PhpLaravelStorageDiskTarget) =>
+            target.diskName,
+          referenceAt: phpLaravelStorageDiskReferenceContextAt,
+        }),
+      ],
+      context,
+    ),
+};
+
+const phpFrameworkScopedCompletionProviders: readonly PhpFrameworkScopedCompletionProvider[] =
+  [phpLaravelScopedCompletionProvider];
+
+async function resolveScopedCompletionHandlers(
+  handlers: readonly PhpFrameworkScopedCompletionHandler[],
+  context: PhpFrameworkScopedCompletionHandlerContext,
+): Promise<PhpMethodCompletion[] | null> {
+  for (const handler of handlers) {
+    const completions = await handler(context);
+
+    if (completions !== null) {
+      return completions;
+    }
+  }
+
+  return null;
+}
+
+function createLaravelGateAbilityHandler(
+  dependencies: PhpFrameworkScopedCompletionDependencies,
+): PhpFrameworkScopedCompletionHandler {
+  return async ({ activeDocument, isRequestStillCurrent, position, source }) => {
+    const gateAbilityContext = phpLaravelGateAbilityReferenceContextAt(
+      source,
+      position,
+    );
+
+    if (!gateAbilityContext || !activeDocument) {
+      return null;
+    }
+
+    return sourcePathDerivedCompletions(
+      gateAbilityContext.prefix,
+      () => dependencies.collectGateAbilityTargets(source, activeDocument.path),
+      isRequestStillCurrent,
+      (target) => target.name,
+      phpLaravelGateAbilityCompletionInsertText,
+    );
+  };
+}
+
+function createLaravelMiddlewareAliasHandler(
+  dependencies: PhpFrameworkScopedCompletionDependencies,
+): PhpFrameworkScopedCompletionHandler {
+  return async ({ activeDocument, isRequestStillCurrent, position, source }) => {
+    const middlewareAliasContext = phpLaravelMiddlewareAliasReferenceContextAt(
+      source,
+      position,
+    );
+
+    if (
+      !middlewareAliasContext ||
+      middlewareAliasContext.aliasParameterStarted ||
+      !activeDocument
+    ) {
+      return null;
+    }
+
+    return sourcePathDerivedCompletions(
+      middlewareAliasContext.alias,
+      () =>
+        dependencies.collectMiddlewareAliasTargets(
+          source,
+          activeDocument.path,
+        ),
+      isRequestStillCurrent,
+      (target) => target.name,
+      phpLaravelMiddlewareAliasCompletionInsertText,
+    );
+  };
+}
+
+interface LaravelConfigDerivedReference {
+  prefix: string;
+}
+
+interface LaravelConfigDerivedTarget {
+  relativePath: string;
+}
+
+function createLaravelConfigDerivedHandler<Target extends LaravelConfigDerivedTarget>({
+  collectTargets,
+  insertTextForName,
+  nameFromTarget,
+  referenceAt,
+}: {
+  collectTargets: () => Promise<readonly Target[]>;
+  insertTextForName: (name: string) => string;
+  nameFromTarget: (target: Target) => string;
+  referenceAt: (
+    source: string,
+    position: EditorPosition,
+  ) => LaravelConfigDerivedReference | null;
+}): PhpFrameworkScopedCompletionHandler {
+  return async ({ activeDocument, isRequestStillCurrent, position, source }) => {
+    const reference = referenceAt(source, position);
+
+    if (!reference || !activeDocument) {
+      return null;
+    }
+
+    return configDerivedCompletions(
+      reference.prefix,
+      collectTargets,
+      isRequestStillCurrent,
+      nameFromTarget,
+      insertTextForName,
+    );
+  };
+}
+
+async function sourcePathDerivedCompletions<
+  Target extends { path: string; relativePath: string | null },
+>(
+  prefix: string,
+  collectTargets: () => Promise<readonly Target[]>,
+  isRequestStillCurrent: () => boolean,
+  nameFromTarget: (target: Target) => string,
+  insertTextForName: (name: string) => string,
+): Promise<PhpMethodCompletion[]> {
+  const normalizedPrefix = prefix.toLowerCase();
+  const targets = await collectTargets();
+
+  if (!isRequestStillCurrent()) {
+    return [];
+  }
+
+  return targets
+    .filter((target) =>
+      nameFromTarget(target).toLowerCase().startsWith(normalizedPrefix),
+    )
+    .slice(0, 80)
+    .map((target) => {
+      const name = nameFromTarget(target);
+
+      return {
+        declaringClassName: target.relativePath ?? getFileName(target.path),
+        insertText: insertTextForName(name),
+        kind: "config",
+        name,
+        parameters: "",
+        returnType: null,
+      };
+    });
+}
+
+async function configDerivedCompletions<Target extends LaravelConfigDerivedTarget>(
   prefix: string,
   collectTargets: () => Promise<readonly Target[]>,
   isRequestStillCurrent: () => boolean,
