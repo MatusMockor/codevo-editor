@@ -88,6 +88,10 @@ import {
   provideBladeLaravelHelperCompletionItems,
 } from "./bladeLaravelHelperCompletionItems";
 import {
+  BLADE_BUILT_IN_VARIABLES,
+  bladeVariableCompletionItems,
+} from "./bladeVariableCompletionItems";
+import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
 } from "./bladeViewDataCache";
@@ -757,23 +761,10 @@ export function useBladeIntelligence(
           ...BLADE_BUILT_IN_VARIABLES,
         ];
 
-        return candidates
-          .filter((variable) =>
-            variable.name
-              .toLowerCase()
-              .startsWith(`$${phpLikeCompletion.prefix.toLowerCase()}`),
-          )
-          .slice(0, 100)
-          .map((variable) => ({
-            detail: variable.typeHint
-              ? `${variable.detail} · ${variable.typeHint}`
-              : variable.detail,
-            insertText: variable.name,
-            kind: "variable",
-            label: variable.name,
-            replaceEnd: phpLikeCompletion.end,
-            replaceStart: phpLikeCompletion.start,
-          }));
+        return bladeVariableCompletionItems(candidates, phpLikeCompletion.prefix, {
+          replaceEnd: phpLikeCompletion.end,
+          replaceStart: phpLikeCompletion.start,
+        });
       }
 
       if (phpLikeCompletion?.kind === "helper") {
@@ -1147,20 +1138,3 @@ export function useBladeIntelligence(
 // adversarial/self-referencing relation chain in Blade source cannot trigger
 // an unbounded run of sequential file-read awaits.
 const BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH = 8;
-
-const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
-  {
-    detail: "Laravel Blade variable",
-    name: "$errors",
-    typeHint: "ViewErrorBag",
-    valueExpression: null,
-    valueOffset: null,
-  },
-  {
-    detail: "Laravel Blade variable",
-    name: "$loop",
-    typeHint: "Loop",
-    valueExpression: null,
-    valueOffset: null,
-  },
-];
