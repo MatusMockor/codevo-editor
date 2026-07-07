@@ -76,11 +76,8 @@ import {
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 import {
-  latteLayoutCandidatePaths,
   componentClassCandidatePathsForTemplate,
-  moduleTemplatesRootOf,
   presenterCandidatePathsForTemplate,
-  resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
@@ -106,7 +103,16 @@ import {
   type NettePresenterCache,
   type NettePresenterInFlight,
 } from "./nettePresenterLinks";
+import {
+  isLatteScanSkippedDirectory,
+  latteTemplateCompletions,
+  resolveLatteTemplateDefinition,
+  type LatteDirectoryEntry,
+  type LatteTemplateCache,
+} from "./netteTemplates";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+
+export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
 
 /**
  * The Monaco icon bucket a Latte completion maps to: tag → keyword,
@@ -138,12 +144,6 @@ export interface LatteCompletionItem {
 
 /** The minimal shape of the active editor document the hook reads (its path). */
 export interface LatteIntelligenceActiveDocument {
-  path: string;
-}
-
-/** A workspace directory entry, narrowed to what the template scan needs. */
-export interface LatteDirectoryEntry {
-  kind: "directory" | "file";
   path: string;
 }
 
@@ -322,14 +322,6 @@ export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
   viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
 };
 
-interface LatteTemplateCacheEntry {
-  expiresAt: number;
-  relativePaths: string[];
-}
-
-/** Per-root cache of workspace `.latte` relative paths (keyed by requested root). */
-export type LatteTemplateCache = Record<string, LatteTemplateCacheEntry>;
-
 interface LatteViewDataCacheEntry {
   entries: LatteNetteViewDataEntry[];
   expiresAt: number;
@@ -393,12 +385,6 @@ interface LatteExpressionResolutionContext {
   viewDataInFlight: LatteViewDataInFlight;
 }
 
-/** Mutable bookkeeping threaded through one recursive scan (spec §6b bounds). */
-interface LatteTemplateScanState {
-  templatesFound: number;
-  visitedDirectories: Set<string>;
-}
-
 /**
  * Directories a Nette project keeps its templates under, covering both the
  * classic (`app/Presenters/templates`, top-level `templates`) and modern
@@ -419,8 +405,6 @@ const LATTE_TEMPLATE_EXTENSION = ".latte";
  */
 const LATTE_TEMPLATE_CACHE_TTL_MS = 5_000;
 const LATTE_MAX_COMPLETIONS = 100;
-const LAYOUT_NAVIGATION_LABEL = "@layout";
-
 /**
  * TTL for the per-root Nette view-data listing (spec §6b). Mirrors the template
  * cache: a short TTL bounds staleness after a presenter changes, while
@@ -468,9 +452,6 @@ const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
  */
 const LATTE_COMPONENT_CACHE_TTL_MS = 5_000;
 
-/** Bound for the backward scan that finds a bare `{layout}` macro before a cursor. */
-const MAX_BARE_LAYOUT_SCAN = 2_000;
-
 /**
  * Bound for the recursive `.latte` scan (spec §6b): protects against a
  * pathologically deep tree - or, since the `listDirectory` contract exposes
@@ -491,22 +472,6 @@ const MAX_LATTE_SCAN_DEPTH = 12;
  * partial result rather than growing unbounded on a very wide tree.
  */
 const MAX_LATTE_TEMPLATE_FILES = 2_000;
-
-/**
- * Directory basenames a Latte scan never descends into, wherever they are
- * nested under `app` / `templates` - dependency, VCS and generated-asset
- * directories a Nette project keeps around but never stores templates under.
- */
-const LATTE_SCAN_SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
-  ".git",
-  ".idea",
-  ".vscode",
-  "assets",
-  "log",
-  "node_modules",
-  "temp",
-  "vendor",
-]);
 
 /**
  * Builds the Latte intelligence API from an accessor to the current
@@ -659,36 +624,17 @@ export function createLatteIntelligence(
       return false;
     }
 
-    const candidatePaths = reference
-      ? resolveLatteTemplateCandidatePaths(
-          reference.name,
-          currentTemplateRelativePath,
-        )
-      : bareLayoutTagAt(source, offset)
-        ? latteLayoutCandidatePaths(currentTemplateRelativePath)
-        : [];
-    const label = reference ? reference.name : LAYOUT_NAVIGATION_LABEL;
-
-    for (const relativePath of candidatePaths) {
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      const path = deps.joinPath(requestedRoot, relativePath);
-      const exists = await fileExists(deps, path);
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      if (!exists) {
-        continue;
-      }
-
-      return deps.openTarget(path, { column: 1, lineNumber: 1 }, label);
-    }
-
-    return false;
+    return resolveLatteTemplateDefinition(
+      {
+        currentTemplateRelativePath,
+        deps,
+        isRequestedRootActive,
+        requestedRoot,
+      },
+      reference,
+      source,
+      offset,
+    );
   };
 
   const provideLatteCompletions = async (
@@ -719,11 +665,19 @@ export function createLatteIntelligence(
 
     if (includeCompletion) {
       return latteTemplateCompletions(
-        deps,
-        templateCache,
-        requestedRoot,
+        {
+          cache: templateCache,
+          currentTemplateRelativePath: currentTemplatePath(deps, requestedRoot),
+          deps,
+          isRequestedRootActive,
+          maxCompletions: LATTE_MAX_COMPLETIONS,
+          maxDepth: MAX_LATTE_SCAN_DEPTH,
+          maxTemplates: MAX_LATTE_TEMPLATE_FILES,
+          requestedRoot,
+          scanDirectories: LATTE_TEMPLATE_SCAN_DIRECTORIES,
+          ttlMs: LATTE_TEMPLATE_CACHE_TTL_MS,
+        },
         includeCompletion,
-        isRequestedRootActive,
       );
     }
 
@@ -1008,18 +962,6 @@ function evictOtherRootCacheEntries<Entry>(
     }
 
     delete cache[cachedRoot];
-  }
-}
-
-async function fileExists(
-  deps: LatteIntelligenceDependencies,
-  path: string,
-): Promise<boolean> {
-  try {
-    await deps.readFileContent(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -3004,180 +2946,6 @@ function editorPositionAtOffset(source: string, offset: number): EditorPosition 
   return { column: clamped - lineStart + 1, lineNumber: before.split("\n").length };
 }
 
-async function latteTemplateCompletions(
-  deps: LatteIntelligenceDependencies,
-  templateCache: LatteTemplateCache,
-  requestedRoot: string,
-  includeCompletion: { prefix: string; replaceEnd: number; replaceStart: number },
-  isRequestedRootActive: () => boolean,
-): Promise<LatteCompletionItem[]> {
-  const relativePaths = await listLatteTemplateRelativePaths(
-    deps,
-    templateCache,
-    requestedRoot,
-    isRequestedRootActive,
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
-  const names = latteIncludeCandidateNames(
-    relativePaths,
-    currentTemplateRelativePath,
-  );
-  const normalizedPrefix = includeCompletion.prefix.toLowerCase();
-
-  return names
-    .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
-    .slice(0, LATTE_MAX_COMPLETIONS)
-    .map((name) => ({
-      detail: "Latte template",
-      insertText: name,
-      kind: "template" as const,
-      label: name,
-      replaceEnd: includeCompletion.replaceEnd,
-      replaceStart: includeCompletion.replaceStart,
-    }));
-}
-
-async function listLatteTemplateRelativePaths(
-  deps: LatteIntelligenceDependencies,
-  templateCache: LatteTemplateCache,
-  requestedRoot: string,
-  isRequestedRootActive: () => boolean,
-): Promise<string[]> {
-  const cached = templateCache[requestedRoot];
-
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.relativePaths;
-  }
-
-  const relativePaths = new Set<string>();
-  const scanState: LatteTemplateScanState = {
-    templatesFound: 0,
-    visitedDirectories: new Set<string>(),
-  };
-
-  for (const directory of LATTE_TEMPLATE_SCAN_DIRECTORIES) {
-    await collectLatteTemplates(
-      deps,
-      deps.joinPath(requestedRoot, directory),
-      requestedRoot,
-      relativePaths,
-      isRequestedRootActive,
-      0,
-      scanState,
-    );
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
-      break;
-    }
-  }
-
-  const sorted = Array.from(relativePaths).sort((left, right) =>
-    left.localeCompare(right),
-  );
-  templateCache[requestedRoot] = {
-    expiresAt: Date.now() + LATTE_TEMPLATE_CACHE_TTL_MS,
-    relativePaths: sorted,
-  };
-
-  return sorted;
-}
-
-/**
- * Recursively walks one scan-root directory, bounded on three independent
- * axes (spec §6b): `depth` stops a pathologically deep - or symlink-cyclic -
- * tree, `scanState.templatesFound` caps the total work on a very wide tree,
- * and `scanState.visitedDirectories` skips an exact repeated directory path
- * within the same scan. All three are deterministic (no throwing): exceeding
- * a bound simply stops that branch and the scan returns whatever it already
- * collected.
- */
-async function collectLatteTemplates(
-  deps: LatteIntelligenceDependencies,
-  directory: string,
-  requestedRoot: string,
-  into: Set<string>,
-  isRequestedRootActive: () => boolean,
-  depth: number,
-  scanState: LatteTemplateScanState,
-): Promise<void> {
-  if (depth > MAX_LATTE_SCAN_DEPTH) {
-    return;
-  }
-
-  if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
-    return;
-  }
-
-  if (scanState.visitedDirectories.has(directory)) {
-    return;
-  }
-
-  scanState.visitedDirectories.add(directory);
-
-  let entries: LatteDirectoryEntry[];
-
-  try {
-    entries = await deps.listDirectory(directory);
-  } catch {
-    return;
-  }
-
-  if (!isRequestedRootActive()) {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!isRequestedRootActive()) {
-      return;
-    }
-
-    if (scanState.templatesFound >= MAX_LATTE_TEMPLATE_FILES) {
-      return;
-    }
-
-    if (entry.kind === "directory") {
-      if (isLatteScanSkippedDirectory(entry.path)) {
-        continue;
-      }
-
-      await collectLatteTemplates(
-        deps,
-        entry.path,
-        requestedRoot,
-        into,
-        isRequestedRootActive,
-        depth + 1,
-        scanState,
-      );
-      continue;
-    }
-
-    if (!entry.path.endsWith(LATTE_TEMPLATE_EXTENSION)) {
-      continue;
-    }
-
-    into.add(deps.toRelativePath(requestedRoot, entry.path));
-    scanState.templatesFound += 1;
-  }
-}
-
-/** True when `path`'s basename is a directory the `.latte` scan never descends into. */
-function isLatteScanSkippedDirectory(path: string): boolean {
-  const segments = path.split("/");
-  const basename = segments[segments.length - 1] ?? "";
-
-  return LATTE_SCAN_SKIPPED_DIRECTORIES.has(basename);
-}
-
 function currentTemplatePath(
   deps: LatteIntelligenceDependencies,
   requestedRoot: string,
@@ -3189,159 +2957,6 @@ function currentTemplatePath(
   }
 
   return deps.toRelativePath(requestedRoot, document.path);
-}
-
-/**
- * Turns workspace-relative `.latte` paths into include references relative to
- * the current template's directory (how Nette resolves includes). The current
- * template excludes itself. Sorted, de-duplicated.
- */
-function latteIncludeCandidateNames(
-  relativePaths: string[],
-  currentTemplateRelativePath: string,
-): string[] {
-  const currentDirectory = dirnameOf(currentTemplateRelativePath);
-  const moduleTemplatesRoot = moduleTemplatesRootOf(currentTemplateRelativePath);
-  const names = new Set<string>();
-
-  for (const relativePath of relativePaths) {
-    if (relativePath === currentTemplateRelativePath) {
-      continue;
-    }
-
-    names.add(relativeReference(currentDirectory, relativePath));
-
-    const moduleRootReference = moduleTemplatesRootReference(
-      moduleTemplatesRoot,
-      relativePath,
-    );
-
-    if (moduleRootReference) {
-      names.add(moduleRootReference);
-    }
-  }
-
-  return Array.from(names).sort((left, right) => left.localeCompare(right));
-}
-
-function moduleTemplatesRootReference(
-  moduleTemplatesRoot: string | null,
-  targetPath: string,
-): string | null {
-  if (!moduleTemplatesRoot) {
-    return null;
-  }
-
-  if (!targetPath.startsWith(`${moduleTemplatesRoot}/`)) {
-    return null;
-  }
-
-  return targetPath.slice(moduleTemplatesRoot.length + 1);
-}
-
-/**
- * Returns true when `offset` sits inside a truly bare `{layout}` macro (a
- * `{layout}` with NO argument at all), so navigation can fall back to the
- * `@layout.latte` auto-lookup. Any argument - a quoted file (handled by the
- * template-reference path), `{layout none}`, or an expression - disqualifies it,
- * staying conservative. Bounded, single-line, hang-safe: the backward scan stops
- * at the enclosing `{` (or a `}` / newline) and the forward scan stops at the
- * tag's `}` or the end of the line.
- */
-function bareLayoutTagAt(source: string, offset: number): boolean {
-  if (offset < 0 || offset > source.length) {
-    return false;
-  }
-
-  const braceStart = macroOpenBefore(source, offset);
-
-  if (braceStart === null || source[braceStart + 1] === "/") {
-    return false;
-  }
-
-  let index = braceStart + 1;
-
-  while (index < source.length && isTagNameChar(source[index] ?? "")) {
-    index += 1;
-  }
-
-  if (source.slice(braceStart + 1, index) !== "layout") {
-    return false;
-  }
-
-  const limit = Math.min(source.length, braceStart + MAX_BARE_LAYOUT_SCAN);
-
-  for (let scan = index; scan < limit; scan += 1) {
-    const character = source[scan];
-
-    if (character === "\n") {
-      return false;
-    }
-
-    if (character === "}") {
-      return offset <= scan;
-    }
-
-    if (character !== " " && character !== "\t") {
-      // Any argument (quoted file, `none`, an expression) is not a bare layout.
-      return false;
-    }
-  }
-
-  return false;
-}
-
-function macroOpenBefore(source: string, offset: number): number | null {
-  const min = Math.max(0, offset - MAX_BARE_LAYOUT_SCAN);
-
-  for (let index = offset - 1; index >= min; index -= 1) {
-    const character = source[index];
-
-    if (character === "\n" || character === "}") {
-      return null;
-    }
-
-    if (character === "{") {
-      return index;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Builds a path from `fromDirectory` to `targetPath` using `../` for each level
- * that must be climbed, so an include inserted from the completion resolves the
- * way Nette resolves a relative include.
- */
-function relativeReference(fromDirectory: string, targetPath: string): string {
-  const fromSegments = fromDirectory.length > 0 ? fromDirectory.split("/") : [];
-  const targetSegments = targetPath.split("/");
-  let common = 0;
-
-  while (
-    common < fromSegments.length &&
-    common < targetSegments.length - 1 &&
-    fromSegments[common] === targetSegments[common]
-  ) {
-    common += 1;
-  }
-
-  const ups = fromSegments.length - common;
-  const downs = targetSegments.slice(common);
-  const parts = [...Array.from({ length: ups }, () => ".."), ...downs];
-
-  return parts.join("/");
-}
-
-function dirnameOf(path: string): string {
-  const index = path.lastIndexOf("/");
-
-  if (index < 0) {
-    return "";
-  }
-
-  return path.slice(0, index);
 }
 
 function offsetAtEditorPosition(source: string, position: EditorPosition): number {
@@ -3361,8 +2976,4 @@ function offsetAtEditorPosition(source: string, position: EditorPosition): numbe
   const column = Math.max(0, position.column - 1);
 
   return offset + Math.min(column, lines[targetLine]?.length ?? 0);
-}
-
-function isTagNameChar(character: string): boolean {
-  return /[A-Za-z0-9_]/.test(character);
 }
