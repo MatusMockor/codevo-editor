@@ -30,11 +30,11 @@ import {
 import {
   currentTemplatePath,
 } from "./latteIntelligenceRuntime";
+import type { LatteCompletionItem } from "./latteCompletionItems";
 import type {
-  LatteCompletionItem,
   LatteFrameworkCapabilities,
   LatteIntelligenceDependencies,
-} from "./useLatteIntelligence";
+} from "./latteIntelligenceContracts";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
