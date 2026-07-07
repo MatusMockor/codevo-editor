@@ -16,7 +16,7 @@ import {
 import {
   componentOwnerCandidatePathsForTemplate,
 } from "./netteCreateComponentViewData";
-import { phpMethodPositionInSource } from "./nettePresenterLinks";
+import { phpMethodPositionInSource } from "./phpMethodPosition";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 
 export interface NetteControlDependencies {
