@@ -5,7 +5,7 @@ import {
 } from "../domain/latteSyntax";
 import type { PhpFrameworkViewDataVariable } from "../domain/phpFrameworkProviders";
 import type { NetteViewDataEntry } from "./netteViewDataEntries";
-import type { LatteVariableResolutionContext } from "./latteVariableTypes";
+import type { LatteVariableResolutionContext } from "./latteVariableContracts";
 
 export interface LatteVariableCandidate {
   detail: string;
