@@ -22,7 +22,7 @@
  * target collectors and navigation primitives are injected (pass-through) so the
  * expensive engines are owned by the controller and merely wired here.
  */
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   bladeComponentNavigationCandidateRelativePaths,
@@ -33,25 +33,14 @@ import {
 import {
   bladeLaravelStringLiteralHelperAt,
 } from "../domain/bladeLaravelHelperCompletions";
-import {
-  bladeForeachLoopBindingsAt,
-  bladeViewVariableSightingsForView,
-  bladeViewVariablesForViewFromEntries,
-  mergeBladeViewVariableResolvedTypes,
-  parseBladeForeachCollection,
-  type BladeForeachLoopBinding,
-  type BladeViewDataEntry,
-  type BladeViewVariableSighting,
-} from "../domain/bladeViewVariables";
+import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import {
   resolveLaravelConfigTarget,
   resolveLaravelTransTarget,
   resolveLaravelViewTarget,
 } from "../domain/laravelPathResolution";
-import { phpLaravelCollectionModelTypeCandidate } from "../domain/phpFrameworkLaravel";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
-import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
@@ -70,10 +59,8 @@ import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
-import {
-  bladeShortTypeName,
-  editorPositionAtOffset,
-} from "./bladePhpCompletionContext";
+import { editorPositionAtOffset } from "./bladePhpCompletionContext";
+import { createBladeViewVariableResolver } from "./bladeViewVariableResolver";
 import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
@@ -186,237 +173,29 @@ export function useBladeIntelligence(
     [],
   );
 
-  // Resolves the receiver type of ONE view-data sighting: FIRST the full PHP
-  // expression engine on the value expression at its source position - the
-  // same engine `providePhpMethodCompletions` uses - so route-model-bound
-  // parameters, typed properties, `@var` docs and Eloquent chains all infer
-  // like PhpStorm (including `->get()` resolving to a Collection rather than
-  // the model). Only when no expression is known (or the engine declines)
-  // does the cheap declared-type hint from the view-data extraction apply.
-  const resolveBladeViewVariableSightingType = useCallback(
-    async (sighting: BladeViewVariableSighting): Promise<string | null> => {
-      if (sighting.variable.valueExpression) {
-        const expressionType = await resolvePhpExpressionType(
-          sighting.source,
-          editorPositionAtOffset(
-            sighting.source,
-            sighting.variable.valueOffset ?? sighting.source.length,
-          ),
-          sighting.variable.valueExpression,
-        );
-
-        if (expressionType) {
-          return expressionType;
-        }
-      }
-
-      return resolvePhpDeclaredType(sighting.source, sighting.variable.typeHint);
-    },
-    [resolvePhpDeclaredType, resolvePhpExpressionType],
-  );
-
-  // CONSERVATIVE view-variable receiver type: every sighting of the variable
-  // (across all controllers passing data to the view) is resolved and the
-  // types must agree - a conflict yields `null` (no member completions, no
-  // guessing). Unresolvable sightings do not veto a resolved type.
-  const resolveBladeViewVariableTypeForView = useCallback(
-    async (viewName: string, variableName: string): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return null;
-      }
-
-      const entries = await ensureBladeViewDataEntriesLoaded(requestedRoot);
-
-      if (!entries || !isRequestedRootActive()) {
-        return null;
-      }
-
-      const resolvedTypes: (string | null)[] = [];
-
-      for (const sighting of bladeViewVariableSightingsForView(
-        entries,
-        viewName,
-        variableName,
-      )) {
-        resolvedTypes.push(await resolveBladeViewVariableSightingType(sighting));
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-      }
-
-      return mergeBladeViewVariableResolvedTypes(resolvedTypes);
-    },
+  const {
+    collectBladeForeachLoopVariables,
+    collectBladeViewVariablesWithDisplayTypes,
+    resolveBladeForeachElementTypeForVariable,
+    resolveBladeViewVariableTypeForView,
+  } = useMemo(
+    () =>
+      createBladeViewVariableResolver({
+        currentWorkspaceRootRef,
+        ensureBladeViewDataEntriesLoaded,
+        resolvePhpClassPropertyOrRelationType,
+        resolvePhpDeclaredType,
+        resolvePhpExpressionType,
+        workspaceRoot,
+      }),
     [
+      currentWorkspaceRootRef,
       ensureBladeViewDataEntriesLoaded,
-      resolveBladeViewVariableSightingType,
+      resolvePhpClassPropertyOrRelationType,
+      resolvePhpDeclaredType,
+      resolvePhpExpressionType,
       workspaceRoot,
     ],
-  );
-
-  // Resolves the type of a `@foreach` collection expression's ROOT variable:
-  // first an ENCLOSING loop that already bound that variable (passed in
-  // `outerLoopVariableTypes`, keyed by lowercased name), then - for a root
-  // that is not itself a loop variable - the reverse `view -> controllers`
-  // mapping (a view variable). The closer binding must win: PHP/Blade scoping
-  // means a loop variable shadows a same-named outer view variable, and
-  // `resolveBladeViewVariableTypeForView` merges sightings across EVERY
-  // controller that renders the view, so a generic loop name (`$item`,
-  // `$row`) reused by an unrelated controller must never override the
-  // enclosing loop's own element type. CONSERVATIVE: an unknown root yields
-  // `null`, never a guess.
-  const resolveBladeForeachRootVariableType = useCallback(
-    async (
-      viewName: string,
-      rootVariableName: string,
-      outerLoopVariableTypes: ReadonlyMap<string, string>,
-    ): Promise<string | null> => {
-      const outerLoopVariableType = outerLoopVariableTypes.get(
-        rootVariableName.toLowerCase(),
-      );
-
-      if (outerLoopVariableType) {
-        return outerLoopVariableType;
-      }
-
-      return resolveBladeViewVariableTypeForView(viewName, `$${rootVariableName}`);
-    },
-    [resolveBladeViewVariableTypeForView],
-  );
-
-  // Resolves the ELEMENT type of one `@foreach` collection expression. Bare
-  // collection variables (`$invoices`) resolve through the root-variable mapping
-  // and must be collection-like. A conservative Laravel relation chain
-  // (`$businessEntity->invoices`, or `$invoice->lines` where `$invoice` is an
-  // enclosing loop element) resolves each relation/property from the previous
-  // owner and returns the final related model type, which lets real-world Blade
-  // loops - including NESTED ones - complete `$item->...` without guessing from
-  // variable names. `source` is the real Blade document text (not the bare
-  // collection-expression fragment) so `phpLaravelCollectionModelTypeCandidate`
-  // can resolve carrier-type aliases (`use X as Y`) declared in the document.
-  const resolveBladeForeachCollectionType = useCallback(
-    async (
-      viewName: string,
-      source: string,
-      binding: BladeForeachLoopBinding,
-      outerLoopVariableTypes: ReadonlyMap<string, string>,
-    ): Promise<string | null> => {
-      const collection = parseBladeForeachCollection(binding.collectionExpression);
-
-      if (!collection) {
-        return null;
-      }
-
-      const rootType = await resolveBladeForeachRootVariableType(
-        viewName,
-        collection.rootVariableName,
-        outerLoopVariableTypes,
-      );
-
-      if (!rootType) {
-        return null;
-      }
-
-      if (collection.relationNames.length === 0) {
-        return phpLaravelCollectionModelTypeCandidate(source, rootType);
-      }
-
-      if (collection.relationNames.length > BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH) {
-        return null;
-      }
-
-      let ownerType: string | null = rootType;
-
-      for (let index = 0; index < collection.relationNames.length; index += 1) {
-        const isFinalRelation = index === collection.relationNames.length - 1;
-        ownerType = await resolvePhpClassPropertyOrRelationType(
-          ownerType,
-          collection.relationNames[index],
-          isFinalRelation,
-        );
-
-        if (!ownerType) {
-          return null;
-        }
-      }
-
-      return ownerType;
-    },
-    [resolveBladeForeachRootVariableType, resolvePhpClassPropertyOrRelationType],
-  );
-
-  // Element types of EVERY `@foreach`/`@forelse` still enclosing `offset`, keyed
-  // by lowercased loop-variable name. Loops resolve outermost-first so an inner
-  // loop iterating a relation of an outer loop's element
-  // (`@foreach($businessEntity->invoices as $invoice)` then
-  // `@foreach($invoice->lines as $line)`) resolves against the already-known
-  // outer element type. Bounded by loop-nesting depth (no recursion); the active
-  // root is re-checked after each await so a tab switch drops stale results.
-  const resolveBladeForeachLoopVariableTypes = useCallback(
-    async (
-      viewName: string,
-      source: string,
-      offset: number,
-    ): Promise<Map<string, string>> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const resolvedTypes = new Map<string, string>();
-
-      for (const binding of bladeForeachLoopBindingsAt(source, offset)) {
-        const elementType = await resolveBladeForeachCollectionType(
-          viewName,
-          source,
-          binding,
-          resolvedTypes,
-        );
-
-        if (!isRequestedRootActive()) {
-          return new Map();
-        }
-
-        if (elementType) {
-          resolvedTypes.set(binding.loopVariableName.toLowerCase(), elementType);
-        }
-      }
-
-      return resolvedTypes;
-    },
-    [resolveBladeForeachCollectionType, workspaceRoot],
-  );
-
-  // CONSERVATIVE element type behind a `@foreach ($collection as $item)` loop
-  // variable at `offset`. Returns `null` when the offset is not inside a loop
-  // binding for `variableName`, or the expression cannot be resolved - never a
-  // guessed element type.
-  const resolveBladeForeachElementTypeForVariable = useCallback(
-    async (
-      viewName: string,
-      source: string,
-      offset: number,
-      variableName: string,
-    ): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const normalizedName = variableName.replace(/^\$/, "").toLowerCase();
-      const loopVariableTypes = await resolveBladeForeachLoopVariableTypes(
-        viewName,
-        source,
-        offset,
-      );
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      return loopVariableTypes.get(normalizedName) ?? null;
-    },
-    [resolveBladeForeachLoopVariableTypes, workspaceRoot],
   );
 
   // Returns the workspace's Blade component tag names for `<x-` completion:
@@ -455,136 +234,6 @@ export function useBladeIntelligence(
       );
     },
     [],
-  );
-
-  // The variables every controller passes to `viewName`, served from the
-  // per-root view-data cache (no workspace scan on the hot path). Display
-  // type hints are merged conservatively in the domain layer: hinted sightings
-  // must agree or the hint is dropped.
-  const collectBladeViewVariables = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return [];
-      }
-
-      const entries = await ensureBladeViewDataEntriesLoaded(requestedRoot);
-
-      if (!entries || !isRequestedRootActive()) {
-        return [];
-      }
-
-      return bladeViewVariablesForViewFromEntries(entries, viewName);
-    },
-    [ensureBladeViewDataEntriesLoaded, workspaceRoot],
-  );
-
-  // The loop variables of every `@foreach`/`@forelse` still enclosing `offset`,
-  // each shaped as a view variable so the `$` list renders it uniformly. The
-  // display type is the enclosing loop's element type when it resolves
-  // (CONSERVATIVE: unknown collection type -> no type hint, never a guess).
-  // `alreadyListed` view variables are skipped so a name shadowing a view
-  // variable is not duplicated.
-  const collectBladeForeachLoopVariables = useCallback(
-    async (
-      viewName: string,
-      source: string,
-      offset: number,
-      alreadyListed: readonly PhpLaravelViewVariable[],
-    ): Promise<PhpLaravelViewVariable[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const bindings = bladeForeachLoopBindingsAt(source, offset);
-      const listedNames = new Set(
-        alreadyListed.map((variable) => variable.name.toLowerCase()),
-      );
-      const loopVariables: PhpLaravelViewVariable[] = [];
-      const seenNames = new Set<string>();
-
-      for (const binding of bindings) {
-        const name = `$${binding.loopVariableName}`;
-        const key = name.toLowerCase();
-
-        if (listedNames.has(key) || seenNames.has(key)) {
-          continue;
-        }
-
-        seenNames.add(key);
-
-        const elementType = await resolveBladeForeachElementTypeForVariable(
-          viewName,
-          source,
-          offset,
-          binding.loopVariableName,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        loopVariables.push({
-          detail: "foreach item",
-          name,
-          typeHint: bladeShortTypeName(elementType),
-          valueExpression: null,
-          valueOffset: null,
-        });
-      }
-
-      return loopVariables;
-    },
-    [resolveBladeForeachElementTypeForVariable, workspaceRoot],
-  );
-
-  // Fills a view variable's display type from the full reverse-mapping resolver
-  // when the cheap declared hint is absent (e.g. a route-model-bound parameter
-  // typed only in the controller signature), so `$` shows the concrete type.
-  // CONSERVATIVE: an unresolved type leaves the hint untouched.
-  const collectBladeViewVariablesWithDisplayTypes = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewVariable[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const variables = await collectBladeViewVariables(viewName);
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const enriched: PhpLaravelViewVariable[] = [];
-
-      for (const variable of variables) {
-        if (variable.typeHint) {
-          enriched.push(variable);
-          continue;
-        }
-
-        const resolvedType = await resolveBladeViewVariableTypeForView(
-          viewName,
-          variable.name,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        enriched.push({
-          ...variable,
-          typeHint: bladeShortTypeName(resolvedType) ?? variable.typeHint,
-        });
-      }
-
-      return enriched;
-    },
-    [
-      collectBladeViewVariables,
-      resolveBladeViewVariableTypeForView,
-      workspaceRoot,
-    ],
   );
 
   // Completion for `.blade.php` documents: `@directive` names, view names,
@@ -893,11 +542,3 @@ export function useBladeIntelligence(
     resetBladeIntelligenceCaches,
   };
 }
-
-// Relation-chain hops resolved per `@foreach` collection expression, e.g.
-// `$node->children->children->...`. Consistent with the other chain
-// resolvers in this file (`resolvePhpExpressionType`'s `depth > 8`), a chain
-// past the cap is rejected outright rather than partially walked, so an
-// adversarial/self-referencing relation chain in Blade source cannot trigger
-// an unbounded run of sequential file-read awaits.
-const BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH = 8;
