@@ -54,7 +54,6 @@ import {
 } from "../domain/netteComponents";
 import {
   LATTE_BUILTIN_FILTERS,
-  innermostLatteExpressionSpanAt,
   latteForeachLoopBindingsAt,
   latteVariableDeclarations,
   parseLatteForeachCollection,
@@ -110,6 +109,15 @@ import {
   type LatteDirectoryEntry,
   type LatteTemplateCache,
 } from "./netteTemplates";
+import {
+  isLatteMemberReferenceAt,
+  latteExpressionCompletionTargetAt,
+  latteMemberReferenceAt,
+  latteVariableNameAt,
+  type LatteFilterCompletionContext,
+  type LatteMemberAccess,
+  type LatteVariableCompletionContext,
+} from "./latteExpressionDetection";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
@@ -1179,44 +1187,6 @@ async function resolveLatteMemberDefinition(
   return false;
 }
 
-const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
-
-function latteVariableNameAt(source: string, offset: number): string | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
-
-  if (!span) {
-    return null;
-  }
-
-  const expression = source.slice(span.expressionStart, span.contentEnd);
-  const relativeOffset = offset - span.expressionStart;
-  const before = expression.slice(0, Math.max(0, relativeOffset));
-
-  if (hasUnclosedStringLiteral(before)) {
-    return null;
-  }
-
-  for (const match of expression.matchAll(LATTE_VARIABLE_REFERENCE)) {
-    const name = match[1] ?? "";
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-
-    if (relativeOffset < start || relativeOffset > end) {
-      continue;
-    }
-
-    const previous = expression[start - 1] ?? "";
-
-    if (/[A-Za-z0-9_>]/.test(previous)) {
-      continue;
-    }
-
-    return name || null;
-  }
-
-  return null;
-}
-
 /**
  * Completions inside a Latte PHP-like expression (`{$...}`, `{if ...}`,
  * `{foreach ...}`, `{= ...}`): `{$var->}` member access, a `|filter` name, or
@@ -1231,235 +1201,21 @@ async function latteExpressionCompletions(
   source: string,
   offset: number,
 ): Promise<LatteCompletionItem[]> {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const target = latteExpressionCompletionTargetAt(source, offset);
 
-  if (!span) {
+  if (!target) {
     return [];
   }
 
-  const before = source.slice(span.contentStart, offset);
-
-  // A `$` / `->` / `|` inside a string literal within the expression is data,
-  // not syntax - no completion popup inside `{var $a = 'x|'}`'s quotes.
-  if (hasUnclosedStringLiteral(before)) {
-    return [];
+  if (target.kind === "member") {
+    return latteMemberCompletions(context, source, offset, target.member);
   }
 
-  const member = latteMemberAccessAt(before, offset);
-
-  if (member) {
-    return latteMemberCompletions(context, source, offset, member);
+  if (target.kind === "filter") {
+    return latteFilterCompletions(target.filter);
   }
 
-  const filter = latteFilterAt(before, offset);
-
-  if (filter) {
-    return latteFilterCompletions(filter);
-  }
-
-  const variable = latteVariableCompletionAt(before, offset);
-
-  if (variable) {
-    return latteVariableCompletions(context, source, offset, variable);
-  }
-
-  return [];
-}
-
-/**
- * True when `before` (an expression-tag slice ending at the cursor) has an
- * unterminated `'...'` / `"..."` literal, i.e. the cursor sits inside a string.
- * Single bounded pass with escape handling, mirroring the quote tracking the
- * domain's `stripLatteFilterChain` uses.
- */
-function hasUnclosedStringLiteral(before: string): boolean {
-  let quote: string | null = null;
-  let index = 0;
-
-  while (index < before.length) {
-    const char = before[index];
-
-    if (quote) {
-      if (char === "\\") {
-        index += 2;
-        continue;
-      }
-
-      if (char === quote) {
-        quote = null;
-      }
-
-      index += 1;
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-    }
-
-    index += 1;
-  }
-
-  return quote !== null;
-}
-
-interface LatteMemberAccess {
-  end: number;
-  prefix: string;
-  receiverExpression: string;
-  start: number;
-  variableName: string;
-}
-
-const LATTE_MEMBER_ACCESS =
-  /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
-
-interface LatteMemberReference {
-  memberName: string;
-  receiverExpression: string;
-  variableName: string;
-}
-
-const LATTE_MEMBER_REFERENCE =
-  /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)/g;
-
-function isLatteMemberReferenceAt(source: string, offset: number): boolean {
-  return latteMemberReferenceAt(source, offset) !== null;
-}
-
-function latteMemberReferenceAt(
-  source: string,
-  offset: number,
-): LatteMemberReference | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
-
-  if (!span) {
-    return null;
-  }
-
-  const expression = source.slice(span.expressionStart, span.contentEnd);
-  const relativeOffset = offset - span.expressionStart;
-  const before = expression.slice(0, Math.max(0, relativeOffset));
-
-  if (hasUnclosedStringLiteral(before)) {
-    return null;
-  }
-
-  for (const match of expression.matchAll(LATTE_MEMBER_REFERENCE)) {
-    const receiver = match[1];
-    const variableName = match[2];
-    const memberName = match[3];
-
-    if (!receiver || !variableName || !memberName || match.index === undefined) {
-      continue;
-    }
-
-    const memberStart = match.index + match[0].lastIndexOf(memberName);
-    const memberEnd = memberStart + memberName.length;
-
-    if (relativeOffset < memberStart || relativeOffset > memberEnd) {
-      continue;
-    }
-
-    return {
-      memberName,
-      receiverExpression: receiver.replace(/\s*\??->\s*/g, "->"),
-      variableName,
-    };
-  }
-
-  return null;
-}
-
-/**
- * Detects a `{$var->}` / `{$var->rel->prop}` member access ending at `offset`
- * from `before` (the expression-tag slice up to the cursor, already confirmed
- * to sit outside string literals). `receiverExpression` is the chain up to the
- * last `->` (whitespace / nullsafe `?->` normalized to `->`), so the injected
- * PHP engine resolves it exactly like Blade's `$var->`; `prefix` is the partial
- * member being typed.
- */
-function latteMemberAccessAt(
-  before: string,
-  offset: number,
-): LatteMemberAccess | null {
-  const match = LATTE_MEMBER_ACCESS.exec(before);
-
-  if (!match?.[1] || !match[2]) {
-    return null;
-  }
-
-  const prefix = match[3] ?? "";
-
-  return {
-    end: offset,
-    prefix,
-    receiverExpression: match[1].replace(/\s*\??->\s*/g, "->"),
-    start: offset - prefix.length,
-    variableName: match[2],
-  };
-}
-
-interface LatteFilterCompletionContext {
-  end: number;
-  prefix: string;
-  start: number;
-}
-
-const LATTE_FILTER_TAIL = /\|\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
-
-/**
- * Detects a `|filter` name being typed at `offset` from `before` (the
- * expression-tag slice up to the cursor, already confirmed outside string
- * literals). Rejects a `||` logical-or so it never offers filters after a
- * boolean expression.
- */
-function latteFilterAt(
-  before: string,
-  offset: number,
-): LatteFilterCompletionContext | null {
-  const match = LATTE_FILTER_TAIL.exec(before);
-
-  if (!match) {
-    return null;
-  }
-
-  if (before[match.index - 1] === "|") {
-    return null;
-  }
-
-  const prefix = match[1] ?? "";
-
-  return { end: offset, prefix, start: offset - prefix.length };
-}
-
-interface LatteVariableCompletionContext {
-  end: number;
-  prefix: string;
-  start: number;
-}
-
-const LATTE_VARIABLE_TAIL = /(?<![A-Za-z0-9_>])\$([A-Za-z_][A-Za-z0-9_]*)?$/;
-
-/**
- * Detects a `$var` reference being typed at `offset` from `before` (the
- * expression-tag slice up to the cursor, already confirmed outside string
- * literals; not part of a `->` member chain - the lookbehind rejects a `$`
- * preceded by a word char or `>`).
- */
-function latteVariableCompletionAt(
-  before: string,
-  offset: number,
-): LatteVariableCompletionContext | null {
-  const match = LATTE_VARIABLE_TAIL.exec(before);
-
-  if (!match) {
-    return null;
-  }
-
-  const prefix = match[1] ?? "";
-
-  return { end: offset, prefix, start: offset - prefix.length - 1 };
+  return latteVariableCompletions(context, source, offset, target.variable);
 }
 
 /**
