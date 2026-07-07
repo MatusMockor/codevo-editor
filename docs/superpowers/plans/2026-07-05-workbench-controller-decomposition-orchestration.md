@@ -1156,6 +1156,18 @@ Integration order:
     - Verified with focused Git diff lifecycle tests, framework intelligence
       tests, full `useWorkbenchController.preview.test.tsx`, and `npm run
       check`.
+16. Second post-stop product-boundary slice completed:
+    - Framework literal navigation for Laravel route/view/config/translation/env
+      helpers now dispatches through `src/application/phpFrameworkLiteralNavigation.ts`.
+    - Close/save tab lifecycle gained `src/application/documentCloseLifecycle.ts`
+      plus live-ref close/save hardening so stale React snapshots do not close or
+      mark the wrong active tab.
+    - NEON intelligence now gates through a provider capability
+      (`phpFrameworkSupportsNeonConfigIntelligence`) instead of a direct Nette
+      profile branch.
+    - Verified with focused literal navigation, lifecycle, Git diff close,
+      Latte/NEON/provider tests, full `useWorkbenchController.preview.test.tsx`,
+      `npm run check`, and full suite.
 
 Current operational goal:
 

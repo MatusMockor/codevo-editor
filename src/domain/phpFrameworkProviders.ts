@@ -429,6 +429,15 @@ export interface PhpFrameworkProvider {
       context: PhpFrameworkStringLiteralContext,
     ) => PhpFrameworkStringLiteralHelperMatch | null;
   };
+  neon?: {
+    /**
+     * Provider-owned opt-in for NEON config intelligence. The application hook
+     * still owns file discovery, cache lifecycle, and editor navigation; this
+     * capability is the framework gate so a Nette-only feature does not depend
+     * on a hardcoded `isNette` branch.
+     */
+    supportsConfigIntelligence: true;
+  };
   semantics?: {
     propertyTypeFromSource?: (
       context: PhpFrameworkPropertyTypeContext,
@@ -639,6 +648,8 @@ export const NETTE_MAGIC_DIAGNOSTIC_SOURCE = "nette-magic";
  *     controller view-data loader and the Latte intelligence hook surface
  *     `{$product->}` completions through the SAME provider dispatch Laravel uses
  *     for Blade (no framework-specific branch in the controller).
+ *   - `neon`: NEON config navigation/completions are enabled through provider
+ *     dispatch instead of direct Nette checks in the application hook.
  *   - `diagnostics`: METHOD-level Nette magic suppression (spec §4.6), labelled
  *     `nette-magic`.
  * Other capabilities (templating references, routes, config) land in later
@@ -677,6 +688,9 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   viewData: {
     entryFromSource: ({ source }) => netteViewDataEntryFromSource(source),
     searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
+  },
+  neon: {
+    supportsConfigIntelligence: true,
   },
 };
 
@@ -1163,6 +1177,18 @@ export function phpFrameworkSupportsStringLiterals(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.stringLiterals !== undefined);
+}
+
+/**
+ * Whether any active provider ships NEON config intelligence. Today this is a
+ * Nette capability, but the application layer only asks the provider boundary.
+ */
+export function phpFrameworkSupportsNeonConfigIntelligence(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) => provider.neon?.supportsConfigIntelligence === true,
+  );
 }
 
 export function phpFrameworkPropertyTypeFromSource(

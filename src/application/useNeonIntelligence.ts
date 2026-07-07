@@ -14,10 +14,10 @@
  *     position, sourced from the injected workspace class-name search (the
  *     project symbol index, filtered to type symbols).
  *
- * GATING (spec §4.9): every entry point is inert unless BOTH the Nette framework
- * profile is active AND the semantic tier (`fullSmart`) is on. Highlighting runs
- * independently, so a `.neon` file in a non-Nette project (or `basic` mode) gets
- * nothing from here.
+ * GATING (spec §4.9): every entry point is inert unless BOTH an active framework
+ * provider opts into NEON config intelligence AND the semantic tier (`fullSmart`)
+ * is on. Highlighting runs independently, so a `.neon` file in a non-Nette
+ * project (or `basic` mode) gets nothing from here.
  *
  * ISOLATION (project rule): each async flow captures the requested workspace root
  * up front and re-checks the LIVE root after every `await`, dropping stale
@@ -28,6 +28,7 @@
 
 import { useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { phpFrameworkSupportsNeonConfigIntelligence } from "../domain/phpFrameworkProviders";
 import {
   detectNeonClassReferenceAt,
   detectNeonIncludeAt,
@@ -406,7 +407,12 @@ export function useNeonIntelligence(
 }
 
 function isNeonSemanticActive(deps: NeonIntelligenceDependencies): boolean {
-  return deps.frameworkIntelligence.isNette && deps.isSemanticIntelligenceActive;
+  return (
+    deps.isSemanticIntelligenceActive &&
+    phpFrameworkSupportsNeonConfigIntelligence(
+      deps.frameworkIntelligence.providers,
+    )
+  );
 }
 
 /**

@@ -47,6 +47,22 @@ function editorDocument(
   };
 }
 
+function gitChangedFile(path: string): GitChangedFile {
+  return {
+    isStaged: false,
+    isUnversioned: false,
+    oldPath: null,
+    oldRelativePath: null,
+    path,
+    relativePath: path.replace(`${ROOT}/`, ""),
+    status: "modified",
+  };
+}
+
+function gitDiffDocumentPath(change: GitChangedFile): string {
+  return `mockor-git-diff:worktree:${change.path}`;
+}
+
 function createFakeLocalHistoryGateway(
   overrides: Partial<LocalHistoryGateway> = {},
 ): LocalHistoryGateway {
@@ -79,6 +95,8 @@ interface Harness {
   rootRef: { current: string | null };
   activeDocumentRef: { current: EditorDocument | null };
   documentsRef: { current: Record<string, EditorDocument> };
+  openPathsRef: { current: string[] };
+  previewPathRef: { current: string | null };
   localHistoryGateway: LocalHistoryGateway;
   workspaceFiles: WorkspaceFileGateway;
   prompter: { confirm: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn> };
@@ -96,6 +114,7 @@ interface Harness {
   closeGitDiffPreview: ReturnType<typeof vi.fn>;
   setActivePath: ReturnType<typeof vi.fn>;
   setOpenPaths: ReturnType<typeof vi.fn>;
+  setPreviewPath: ReturnType<typeof vi.fn>;
   setMessage: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
@@ -109,13 +128,31 @@ function renderLifecycle(
   const root = createRoot(container);
   const captured: { lifecycle: DocumentLifecycle | null } = { lifecycle: null };
 
-  const activeDocument = editorDocument(`${ROOT}/src/User.php`);
+  const defaultActiveDocument = editorDocument(`${ROOT}/src/User.php`);
+  const activeDocument =
+    "activeDocument" in overrides
+      ? overrides.activeDocument ?? null
+      : defaultActiveDocument;
+  const initialDocuments = overrides.documents ?? {
+    ...(activeDocument ? { [activeDocument.path]: activeDocument } : {}),
+  };
+  const initialOpenPaths =
+    overrides.openPaths ?? (activeDocument ? [activeDocument.path] : []);
+  const initialPreviewPath = overrides.previewPath ?? null;
+  const initialActivePath =
+    "activePath" in overrides
+      ? overrides.activePath ?? null
+      : activeDocument?.path ?? null;
   const rootRef: { current: string | null } = { current: ROOT };
   const activeDocumentRef: { current: EditorDocument | null } = {
     current: activeDocument,
   };
   const documentsRef: { current: Record<string, EditorDocument> } = {
-    current: { [activeDocument.path]: activeDocument },
+    current: initialDocuments,
+  };
+  const openPathsRef: { current: string[] } = { current: initialOpenPaths };
+  const previewPathRef: { current: string | null } = {
+    current: initialPreviewPath,
   };
   const filePrefetchCacheRef = { current: new FilePrefetchCache() };
   const externallyRemovedDocumentRootByPathRef: {
@@ -163,8 +200,25 @@ function renderLifecycle(
         typeof updater === "function" ? updater(documentsRef.current) : updater;
     },
   );
-  const setPreviewPath = vi.fn();
-  const setOpenPaths = vi.fn();
+  const setPreviewPath = vi.fn(
+    (
+      updater:
+        | string
+        | null
+        | ((current: string | null) => string | null),
+    ) => {
+      previewPathRef.current =
+        typeof updater === "function"
+          ? updater(previewPathRef.current)
+          : updater;
+    },
+  );
+  const setOpenPaths = vi.fn(
+    (updater: string[] | ((current: string[]) => string[])) => {
+      openPathsRef.current =
+        typeof updater === "function" ? updater(openPathsRef.current) : updater;
+    },
+  );
   const setActivePath = vi.fn();
   const setGitDiffLoading = vi.fn();
   const setSelectedGitChange = vi.fn();
@@ -176,16 +230,19 @@ function renderLifecycle(
   const deps: DocumentLifecycleDependencies = {
     workspaceRoot: ROOT,
     activeDocument,
-    documents: documentsRef.current,
-    openPaths: [activeDocument.path],
-    activePath: activeDocument.path,
-    previewPath: null,
+    documents: initialDocuments,
+    openPaths: initialOpenPaths,
+    activePath: initialActivePath,
+    previewPath: initialPreviewPath,
     gitStatus: emptyGitStatus(),
     selectedGitChange: null,
     gitDiffLoading: false,
     workspaceSettings: defaultWorkspaceSettings(),
     currentWorkspaceRootRef: rootRef,
     activeDocumentRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
     filePrefetchCacheRef,
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
@@ -241,6 +298,8 @@ function renderLifecycle(
     rootRef,
     activeDocumentRef,
     documentsRef,
+    openPathsRef,
+    previewPathRef,
     localHistoryGateway,
     workspaceFiles,
     prompter,
@@ -258,6 +317,7 @@ function renderLifecycle(
     closeGitDiffPreview,
     setActivePath,
     setOpenPaths,
+    setPreviewPath,
     setMessage,
     reportError,
     reportErrorForActiveWorkspaceRoot,
@@ -440,6 +500,27 @@ describe("useDocumentLifecycle", () => {
       );
       harness.unmount();
     });
+
+    it("updates live document refs after saving before React rerenders", async () => {
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "original",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+      });
+      harness.activeDocumentRef.current = activeDocument;
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+
+      expect(harness.activeDocumentRef.current?.content).toBe("edited");
+      expect(harness.activeDocumentRef.current?.savedContent).toBe("edited");
+      harness.unmount();
+    });
   });
 
   describe("closeDocument", () => {
@@ -447,6 +528,7 @@ describe("useDocumentLifecycle", () => {
       const first = editorDocument(`${ROOT}/src/A.php`);
       const second = editorDocument(`${ROOT}/src/B.php`);
       const harness = renderLifecycle({
+        activeDocument: first,
         documents: {
           [first.path]: first,
           [second.path]: second,
@@ -515,6 +597,182 @@ describe("useDocumentLifecycle", () => {
       ).toHaveBeenCalledWith(ROOT, removed.path);
       harness.unmount();
     });
+
+    it("uses the live document ref when closing a tab opened after the render snapshot", () => {
+      const first = editorDocument(`${ROOT}/src/A.php`);
+      const second = editorDocument(`${ROOT}/src/B.php`);
+      const harness = renderLifecycle({
+        documents: { [first.path]: first },
+        openPaths: [first.path],
+        activePath: first.path,
+      });
+      harness.documentsRef.current = {
+        [first.path]: first,
+        [second.path]: second,
+      };
+      harness.openPathsRef.current = [first.path, second.path];
+
+      act(() => {
+        harness.lifecycle().closeDocument(second.path);
+      });
+
+      expect(harness.syncClosedDocument).toHaveBeenCalledWith(second);
+      expect(harness.documentsRef.current[second.path]).toBeUndefined();
+      expect(harness.openPathsRef.current).toEqual([first.path]);
+      harness.unmount();
+    });
+
+    it("uses the live active document ref to reselect after closing", () => {
+      const first = editorDocument(`${ROOT}/src/A.php`);
+      const second = editorDocument(`${ROOT}/src/B.php`);
+      const harness = renderLifecycle({
+        documents: { [first.path]: first },
+        openPaths: [first.path],
+        activePath: first.path,
+      });
+      harness.documentsRef.current = {
+        [first.path]: first,
+        [second.path]: second,
+      };
+      harness.openPathsRef.current = [first.path, second.path];
+      harness.activeDocumentRef.current = second;
+
+      act(() => {
+        harness.lifecycle().closeDocument(second.path);
+      });
+
+      expect(harness.setActivePath).toHaveBeenCalledWith(first.path);
+      expect(harness.activeDocumentRef.current).toBe(first);
+      harness.unmount();
+    });
+
+    it("does not treat a stale activePath snapshot as active when the live ref points elsewhere", () => {
+      const first = editorDocument(`${ROOT}/src/A.php`);
+      const second = editorDocument(`${ROOT}/src/B.php`);
+      const harness = renderLifecycle({
+        documents: { [first.path]: first },
+        openPaths: [first.path],
+        activePath: first.path,
+      });
+      harness.documentsRef.current = {
+        [first.path]: first,
+        [second.path]: second,
+      };
+      harness.openPathsRef.current = [first.path, second.path];
+      harness.activeDocumentRef.current = second;
+
+      act(() => {
+        harness.lifecycle().closeDocument(first.path);
+      });
+
+      expect(harness.setActivePath).not.toHaveBeenCalled();
+      expect(harness.activeDocumentRef.current).toBe(second);
+      expect(harness.documentsRef.current[first.path]).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("prompts from the live dirty document ref before closing", () => {
+      const first = editorDocument(`${ROOT}/src/A.php`);
+      const dirtySecond = editorDocument(
+        `${ROOT}/src/B.php`,
+        "edited",
+        "original",
+      );
+      const prompter = {
+        confirm: vi.fn(() => false),
+        prompt: vi.fn(() => null),
+      };
+      const harness = renderLifecycle({
+        documents: { [first.path]: first },
+        openPaths: [first.path],
+        activePath: first.path,
+        prompter:
+          prompter as unknown as DocumentLifecycleDependencies["prompter"],
+      });
+      harness.documentsRef.current = {
+        [first.path]: first,
+        [dirtySecond.path]: dirtySecond,
+      };
+      harness.openPathsRef.current = [first.path, dirtySecond.path];
+
+      act(() => {
+        harness.lifecycle().closeDocument(dirtySecond.path);
+      });
+
+      expect(prompter.confirm).toHaveBeenCalledWith("Discard changes?");
+      expect(harness.syncClosedDocument).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[dirtySecond.path]).toBe(dirtySecond);
+      harness.unmount();
+    });
+
+    it("clears preview refs when closing a preview document", () => {
+      const pinned = editorDocument(`${ROOT}/src/Pinned.php`);
+      const preview = editorDocument(`${ROOT}/src/Preview.php`);
+      const harness = renderLifecycle({
+        documents: {
+          [pinned.path]: pinned,
+          [preview.path]: preview,
+        },
+        openPaths: [pinned.path],
+        activePath: preview.path,
+        previewPath: preview.path,
+      });
+      harness.activeDocumentRef.current = preview;
+
+      act(() => {
+        harness.lifecycle().closeDocument(preview.path);
+      });
+
+      expect(harness.previewPathRef.current).toBeNull();
+      expect(harness.openPathsRef.current).toEqual([pinned.path]);
+      expect(harness.activeDocumentRef.current).toBe(pinned);
+      expect(harness.setActivePath).toHaveBeenCalledWith(pinned.path);
+      harness.unmount();
+    });
+
+    it("loads the next git diff tab when closing the active git diff document", () => {
+      const firstChange = gitChangedFile(`${ROOT}/src/A.php`);
+      const secondChange = gitChangedFile(`${ROOT}/src/B.php`);
+      const firstPath = gitDiffDocumentPath(firstChange);
+      const secondPath = gitDiffDocumentPath(secondChange);
+      const firstDocument = {
+        ...editorDocument(firstPath),
+        readOnly: true,
+      };
+      const secondDocument = {
+        ...editorDocument(secondPath),
+        readOnly: true,
+      };
+      const harness = renderLifecycle({
+        documents: {
+          [firstPath]: firstDocument,
+          [secondPath]: secondDocument,
+        },
+        openPaths: [firstPath, secondPath],
+        activePath: firstPath,
+        gitStatus: {
+          ...emptyGitStatus(),
+          changes: [firstChange, secondChange],
+        },
+        gitChangeForDiffDocumentPath: (path, changes) =>
+          changes.find((change) => gitDiffDocumentPath(change) === path) ??
+          null,
+      });
+      harness.activeDocumentRef.current = firstDocument;
+
+      act(() => {
+        harness.lifecycle().closeDocument(firstPath);
+      });
+
+      expect(harness.loadGitDiffDocument).toHaveBeenCalledWith(
+        secondPath,
+        secondChange,
+      );
+      expect(harness.documentsRef.current[firstPath]).toBeUndefined();
+      expect(harness.openPathsRef.current).toEqual([secondPath]);
+      expect(harness.setMessage).toHaveBeenCalledWith(null);
+      harness.unmount();
+    });
   });
 
   describe("closeActiveSurface", () => {
@@ -546,6 +804,31 @@ describe("useDocumentLifecycle", () => {
 
       expect(harness.closeGitDiffPreview).not.toHaveBeenCalled();
       expect(harness.syncClosedDocument).toHaveBeenCalledWith(active);
+      harness.unmount();
+    });
+
+    it("closes the live active document for Cmd+W before the next render", () => {
+      const first = editorDocument(`${ROOT}/src/A.php`);
+      const second = editorDocument(`${ROOT}/src/B.php`);
+      const harness = renderLifecycle({
+        activeDocument: first,
+        documents: { [first.path]: first },
+        openPaths: [first.path],
+        activePath: first.path,
+      });
+      harness.documentsRef.current = {
+        [first.path]: first,
+        [second.path]: second,
+      };
+      harness.openPathsRef.current = [first.path, second.path];
+      harness.activeDocumentRef.current = second;
+
+      act(() => {
+        harness.lifecycle().closeActiveSurface();
+      });
+
+      expect(harness.syncClosedDocument).toHaveBeenCalledWith(second);
+      expect(harness.setActivePath).toHaveBeenCalledWith(first.path);
       harness.unmount();
     });
   });

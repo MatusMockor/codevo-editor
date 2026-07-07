@@ -23,6 +23,7 @@ import {
   phpFrameworkRouteSearchQueries,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
+  phpFrameworkSupportsNeonConfigIntelligence,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsStringLiterals,
   phpFrameworkSupportsTranslations,
@@ -1319,6 +1320,16 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           ],
         },
       ]);
+    });
+
+    it("exposes Nette NEON config intelligence through the provider capability", () => {
+      expect(phpFrameworkSupportsNeonConfigIntelligence(providers)).toBe(true);
+      expect(phpFrameworkSupportsNeonConfigIntelligence([])).toBe(false);
+      expect(
+        phpFrameworkSupportsNeonConfigIntelligence([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(false);
     });
 
     it("downgrades a call on $this->template to a nette-magic hint (methods only)", () => {

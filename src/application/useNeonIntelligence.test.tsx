@@ -25,6 +25,11 @@ const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
   profile: "generic",
   providers: [],
 });
+const STALE_NETTE_PROFILE_WITHOUT_PROVIDER = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "nette",
+  providers: [],
+});
 
 function makeDeps(
   overrides: Partial<NeonIntelligenceDependencies> = {},
@@ -804,6 +809,24 @@ describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () =>
       throw new Error("no directory");
     });
     const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, listDirectory });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "parameters:\n    dsn: %db\n";
+    const offset = source.indexOf("%db") + 3;
+
+    await expect(
+      neon.provideNeonCompletions(source, positionAtOffset(source, offset)),
+    ).resolves.toEqual([]);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("returns nothing for a stale Nette profile without the provider capability", async () => {
+    const listDirectory = vi.fn(async () => {
+      throw new Error("should not scan without the provider capability");
+    });
+    const deps = makeDeps({
+      frameworkIntelligence: STALE_NETTE_PROFILE_WITHOUT_PROVIDER,
+      listDirectory,
+    });
     const neon = createNeonIntelligence(() => deps);
     const source = "parameters:\n    dsn: %db\n";
     const offset = source.indexOf("%db") + 3;

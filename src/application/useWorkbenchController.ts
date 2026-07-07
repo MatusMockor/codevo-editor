@@ -71,6 +71,7 @@ import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import {
@@ -293,12 +294,6 @@ import {
   type PhpLaravelDispatchTarget,
 } from "../domain/phpLaravelDispatch";
 import {
-  resolveLaravelConfigTarget,
-  resolveLaravelEnvTarget,
-  resolveLaravelTransTarget,
-  resolveLaravelViewTarget,
-} from "../domain/laravelPathResolution";
-import {
   phpLaravelAuthGuardCompletionInsertText,
   phpLaravelAuthGuardReferenceContextAt,
 } from "../domain/phpLaravelAuth";
@@ -368,9 +363,7 @@ import {
 import {
   phpFrameworkConfigReferenceAt,
   phpFrameworkRouteReferenceAt,
-  phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsRoutes,
-  phpFrameworkSupportsStringLiterals,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkSupportsViews,
   phpFrameworkValidationRuleCompletions,
@@ -4245,6 +4238,9 @@ export function useWorkbenchController(
     workspaceSettings,
     currentWorkspaceRootRef,
     activeDocumentRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
     filePrefetchCacheRef,
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
@@ -6737,17 +6733,16 @@ export function useWorkbenchController(
     [readNavigationFileContent, textSearch, workspaceRoot],
   );
 
-  // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
-  // literals (config / view / __ / trans / env / route). Monaco's definition provider
-  // delegates here; because the editor opens files through its own tab system
-  // (and limits native navigation to already-open models), this callback DOES
-  // the navigation and resolves `true` when it handled the request — the
-  // provider then returns null and Monaco does not also navigate. Detection
-  // dispatches through the active framework provider's stringLiterals classifier
-  // (phpFrameworkStringLiteralHelperAt); laravelPathResolution gates resolvability;
-  // the proven per-helper finders perform the file read + key-line lookup and
-  // carry the per-workspace isolation guards (requested-root capture +
-  // re-check after each await), so stale results are dropped on tab switch.
+  // Powers Cmd+Click / native "Go to Definition" on framework-aware PHP
+  // references, including Laravel route model binding / dispatch sites and
+  // global string-helper literals (config / view / __ / trans / env / route).
+  // Monaco's definition provider delegates here; because the editor opens files
+  // through its own tab system (and limits native navigation to already-open
+  // models), this callback DOES the navigation and resolves `true` when it
+  // handled the request. String-literal detection and target dispatch live
+  // behind resolvePhpFrameworkLiteralNavigationTarget; the proven per-helper
+  // finders perform the file read + key-line lookup and carry per-workspace
+  // isolation guards, so stale results are dropped on tab switch.
   // Defense in depth: this callback ALSO captures the requested root up front
   // and re-checks it after each finder await (before openNavigationTarget) so a
   // tab switch mid-resolution can never navigate into a stale-workspace file.
@@ -6871,133 +6866,39 @@ export function useWorkbenchController(
         }
       }
 
-      // TODO(nette): this gate also covers the templating viewReference lookup below and
-      // the per-helper branches resolve through Laravel-shaped targets. When the Nette
-      // provider ships `templating` or `stringLiterals`, split the gate per capability
-      // and route helper matches through provider-owned resolvers.
-      if (!phpFrameworkSupportsStringLiterals(activePhpFrameworkProviders)) {
+      const literalTarget = await resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: activeDocument
+            ? { content: activeDocument.content, path: activeDocument.path }
+            : null,
+          offset,
+          position: editorPositionAtOffset(source, offset),
+          providers: activePhpFrameworkProviders,
+          source,
+        },
+        {
+          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
+          findConfigTarget: findPhpLaravelConfigTarget,
+          findEnvTarget: findPhpLaravelEnvTarget,
+          findTranslationTarget: findPhpLaravelTranslationTarget,
+          findViewTarget: findPhpLaravelViewTarget,
+        },
+      );
+
+      // Per-workspace isolation guard: drop the resolved target if the user
+      // switched project tabs during the file read so we never navigate into a
+      // stale-workspace file inside the now-active workspace.
+      if (!isRequestedRootActive()) {
         return false;
       }
 
-      const viewReference = phpFrameworkViewReferenceAt(
-        source,
-        editorPositionAtOffset(source, offset),
-        activePhpFrameworkProviders,
-      );
-
-      if (viewReference) {
-        const target = await findPhpLaravelViewTarget(viewReference.name);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.name)
-          : false;
-      }
-
-      const match = phpFrameworkStringLiteralHelperAt(
-        source,
-        offset,
-        activePhpFrameworkProviders,
-      );
-
-      if (!match) {
-        return false;
-      }
-
-      if (match.helper === "config") {
-        if (!resolveLaravelConfigTarget(match.literal)) {
-          return false;
-        }
-
-        const target = await findPhpLaravelConfigTarget(match.literal);
-
-        // Per-workspace isolation guard: drop the resolved target if the user
-        // switched project tabs during the file read so we never navigate into
-        // a stale-workspace file inside the now-active workspace.
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.key)
-          : false;
-      }
-
-      if (match.helper === "view") {
-        if (!resolveLaravelViewTarget(match.literal)) {
-          return false;
-        }
-
-        const target = await findPhpLaravelViewTarget(match.literal);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.name)
-          : false;
-      }
-
-      if (match.helper === "trans") {
-        if (!resolveLaravelTransTarget(match.literal)) {
-          return false;
-        }
-
-        const target = await findPhpLaravelTranslationTarget(match.literal);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.key)
-          : false;
-      }
-
-      if (match.helper === "env") {
-        if (!resolveLaravelEnvTarget(match.literal)) {
-          return false;
-        }
-
-        const target = await findPhpLaravelEnvTarget(match.literal);
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.name)
-          : false;
-      }
-
-      if (match.helper === "route") {
-        if (!activeDocument) {
-          return false;
-        }
-
-        const routes = await collectPhpLaravelNamedRouteTargets(
-          activeDocument.content,
-          activeDocument.path,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const target = routes.find(
-          (route) => route.name.toLowerCase() === match.literal.toLowerCase(),
-        );
-
-        return target
-          ? openNavigationTarget(target.path, target.position, target.name)
-          : false;
-      }
-
-      return false;
+      return literalTarget
+        ? openNavigationTarget(
+            literalTarget.path,
+            literalTarget.position,
+            literalTarget.label,
+          )
+        : false;
     },
     [
       activeDocument,

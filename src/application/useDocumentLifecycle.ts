@@ -19,13 +19,10 @@ import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
-import {
-  isDirty,
-  nextActiveEditorPathAfterClose,
-  workspaceRelativePath,
-} from "../domain/workspace";
+import { isDirty, workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
+import { planDocumentClose } from "./documentCloseLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
@@ -40,9 +37,8 @@ const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
  * document-sync did-save/did-close collaborators come from `useDocumentSync`,
  * the diagnostics cleanup from `useDiagnostics`, and the git-diff preview
  * loaders from the git flow - all injected rather than duplicated. The tab
- * state (`documents` / `openPaths` / `activePath`) is shell-owned; its live
- * values and setters are injected so the callback identities and updates stay
- * byte-for-byte identical.
+ * state is shell-owned; its live refs and setters are injected so close/save
+ * lifecycle mutations stay current across rapid open/preview operations.
  */
 export interface DocumentLifecycleDependencies {
   // Shared workspace + document state (shell-owned).
@@ -59,6 +55,9 @@ export interface DocumentLifecycleDependencies {
 
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
+  documentsRef: MutableRefObject<Record<string, EditorDocument>>;
+  openPathsRef: MutableRefObject<string[]>;
+  previewPathRef: MutableRefObject<string | null>;
   filePrefetchCacheRef: MutableRefObject<FilePrefetchCache>;
   externallyRemovedDocumentRootByPathRef: MutableRefObject<
     Record<string, string>
@@ -162,16 +161,16 @@ export function useDocumentLifecycle(
   const {
     workspaceRoot,
     activeDocument,
-    documents,
-    openPaths,
     activePath,
-    previewPath,
     gitStatus,
     selectedGitChange,
     gitDiffLoading,
     workspaceSettings,
     currentWorkspaceRootRef,
     activeDocumentRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
     filePrefetchCacheRef,
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
@@ -303,6 +302,10 @@ export function useDocumentLifecycle(
         ...documentToFormat,
         content: editorConfiguredContent,
       };
+      const savedDocument: EditorDocument = {
+        ...documentToSave,
+        savedContent: documentToSave.content,
+      };
 
       await workspaceFiles.writeTextFile(
         documentToSave.path,
@@ -320,6 +323,20 @@ export function useDocumentLifecycle(
       );
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
+      }
+
+      if (documentsRef.current[documentToSave.path]) {
+        documentsRef.current = {
+          ...documentsRef.current,
+          [documentToSave.path]: {
+            ...documentsRef.current[documentToSave.path],
+            content: documentToSave.content,
+            savedContent: documentToSave.content,
+          },
+        };
+      }
+      if (activeDocumentRef.current?.path === documentToSave.path) {
+        activeDocumentRef.current = savedDocument;
       }
 
       setDocuments((current) => {
@@ -350,6 +367,8 @@ export function useDocumentLifecycle(
     }
   }, [
     captureLocalHistorySnapshot,
+    activeDocumentRef,
+    documentsRef,
     formattedContentForSave,
     optimizedImportsContentForSave,
     organizedImportsContentForSave,
@@ -379,7 +398,18 @@ export function useDocumentLifecycle(
 
   const closeDocument = useCallback(
     (path: string) => {
-      const document = documents[path];
+      const effectiveActivePath =
+        activeDocumentRef.current?.path ?? activePath;
+      const plan = planDocumentClose({
+        closePath: path,
+        activePath: effectiveActivePath,
+        documents: documentsRef.current,
+        openPaths: openPathsRef.current,
+        previewPath: previewPathRef.current,
+        gitStatusChanges: gitStatus.changes,
+        gitChangeForDiffDocumentPath,
+      });
+      const { document } = plan;
       const externallyRemovedRoot =
         externallyRemovedDocumentRootByPathRef.current[path];
 
@@ -410,13 +440,14 @@ export function useDocumentLifecycle(
         setMessage(null);
       }
 
-      const nextActivePath =
-        activePath === path
-          ? nextActiveEditorPathAfterClose(path, openPaths, previewPath)
+      documentsRef.current = plan.nextDocuments;
+      openPathsRef.current = plan.nextOpenPaths;
+      previewPathRef.current = plan.nextPreviewPath;
+      if (activeDocumentRef.current?.path === path) {
+        activeDocumentRef.current = plan.nextActivePath
+          ? plan.nextDocuments[plan.nextActivePath] ?? null
           : null;
-      const nextGitChange = nextActivePath
-        ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
-        : null;
+      }
 
       setDocuments((current) => {
         const next = { ...current };
@@ -426,23 +457,25 @@ export function useDocumentLifecycle(
       setPreviewPath((current) => (current === path ? null : current));
       setOpenPaths((current) => current.filter((item) => item !== path));
 
-      if (activePath === path) {
-        if (nextActivePath && nextGitChange) {
-          loadGitDiffDocument(nextActivePath, nextGitChange);
+      if (plan.closedActiveDocument) {
+        if (plan.nextActivePath && plan.nextGitChange) {
+          loadGitDiffDocument(plan.nextActivePath, plan.nextGitChange);
         } else {
-          setActivePath(nextActivePath);
+          setActivePath(plan.nextActivePath);
         }
       }
     },
     [
       activePath,
+      activeDocumentRef,
       clearLanguageServerDiagnosticsForPath,
       clearPhpLocalDiagnosticsForPath,
-      documents,
+      documentsRef,
       gitStatus.changes,
+      gitChangeForDiffDocumentPath,
       loadGitDiffDocument,
-      openPaths,
-      previewPath,
+      openPathsRef,
+      previewPathRef,
       prompter,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
@@ -460,24 +493,27 @@ export function useDocumentLifecycle(
   }, [reportError]);
 
   const closeActiveSurface = useCallback(() => {
-    if (selectedGitChange || gitDiffLoading) {
+    if (selectedGitChangeRef.current || selectedGitChange || gitDiffLoading) {
       closeGitDiffPreview();
       return;
     }
 
-    if (activeDocument) {
-      closeDocument(activeDocument.path);
+    const currentActiveDocument = activeDocumentRef.current ?? activeDocument;
+    if (currentActiveDocument) {
+      closeDocument(currentActiveDocument.path);
       return;
     }
 
     closeApplicationWindow();
   }, [
     activeDocument,
+    activeDocumentRef,
     closeApplicationWindow,
     closeDocument,
     closeGitDiffPreview,
     gitDiffLoading,
     selectedGitChange,
+    selectedGitChangeRef,
   ]);
 
   useEffect(() => {
