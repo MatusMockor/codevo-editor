@@ -1,50 +1,24 @@
 import { latteVariableDeclarations } from "../domain/latteSyntax";
 import {
-  netteTemplateClassPropertiesFromSource,
-  type NetteTemplateProperty,
-} from "../domain/netteViewData";
+  loadNetteTemplateTypeProperties,
+} from "./netteTemplateTypeDiscovery";
+import type {
+  LatteTemplateTypeContext,
+  LatteTemplateTypePropertySighting,
+} from "./netteTemplateTypeDiscovery";
 
-export interface NetteTemplateTypeSearchResult {
-  path: string;
-}
-
-export interface NetteTemplateTypeDependencies {
-  readFileContent(path: string): Promise<string>;
-  resolveDeclaredType(source: string, typeHint: string | null): string | null;
-  searchText(
-    rootPath: string,
-    query: string,
-    limit: number,
-  ): Promise<NetteTemplateTypeSearchResult[]>;
-}
-
-export interface LatteTemplateTypePropertySighting {
-  property: NetteTemplateProperty;
-  source: string;
-}
-
-export interface LatteTemplateTypeCacheEntry {
-  expiresAt: number;
-  sightingsByTypeName: Record<string, LatteTemplateTypePropertySighting[]>;
-}
-
-export type LatteTemplateTypeCache = Record<string, LatteTemplateTypeCacheEntry>;
-
-export type LatteTemplateTypeInFlight = Map<
-  string,
-  Promise<LatteTemplateTypePropertySighting[]>
->;
-
-export interface LatteTemplateTypeContext {
-  cache: LatteTemplateTypeCache;
-  deps: NetteTemplateTypeDependencies;
-  inFlight: LatteTemplateTypeInFlight;
-  isRequestedRootActive(): boolean;
-  phpExtension: string;
-  requestedRoot: string;
-  searchLimit: number;
-  ttlMs: number;
-}
+export {
+  loadNetteTemplateTypeProperties,
+} from "./netteTemplateTypeDiscovery";
+export type {
+  LatteTemplateTypeCache,
+  LatteTemplateTypeCacheEntry,
+  LatteTemplateTypeContext,
+  LatteTemplateTypeInFlight,
+  LatteTemplateTypePropertySighting,
+  NetteTemplateTypeDependencies,
+  NetteTemplateTypeSearchResult,
+} from "./netteTemplateTypeDiscovery";
 
 export async function latteTemplateTypeVariableType(
   context: LatteTemplateTypeContext,
@@ -113,39 +87,6 @@ export function latteTemplateTypeNames(source: string): string[] {
   return Array.from(names);
 }
 
-export async function loadNetteTemplateTypeProperties(
-  context: LatteTemplateTypeContext,
-  typeName: string,
-): Promise<LatteTemplateTypePropertySighting[]> {
-  const { cache, inFlight, requestedRoot } = context;
-  const cached = cache[requestedRoot];
-
-  if (
-    cached &&
-    cached.expiresAt > Date.now() &&
-    Object.prototype.hasOwnProperty.call(cached.sightingsByTypeName, typeName)
-  ) {
-    return cached.sightingsByTypeName[typeName] ?? [];
-  }
-
-  const key = `${requestedRoot}\0${typeName}`;
-  const existingLoad = inFlight.get(key);
-
-  if (existingLoad) {
-    return existingLoad;
-  }
-
-  const load = scanNetteTemplateTypeProperties(context, typeName).finally(() => {
-    if (inFlight.get(key) === load) {
-      inFlight.delete(key);
-    }
-  });
-
-  inFlight.set(key, load);
-
-  return load;
-}
-
 export function mergeLatteResolvedTypes(
   types: readonly (string | null)[],
 ): string | null {
@@ -162,145 +103,4 @@ export function mergeLatteResolvedTypes(
   return resolved.every((type) => normalize(type) === normalize(first))
     ? first
     : null;
-}
-
-async function scanNetteTemplateTypeProperties(
-  context: LatteTemplateTypeContext,
-  typeName: string,
-): Promise<LatteTemplateTypePropertySighting[]> {
-  const {
-    cache,
-    deps,
-    isRequestedRootActive,
-    phpExtension,
-    requestedRoot,
-    searchLimit,
-    ttlMs,
-  } = context;
-  const shortName = shortTypeName(typeName);
-
-  if (!shortName) {
-    return [];
-  }
-
-  const results = await deps.searchText(
-    requestedRoot,
-    `class ${shortName}`,
-    searchLimit,
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const visitedPaths = new Set<string>();
-  const sightings: LatteTemplateTypePropertySighting[] = [];
-
-  for (const result of results) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (visitedPaths.has(result.path) || !result.path.endsWith(phpExtension)) {
-      continue;
-    }
-
-    visitedPaths.add(result.path);
-
-    let content: string;
-
-    try {
-      content = await deps.readFileContent(result.path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (!phpSourceDefinesType(content, typeName)) {
-      continue;
-    }
-
-    for (const property of netteTemplateClassPropertiesFromSource(
-      content,
-      shortName,
-    )) {
-      sightings.push({ property, source: content });
-    }
-  }
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const existing =
-    cache[requestedRoot]?.expiresAt > Date.now()
-      ? cache[requestedRoot]?.sightingsByTypeName
-      : undefined;
-
-  cache[requestedRoot] = {
-    expiresAt: Date.now() + ttlMs,
-    sightingsByTypeName: {
-      ...(existing ?? {}),
-      [typeName]: sightings,
-    },
-  };
-
-  return sightings;
-}
-
-function phpSourceDefinesType(source: string, typeName: string): boolean {
-  const normalizedType = typeName.replace(/^\\+/, "");
-  const shortName = shortTypeName(typeName);
-
-  if (!shortName || !phpSourceHasClass(source, shortName)) {
-    return false;
-  }
-
-  const namespace = phpNamespaceName(source);
-
-  if (!namespace || !normalizedType.includes("\\")) {
-    return shortName === normalizedType.split("\\").pop();
-  }
-
-  return `${namespace}\\${shortName}` === normalizedType;
-}
-
-function phpSourceHasClass(source: string, shortName: string): boolean {
-  const pattern = new RegExp(
-    `\\b(?:class|interface|trait)\\s+${escapeRegExp(shortName)}\\b`,
-  );
-
-  return pattern.test(source);
-}
-
-function phpNamespaceName(source: string): string | null {
-  const match = /\bnamespace\s+([^;{]+)\s*[;{]/.exec(source);
-
-  if (!match?.[1]) {
-    return null;
-  }
-
-  return match[1].trim().replace(/\s+/g, "");
-}
-
-function shortTypeName(typeName: string | null): string | null {
-  if (!typeName) {
-    return null;
-  }
-
-  const normalized = typeName.replace(/^\?/, "").replace(/^\\+/, "");
-  const parts = normalized.split("\\").filter(Boolean);
-
-  return parts[parts.length - 1] ?? null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
