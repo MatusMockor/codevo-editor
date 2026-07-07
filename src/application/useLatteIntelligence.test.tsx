@@ -3312,6 +3312,37 @@ describe("createLatteIntelligence {control} component definition (Fáza 2)", () 
     );
   });
 
+  it("navigates a {control name:part} render variant to the control render method", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+      openPhpMethodTarget,
+      openTarget,
+      readFileContent,
+      resolveDeclaredType: (_source, typeHint) =>
+        typeHint === "ProductListControl"
+          ? "App\\UI\\Home\\ProductListControl"
+          : typeHint,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{control productList:pagination}";
+    const offset = source.indexOf("pagination") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\UI\\Home\\ProductListControl",
+      "renderPagination",
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
   it("navigates Nette module {control} references to the module presenter factory", async () => {
     const presenter = `<?php
 namespace App\\ProductsModule\\Presenters;
