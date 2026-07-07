@@ -82,112 +82,24 @@ import {
 import {
   joinWorkspacePath,
   type FileEntry,
-  type TextSearchGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpLaravelNamedRouteTarget } from "./useLaravelTargets";
 import type {
-  LaravelTargets,
-  PhpLaravelNamedRouteTarget,
-} from "./useLaravelTargets";
+  BladeCompletionItem,
+  BladeIntelligence,
+  BladeIntelligenceDependencies,
+} from "./bladeIntelligenceContracts";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
-} from "./useWorkbenchController";
-import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+} from "./phpCodeActionTypes";
 
-/**
- * A Blade completion item the controller hands to the Monaco "blade" completion
- * provider. Structurally compatible with the provider's `BladeCompletion`; kept
- * local so the controller does not depend on the components layer.
- */
-export interface BladeCompletionItem {
-  detail?: string;
-  insertText: string;
-  kind: "directive" | "view" | "component" | "variable" | "helper" | "member";
-  label: string;
-  replaceStart?: number;
-  replaceEnd?: number;
-}
-
-/**
- * Collaborators the Blade intelligence needs from the workbench shell. The heavy
- * PHP/Laravel resolvers, target collectors and navigation primitives are
- * injected verbatim so the expensive engines stay owned by the controller.
- */
-export interface BladeIntelligenceDependencies {
-  activeDocument: { content: string; path: string } | null;
-  currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkIntelligence: PhpFrameworkIntelligence;
-  workspaceRoot: string | null;
-  textSearch: Pick<TextSearchGateway, "searchText">;
-  workspaceFiles: { readDirectory: (path: string) => Promise<FileEntry[]> };
-  readNavigationFileContent: (path: string) => Promise<string>;
-  relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
-  openNavigationTarget: (
-    path: string,
-    position: EditorPosition,
-    label: string,
-  ) => Promise<boolean>;
-  resolvePhpExpressionType: (
-    source: string,
-    position: EditorPosition,
-    expression: string,
-  ) => Promise<string | null>;
-  resolvePhpDeclaredType: (source: string, typeName: string | null) => string | null;
-  resolvePhpClassPropertyOrRelationType: (
-    className: string,
-    propertyName: string,
-    includeCollectionRelations?: boolean,
-  ) => Promise<string | null>;
-  resolvePhpReceiverMethodCompletions: (
-    source: string,
-    position: EditorPosition,
-    receiverExpression: string,
-  ) => Promise<PhpMethodCompletion[]>;
-  ensurePhpLaravelMigrationSourcesLoaded: (requestedRoot: string) => Promise<void>;
-  ensurePhpLaravelProviderSourcesLoaded: (requestedRoot: string) => Promise<void>;
-  collectPhpLaravelViewTargets: LaravelTargets["collectPhpLaravelViewTargets"];
-  collectPhpLaravelConfigTargets: LaravelTargets["collectPhpLaravelConfigTargets"];
-  collectPhpLaravelNamedRouteTargets: LaravelTargets["collectPhpLaravelNamedRouteTargets"];
-  collectPhpLaravelTranslationTargets: LaravelTargets["collectPhpLaravelTranslationTargets"];
-  findPhpLaravelViewTarget: LaravelTargets["findPhpLaravelViewTarget"];
-  findPhpLaravelConfigTarget: LaravelTargets["findPhpLaravelConfigTarget"];
-  findPhpLaravelTranslationTarget: LaravelTargets["findPhpLaravelTranslationTarget"];
-  createMissingBladeViewCodeAction: (
-    source: string,
-    range: PhpCodeActionRange,
-    language: "blade" | "php",
-    isRequestedRootActive: () => boolean,
-  ) => Promise<PhpCodeActionDescriptor | null>;
-  openDirectPhpMethodTarget: (
-    className: string,
-    methodName: string,
-  ) => Promise<boolean>;
-  openPhpLaravelModelAttributeTarget: (
-    className: string,
-    attributeName: string,
-  ) => Promise<boolean>;
-  openDirectPhpPropertyTarget: (
-    className: string,
-    propertyName: string,
-  ) => Promise<boolean>;
-}
-
-/** The Blade providers + cache lifecycle the controller mount consumes. */
-export interface BladeIntelligence {
-  provideBladeCodeActions: (
-    source: string,
-    range?: PhpCodeActionRange,
-  ) => Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCompletions: (
-    source: string,
-    position: EditorPosition,
-  ) => Promise<BladeCompletionItem[]>;
-  provideBladeDefinition: (source: string, offset: number) => Promise<boolean>;
-  invalidateBladeComponentNamesForPath: (root: string, path: string) => void;
-  invalidateBladeViewDataEntriesForPath: (root: string, path: string) => void;
-  resetBladeIntelligenceCaches: () => void;
-}
+export type {
+  BladeCompletionItem,
+  BladeIntelligence,
+  BladeIntelligenceDependencies,
+} from "./bladeIntelligenceContracts";
 
 export function useBladeIntelligence(
   deps: BladeIntelligenceDependencies,

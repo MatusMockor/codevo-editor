@@ -165,6 +165,14 @@ describe("useBladeIntelligence hook mount", () => {
     const harness = renderHook(deps);
     const first = harness.api();
 
+    expect(Object.keys(first).sort()).toEqual([
+      "invalidateBladeComponentNamesForPath",
+      "invalidateBladeViewDataEntriesForPath",
+      "provideBladeCodeActions",
+      "provideBladeCompletions",
+      "provideBladeDefinition",
+      "resetBladeIntelligenceCaches",
+    ]);
     expect(typeof first.provideBladeCompletions).toBe("function");
     expect(typeof first.provideBladeCodeActions).toBe("function");
     expect(typeof first.provideBladeDefinition).toBe("function");
@@ -178,6 +186,59 @@ describe("useBladeIntelligence hook mount", () => {
     );
 
     harness.unmount();
+  });
+});
+
+describe("useBladeIntelligence completion item contract", () => {
+  it("marks Blade directive completions as directive items", async () => {
+    const harness = renderHook(makeDeps());
+    const source = "@if";
+
+    const completions = await harness.api().provideBladeCompletions(
+      source,
+      positionAtOffset(source, source.length),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "directive", label: "@if" }),
+    );
+  });
+
+  it("marks PHP-like helper completions as helper items", async () => {
+    const harness = renderHook(makeDeps());
+    const source = "{{ ro }}";
+    const offset = source.indexOf("ro") + "ro".length;
+
+    const completions = await harness.api().provideBladeCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "helper", label: "route" }),
+    );
+  });
+
+  it("marks Blade view-name completions as view items", async () => {
+    const collectPhpLaravelViewTargets = vi.fn(async () => [
+      {
+        name: "partials.alert",
+        path: `${ROOT}/resources/views/partials/alert.blade.php`,
+        relativePath: "resources/views/partials/alert.blade.php",
+      },
+    ]);
+    const harness = renderHook(makeDeps({ collectPhpLaravelViewTargets }));
+    const source = "@include('partials.a')";
+    const offset = source.indexOf("partials.a") + "partials.a".length;
+
+    const completions = await harness.api().provideBladeCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "view", label: "partials.alert" }),
+    );
   });
 });
 
@@ -196,6 +257,9 @@ describe("useBladeIntelligence view-data completions", () => {
     );
 
     expect(completions.map((item) => item.label)).toContain("$invoice");
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "variable", label: "$invoice" }),
+    );
   });
 
   it("caches the loaded view-data entries across completion calls", async () => {
@@ -326,6 +390,9 @@ describe("useBladeIntelligence foreach + member completions", () => {
 
     expect(resolvePhpReceiverMethodCompletions).toHaveBeenCalled();
     expect(completions.map((item) => item.label)).toContain("total");
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "member", label: "total" }),
+    );
   });
 });
 
@@ -356,6 +423,9 @@ describe("useBladeIntelligence component completions", () => {
     );
 
     expect(completions.map((item) => item.label)).toContain("alert");
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "component", label: "alert" }),
+    );
   });
 
   it("caches component names until invalidateBladeComponentNamesForPath", async () => {
