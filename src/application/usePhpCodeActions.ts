@@ -1,8 +1,6 @@
 import { useCallback } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import { parsePhpClassStructure } from "../domain/phpClassStructure";
-import { planExtractInterface } from "../domain/phpExtractInterface";
-import { offsetToPosition } from "../domain/phpInsertionPoint";
 import { phpCurrentTypeKind } from "../domain/phpNavigation";
 import {
   isTypeProjectSymbol,
@@ -20,8 +18,8 @@ import {
   phpGenerateConstructorWithPromotionCodeAction,
   phpGeneratePhpDocCodeAction,
 } from "./phpClassGenerateCodeActions";
-import { zeroLengthPhpEditRange } from "./phpCodeActionEdits";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
+import { phpExtractInterfaceCodeAction } from "./phpExtractInterfaceCodeActions";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
@@ -477,55 +475,4 @@ export function usePhpCodeActions({
   );
 
   return { createMissingBladeViewCodeAction, providePhpCodeActions };
-}
-
-/**
- * Offers "Extract interface" (PhpStorm) when the cursor sits on a concrete
- * `class` declaration that exposes at least one public instance method. The
- * `planExtractInterface` planner synthesises a sibling `<Class>Interface.php`
- * (carrying the public-instance-method signatures) and the in-place edit that
- * adds `implements <Class>Interface` to the class header. The resulting action
- * therefore CREATES a file (the new interface) and EDITS the current document
- * (the implements clause). Returns `null` for any shape the conservative
- * planner rejects (abstract class / interface / trait / enum, no public
- * instance methods, parse failure, cursor outside a class) so the action is
- * never offered where it could create an empty or malformed interface.
- *
- * `sourcePath` is the active document's absolute path; without it the sibling
- * interface path cannot be derived, so the action is not offered.
- */
-function phpExtractInterfaceCodeAction(
-  source: string,
-  range: PhpCodeActionRange,
-  sourcePath: string | null,
-): PhpCodeActionDescriptor | null {
-  if (!sourcePath) {
-    return null;
-  }
-
-  const plan = planExtractInterface(source, range.start, sourcePath);
-
-  if (!plan) {
-    return null;
-  }
-
-  const implementsPosition = offsetToPosition(
-    source,
-    plan.implementsEdit.offset,
-  );
-
-  return {
-    edits: [
-      {
-        range: zeroLengthPhpEditRange(implementsPosition),
-        text: plan.implementsEdit.text,
-      },
-    ],
-    kind: "refactor.extract",
-    newFile: {
-      content: plan.interfaceText,
-      path: plan.interfaceFilePath,
-    },
-    title: "Extract interface",
-  };
 }
