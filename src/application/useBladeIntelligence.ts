@@ -25,16 +25,12 @@
 import { useCallback, useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
-  BLADE_ANONYMOUS_COMPONENTS_DIR,
-  BLADE_CLASS_COMPONENTS_DIR,
   BLADE_DIRECTIVES,
-  bladeComponentNameFromClassRelativePath,
   bladeComponentNavigationCandidateRelativePaths,
   bladeViewCandidateRelativePaths,
   detectBladeComponentCompletionAt,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
-  isBladeComponentSourcePath,
   isInsideBladeComment,
 } from "../domain/bladeNavigation";
 import {
@@ -79,10 +75,7 @@ import {
   orderPhpMemberCompletionsByCategory,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
-import {
-  joinWorkspacePath,
-  type FileEntry,
-} from "../domain/workspace";
+import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpLaravelNamedRouteTarget } from "./useLaravelTargets";
 import type {
@@ -94,6 +87,10 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
+import {
+  collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
+  invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
+} from "./bladeComponentDiscovery";
 
 export type {
   BladeCompletionItem,
@@ -528,108 +525,30 @@ export function useBladeIntelligence(
   // readDirectory await and before the cache write, so a tab switch drops
   // in-flight results (per-project isolation).
   const collectBladeComponentNames = useCallback(async (): Promise<string[]> => {
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (!requestedRoot) {
-      return [];
-    }
-
-    const cachedNames = bladeComponentNamesByRootRef.current[requestedRoot];
-
-    if (cachedNames) {
-      return cachedNames;
-    }
-
-    const names = new Set<string>();
-
-    const visitDirectory = async (
-      directory: string,
-      addEntry: (relativePath: string) => void,
-      scanRoot: string,
-    ): Promise<void> => {
-      let entries: FileEntry[];
-
-      try {
-        entries = await workspaceFiles.readDirectory(directory);
-      } catch {
-        return;
-      }
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      for (const entry of entries) {
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        if (entry.kind === "directory") {
-          await visitDirectory(entry.path, addEntry, scanRoot);
-          continue;
-        }
-
-        addEntry(relativeWorkspacePath(scanRoot, entry.path));
-      }
-    };
-
-    const componentsRoot = joinWorkspacePath(
-      requestedRoot,
-      BLADE_ANONYMOUS_COMPONENTS_DIR,
-    );
-    await visitDirectory(
-      componentsRoot,
-      (relativePath) => {
-        const componentName = bladeComponentNameFromRelativePath(relativePath);
-
-        if (componentName) {
-          names.add(componentName);
-        }
-      },
-      componentsRoot,
-    );
-
-    const classComponentsRoot = joinWorkspacePath(
-      requestedRoot,
-      BLADE_CLASS_COMPONENTS_DIR,
-    );
-    await visitDirectory(
-      classComponentsRoot,
-      (relativePath) => {
-        const componentName =
-          bladeComponentNameFromClassRelativePath(relativePath);
-
-        if (componentName) {
-          names.add(componentName);
-        }
-      },
-      classComponentsRoot,
-    );
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    const sortedNames = Array.from(names).sort((left, right) =>
-      left.localeCompare(right),
-    );
-    bladeComponentNamesByRootRef.current[requestedRoot] = sortedNames;
-
-    return sortedNames;
-  }, [workspaceFiles, workspaceRoot]);
+    return collectBladeComponentNamesFromWorkspace({
+      cacheRef: bladeComponentNamesByRootRef,
+      currentWorkspaceRootRef,
+      relativeWorkspacePath,
+      workspaceFiles,
+      workspaceRoot,
+    });
+  }, [
+    currentWorkspaceRootRef,
+    relativeWorkspacePath,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
 
   // Drops the cached component names for `root` when a file under either Blade
   // component directory changes so the next `<x-` completion re-scans. Mirrors
   // invalidatePhpLaravelMigrationSourcesForPath.
   const invalidateBladeComponentNamesForPath = useCallback(
     (root: string, path: string): void => {
-      if (!isBladeComponentSourcePath(root, path)) {
-        return;
-      }
-
-      delete bladeComponentNamesByRootRef.current[root];
+      invalidateBladeComponentNamesForCachePath(
+        bladeComponentNamesByRootRef,
+        root,
+        path,
+      );
     },
     [],
   );
@@ -1334,33 +1253,6 @@ export function useBladeIntelligence(
 // adversarial/self-referencing relation chain in Blade source cannot trigger
 // an unbounded run of sequential file-read awaits.
 const BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH = 8;
-
-/**
- * Maps a component blade file path relative to `resources/views/components` to
- * its dotted component name — the inverse of bladeComponentCandidateRelativePaths.
- * `forms/input.blade.php` → `forms.input`; `alert/index.blade.php` → `alert`.
- * Returns null for paths that are not component blade files.
- */
-function bladeComponentNameFromRelativePath(relativePath: string): string | null {
-  const normalized = relativePath.split("\\").join("/").replace(/^\/+/, "");
-
-  if (!normalized.endsWith(".blade.php")) {
-    return null;
-  }
-
-  const withoutExtension = normalized.slice(0, -".blade.php".length);
-  const segments = withoutExtension.split("/").filter(Boolean);
-
-  if (segments[segments.length - 1] === "index") {
-    segments.pop();
-  }
-
-  if (segments.length === 0) {
-    return null;
-  }
-
-  return segments.join(".");
-}
 
 const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
   {
