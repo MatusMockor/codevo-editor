@@ -41,6 +41,7 @@ import {
 import {
   detectLatteLinkAt,
   detectPhpPresenterLinkAt,
+  netteRoutePresenterTargetsFromSource,
   nettePresenterActionMethodCandidates,
   nettePresenterClassCandidatePathsForLink,
   nettePresenterLinkCompletionContextAt,
@@ -294,7 +295,7 @@ export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
   presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
   presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
   presenterScanDirectories: ["app"],
-  isPresenterSourcePath: (path) => path.endsWith("Presenter.php"),
+  isPresenterSourcePath: isNettePresenterDiscoverySourcePath,
   presenterLinkCompletionContextAt: nettePresenterLinkCompletionContextAt,
   supportsLattePresenterLinkIntelligence:
     phpFrameworkSupportsLattePresenterLinkIntelligence,
@@ -1172,8 +1173,12 @@ async function lattePresenterLinkCompletions(
   }
 
   const normalizedPrefix = completion.prefix.toLowerCase();
+  const completionTargets = nettePresenterCompletionTargets(
+    targets,
+    currentPresenterShortNames(context.deps, context.requestedRoot),
+  );
 
-  return targets
+  return completionTargets
     .filter((target) => target.toLowerCase().startsWith(normalizedPrefix))
     .slice(0, LATTE_MAX_COMPLETIONS)
     .map((target) => ({
@@ -1395,9 +1400,12 @@ function nettePresenterLinkTargetsFromSource(
   source: string,
 ): string[] {
   const shortName = nettePresenterShortNameFromPath(presenterPath);
+  const routeTargets = netteRoutePresenterTargetsFromSource(source).map(
+    (target) => target.target,
+  );
 
   if (!shortName) {
-    return [];
+    return routeTargets;
   }
 
   const targets: string[] = [];
@@ -1414,7 +1422,16 @@ function nettePresenterLinkTargetsFromSource(
     );
   }
 
-  return targets;
+  return [...targets, ...routeTargets];
+}
+
+function isNettePresenterDiscoverySourcePath(path: string): boolean {
+  const fileName = path.split("/").pop() ?? "";
+
+  return (
+    path.endsWith(PRESENTER_SUFFIX) ||
+    (/router/i.test(fileName) && fileName.endsWith(PHP_EXTENSION))
+  );
 }
 
 function nettePresenterShortNameFromPath(presenterPath: string): string | null {
@@ -1427,6 +1444,70 @@ function nettePresenterShortNameFromPath(presenterPath: string): string | null {
   const shortName = fileName.slice(0, -PRESENTER_SUFFIX.length);
 
   return shortName.length > 0 ? shortName : null;
+}
+
+function nettePresenterCompletionTargets(
+  targets: readonly string[],
+  currentPresenterNames: readonly string[],
+): string[] {
+  const withRelativeTargets = new Set<string>(targets);
+  const current = new Set(currentPresenterNames);
+
+  if (current.size === 0) {
+    return Array.from(withRelativeTargets);
+  }
+
+  for (const target of targets) {
+    const relative = relativePresenterTarget(target, current);
+
+    if (relative) {
+      withRelativeTargets.add(relative);
+    }
+  }
+
+  return Array.from(withRelativeTargets).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+function relativePresenterTarget(
+  target: string,
+  currentPresenterNames: ReadonlySet<string>,
+): string | null {
+  const segments = target.split(":");
+
+  if (segments.length !== 2) {
+    return null;
+  }
+
+  const [presenter, action] = segments;
+
+  if (!presenter || !action || !currentPresenterNames.has(presenter)) {
+    return null;
+  }
+
+  return action;
+}
+
+function currentPresenterShortNames(
+  deps: LatteIntelligenceDependencies,
+  requestedRoot: string,
+): string[] {
+  const currentPath = currentTemplatePath(deps, requestedRoot);
+  const names = new Set<string>();
+  const candidatePaths = currentPath.endsWith(PRESENTER_SUFFIX)
+    ? [currentPath]
+    : presenterCandidatePathsForTemplate(currentPath);
+
+  for (const path of candidatePaths) {
+    const shortName = nettePresenterShortNameFromPath(path);
+
+    if (shortName) {
+      names.add(shortName);
+    }
+  }
+
+  return Array.from(names);
 }
 
 // --- {control} component navigation + completion (Fáza 2) ------------------

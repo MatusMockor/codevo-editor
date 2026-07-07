@@ -316,7 +316,6 @@ import {
   phpFrameworkScopedStringCompletionContextAt,
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
-  phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -536,32 +535,30 @@ export function useWorkbenchController(
     () => createPhpFrameworkIntelligence(phpFrameworkResolution),
     [phpFrameworkResolution],
   );
-  const activePhpFrameworkProviders = phpFrameworkResolution.providers;
-  const activePhpFrameworkProviderSignature = useMemo(
-    () => phpFrameworkProviderSignature(activePhpFrameworkProviders),
-    [activePhpFrameworkProviders],
-  );
+  const activePhpFrameworkProviders = phpFrameworkIntelligence.providers;
+  const activePhpFrameworkProviderSignature =
+    phpFrameworkIntelligence.providerSignature;
   const isLaravelFrameworkActive = phpFrameworkIntelligence.isLaravel;
   const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
   // Exclusive, per-workspace framework profile - the single discriminator the
   // status-bar chip and future gating key off.
-  const activeFrameworkProfile = phpFrameworkResolution.profile;
+  const activeFrameworkProfile = phpFrameworkIntelligence.profile;
   // Edge (spec 4.1): a project that declares several framework signals at once
   // (e.g. a Laravel app carrying latte/latte transitively in composer.lock)
   // resolves to a single exclusive profile by registry priority. Surface the
   // ambiguity once per workspace so the deterministic pick stays observable and
   // we never silently blend two frameworks' magic.
   useEffect(() => {
-    if (phpFrameworkResolution.matchedProviderIds.length < 2) {
+    if (phpFrameworkIntelligence.matchedProviderIds.length < 2) {
       return;
     }
 
     console.warn(
-      `Multiple PHP framework signals detected (${phpFrameworkResolution.matchedProviderIds.join(
+      `Multiple PHP framework signals detected (${phpFrameworkIntelligence.matchedProviderIds.join(
         ", ",
-      )}); resolved exclusively to "${phpFrameworkResolution.profile}" by registry priority.`,
+      )}); resolved exclusively to "${phpFrameworkIntelligence.profile}" by registry priority.`,
     );
-  }, [phpFrameworkResolution]);
+  }, [phpFrameworkIntelligence]);
   const [workspaceTrust, setWorkspaceTrust] =
     useState<WorkspaceTrustState | null>(null);
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
@@ -5251,7 +5248,7 @@ export function useWorkbenchController(
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
-    activePhpFrameworkProviders,
+    frameworkIntelligence: phpFrameworkIntelligence,
   });
 
   const findPhpLaravelEnvTarget = useCallback(

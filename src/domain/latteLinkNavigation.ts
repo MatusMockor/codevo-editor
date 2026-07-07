@@ -103,6 +103,11 @@ export interface NetteLinkCompletionContext {
   replaceStart: number;
 }
 
+/** A static presenter/action target discovered from a Nette Route default. */
+export interface NetteRoutePresenterTarget {
+  target: string;
+}
+
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const DEFAULT_ACTION = "default";
 const THIS_ACTION = "this";
@@ -119,6 +124,8 @@ const MAX_NHREF_SCAN = 4000;
  */
 const PHP_LINK_CALL =
   /->\s*(redirectPermanent|redirect|isLinkCurrent|lazyLink|canonicalize|forward|link)\b\s*\(/g;
+const PHP_ROUTE_CONSTRUCTOR =
+  /\bnew\s+(?:\\?Nette\\Application\\Routers\\)?Route\s*\(/g;
 
 /**
  * Decomposes a Nette link destination string into its structural parts, or
@@ -379,6 +386,52 @@ export function nettePresenterLinkCompletionContextAt(
   }
 
   return latteLinkCompletionAt(source, offset);
+}
+
+/**
+ * Extracts static `Presenter:action` defaults from Nette route definitions:
+ * `new Route('/x', 'Product:show')` and
+ * `new Route('/x', ['presenter' => 'Product', 'action' => 'show'])`.
+ *
+ * This is intentionally conservative route awareness for completion discovery:
+ * it does not try to evaluate dynamic route masks, constants, variables, or
+ * factories. A malformed/default-less route simply contributes no target.
+ */
+export function netteRoutePresenterTargetsFromSource(
+  source: string,
+): NetteRoutePresenterTarget[] {
+  const targets = new Set<string>();
+
+  PHP_ROUTE_CONSTRUCTOR.lastIndex = 0;
+
+  for (
+    let match = PHP_ROUTE_CONSTRUCTOR.exec(source);
+    match !== null;
+    match = PHP_ROUTE_CONSTRUCTOR.exec(source)
+  ) {
+    const openParen = match.index + match[0].length - 1;
+    const secondArgument = secondTopLevelArgument(source, openParen);
+
+    if (PHP_ROUTE_CONSTRUCTOR.lastIndex <= match.index) {
+      PHP_ROUTE_CONSTRUCTOR.lastIndex = match.index + 1;
+    }
+
+    if (!secondArgument) {
+      continue;
+    }
+
+    const target =
+      routeStringTarget(source, secondArgument.start, secondArgument.end) ??
+      routeArrayTarget(source, secondArgument.start, secondArgument.end);
+
+    if (target) {
+      targets.add(target);
+    }
+  }
+
+  return Array.from(targets)
+    .sort((left, right) => left.localeCompare(right))
+    .map((target) => ({ target }));
 }
 
 // --- link-target parsing helpers -------------------------------------------
@@ -1031,6 +1084,246 @@ function stringLiteralClose(
   return source.length;
 }
 
+interface ArgumentRange {
+  end: number;
+  start: number;
+}
+
+function secondTopLevelArgument(
+  source: string,
+  openParen: number,
+): ArgumentRange | null {
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  const comma = firstTopLevelComma(source, openParen + 1, closeParen);
+
+  if (comma === null) {
+    return null;
+  }
+
+  const start = skipWhitespace(source, comma + 1, closeParen);
+  const end = topLevelArgumentEnd(source, start, closeParen);
+
+  return start < end ? { end, start } : null;
+}
+
+function firstTopLevelComma(
+  source: string,
+  start: number,
+  end: number,
+): number | null {
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  let quote: string | null = null;
+  let index = start;
+
+  while (index < end) {
+    const char = source[index];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      index += 1;
+      continue;
+    }
+
+    if (char === "(") {
+      parenDepth += 1;
+    }
+
+    if (char === ")" && parenDepth > 0) {
+      parenDepth -= 1;
+    }
+
+    if (char === "[") {
+      bracketDepth += 1;
+    }
+
+    if (char === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+    }
+
+    if (char === "{") {
+      braceDepth += 1;
+    }
+
+    if (char === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+    }
+
+    if (
+      char === "," &&
+      parenDepth === 0 &&
+      bracketDepth === 0 &&
+      braceDepth === 0
+    ) {
+      return index;
+    }
+
+    index += 1;
+  }
+
+  return null;
+}
+
+function topLevelArgumentEnd(
+  source: string,
+  start: number,
+  limit: number,
+): number {
+  const comma = firstTopLevelComma(source, start, limit);
+  let end = comma ?? limit;
+
+  while (end > start && isWhitespace(source[end - 1])) {
+    end -= 1;
+  }
+
+  return end;
+}
+
+function routeStringTarget(
+  source: string,
+  start: number,
+  end: number,
+): string | null {
+  const quote = source[start];
+
+  if (quote !== "'" && quote !== '"') {
+    return null;
+  }
+
+  const literal = firstStringLiteralArgument(source, start - 1);
+
+  if (!literal || literal.contentEnd > end) {
+    return null;
+  }
+
+  return completionTargetFromLinkLiteral(literal.text);
+}
+
+function routeArrayTarget(
+  source: string,
+  start: number,
+  end: number,
+): string | null {
+  if (source[start] !== "[") {
+    return null;
+  }
+
+  const closeBracket = matchingBracketOffset(source, start, "[", "]");
+
+  if (closeBracket === null || closeBracket > end) {
+    return null;
+  }
+
+  const arraySource = source.slice(start, closeBracket + 1);
+  const presenter = routeArrayStringValue(arraySource, "presenter");
+  const action = routeArrayStringValue(arraySource, "action") ?? DEFAULT_ACTION;
+
+  if (!presenter) {
+    return null;
+  }
+
+  return completionTargetFromLinkLiteral(`${presenter}:${action}`);
+}
+
+function routeArrayStringValue(arraySource: string, key: string): string | null {
+  const pattern = new RegExp(
+    String.raw`(['"])${escapeRegExp(key)}\1\s*=>\s*(['"])(.*?)\2`,
+    "s",
+  );
+  const match = pattern.exec(arraySource);
+
+  return match?.[3] ?? null;
+}
+
+function completionTargetFromLinkLiteral(target: string): string | null {
+  const parsed = parseNetteLinkTarget(target);
+
+  if (!parsed || parsed.presenter === null) {
+    return null;
+  }
+
+  return [
+    parsed.module,
+    parsed.presenter,
+    `${parsed.action}${parsed.isSignal ? "!" : ""}`,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(":");
+}
+
+function matchingBracketOffset(
+  source: string,
+  openOffset: number,
+  open: string,
+  close: string,
+): number | null {
+  if (source[openOffset] !== open) {
+    return null;
+  }
+
+  let depth = 0;
+  let quote: string | null = null;
+  let index = openOffset;
+
+  while (index < source.length) {
+    const char = source[index];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      index += 1;
+      continue;
+    }
+
+    if (char === open) {
+      depth += 1;
+    } else if (char === close) {
+      depth -= 1;
+
+      if (depth === 0) {
+        return index;
+      }
+    }
+
+    index += 1;
+  }
+
+  return null;
+}
+
 // --- completion contexts ----------------------------------------------------
 
 function latteLinkCompletionAt(
@@ -1227,6 +1520,20 @@ function isWhitespace(character: string | undefined): boolean {
     character === "\n" ||
     character === "\r"
   );
+}
+
+function skipWhitespace(source: string, from: number, limit: number): number {
+  let index = from;
+
+  while (index < limit && isWhitespace(source[index])) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isBareTargetBoundary(character: string | undefined): boolean {

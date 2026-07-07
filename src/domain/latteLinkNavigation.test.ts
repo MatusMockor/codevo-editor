@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectLatteLinkAt,
   detectPhpPresenterLinkAt,
+  netteRoutePresenterTargetsFromSource,
   nettePresenterActionMethodCandidates,
   nettePresenterClassCandidatePathsForLink,
   nettePresenterLinkCompletionContextAt,
@@ -810,6 +811,39 @@ describe("nettePresenterLinkCompletionContextAt", () => {
     expect(
       nettePresenterLinkCompletionContextAt(source, offset, "php"),
     ).toBeNull();
+  });
+});
+
+describe("netteRoutePresenterTargetsFromSource", () => {
+  it("extracts static presenter defaults from Nette Route constructors", () => {
+    const source = `<?php
+use Nette\\Application\\Routers\\Route;
+
+$router[] = new Route('/product/<id>', 'Product:show');
+$router[] = new Route('/admin', ':Admin:Dashboard:');
+$router[] = new Route('/dynamic', $defaults);
+`;
+
+    expect(netteRoutePresenterTargetsFromSource(source)).toEqual([
+      { target: "Admin:Dashboard:default" },
+      { target: "Product:show" },
+    ]);
+  });
+
+  it("extracts presenter/action array defaults and ignores dynamic entries", () => {
+    const source = `<?php
+$router[] = new \\Nette\\Application\\Routers\\Route('/orders', [
+    'presenter' => 'Order',
+    'action' => 'list',
+]);
+$router[] = new Route('/home', ['presenter' => 'Homepage']);
+$router[] = new Route('/bad', ['presenter' => $presenter, 'action' => 'show']);
+`;
+
+    expect(netteRoutePresenterTargetsFromSource(source)).toEqual([
+      { target: "Homepage:default" },
+      { target: "Order:list" },
+    ]);
   });
 });
 

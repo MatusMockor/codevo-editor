@@ -1,7 +1,8 @@
-import type {
-  FrameworkProfile,
-  PhpFrameworkProvider,
-  PhpFrameworkResolution,
+import {
+  phpFrameworkProviderSignature,
+  type FrameworkProfile,
+  type PhpFrameworkProvider,
+  type PhpFrameworkResolution,
 } from "../domain/phpFrameworkProviders";
 
 /**
@@ -12,19 +13,27 @@ import type {
 export interface PhpFrameworkIntelligence {
   readonly matchedProviderIds: readonly string[];
   readonly profile: FrameworkProfile;
+  readonly providerIds: readonly string[];
+  readonly providerSignature: string;
   readonly providers: readonly PhpFrameworkProvider[];
   readonly isLaravel: boolean;
   readonly isNette: boolean;
+  hasProvider(providerId: string): boolean;
 }
 
 export function createPhpFrameworkIntelligence(
   resolution: PhpFrameworkResolution,
 ): PhpFrameworkIntelligence {
+  const providerIds = resolution.providers.map((provider) => provider.id);
+
   return {
     matchedProviderIds: resolution.matchedProviderIds,
     profile: resolution.profile,
+    providerIds,
+    providerSignature: phpFrameworkProviderSignature(resolution.providers),
     providers: resolution.providers,
     isLaravel: resolution.profile === "laravel",
     isNette: resolution.profile === "nette",
+    hasProvider: (providerId) => providerIds.includes(providerId),
   };
 }

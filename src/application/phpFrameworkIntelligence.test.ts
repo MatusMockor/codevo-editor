@@ -15,6 +15,10 @@ describe("createPhpFrameworkIntelligence", () => {
     });
 
     expect(intelligence.providers).toBe(providers);
+    expect(intelligence.providerIds).toEqual(["laravel"]);
+    expect(intelligence.providerSignature).toBe("laravel");
+    expect(intelligence.hasProvider("laravel")).toBe(true);
+    expect(intelligence.hasProvider("nette")).toBe(false);
     expect(intelligence.isLaravel).toBe(true);
     expect(intelligence.isNette).toBe(false);
   });
@@ -28,6 +32,10 @@ describe("createPhpFrameworkIntelligence", () => {
     });
 
     expect(intelligence.providers).toBe(providers);
+    expect(intelligence.providerIds).toEqual(["nette"]);
+    expect(intelligence.providerSignature).toBe("nette");
+    expect(intelligence.hasProvider("laravel")).toBe(false);
+    expect(intelligence.hasProvider("nette")).toBe(true);
     expect(intelligence.isLaravel).toBe(false);
     expect(intelligence.isNette).toBe(true);
   });
@@ -40,6 +48,10 @@ describe("createPhpFrameworkIntelligence", () => {
     });
 
     expect(intelligence.providers).toEqual([]);
+    expect(intelligence.providerIds).toEqual([]);
+    expect(intelligence.providerSignature).toBe("");
+    expect(intelligence.hasProvider("laravel")).toBe(false);
+    expect(intelligence.hasProvider("nette")).toBe(false);
     expect(intelligence.isLaravel).toBe(false);
     expect(intelligence.isNette).toBe(false);
   });

@@ -13,7 +13,6 @@ import {
   phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationTargetFromSource,
-  isPhpFrameworkProviderActive,
   type PhpFrameworkProvider,
   type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
@@ -93,6 +92,7 @@ import {
   type WorkspaceFileTarget,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
+import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type PhpLaravelNamedRouteTarget =
   WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
@@ -410,8 +410,10 @@ export interface LaravelTargets {
 
 export type PhpFrameworkTargetsDependencies = Omit<
   LaravelTargetsDependencies,
-  "isLaravelFrameworkActive"
->;
+  "activePhpFrameworkProviders" | "isLaravelFrameworkActive"
+> & {
+  frameworkIntelligence: PhpFrameworkIntelligence;
+};
 
 export interface PhpFrameworkTargets {
   collectNamedRouteTargets: LaravelTargets["collectPhpLaravelNamedRouteTargets"];
@@ -450,6 +452,53 @@ export interface PhpFrameworkTargets {
 export interface PhpFrameworkTargetCollectorAdapter {
   providerId: string;
   useTargets: (dependencies: PhpFrameworkTargetsDependencies) => PhpFrameworkTargets;
+}
+
+const inertPhpFrameworkTargets: PhpFrameworkTargets = {
+  collectNamedRouteTargets: async () => [],
+  collectAuthorizationAbilityTargets: async () => [],
+  collectMiddlewareAliasTargets: async () => [],
+  collectEnvironmentTargets: async () => [],
+  collectViewTargets: async () => [],
+  collectConfigTargets: async () => [],
+  collectTranslationTargets: async () => [],
+  collectAuthGuardTargets: async () => [],
+  collectCacheStoreTargets: async () => [],
+  collectDatabaseConnectionTargets: async () => [],
+  collectBroadcastConnectionTargets: async () => [],
+  collectQueueConnectionTargets: async () => [],
+  collectRedisConnectionTargets: async () => [],
+  collectMailMailerTargets: async () => [],
+  collectPasswordBrokerTargets: async () => [],
+  collectLogChannelTargets: async () => [],
+  collectStorageDiskTargets: async () => [],
+  findViewTarget: async () => null,
+  findConfigTarget: async () => null,
+  findTranslationTarget: async () => null,
+  findAuthGuardTarget: async () => null,
+  findCacheStoreTarget: async () => null,
+  findDatabaseConnectionTarget: async () => null,
+  findBroadcastConnectionTarget: async () => null,
+  findQueueConnectionTarget: async () => null,
+  findRedisConnectionTarget: async () => null,
+  findMailMailerTarget: async () => null,
+  findPasswordBrokerTarget: async () => null,
+  findLogChannelTarget: async () => null,
+  findStorageDiskTarget: async () => null,
+  invalidateTargetCache: () => {},
+};
+
+function inactivePhpFrameworkTargets(
+  mountedTargets: readonly PhpFrameworkTargets[],
+): PhpFrameworkTargets {
+  return {
+    ...inertPhpFrameworkTargets,
+    invalidateTargetCache: () => {
+      for (const targets of mountedTargets) {
+        targets.invalidateTargetCache();
+      }
+    },
+  };
 }
 
 /**
@@ -1442,13 +1491,11 @@ function phpFrameworkTargetsFromLaravelTargets(
 function usePhpLaravelFrameworkTargetAdapter(
   dependencies: PhpFrameworkTargetsDependencies,
 ): PhpFrameworkTargets {
-  const isLaravelFrameworkActive = isPhpFrameworkProviderActive(
-    dependencies.activePhpFrameworkProviders,
-    "laravel",
-  );
+  const { frameworkIntelligence, ...shellDependencies } = dependencies;
   const laravelTargets = useLaravelFrameworkTargetAdapter({
-    ...dependencies,
-    isLaravelFrameworkActive,
+    ...shellDependencies,
+    activePhpFrameworkProviders: frameworkIntelligence.providers,
+    isLaravelFrameworkActive: frameworkIntelligence.hasProvider("laravel"),
   });
 
   return phpFrameworkTargetsFromLaravelTargets(laravelTargets);
@@ -1466,7 +1513,19 @@ export const phpFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCol
 export function usePhpFrameworkTargets(
   dependencies: PhpFrameworkTargetsDependencies,
 ): PhpFrameworkTargets {
-  return usePhpLaravelFrameworkTargetAdapter(dependencies);
+  const targetAdapters = phpFrameworkTargetCollectorAdapters.map((adapter) => ({
+    adapter,
+    targets: adapter.useTargets(dependencies),
+  }));
+
+  const activeTargets = targetAdapters.find(({ adapter }) =>
+    dependencies.frameworkIntelligence.hasProvider(adapter.providerId),
+  )?.targets;
+
+  return (
+    activeTargets ??
+    inactivePhpFrameworkTargets(targetAdapters.map(({ targets }) => targets))
+  );
 }
 
 export function useLaravelTargets(

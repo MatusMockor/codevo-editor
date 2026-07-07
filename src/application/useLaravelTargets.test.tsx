@@ -27,9 +27,25 @@ import type { FileEntry, TextSearchResult } from "../domain/workspace";
 import { phpLaravelAuthGuardConfigKey } from "../domain/phpLaravelAuth";
 import { phpLaravelDatabaseConnectionConfigKey } from "../domain/phpLaravelDatabase";
 import { phpLaravelStorageDiskConfigKey } from "../domain/phpLaravelStorage";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_FRAMEWORK_INTELLIGENCE = createPhpFrameworkIntelligence({
+  matchedProviderIds: ["laravel"],
+  profile: "laravel",
+  providers: PROVIDERS,
+});
+const GENERIC_FRAMEWORK_INTELLIGENCE = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "generic",
+  providers: [],
+});
+const NETTE_FRAMEWORK_INTELLIGENCE = createPhpFrameworkIntelligence({
+  matchedProviderIds: ["nette"],
+  profile: "nette",
+  providers: [phpNetteFrameworkProvider],
+});
 
 function fileEntry(path: string): FileEntry {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -165,7 +181,7 @@ function renderPhpFrameworkTargets(
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
-    activePhpFrameworkProviders: PROVIDERS,
+    frameworkIntelligence: LARAVEL_FRAMEWORK_INTELLIGENCE,
     ...overrides,
   };
 
@@ -231,7 +247,7 @@ describe("usePhpFrameworkTargets", () => {
 
   it("returns empty targets when no framework provider is active", async () => {
     const harness = renderPhpFrameworkTargets({
-      activePhpFrameworkProviders: [],
+      frameworkIntelligence: GENERIC_FRAMEWORK_INTELLIGENCE,
     });
 
     expect(
@@ -266,7 +282,7 @@ describe("usePhpFrameworkTargets", () => {
 
   it("keeps the Laravel adapter inert for a non-Laravel provider", async () => {
     const harness = renderPhpFrameworkTargets({
-      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+      frameworkIntelligence: NETTE_FRAMEWORK_INTELLIGENCE,
     });
 
     expect(

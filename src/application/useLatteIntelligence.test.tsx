@@ -2383,6 +2383,56 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
   });
 
+  it("offers current-presenter relative action and signal targets", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Product/ProductPresenter.php`,
+      }),
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link d}";
+    const offset = source.indexOf("d") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        insertText: "delete!",
+        kind: "link",
+        label: "delete!",
+      }),
+    );
+  });
+
+  it("offers route-default presenter actions discovered from Nette router files", async () => {
+    const routerSource = `<?php
+use Nette\\Application\\Routers\\Route;
+
+$router[] = new Route('/archive/<id>', 'Archive:show');
+$router[] = new Route('/admin', ['presenter' => 'Admin:Dashboard', 'action' => 'default']);
+`;
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/Router/RouterFactory.php": routerSource,
+    });
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{link A}";
+    const offset = source.indexOf("A") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("Archive:show");
+    expect(labels).toContain("Admin:Dashboard:default");
+  });
+
   it("filters targets by the typed prefix", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({ listDirectory, readFileContent });
