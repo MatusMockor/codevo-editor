@@ -1,7 +1,6 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   detectLatteIncludeCompletionAt,
-  detectLatteReferenceAt,
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
 import {
@@ -11,22 +10,17 @@ import {
   latteControlCompletionAt,
   latteControlCompletions,
   latteFormNameCompletionAt,
-  netteControlReferenceAt,
-  resolveNetteControlDefinition,
   resolveNetteCreateComponentReverse,
   type NetteControlCache,
 } from "./netteControlComponents";
 import {
   lattePresenterLinkCompletions,
-  resolveNetteLinkDefinition,
   resolveNettePresenterLink,
   type NettePresenterCache,
-  type NettePresenterInFlight,
 } from "./nettePresenterLinks";
 import {
   isLatteScanSkippedDirectory,
   latteTemplateCompletions,
-  resolveLatteTemplateDefinition,
   type LatteTemplateCache,
 } from "./netteTemplates";
 import {
@@ -36,60 +30,35 @@ import {
 import { isLatteMemberReferenceAt } from "./latteExpressionDetection";
 import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
-  resolveLatteBlockDefinition,
-} from "./latteBlockDefinitions";
-import {
   latteExpressionCompletions,
-  resolveLatteMemberDefinition,
-  resolveNettePresenterVariableDefinition,
   type LatteViewDataCache,
-  type LatteViewDataInFlight,
 } from "./latteExpressionIntelligence";
-import type {
-  LatteTemplateTypeCache,
-  LatteTemplateTypeInFlight,
-} from "./netteTemplateTypes";
+import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import {
   activeLatteWorkspaceContext,
   currentTemplatePath,
-  evictOtherRootCacheEntries,
   isLattePresenterLinkIntelligenceActive,
   offsetAtEditorPosition,
 } from "./latteIntelligenceRuntime";
 import type {
   LatteFrameworkCapabilities,
   LatteIntelligence,
-  LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
-
-const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = ["app", "templates"];
-const LATTE_TEMPLATE_CACHE_TTL_MS = 5_000;
-const LATTE_MAX_COMPLETIONS = 100;
-const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
-const LATTE_COMPONENT_CACHE_TTL_MS = 5_000;
-const MAX_LATTE_SCAN_DEPTH = 12;
-const MAX_LATTE_TEMPLATE_FILES = 2_000;
-
-export interface LatteProviderFlowCaches {
-  componentCache: NetteControlCache;
-  presenterCache: NettePresenterCache;
-  templateCache: LatteTemplateCache;
-  templateTypeCache: LatteTemplateTypeCache;
-  viewDataCache: LatteViewDataCache;
-}
-
-export interface LatteProviderFlowInFlight {
-  presenterInFlight: NettePresenterInFlight;
-  templateTypeInFlight: LatteTemplateTypeInFlight;
-  viewDataInFlight: LatteViewDataInFlight;
-}
-
-export interface LatteProviderFlowFactoryOptions {
-  caches: LatteProviderFlowCaches;
-  frameworkCapabilities: LatteFrameworkCapabilities;
-  getDependencies(): LatteIntelligenceDependencies;
-  inFlight: LatteProviderFlowInFlight;
-}
+import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
+import {
+  evictLatteProviderCaches,
+  LATTE_COMPONENT_CACHE_TTL_MS,
+  LATTE_MAX_COMPLETIONS,
+  LATTE_PRESENTER_CACHE_TTL_MS,
+  LATTE_TEMPLATE_CACHE_TTL_MS,
+  LATTE_TEMPLATE_SCAN_DIRECTORIES,
+  MAX_LATTE_SCAN_DEPTH,
+  MAX_LATTE_TEMPLATE_FILES,
+  type LatteProviderFlowFactoryOptions,
+} from "./latteProviderFlowContext";
+import {
+  provideLatteDefinition as provideLatteDefinitionFlow,
+} from "./latteDefinitionProvider";
 
 export interface LatteProviderFlows {
   provideLatteCompletions(
@@ -142,135 +111,6 @@ export function createLatteIntelligence(
 export function createLatteProviderFlows(
   options: LatteProviderFlowFactoryOptions,
 ): LatteProviderFlows {
-  const provideLatteDefinition = async (
-    source: string,
-    offset: number,
-  ): Promise<boolean> => {
-    const deps = options.getDependencies();
-    evictLatteProviderCaches(options.caches, deps.workspaceRoot);
-
-    const workspaceContext = activeLatteWorkspaceContext(
-      deps,
-      options.frameworkCapabilities,
-    );
-
-    if (!workspaceContext) {
-      return false;
-    }
-
-    const { isRequestedRootActive, requestedRoot } = workspaceContext;
-    const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
-
-    if (isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
-      const linkHandled = await resolveNetteLinkDefinition(
-        {
-          currentRelativePath: currentTemplateRelativePath,
-          deps,
-          frameworkCapabilities: options.frameworkCapabilities,
-          isDirectorySkipped: isLatteScanSkippedDirectory,
-          isRequestedRootActive,
-          maxDepth: MAX_LATTE_SCAN_DEPTH,
-          maxPresenters: MAX_LATTE_TEMPLATE_FILES,
-          requestedRoot,
-        },
-        options.frameworkCapabilities.detectLattePresenterLinkAt(source, offset),
-      );
-
-      if (linkHandled) {
-        return true;
-      }
-    }
-
-    const controlHandled = await resolveNetteControlDefinition(
-      deps,
-      requestedRoot,
-      isRequestedRootActive,
-      netteControlReferenceAt(source, offset),
-      currentTemplateRelativePath,
-    );
-
-    if (controlHandled) {
-      return true;
-    }
-
-    const variableHandled = await resolveNettePresenterVariableDefinition(
-      {
-        deps,
-        frameworkCapabilities: options.frameworkCapabilities,
-        isRequestedRootActive,
-        maxCompletions: LATTE_MAX_COMPLETIONS,
-        requestedRoot,
-        templateTypeCache: options.caches.templateTypeCache,
-        templateTypeInFlight: options.inFlight.templateTypeInFlight,
-        viewDataCache: options.caches.viewDataCache,
-        viewDataInFlight: options.inFlight.viewDataInFlight,
-      },
-      source,
-      offset,
-    );
-
-    if (variableHandled) {
-      return true;
-    }
-
-    const memberHandled = await resolveLatteMemberDefinition(
-      {
-        deps,
-        frameworkCapabilities: options.frameworkCapabilities,
-        isRequestedRootActive,
-        maxCompletions: LATTE_MAX_COMPLETIONS,
-        requestedRoot,
-        templateTypeCache: options.caches.templateTypeCache,
-        templateTypeInFlight: options.inFlight.templateTypeInFlight,
-        viewDataCache: options.caches.viewDataCache,
-        viewDataInFlight: options.inFlight.viewDataInFlight,
-      },
-      source,
-      offset,
-    );
-
-    if (memberHandled) {
-      return true;
-    }
-
-    const reference = detectLatteReferenceAt(source, offset);
-
-    if (reference?.kind === "control") {
-      return resolveNetteControlDefinition(
-        deps,
-        requestedRoot,
-        isRequestedRootActive,
-        { name: reference.name },
-        currentTemplateRelativePath,
-      );
-    }
-
-    if (reference?.kind === "block") {
-      return resolveLatteBlockDefinition(
-        deps,
-        source,
-        reference,
-        currentTemplateRelativePath,
-      );
-    }
-
-    if (reference && reference.kind !== "template") {
-      return false;
-    }
-
-    return resolveLatteTemplateDefinition(
-      {
-        currentTemplateRelativePath,
-        deps,
-        isRequestedRootActive,
-        requestedRoot,
-      },
-      reference,
-      source,
-      offset,
-    );
-  };
-
   const provideLatteCompletions = async (
     source: string,
     position: EditorPosition,
@@ -505,19 +345,9 @@ export function createLatteProviderFlows(
 
   return {
     provideLatteCompletions,
-    provideLatteDefinition,
+    provideLatteDefinition: (source, offset) =>
+      provideLatteDefinitionFlow(options, source, offset),
     provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition,
   };
-}
-
-function evictLatteProviderCaches(
-  caches: LatteProviderFlowCaches,
-  requestedRoot: string | null,
-): void {
-  evictOtherRootCacheEntries(caches.templateCache, requestedRoot);
-  evictOtherRootCacheEntries(caches.viewDataCache, requestedRoot);
-  evictOtherRootCacheEntries(caches.presenterCache, requestedRoot);
-  evictOtherRootCacheEntries(caches.componentCache, requestedRoot);
-  evictOtherRootCacheEntries(caches.templateTypeCache, requestedRoot);
 }
