@@ -59,8 +59,6 @@ import {
   parseLatteForeachCollection,
   type LatteVariableDeclaration,
 } from "../domain/latteSyntax";
-import { netteTemplateClassPropertiesFromSource } from "../domain/netteViewData";
-import type { NetteTemplateProperty } from "../domain/netteViewData";
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
@@ -124,6 +122,14 @@ import {
   type NetteViewDataEntry,
   type NetteViewDataInFlight,
 } from "./netteViewDataEntries";
+import {
+  latteTemplateTypePropertySightings as netteTemplateTypePropertySightings,
+  latteTemplateTypeVariableType as netteTemplateTypeVariableType,
+  mergeLatteResolvedTypes,
+  type LatteTemplateTypeCache,
+  type LatteTemplateTypeInFlight,
+  type LatteTemplateTypePropertySighting,
+} from "./netteTemplateTypes";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
@@ -339,30 +345,6 @@ export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
 export type LatteViewDataCache = NetteViewDataCache;
 type LatteViewDataInFlight = NetteViewDataInFlight;
 type LatteNetteViewDataEntry = NetteViewDataEntry;
-
-interface LatteTemplateTypePropertySighting {
-  property: NetteTemplateProperty;
-  source: string;
-}
-
-interface LatteTemplateTypeCacheEntry {
-  expiresAt: number;
-  sightingsByTypeName: Record<string, LatteTemplateTypePropertySighting[]>;
-}
-
-/**
- * Per-root cache of explicit `{templateType App\FooTemplate}` property scans.
- * The root entry contains a tiny type-name map because a single Latte template
- * can only name a handful of template types, while root-level eviction keeps
- * project switching isolated like the sibling caches.
- */
-export type LatteTemplateTypeCache = Record<string, LatteTemplateTypeCacheEntry>;
-
-/** In-flight template-type property scans keyed by requested root + type name. */
-type LatteTemplateTypeInFlight = Map<
-  string,
-  Promise<LatteTemplateTypePropertySighting[]>
->;
 
 /**
  * Everything one expression-completion request carries down the resolution
@@ -1373,7 +1355,7 @@ async function collectLatteVariableCandidates(
     );
   }
 
-  for (const sighting of await latteTemplateTypePropertySightings(
+  for (const sighting of await loadLatteTemplateTypePropertySightings(
     context,
     source,
   )) {
@@ -1446,7 +1428,7 @@ async function resolveLatteVariableType(
     return declaredType;
   }
 
-  const templateType = await latteTemplateTypeVariableType(
+  const templateType = await resolveLatteTemplateTypeVariableType(
     context,
     source,
     variableName,
@@ -1701,70 +1683,26 @@ async function currentNetteFactoryPresenterClassName(
 }
 
 /** Priority 2: typed properties on an explicit `{templateType FooTemplate}` class. */
-async function latteTemplateTypeVariableType(
+async function resolveLatteTemplateTypeVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
   variableName: string,
 ): Promise<string | null> {
-  const { deps, isRequestedRootActive } = context;
-  const target = `$${variableName}`;
-  const sightings = await latteTemplateTypePropertySightings(context, source);
-
-  if (!isRequestedRootActive()) {
-    return null;
-  }
-
-  const resolved: (string | null)[] = [];
-
-  for (const sighting of sightings) {
-    if (sighting.property.name !== target) {
-      continue;
-    }
-
-    resolved.push(
-      deps.resolveDeclaredType(sighting.source, sighting.property.type) ??
-        sighting.property.type,
-    );
-  }
-
-  return mergeLatteResolvedTypes(resolved);
+  return netteTemplateTypeVariableType(
+    latteTemplateTypeContext(context),
+    source,
+    variableName,
+  );
 }
 
-async function latteTemplateTypePropertySightings(
+function loadLatteTemplateTypePropertySightings(
   context: LatteExpressionResolutionContext,
   source: string,
 ): Promise<LatteTemplateTypePropertySighting[]> {
-  const typeNames = latteTemplateTypeNames(source);
-
-  if (typeNames.length === 0) {
-    return [];
-  }
-
-  const sightings: LatteTemplateTypePropertySighting[] = [];
-
-  for (const typeName of typeNames) {
-    sightings.push(...(await loadNetteTemplateTypeProperties(context, typeName)));
-
-    if (!context.isRequestedRootActive()) {
-      return [];
-    }
-  }
-
-  return sightings;
-}
-
-function latteTemplateTypeNames(source: string): string[] {
-  const names = new Set<string>();
-
-  for (const declaration of latteVariableDeclarations(source)) {
-    if (declaration.kind !== "templateType" || !declaration.typeName) {
-      continue;
-    }
-
-    names.add(declaration.typeName);
-  }
-
-  return Array.from(names);
+  return netteTemplateTypePropertySightings(
+    latteTemplateTypeContext(context),
+    source,
+  );
 }
 
 /** Priority 1: the first `{varType}` / `{parameters}` type for the variable. */
@@ -1983,125 +1921,25 @@ function loadLatteViewDataEntries(
   });
 }
 
-async function loadNetteTemplateTypeProperties(
-  context: LatteExpressionResolutionContext,
-  typeName: string,
-): Promise<LatteTemplateTypePropertySighting[]> {
-  const { requestedRoot, templateTypeCache, templateTypeInFlight } = context;
-  const cached = templateTypeCache[requestedRoot];
-
-  if (
-    cached &&
-    cached.expiresAt > Date.now() &&
-    Object.prototype.hasOwnProperty.call(cached.sightingsByTypeName, typeName)
-  ) {
-    return cached.sightingsByTypeName[typeName] ?? [];
-  }
-
-  const key = `${requestedRoot}\0${typeName}`;
-  const inFlight = templateTypeInFlight.get(key);
-
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const load = scanNetteTemplateTypeProperties(context, typeName).finally(() => {
-    if (templateTypeInFlight.get(key) === load) {
-      templateTypeInFlight.delete(key);
-    }
-  });
-
-  templateTypeInFlight.set(key, load);
-
-  return load;
-}
-
-async function scanNetteTemplateTypeProperties(
-  context: LatteExpressionResolutionContext,
-  typeName: string,
-): Promise<LatteTemplateTypePropertySighting[]> {
+function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {
   const {
+    templateTypeCache,
     deps,
     isRequestedRootActive,
     requestedRoot,
-    templateTypeCache,
+    templateTypeInFlight,
   } = context;
-  const shortName = shortTypeName(typeName);
 
-  if (!shortName) {
-    return [];
-  }
-
-  const results = await deps.searchText(
+  return {
+    cache: templateTypeCache,
+    deps,
+    inFlight: templateTypeInFlight,
+    isRequestedRootActive,
+    phpExtension: PHP_EXTENSION,
     requestedRoot,
-    `class ${shortName}`,
-    LATTE_TEMPLATE_TYPE_SEARCH_LIMIT,
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const visitedPaths = new Set<string>();
-  const sightings: LatteTemplateTypePropertySighting[] = [];
-
-  for (const result of results) {
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (visitedPaths.has(result.path) || !result.path.endsWith(PHP_EXTENSION)) {
-      continue;
-    }
-
-    visitedPaths.add(result.path);
-
-    let content: string;
-
-    try {
-      content = await deps.readFileContent(result.path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    if (!phpSourceDefinesType(content, typeName)) {
-      continue;
-    }
-
-    for (const property of netteTemplateClassPropertiesFromSource(
-      content,
-      shortName,
-    )) {
-      sightings.push({ property, source: content });
-    }
-  }
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const existing =
-    templateTypeCache[requestedRoot]?.expiresAt > Date.now()
-      ? templateTypeCache[requestedRoot]?.sightingsByTypeName
-      : undefined;
-
-  templateTypeCache[requestedRoot] = {
-    expiresAt: Date.now() + LATTE_TEMPLATE_TYPE_CACHE_TTL_MS,
-    sightingsByTypeName: {
-      ...(existing ?? {}),
-      [typeName]: sightings,
-    },
+    searchLimit: LATTE_TEMPLATE_TYPE_SEARCH_LIMIT,
+    ttlMs: LATTE_TEMPLATE_TYPE_CACHE_TTL_MS,
   };
-
-  return sightings;
 }
 
 /**
@@ -2247,27 +2085,6 @@ async function resolveNetteSightingType(
 }
 
 /**
- * Conservative merge of the types a variable resolved to across its presenter
- * sightings: unresolved sightings are ignored, but two DIFFERENT resolved types
- * conflict and yield `null` (no completions, no guessing).
- */
-function mergeLatteResolvedTypes(types: readonly (string | null)[]): string | null {
-  const resolved = types.filter((type): type is string => Boolean(type));
-
-  if (resolved.length === 0) {
-    return null;
-  }
-
-  const first = resolved[0] ?? "";
-  const normalize = (type: string) =>
-    type.trim().replace(/^\\+/, "").toLowerCase();
-
-  return resolved.every((type) => normalize(type) === normalize(first))
-    ? first
-    : null;
-}
-
-/**
  * The element type of a collection type: `X[]` → `X`, a generic
  * `iterable<X>` / `Collection<int, X>` → its last type argument. A type with no
  * recognisable element shape yields `null` (conservative - no member completion
@@ -2398,36 +2215,6 @@ function phpClassPositionInSource(
     source,
     match.index + match[0].length - className.length,
   );
-}
-
-function phpSourceDefinesType(source: string, typeName: string): boolean {
-  const normalizedType = typeName.replace(/^\\+/, "");
-  const shortName = shortTypeName(typeName);
-
-  if (!shortName) {
-    return false;
-  }
-
-  const namespace = phpNamespaceName(source);
-  const classPattern = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
-
-  for (const match of source.matchAll(classPattern)) {
-    const className = match[1] ?? "";
-
-    if (className !== shortName) {
-      continue;
-    }
-
-    if (!normalizedType.includes("\\")) {
-      return true;
-    }
-
-    const fullyQualifiedName = namespace ? `${namespace}\\${className}` : className;
-
-    return fullyQualifiedName === normalizedType;
-  }
-
-  return false;
 }
 
 function phpNamespaceName(source: string): string | null {
