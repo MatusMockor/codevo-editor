@@ -60,7 +60,6 @@ import {
 import {
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   latteControlCompletionAt,
   latteControlCompletions,
@@ -125,6 +124,13 @@ import {
   resolveLatteVariableType as resolveNetteLatteVariableType,
   type LatteVariableCandidate,
 } from "./latteVariableTypes";
+import {
+  activeLatteWorkspaceContext,
+  currentTemplatePath,
+  evictOtherRootCacheEntries,
+  isLattePresenterLinkIntelligenceActive,
+  offsetAtEditorPosition,
+} from "./latteIntelligenceRuntime";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplates";
@@ -463,18 +469,16 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
+    const workspaceContext = activeLatteWorkspaceContext(
+      deps,
+      frameworkCapabilities,
+    );
+
+    if (!workspaceContext) {
       return false;
     }
 
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
-      return false;
-    }
-
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const { isRequestedRootActive, requestedRoot } = workspaceContext;
     const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
 
     if (isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
@@ -596,18 +600,16 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
+    const workspaceContext = activeLatteWorkspaceContext(
+      deps,
+      frameworkCapabilities,
+    );
+
+    if (!workspaceContext) {
       return [];
     }
 
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
-      return [];
-    }
-
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const { isRequestedRootActive, requestedRoot } = workspaceContext;
     const offset = offsetAtEditorPosition(source, position);
     const includeCompletion = detectLatteIncludeCompletionAt(source, offset);
 
@@ -728,18 +730,16 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
+    const workspaceContext = activeLatteWorkspaceContext(
+      deps,
+      frameworkCapabilities,
+    );
+
+    if (!workspaceContext) {
       return false;
     }
 
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
-      return false;
-    }
-
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const { isRequestedRootActive, requestedRoot } = workspaceContext;
     const detection = frameworkCapabilities.detectPhpPresenterLinkAt(source, offset);
 
     if (detection) {
@@ -784,16 +784,16 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (
-      !isLatteSemanticActive(deps, frameworkCapabilities) ||
-      !isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)
-    ) {
+    const workspaceContext = activeLatteWorkspaceContext(
+      deps,
+      frameworkCapabilities,
+    );
+
+    if (!workspaceContext) {
       return null;
     }
 
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
+    if (!isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
       return null;
     }
 
@@ -807,8 +807,7 @@ export function createLatteIntelligence(
       return null;
     }
 
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
+    const { isRequestedRootActive, requestedRoot } = workspaceContext;
 
     // Reuses the SAME per-root discovery + cache the Latte-side `{link}` /
     // `n:href` completion uses (`presenterCache` / `presenterInFlight`), so a
@@ -871,51 +870,6 @@ export function useLatteIntelligence(
   }
 
   return apiRef.current;
-}
-
-function isLatteSemanticActive(
-  deps: LatteIntelligenceDependencies,
-  frameworkCapabilities: LatteFrameworkCapabilities,
-): boolean {
-  return (
-    deps.isSemanticIntelligenceActive &&
-    frameworkCapabilities.supportsLatteTemplateIntelligence(
-      deps.frameworkIntelligence.providers,
-    )
-  );
-}
-
-function isLattePresenterLinkIntelligenceActive(
-  deps: LatteIntelligenceDependencies,
-  frameworkCapabilities: LatteFrameworkCapabilities,
-): boolean {
-  return frameworkCapabilities.supportsLattePresenterLinkIntelligence(
-    deps.frameworkIntelligence.providers,
-  );
-}
-
-/**
- * Evicts every cached root except `requestedRoot` (spec §6b cache lifecycle):
- * with a single active project tab a per-root map holds at most one entry, so
- * switching projects - or closing the active one, `requestedRoot === null` -
- * no longer leaves a previous root's data cached forever. Called synchronously
- * at the very top of every async flow, before that flow's first `await`, so it
- * always runs against a guaranteed-fresh `requestedRoot` (no stale-await risk);
- * the per-cache TTL then bounds the staleness of whatever one entry remains.
- * Generic over the entry type so the template listing and the presenter
- * view-data cache share one eviction rule.
- */
-function evictOtherRootCacheEntries<Entry>(
-  cache: Record<string, Entry>,
-  requestedRoot: string | null,
-): void {
-  for (const cachedRoot of Object.keys(cache)) {
-    if (workspaceRootKeysEqual(cachedRoot, requestedRoot)) {
-      continue;
-    }
-
-    delete cache[cachedRoot];
-  }
 }
 
 // --- expression completions (member / filter / variable) -------------------
@@ -1180,36 +1134,4 @@ async function latteCandidateViewNames(
     requestedRoot,
     templateRelativePath,
   });
-}
-
-function currentTemplatePath(
-  deps: LatteIntelligenceDependencies,
-  requestedRoot: string,
-): string {
-  const document = deps.getActiveDocument();
-
-  if (!document) {
-    return "";
-  }
-
-  return deps.toRelativePath(requestedRoot, document.path);
-}
-
-function offsetAtEditorPosition(source: string, position: EditorPosition): number {
-  const lines = source.split("\n");
-  const targetLine = Math.max(0, position.lineNumber - 1);
-
-  if (targetLine >= lines.length) {
-    return source.length;
-  }
-
-  let offset = 0;
-
-  for (let line = 0; line < targetLine; line += 1) {
-    offset += (lines[line]?.length ?? 0) + 1;
-  }
-
-  const column = Math.max(0, position.column - 1);
-
-  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
