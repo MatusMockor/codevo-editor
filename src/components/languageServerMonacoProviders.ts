@@ -4668,28 +4668,6 @@ async function provideCompletionItems(
     return { suggestions: nettePhpLinkSuggestions };
   }
 
-  // Kick off the language-server completion before awaiting the (potentially
-  // framework-backed) method collectors so the two run concurrently instead of
-  // adding their latencies serially on every keystroke.
-  const lspCompletion = requestPhpLanguageServerCompletion(
-    context,
-    model,
-    position,
-  );
-  const methodSuggestions = await phpMethodSuggestions(
-    monaco,
-    context,
-    source,
-    position,
-    range,
-    documentContext,
-  );
-
-  if (!isPhpDocumentContextActive(context, documentContext)) {
-    void lspCompletion.catch(() => undefined);
-    return { suggestions: [] };
-  }
-
   const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(
     source,
     position,
@@ -4701,10 +4679,37 @@ async function provideCompletionItems(
   const isMemberOrStaticAccessCompletion = Boolean(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
-  const isScopedCompletion = Boolean(
-    isMemberOrStaticAccessCompletion ||
-      phpLaravelScopedStringCompletionContextAt(source, position),
+  const isFrameworkStringCompletion = Boolean(
+    phpLaravelScopedStringCompletionContextAt(source, position),
   );
+  const isScopedCompletion = Boolean(
+    isMemberOrStaticAccessCompletion || isFrameworkStringCompletion,
+  );
+
+  // Kick off the language-server completion before awaiting the (potentially
+  // framework-backed) method collectors so the two run concurrently instead of
+  // adding their latencies serially on every keystroke. Laravel/framework
+  // string contexts are the exception: phpactor has no useful semantic signal
+  // inside `route('...')`, `config('...')`, `DB::connection('...')`, etc., and
+  // its generic string completions can drown out or duplicate our framework
+  // targets. In that context the local framework collector is authoritative.
+  const lspCompletion = isFrameworkStringCompletion
+    ? null
+    : requestPhpLanguageServerCompletion(context, model, position);
+  const methodSuggestions = await phpMethodSuggestions(
+    monaco,
+    context,
+    source,
+    position,
+    range,
+    documentContext,
+  );
+
+  if (!isPhpDocumentContextActive(context, documentContext)) {
+    void lspCompletion?.catch(() => undefined);
+    return { suggestions: [] };
+  }
+
   const variableSuggestions: Monaco.languages.CompletionItem[] =
     methodSuggestions.length > 0 || isScopedCompletion
       ? []
@@ -4737,6 +4742,14 @@ async function provideCompletionItems(
   const localSuggestions = [...methodSuggestions, ...variableSuggestions];
   const suggestions = [...localSuggestions, ...snippetSuggestions];
 
+  if (isFrameworkStringCompletion) {
+    return { suggestions };
+  }
+
+  if (!lspCompletion) {
+    return { suggestions };
+  }
+
   const resolution = await lspCompletion;
 
   // The locally-computed method/postfix/variable/snippet suggestions are
@@ -4764,6 +4777,8 @@ async function provideCompletionItems(
   }
 
   const completion = resolution.completion;
+  const localSemanticShadowNames =
+    localSemanticCompletionShadowNames(monaco, localSuggestions);
   const lspSuggestions = completion.items.flatMap((item, index) => {
     const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
 
@@ -4774,6 +4789,15 @@ async function provideCompletionItems(
         item,
         kind,
         Boolean(staticAccessCompletionContext),
+      )
+    ) {
+      return [];
+    }
+
+    if (
+      lspCompletionShadowedByLocalSemanticCompletion(
+        item,
+        localSemanticShadowNames,
       )
     ) {
       return [];
@@ -4809,6 +4833,37 @@ async function provideCompletionItems(
       ...snippetSuggestions,
     ]),
   };
+}
+
+function localSemanticCompletionShadowNames(
+  monaco: MonacoApi,
+  items: readonly Monaco.languages.CompletionItem[],
+): Set<string> {
+  const names = new Set<string>();
+
+  for (const item of items) {
+    if (
+      item.kind !== monaco.languages.CompletionItemKind.Field &&
+      item.kind !== monaco.languages.CompletionItemKind.Function &&
+      item.kind !== monaco.languages.CompletionItemKind.Event
+    ) {
+      continue;
+    }
+
+    names.add(completionItemLabelText(item.label).toLowerCase());
+  }
+
+  return names;
+}
+
+function lspCompletionShadowedByLocalSemanticCompletion(
+  item: LanguageServerCompletionList["items"][number],
+  localSemanticShadowNames: ReadonlySet<string>,
+): boolean {
+  const callableName = phpCallableCompletionName(item.label);
+  const name = callableName ?? item.label;
+
+  return localSemanticShadowNames.has(name.toLowerCase());
 }
 
 type PhpLanguageServerCompletionResolution =

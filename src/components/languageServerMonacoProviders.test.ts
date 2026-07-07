@@ -1278,6 +1278,20 @@ describe("registerLanguageServerMonacoProviders", () => {
 
   it("inserts Laravel database connection completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: "pgbad",
+            kind: null,
+            label: "pgbad",
+          },
+        ],
+      },
+    });
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "config/database.php",
@@ -1294,12 +1308,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         content:
           "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
       },
-      featuresGateway: featuresGateway({
-        completion: {
-          isIncomplete: false,
-          items: [],
-        },
-      }),
+      featuresGateway: gateway,
       providePhpMethodCompletions,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
@@ -1308,12 +1317,12 @@ describe("registerLanguageServerMonacoProviders", () => {
       model({
         lineContent: "    return DB::connection('pg');",
         word: {
-          endColumn: 31,
+          endColumn: 30,
           startColumn: 29,
         },
       }),
       {
-        column: 31,
+        column: 30,
         lineNumber: 4,
       },
     );
@@ -1336,10 +1345,11 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalledWith(
       "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
       {
-        column: 31,
+        column: 30,
         lineNumber: 4,
       },
     );
+    expect(gateway.completion).not.toHaveBeenCalled();
   });
 
   it("inserts Laravel translation key completions as plain string suffixes", async () => {
@@ -1963,6 +1973,61 @@ function show($user): void
       suggestions: [],
     });
     expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
+
+  it("does not offer phpactor noise inside Laravel scoped strings", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "string",
+            documentation: null,
+            insertText: "authenticate",
+            kind: null,
+            label: "authenticate",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = `<?php
+function show(): void
+{
+    Auth::guard('zz');
+}
+`;
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          content: source,
+          lineContent: "    Auth::guard('zz');",
+          word: {
+            endColumn: 20,
+            startColumn: 18,
+          },
+        }),
+        {
+          column: 20,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [],
+    });
+    expect(providePhpMethodCompletions).toHaveBeenCalled();
+    expect(gateway.completion).not.toHaveBeenCalled();
   });
 
   it("does not offer local variables as a fallback inside Laravel validation rule strings", async () => {
@@ -2937,6 +3002,138 @@ function store($request): void
             description: "relation - App\\Models\\Post",
             detail: "",
             label: "comments",
+          },
+        }),
+      ],
+    });
+  });
+
+  it("lets local Laravel relation completions shadow same-named phpactor methods", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail:
+              "App\\Models\\Post::comments(): Illuminate\\Database\\Eloquent\\Relations\\HasMany",
+            documentation: null,
+            insertText: "comments",
+            kind: 2,
+            label: "comments",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "relation" as const,
+        name: "comments",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Relations\\HasMany",
+      },
+    ]);
+    const source = "<?php\nfunction show(Post $post): void\n{\n    $post->com\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          content: source,
+          lineContent: "    $post->com",
+          word: {
+            endColumn: 15,
+            startColumn: 12,
+          },
+        }),
+        {
+          column: 15,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        expect.objectContaining({
+          kind: 5,
+          label: {
+            description: "relation - App\\Models\\Post",
+            detail: "",
+            label: "comments",
+          },
+        }),
+      ],
+    });
+  });
+
+  it("lets local Laravel scope completions shadow same-named phpactor methods", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail:
+              "App\\Models\\Post::active(): Illuminate\\Database\\Eloquent\\Builder",
+            documentation: null,
+            insertText: "active",
+            kind: 2,
+            label: "active",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "scope" as const,
+        name: "active",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    const source = "<?php\nPost::act\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          content: source,
+          lineContent: "Post::act",
+          word: {
+            endColumn: 10,
+            startColumn: 7,
+          },
+        }),
+        {
+          column: 10,
+          lineNumber: 2,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        expect.objectContaining({
+          kind: 3,
+          label: {
+            description: "scope - App\\Models\\Post",
+            detail: "()",
+            label: "active",
           },
         }),
       ],
