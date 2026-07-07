@@ -147,6 +147,7 @@ const editorSurfaceMocks = vi.hoisted(() => ({
       source: string,
       range: { end: number; start: number },
     ) => unknown;
+    providePhpFrameworkDefinition?: (source: string, offset: number) => unknown;
     providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
   } | null,
 }));
@@ -168,6 +169,10 @@ vi.mock("./languageServerMonacoProviders", async () => {
         ) => unknown;
         provideBladeDefinition?: (source: string, offset: number) => unknown;
         providePhpCodeActions?: (source: string) => unknown;
+        providePhpFrameworkDefinition?: (
+          source: string,
+          offset: number,
+        ) => unknown;
         providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
       },
     ) => {
@@ -488,7 +493,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("forwards providePhpLaravelDefinition into the language server provider context", async () => {
+  it("forwards providePhpFrameworkDefinition into the language server provider context", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\n$value = config('app.name');\n",
       language: "php",
@@ -504,7 +509,7 @@ describe("EditorSurface", () => {
     };
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = createMonaco(model);
-    const providePhpLaravelDefinition = vi.fn(async () => true);
+    const providePhpFrameworkDefinition = vi.fn(async () => true);
 
     await act(async () => {
       root.render(
@@ -535,7 +540,7 @@ describe("EditorSurface", () => {
           onRevealTargetHandled={vi.fn()}
           onRevertChangeHunk={vi.fn()}
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
-          providePhpLaravelDefinition={providePhpLaravelDefinition}
+          providePhpFrameworkDefinition={providePhpFrameworkDefinition}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
         />,
@@ -545,14 +550,14 @@ describe("EditorSurface", () => {
 
     const context = editorSurfaceMocks.registeredContext;
 
-    expect(context?.providePhpLaravelDefinition).toEqual(expect.any(Function));
+    expect(context?.providePhpFrameworkDefinition).toEqual(expect.any(Function));
 
-    await context?.providePhpLaravelDefinition?.(
+    await context?.providePhpFrameworkDefinition?.(
       "<?php\n$value = config('app.name');\n",
       24,
     );
 
-    expect(providePhpLaravelDefinition).toHaveBeenCalledWith(
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
       "<?php\n$value = config('app.name');\n",
       24,
     );

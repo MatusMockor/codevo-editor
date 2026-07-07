@@ -396,7 +396,7 @@ export interface LanguageServerMonacoProviderContext {
   /**
    * Resolves and navigates to the Blade target (a view referenced by
    * `@include`/`@extends`/…, or an `<x-...>` component) at `offset` inside a
-   * `.blade.php` document. Like {@link providePhpLaravelDefinition}, the
+   * `.blade.php` document. Like {@link providePhpFrameworkDefinition}, the
    * controller performs the navigation itself and resolves `true` when it
    * handled the request (so the Monaco provider returns `null`); it resolves
    * `false` when the offset is not a resolvable Blade reference. Per-project
@@ -489,16 +489,25 @@ export interface LanguageServerMonacoProviderContext {
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
   /**
-   * Resolves and navigates to the target of a Laravel global string-helper
-   * literal (`config`, `view`, `__`/`trans`, `env`) located at `offset`.
+   * Resolves and navigates to the target of a framework-owned PHP string
+   * literal (`config`, `view`, `__`/`trans`, `env`, etc.) located at `offset`.
    *
    * Because the editor hosts a single Monaco model and opens files through its
    * own tab system (`limitNavigationResultsToOpenModels`), the callback performs
    * the navigation itself and resolves `true` when it handled the request. The
    * definition provider then returns `null` so Monaco does not also attempt to
    * navigate to a — possibly not-yet-open — model. It resolves `false` when the
-   * offset is not a (resolvable) Laravel literal, leaving the regular phpactor
+   * offset is not a resolvable framework literal, leaving the regular phpactor
    * definition flow untouched.
+   */
+  providePhpFrameworkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  /**
+   * @deprecated Use {@link providePhpFrameworkDefinition}. Kept as a narrow
+   * compatibility alias for callers still named after the original Laravel-only
+   * callback.
    */
   providePhpLaravelDefinition?(
     source: string,
@@ -1984,7 +1993,7 @@ async function provideDefinition(
     return null;
   }
 
-  if (await provideLaravelStringLiteralDefinition(context, model, position)) {
+  if (await providePhpFrameworkStringLiteralDefinition(context, model, position)) {
     return null;
   }
 
@@ -2001,18 +2010,22 @@ async function provideDefinition(
 }
 
 /**
- * Attempts Laravel global string-helper navigation (config / view / trans / env)
- * for a PHP document. Returns `true` when the request was handled (the target
- * file was opened by the controller), so the caller stops and Monaco does not
- * navigate. Per-project isolation is enforced inside the controller callback,
- * which re-checks the active workspace after each await and drops stale results.
+ * Attempts framework-owned PHP string-literal navigation (config / view / trans
+ * / env, etc.) for a PHP document. Returns `true` when the request was handled
+ * (the target file was opened by the controller), so the caller stops and Monaco
+ * does not navigate. Per-project isolation is enforced inside the controller
+ * callback, which re-checks the active workspace after each await and drops
+ * stale results.
  */
-async function provideLaravelStringLiteralDefinition(
+async function providePhpFrameworkStringLiteralDefinition(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<boolean> {
-  if (!context.providePhpLaravelDefinition) {
+  const provideDefinition =
+    context.providePhpFrameworkDefinition ?? context.providePhpLaravelDefinition;
+
+  if (!provideDefinition) {
     return false;
   }
 
@@ -2026,7 +2039,7 @@ async function provideLaravelStringLiteralDefinition(
   const offset = offsetAtMonacoPosition(source, position);
 
   try {
-    return await context.providePhpLaravelDefinition(source, offset);
+    return await provideDefinition(source, offset);
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);

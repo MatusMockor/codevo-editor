@@ -276,6 +276,14 @@ interface EditorSurfaceProps {
     source: string,
     position: EditorPosition,
   ): boolean;
+  providePhpFrameworkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  /**
+   * @deprecated Use providePhpFrameworkDefinition. Kept so older callers can
+   * cross the provider boundary without changing behavior.
+   */
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -370,11 +378,16 @@ function EditorSurfaceComponent({
   provideNettePhpLinkCompletions = async () => [],
   isPhpFrameworkStringCompletionContext = () => false,
   providePhpCodeActions = async () => [],
-  providePhpLaravelDefinition = async () => false,
+  providePhpFrameworkDefinition,
+  providePhpLaravelDefinition,
   providePhpMethodCompletions,
   providePhpMethodSignature,
   providePhpParameterInlayHints = async () => [],
 }: EditorSurfaceProps) {
+  const resolvedProvidePhpFrameworkDefinition =
+    providePhpFrameworkDefinition ??
+    providePhpLaravelDefinition ??
+    noopPhpFrameworkDefinition;
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -515,7 +528,9 @@ function EditorSurfaceComponent({
   const phpFrameworkStringCompletionContextRef = useRef(
     isPhpFrameworkStringCompletionContext,
   );
-  const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
+  const phpFrameworkDefinitionRef = useRef(
+    resolvedProvidePhpFrameworkDefinition,
+  );
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
@@ -743,8 +758,8 @@ function EditorSurfaceComponent({
   }, [isPhpFrameworkStringCompletionContext]);
 
   useEffect(() => {
-    phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
-  }, [providePhpLaravelDefinition]);
+    phpFrameworkDefinitionRef.current = resolvedProvidePhpFrameworkDefinition;
+  }, [resolvedProvidePhpFrameworkDefinition]);
 
   useEffect(() => {
     phpMethodCompletionsRef.current = providePhpMethodCompletions;
@@ -893,8 +908,8 @@ function EditorSurfaceComponent({
         phpFrameworkStringCompletionContextRef.current(source, position),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
-      providePhpLaravelDefinition: (source, offset) =>
-        phpLaravelDefinitionRef.current(source, offset),
+      providePhpFrameworkDefinition: (source, offset) =>
+        phpFrameworkDefinitionRef.current(source, offset),
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
@@ -3802,6 +3817,7 @@ const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
 const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 const noopLocalPhpDiagnosticsChange = () => undefined;
+const noopPhpFrameworkDefinition = async () => false;
 // Stable empty identities so an absent breadcrumb symbol set / path does not
 // produce a fresh array each render and break the breadcrumb path memo.
 const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];

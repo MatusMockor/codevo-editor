@@ -7859,13 +7859,13 @@ function store($request): void
     });
   });
 
-  it("navigates a Laravel string-helper definition and skips phpactor when handled", async () => {
+  it("navigates a framework string-helper definition and skips phpactor when handled", async () => {
     const registered = createRegisteredProviders();
     const source = "<?php\n$value = config('app.name');\n";
     const offset = source.indexOf("app.name");
     const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
     const column = offset - lineStart + 1;
-    const providePhpLaravelDefinition = vi.fn(async () => true);
+    const providePhpFrameworkDefinition = vi.fn(async () => true);
     const gateway = featuresGateway({
       definition: [
         {
@@ -7883,7 +7883,7 @@ function store($request): void
         savedContent: source,
       },
       featuresGateway: gateway,
-      providePhpLaravelDefinition,
+      providePhpFrameworkDefinition,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -7893,12 +7893,12 @@ function store($request): void
         { column, lineNumber: 2 },
       ),
     ).resolves.toBeNull();
-    expect(providePhpLaravelDefinition).toHaveBeenCalledTimes(1);
-    expect(providePhpLaravelDefinition).toHaveBeenCalledWith(source, offset);
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledTimes(1);
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(source, offset);
     expect(gateway.definition).not.toHaveBeenCalled();
   });
 
-  it("falls back to phpactor definition when the Laravel callback does not handle the offset", async () => {
+  it("falls back to phpactor definition when the legacy Laravel callback does not handle the offset", async () => {
     const registered = createRegisteredProviders();
     const source = "<?php\n$user = $repository->find();\n";
     const providePhpLaravelDefinition = vi.fn(async () => false);
@@ -11985,6 +11985,9 @@ function providerContext(
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
+    providePhpFrameworkDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpFrameworkDefinition"]
+    >;
     providePhpLaravelDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpLaravelDefinition"]
     >;
@@ -12038,6 +12041,7 @@ function providerContext(
           phpLaravelFrameworkProvider,
         ])),
     providePhpCodeActions: overrides.providePhpCodeActions,
+    providePhpFrameworkDefinition: overrides.providePhpFrameworkDefinition,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
