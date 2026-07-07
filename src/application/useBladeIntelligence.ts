@@ -22,9 +22,8 @@
  * target collectors and navigation primitives are injected (pass-through) so the
  * expensive engines are owned by the controller and merely wired here.
  */
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import type {
   BladeCompletionItem,
   BladeIntelligence,
@@ -38,20 +37,12 @@ import {
   provideBladeCodeActions as provideBladeCodeActionsFromProvider,
 } from "./bladeCodeActionProvider";
 import {
-  collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
-  invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
-} from "./bladeComponentDiscovery";
-import { createBladeViewVariableResolver } from "./bladeViewVariableResolver";
-import {
-  ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
-  invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
-} from "./bladeViewDataCache";
-import {
   provideBladeCompletions as provideBladeCompletionsFromProvider,
 } from "./bladeCompletionProvider";
 import {
   provideBladeDefinition as provideBladeDefinitionFromProvider,
 } from "./bladeDefinitionProvider";
+import { useBladeIntelligenceCaches } from "./useBladeIntelligenceCaches";
 
 export type {
   BladeCompletionItem,
@@ -93,132 +84,27 @@ export function useBladeIntelligence(
   const activePhpFrameworkProviders = frameworkIntelligence.providers;
   const isLaravelFrameworkActive = frameworkIntelligence.isLaravel;
 
-  // Per-root cache of controller view-data entries (`view('x', [...])`,
-  // `View::make`, `->with(...)`, `compact(...)` sources) feeding Blade variable
-  // and member completions. Keyed by workspace root and reset on workspace
-  // switch / reindex like the migration/provider caches, and invalidated when
-  // any PHP file in the root changes, so the blade completion hot path never
-  // re-runs the workspace text search. The in-flight map dedupes concurrent
-  // loads; a load only writes the cache while it is still the registered load
-  // for its root (mid-load invalidation drops the result).
-  const bladeViewDataEntriesByRootRef = useRef<
-    Record<string, BladeViewDataEntry[]>
-  >({});
-  const bladeViewDataEntriesLoadInFlightRef = useRef<
-    Map<string, Promise<BladeViewDataEntry[] | null>>
-  >(new Map());
-  // Per-root cache of Blade component tag names (anonymous blade views under
-  // resources/views/components plus class-based components under
-  // app/View/Components) fed into `<x-` completion. Keyed by workspace root,
-  // reset on workspace switch / reindex and invalidated when a file under
-  // either component directory changes, so names never leak across project
-  // tabs and never go stale after a component is added/removed.
-  const bladeComponentNamesByRootRef = useRef<Record<string, string[]>>({});
-
-  // Loads (and caches per root) the controller sources that pass data to Blade
-  // views: one workspace text search per query, each hit parsed once into its
-  // view-data bindings. The hot completion path then works from the in-memory
-  // entries. Per-project isolation: the requested root is captured up front and
-  // re-checked after EVERY await; a stale root drops the result and never
-  // writes the cache. Concurrent callers share the same in-flight promise.
-  const ensureBladeViewDataEntriesLoaded = useCallback(
-    async (requestedRoot: string): Promise<BladeViewDataEntry[] | null> => {
-      return loadBladeViewDataEntries(requestedRoot, {
-        currentWorkspaceRootRef,
-        entriesByRootRef: bladeViewDataEntriesByRootRef,
-        frameworkProviders: activePhpFrameworkProviders,
-        loadInFlightRef: bladeViewDataEntriesLoadInFlightRef,
-        readNavigationFileContent,
-        textSearch,
-      });
-    },
-    [
-      activePhpFrameworkProviders,
-      currentWorkspaceRootRef,
-      readNavigationFileContent,
-      textSearch,
-    ],
-  );
-
-  // Drops the cached view-data entries for `root` when any PHP file changes
-  // (controllers can live anywhere - app/, routes/, modules/ - so the
-  // invalidation is deliberately broad). The next Blade completion reloads
-  // lazily; deleting the in-flight entry also prevents a racing load from
-  // caching pre-change sources.
-  const invalidateBladeViewDataEntriesForPath = useCallback(
-    (root: string, path: string): void => {
-      invalidateBladeViewDataEntriesForCachePath(
-        bladeViewDataEntriesByRootRef,
-        bladeViewDataEntriesLoadInFlightRef,
-        root,
-        path,
-      );
-    },
-    [],
-  );
-
   const {
+    collectBladeComponentNames,
     collectBladeForeachLoopVariables,
     collectBladeViewVariablesWithDisplayTypes,
+    invalidateBladeComponentNamesForPath,
+    invalidateBladeViewDataEntriesForPath,
     resolveBladeForeachElementTypeForVariable,
     resolveBladeViewVariableTypeForView,
-  } = useMemo(
-    () =>
-      createBladeViewVariableResolver({
-        currentWorkspaceRootRef,
-        ensureBladeViewDataEntriesLoaded,
-        resolvePhpClassPropertyOrRelationType,
-        resolvePhpDeclaredType,
-        resolvePhpExpressionType,
-        workspaceRoot,
-      }),
-    [
-      currentWorkspaceRootRef,
-      ensureBladeViewDataEntriesLoaded,
-      resolvePhpClassPropertyOrRelationType,
-      resolvePhpDeclaredType,
-      resolvePhpExpressionType,
-      workspaceRoot,
-    ],
-  );
-
-  // Returns the workspace's Blade component tag names for `<x-` completion:
-  // anonymous blade views under resources/views/components (dotted names
-  // without the `.blade.php` / `/index.blade.php` suffix) merged with
-  // class-based components under app/View/Components (PascalCase segments
-  // kebab-cased, Laravel convention). The scan result is cached per workspace
-  // root (see bladeComponentNamesByRootRef) so the completion hot path stays
-  // off the file system; the walk re-checks the active workspace after each
-  // readDirectory await and before the cache write, so a tab switch drops
-  // in-flight results (per-project isolation).
-  const collectBladeComponentNames = useCallback(async (): Promise<string[]> => {
-    return collectBladeComponentNamesFromWorkspace({
-      cacheRef: bladeComponentNamesByRootRef,
-      currentWorkspaceRootRef,
-      relativeWorkspacePath,
-      workspaceFiles,
-      workspaceRoot,
-    });
-  }, [
+    resetBladeIntelligenceCaches,
+  } = useBladeIntelligenceCaches({
     currentWorkspaceRootRef,
+    frameworkProviders: activePhpFrameworkProviders,
+    readNavigationFileContent,
     relativeWorkspacePath,
+    resolvePhpClassPropertyOrRelationType,
+    resolvePhpDeclaredType,
+    resolvePhpExpressionType,
+    textSearch,
     workspaceFiles,
     workspaceRoot,
-  ]);
-
-  // Drops the cached component names for `root` when a file under either Blade
-  // component directory changes so the next `<x-` completion re-scans. Mirrors
-  // invalidatePhpLaravelMigrationSourcesForPath.
-  const invalidateBladeComponentNamesForPath = useCallback(
-    (root: string, path: string): void => {
-      invalidateBladeComponentNamesForCachePath(
-        bladeComponentNamesByRootRef,
-        root,
-        path,
-      );
-    },
-    [],
-  );
+  });
 
   // Completion for `.blade.php` documents: `@directive` names, view names,
   // `<x-...>` component names, Blade variables, and Laravel helper literals.
@@ -320,12 +206,6 @@ export function useBladeIntelligence(
       workspaceRoot,
     ],
   );
-
-  const resetBladeIntelligenceCaches = useCallback((): void => {
-    bladeViewDataEntriesByRootRef.current = {};
-    bladeViewDataEntriesLoadInFlightRef.current = new Map();
-    bladeComponentNamesByRootRef.current = {};
-  }, []);
 
   return {
     provideBladeCodeActions,
