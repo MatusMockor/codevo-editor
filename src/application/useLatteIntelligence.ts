@@ -58,7 +58,6 @@ import {
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
-  orderPhpMemberCompletionsByCategory,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -94,13 +93,8 @@ import {
 } from "./netteTemplates";
 import {
   isLatteMemberReferenceAt,
-  latteExpressionCompletionTargetAt,
-  type LatteMemberAccess,
-  type LatteVariableCompletionContext,
 } from "./latteExpressionDetection";
 import {
-  latteFilterCompletions as buildLatteFilterCompletions,
-  latteMemberCompletionItem,
   latteTagCompletions as buildLatteTagCompletions,
   type LatteCompletionItem,
 } from "./latteCompletionItems";
@@ -111,6 +105,9 @@ import {
   resolveLatteMemberDefinition as resolveLatteExpressionMemberDefinition,
   resolveNettePresenterVariableDefinition as resolveLattePresenterVariableDefinition,
 } from "./latteExpressionDefinitions";
+import {
+  latteExpressionCompletions as resolveLatteExpressionCompletions,
+} from "./latteExpressionCompletions";
 import {
   latteCandidateViewNames as resolveLatteCandidateViewNames,
   loadNetteViewDataEntries,
@@ -1005,106 +1002,29 @@ async function latteExpressionCompletions(
   source: string,
   offset: number,
 ): Promise<LatteCompletionItem[]> {
-  const target = latteExpressionCompletionTargetAt(source, offset);
-
-  if (!target) {
-    return [];
-  }
-
-  if (target.kind === "member") {
-    return latteMemberCompletions(context, source, offset, target.member);
-  }
-
-  if (target.kind === "filter") {
-    return buildLatteFilterCompletions(target.filter, LATTE_MAX_COMPLETIONS);
-  }
-
-  return latteVariableCompletions(context, source, offset, target.variable);
-}
-
-/**
- * `{$var->}` member completion: resolve the receiver variable's type through the
- * priority sources (§4.4), synthesize a typed PHP document, then dispatch to the
- * injected PHP member-completion engine - identical to the Blade path. Every
- * `await` is followed by a live-root re-check so a tab switch drops the result.
- */
-async function latteMemberCompletions(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-  member: LatteMemberAccess,
-): Promise<LatteCompletionItem[]> {
-  const { deps, isRequestedRootActive } = context;
-  const receiverType = await resolveLatteVariableType(
-    context,
+  return resolveLatteExpressionCompletions(
+    latteExpressionCompletionContext(context),
     source,
     offset,
-    member.variableName,
-    0,
   );
-
-  if (!isRequestedRootActive() || !receiverType) {
-    return [];
-  }
-
-  const synthetic = deps.synthesizeTypedReceiverSource(
-    member.variableName,
-    receiverType,
-  );
-  const members = await deps.resolvePhpReceiverCompletions(
-    synthetic.source,
-    synthetic.position,
-    member.receiverExpression,
-  );
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const normalizedPrefix = member.prefix.toLowerCase();
-
-  return orderPhpMemberCompletionsByCategory(members)
-    .filter((entry) => entry.name.toLowerCase().startsWith(normalizedPrefix))
-    .slice(0, LATTE_MAX_COMPLETIONS)
-    .map((entry) => latteMemberCompletionItem(entry, member.start, member.end));
 }
 
-/**
- * `{$var}` variable list: every template variable in scope (inline declarations,
- * enclosing `{foreach}` loop bindings, presenter view-data) with a cheap display
- * type. Full expression-type inference is intentionally NOT run per name here
- * (spec §6b lazy) - it runs only on member completion for the ONE variable the
- * user drills into.
- */
-async function latteVariableCompletions(
+function latteExpressionCompletionContext(
   context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-  variable: LatteVariableCompletionContext,
-): Promise<LatteCompletionItem[]> {
-  const candidates = await collectLatteVariableCandidates(context, source, offset);
-
-  if (!context.isRequestedRootActive()) {
-    return [];
-  }
-
-  const normalizedPrefix = `$${variable.prefix.toLowerCase()}`;
-
-  return candidates
-    .filter((candidate) =>
-      candidate.name.toLowerCase().startsWith(normalizedPrefix),
-    )
-    .slice(0, LATTE_MAX_COMPLETIONS)
-    .map((candidate) => ({
-      detail: candidate.typeHint
-        ? `${candidate.detail} · ${candidate.typeHint}`
-        : candidate.detail,
-      insertText: candidate.name,
-      kind: "variable" as const,
-      label: candidate.name,
-      replaceEnd: variable.end,
-      replaceStart: variable.start,
-    }));
+) {
+  return {
+    collectVariableCandidates: (source: string, offset: number) =>
+      collectLatteVariableCandidates(context, source, offset),
+    deps: context.deps,
+    isRequestedRootActive: context.isRequestedRootActive,
+    maxCompletions: LATTE_MAX_COMPLETIONS,
+    resolveVariableType: (
+      source: string,
+      offset: number,
+      variableName: string,
+      depth: number,
+    ) => resolveLatteVariableType(context, source, offset, variableName, depth),
+  };
 }
 
 async function collectLatteVariableCandidates(
