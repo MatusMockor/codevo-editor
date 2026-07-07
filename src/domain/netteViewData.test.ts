@@ -86,6 +86,92 @@ class OrderPresenter extends BasePresenter
     ]);
   });
 
+  it("extracts Template::add() entries from a local template alias", () => {
+    const source = `<?php
+
+use Nette\\Bridges\\ApplicationLatte\\DefaultTemplate;
+
+class ParentalControlsAdminPresenter extends BasePresenter
+{
+    public function renderShow(string $id): void
+    {
+        /** @var DefaultTemplate $template */
+        $template = $this->template;
+        $template->add('range', $this->ranges->find($id));
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "ParentalControlsAdmin:show",
+        variables: [
+          {
+            detail: "template add()",
+            name: "$range",
+            typeHint: null,
+            valueExpression: "$this->ranges->find($id)",
+            valueOffset: source.indexOf("$this->ranges->find"),
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("infers display hints from render parameters, @param docs, and presenter properties", () => {
+    const source = `<?php
+
+use App\\Model\\Profile;
+use App\\Model\\SelectedProfile;
+use App\\Model\\Token;
+use App\\Model\\TypedCurrentUser;
+
+class ProfilePresenter extends BasePresenter
+{
+    /** @var Token */
+    private $token;
+
+    private TypedCurrentUser $currentUser;
+
+    /**
+     * @param SelectedProfile $profile
+     */
+    public function renderShow(Profile $profile): void
+    {
+        $this->template->profile = $profile;
+        $this->template->token = $this->token;
+        $this->template->currentUser = $this->currentUser;
+    }
+}
+`;
+
+    const [binding] = netteViewDataEntryFromSource(source).bindings;
+
+    expect(binding?.variables).toEqual([
+      {
+        detail: "template data",
+        name: "$profile",
+        typeHint: "SelectedProfile",
+        valueExpression: "$profile",
+        valueOffset: source.indexOf("$profile;"),
+      },
+      {
+        detail: "template data",
+        name: "$token",
+        typeHint: "Token",
+        valueExpression: "$this->token",
+        valueOffset: source.indexOf("$this->token;"),
+      },
+      {
+        detail: "template data",
+        name: "$currentUser",
+        typeHint: "TypedCurrentUser",
+        valueExpression: "$this->currentUser",
+        valueOffset: source.indexOf("$this->currentUser;"),
+      },
+    ]);
+  });
+
   it("assigns chained $this->template->a = $this->template->b = value to both", () => {
     const source = `<?php
 
@@ -297,6 +383,7 @@ class CommentController
   it("exposes byte-precise search anchors", () => {
     expect(NETTE_VIEW_DATA_SEARCH_QUERIES).toEqual([
       "->template->",
+      "template->add(",
       "setParameters(",
     ]);
   });

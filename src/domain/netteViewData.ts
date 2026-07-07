@@ -47,13 +47,15 @@ import type {
  * Byte-precise text-search anchors that surface the presenter/control sources
  * feeding data into Latte templates. `->template->` matches the dominant
  * `$this->template->x = ...` assignment idiom (and the `$template->x` form once
- * `$template = $this->template`); `setParameters(` matches the
- * `$this->template->setParameters([...])` array form. Owned here (not the
- * controller) so view-data knowledge stays framework-owned, mirroring
- * Laravel's `laravelViewDataSearchQueries`.
+ * `$template = $this->template`); `template->add(` catches the Nette
+ * `DefaultTemplate::add()` helper used in older CRM modules; `setParameters(`
+ * matches the array form. Owned here (not the controller) so view-data
+ * knowledge stays framework-owned, mirroring Laravel's
+ * `laravelViewDataSearchQueries`.
  */
 export const NETTE_VIEW_DATA_SEARCH_QUERIES: readonly string[] = [
   "->template->",
+  "template->add(",
   "setParameters(",
 ];
 
@@ -86,6 +88,10 @@ const TEMPLATE_SET_PARAMETERS = new RegExp(
   TEMPLATE_RECEIVER + String.raw`\s*->\s*setParameters\s*\(`,
   "g",
 );
+const TEMPLATE_ADD = new RegExp(
+  TEMPLATE_RECEIVER + String.raw`\s*->\s*add\s*\(`,
+  "g",
+);
 const CHAINED_TEMPLATE_TARGET = new RegExp(
   "^" +
     TEMPLATE_RECEIVER +
@@ -108,6 +114,7 @@ function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
   const ranges = presenterMethodRanges(source);
   const sightings = [
     ...propertyAssignmentSightings(source, ranges, presenterName),
+    ...addCallSightings(source, ranges, presenterName),
     ...setParametersSightings(source, ranges, presenterName),
   ].sort((left, right) => left.offset - right.offset);
 
@@ -124,6 +131,54 @@ function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
     variables: Array.from(variables.values()),
     viewName,
   }));
+}
+
+function addCallSightings(
+  source: string,
+  ranges: readonly NetteMethodRange[],
+  presenterName: string,
+): NetteViewDataSighting[] {
+  const sightings: NetteViewDataSighting[] = [];
+
+  for (const match of source.matchAll(TEMPLATE_ADD)) {
+    const callOffset = match.index ?? 0;
+    const openParen = callOffset + match[0].length - 1;
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const parts = splitTopLevelParts(source.slice(openParen + 1, closeParen), ",");
+    const name = stringLiteralValue(parts[0]?.text ?? "");
+
+    if (!name || !isSafeVariableName(name)) {
+      continue;
+    }
+
+    const valuePart = parts[1];
+    const valueExpression = valuePart?.text ?? "";
+
+    if (!valuePart || valueExpression.length === 0) {
+      continue;
+    }
+
+    const valueOffset = openParen + 1 + valuePart.offset;
+
+    sightings.push({
+      offset: callOffset,
+      variable: viewDataVariable(
+        source,
+        name,
+        "template add()",
+        valueExpression,
+        valueOffset,
+      ),
+      viewName: `${presenterName}:${actionForOffset(callOffset, ranges)}`,
+    });
+  }
+
+  return sightings;
 }
 
 function propertyAssignmentSightings(
@@ -314,9 +369,10 @@ function viewDataVariable(
 }
 
 /**
- * Cheap display type hint: only a bare `$variable` value resolves (a local
- * `@var` docblock, then a `new X()` / `X::` assignment before the offset). Any
- * richer expression is left to the caller's expression-type inference via
+ * Cheap display type hint: direct `new X()` / `X::` expressions, bare
+ * `$variable` values (local `@var`, previous assignment, `@param`, then method
+ * parameter type), and `$this->property` values from typed/PHPDoc properties.
+ * Any richer expression is left to the caller's expression-type inference via
  * `valueExpression` / `valueOffset`.
  */
 function typeHintForValue(
@@ -328,18 +384,43 @@ function typeHintForValue(
     return null;
   }
 
-  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(valueExpression.trim());
+  const expression = valueExpression.trim();
+  const directType = directTypeForExpression(expression);
 
-  if (!match?.[1]) {
-    return null;
+  if (directType) {
+    return directType;
   }
 
-  const before = source.slice(0, valueOffset);
+  const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression);
 
-  return (
-    phpDocTypeForVariable(before, match[1]) ??
-    assignmentTypeForVariable(before, match[1])
+  if (variableMatch?.[1]) {
+    const before = source.slice(0, valueOffset);
+
+    return (
+      phpDocTypeForVariable(before, variableMatch[1]) ??
+      assignmentTypeForVariable(before, variableMatch[1]) ??
+      phpDocParamTypeForVariable(before, variableMatch[1]) ??
+      methodParameterTypeForVariable(before, variableMatch[1])
+    );
+  }
+
+  const propertyMatch = /^\$this\s*->\s*([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+    expression,
   );
+
+  if (propertyMatch?.[1]) {
+    return thisPropertyTypeForName(source.slice(0, valueOffset), propertyMatch[1]);
+  }
+
+  return null;
+}
+
+function directTypeForExpression(expression: string): string | null {
+  const match = /^(?:new\s+)?(\\?[A-Z][A-Za-z0-9_\\]*)\s*(?:::|->|\()/.exec(
+    expression,
+  );
+
+  return match?.[1] ? normalizeType(match[1]) : null;
 }
 
 function phpDocTypeForVariable(
@@ -378,6 +459,130 @@ function assignmentTypeForVariable(
   }
 
   return found;
+}
+
+function phpDocParamTypeForVariable(
+  source: string,
+  variableName: string,
+): string | null {
+  const functionStart = lastFunctionStart(source);
+
+  if (functionStart === null) {
+    return null;
+  }
+
+  const docblock = precedingDocblock(source, functionStart);
+
+  if (!docblock) {
+    return null;
+  }
+
+  const pattern = new RegExp(
+    String.raw`@param\s+([\\?A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]\s]*)\s+\$${escapeRegExp(
+      variableName,
+    )}\b`,
+    "g",
+  );
+  let found: string | null = null;
+
+  for (const match of docblock.matchAll(pattern)) {
+    found = normalizeType(match[1] ?? "");
+  }
+
+  return found;
+}
+
+function methodParameterTypeForVariable(
+  source: string,
+  variableName: string,
+): string | null {
+  const signature = lastFunctionSignature(source);
+
+  if (!signature) {
+    return null;
+  }
+
+  for (const part of splitTopLevelParts(signature.parameters, ",")) {
+    const pattern = new RegExp(
+      String.raw`^(?:[\\?A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]]*\s+)?((?:\\?|\?)[\\A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]]*|[A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]]*)\s+(?:&\s*)?(?:\.\.\.\s*)?\$${escapeRegExp(
+        variableName,
+      )}\b`,
+    );
+    const match = pattern.exec(part.text);
+
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const normalized = normalizeType(match[1]);
+
+    if (normalized && normalized !== "function") {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function thisPropertyTypeForName(
+  source: string,
+  propertyName: string,
+): string | null {
+  const pattern = new RegExp(
+    String.raw`\b(?:public|protected|private)\s+(?:static\s+)?(?:readonly\s+)?(?:(\??\\?[A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]]*)\s+)?\$${escapeRegExp(
+      propertyName,
+    )}\b`,
+    "g",
+  );
+  let found: string | null = null;
+
+  for (const match of source.matchAll(pattern)) {
+    const docblock = precedingDocblock(source, match.index ?? 0);
+    const phpDocType = docblock ? phpDocVarType(docblock) : null;
+    const declaredType = normalizeType(match[1] ?? "");
+
+    found = phpDocType ?? declaredType ?? found;
+  }
+
+  return found;
+}
+
+function phpDocVarType(docblock: string): string | null {
+  const match =
+    /@var\s+([\\?A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]\s]*)/.exec(docblock);
+
+  return match?.[1] ? normalizeType(match[1]) : null;
+}
+
+interface FunctionSignature {
+  parameters: string;
+  start: number;
+}
+
+function lastFunctionSignature(source: string): FunctionSignature | null {
+  const pattern =
+    /\b(?:(?:public|protected|private|final|abstract|static)\s+)*function\s+&?[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+  let found: FunctionSignature | null = null;
+
+  for (const match of source.matchAll(pattern)) {
+    const openParen = (match.index ?? 0) + match[0].lastIndexOf("(");
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    found = {
+      parameters: source.slice(openParen + 1, closeParen),
+      start: match.index ?? 0,
+    };
+  }
+
+  return found;
+}
+
+function lastFunctionStart(source: string): number | null {
+  return lastFunctionSignature(source)?.start ?? null;
 }
 
 /**

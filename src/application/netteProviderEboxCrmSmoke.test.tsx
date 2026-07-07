@@ -228,6 +228,62 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
   });
 
+  it("covers ebox Template::add() view-data feeding Latte variable and member completion", async () => {
+    const templatePath =
+      "app/modules/parentalControlsModule/templates/ParentalControlsAdmin/show.latte";
+    const presenterPath =
+      "app/modules/parentalControlsModule/presenters/ParentalControlsAdminPresenter.php";
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Nette\\Database\\Table\\ActiveRow",
+        kind: "property" as const,
+        name: "id",
+        parameters: "",
+        returnType: "mixed",
+      },
+    ]);
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeLatteDeps(templatePath, {
+      resolveExpressionType: vi.fn(async (_source, _position, expression) =>
+        expression.includes("parentalControlsRangesRepository->find")
+          ? "Nette\\Database\\Table\\ActiveRow"
+          : null,
+      ),
+      resolvePhpReceiverCompletions,
+      searchText: vi.fn(async (_root, query) =>
+        query === "template->add("
+          ? [{ path: joinPath(EBOX_CRM_ROOT, presenterPath) }]
+          : [],
+      ),
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const variableSource = "{$ra}";
+    const variableCompletions = await latte.provideLatteCompletions(
+      variableSource,
+      positionAtOffset(variableSource, variableSource.indexOf("ra") + 2),
+    );
+
+    expect(variableCompletions.map((item) => item.label)).toContain("$range");
+
+    const memberSource = "{$range->}";
+    const memberCompletions = await latte.provideLatteCompletions(
+      memberSource,
+      positionAtOffset(memberSource, memberSource.indexOf("->") + 2),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "range",
+      "Nette\\Database\\Table\\ActiveRow",
+    );
+    expect(memberCompletions.map((item) => item.label)).toContain("id");
+  });
+
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {
     const configPath = "app/modules/usersModule/config/config.neon";
     const source = await readFileContent(joinPath(EBOX_CRM_ROOT, configPath));

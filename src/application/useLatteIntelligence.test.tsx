@@ -1200,6 +1200,51 @@ class ProductTemplate extends Template
     );
   });
 
+  it("resolves a presenter property type when the assigned expression is conservative", async () => {
+    const presenterSource = `<?php
+namespace App\\UI\\UsersAdmin;
+
+class UsersAdminPresenter extends BasePresenter
+{
+    /** @var \\App\\Model\\User */
+    private $selectedUser;
+
+    public function renderShow(): void
+    {
+        $this->template->user = $this->selectedUser;
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/UI/UsersAdmin/UsersAdminPresenter.php": presenterSource,
+    });
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/UsersAdmin/show.latte`,
+      }),
+      readFileContent,
+      resolveExpressionType: vi.fn(async () => null),
+      searchText,
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$user->}";
+    const offset = source.indexOf("->") + 2;
+
+    await latte.provideLatteCompletions(source, positionAtOffset(source, offset));
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "user",
+      "\\App\\Model\\User",
+    );
+  });
+
   it("types the implicit $presenter variable as the current presenter", async () => {
     const { readFileContent, searchText } = buildNettePresenterWorkspace({
       "app/UI/Home/HomePresenter.php": HOME_PRESENTER_SOURCE,
@@ -1513,6 +1558,43 @@ class ProductTemplate extends Template
     );
   });
 
+  it("lists variables from ebox-style module presenters using Template::add()", async () => {
+    const presenterSource = `<?php
+namespace Efabrica\\Crm\\ParentalControlsModule\\Presenters;
+
+class ParentalControlsAdminPresenter extends BasePresenter
+{
+    public function renderShow(string $id): void
+    {
+        $template = $this->template;
+        $template->add('range', $this->ranges->find($id));
+    }
+}
+`;
+    const { readFileContent, searchText } = buildNettePresenterWorkspace({
+      "app/modules/parentalControlsModule/Presenters/ParentalControlsAdminPresenter.php":
+        presenterSource,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/parentalControlsModule/templates/ParentalControlsAdmin/show.latte`,
+      }),
+      readFileContent,
+      searchText,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(searchText).toHaveBeenCalledWith(ROOT, "template->add(", 200);
+    expect(completions.find((completion) => completion.label === "$range"))
+      .toMatchObject({ detail: "presenter data" });
+  });
+
   it("loads Latte view data through the active provider capability", async () => {
     const presenterSource = "<?php\n$custom = new Custom();\nassignView();\n";
     const searchText = vi.fn(async (_root: string, query: string) =>
@@ -1688,7 +1770,7 @@ describe("createLatteIntelligence view-data cache lifecycle", () => {
     ]);
 
     // One call per search anchor, not one per anchor per request.
-    expect(searchText.mock.calls.length).toBe(2);
+    expect(searchText.mock.calls.length).toBe(3);
   });
 });
 
