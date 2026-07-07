@@ -90,6 +90,9 @@ import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
 } from "./bladeViewDataCache";
+import {
+  synthesizePhpTypedReceiverSource as bladeSyntheticPhpMemberAccessSource,
+} from "./phpTypedReceiverSource";
 
 export type {
   BladeCompletionItem,
@@ -1420,18 +1423,6 @@ function bladeShortTypeName(typeName: string | null): string | null {
   const shortName = segments[segments.length - 1]?.trim() ?? "";
 
   return shortName.length > 0 ? shortName : null;
-}
-
-function bladeSyntheticPhpMemberAccessSource(
-  variableName: string,
-  typeName: string,
-): { position: EditorPosition; source: string } {
-  const source = `<?php\n/** @var \\${typeName.replace(/^\\+/, "")} $${variableName} */\n$${variableName}->`;
-
-  return {
-    position: editorPositionAtOffset(source, source.length),
-    source,
-  };
 }
 
 function bladeMemberCompletionItem(

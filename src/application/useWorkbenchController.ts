@@ -88,6 +88,9 @@ import {
   phpSuperMethodHierarchyReferences,
 } from "./usePhpCodeActions";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
+import {
+  synthesizePhpTypedReceiverSource,
+} from "./phpTypedReceiverSource";
 export type {
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
@@ -7364,7 +7367,7 @@ export function useWorkbenchController(
     resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
     searchText: (root, query, maxResults) =>
       textSearch.searchText(root, query, maxResults),
-    synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
+    synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
     toRelativePath: relativeWorkspacePath,
     workspaceRoot,
   });
@@ -7397,7 +7400,7 @@ export function useWorkbenchController(
         .filter(isTypeProjectSymbol)
         .map((symbol) => symbol.fullyQualifiedName);
     },
-    synthesizeTypedReceiverSource: bladeSyntheticPhpMemberAccessSource,
+    synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
     toRelativePath: relativeWorkspacePath,
     workspaceRoot,
   });
@@ -12679,18 +12682,6 @@ function shouldRunInitialIndexScan(
   }
 
   return cachedWorkspaceState.indexProgress.status !== "completed";
-}
-
-function bladeSyntheticPhpMemberAccessSource(
-  variableName: string,
-  typeName: string,
-): { position: EditorPosition; source: string } {
-  const source = `<?php\n/** @var \\${typeName.replace(/^\\+/, "")} $${variableName} */\n$${variableName}->`;
-
-  return {
-    position: editorPositionAtOffset(source, source.length),
-    source,
-  };
 }
 
 /**
