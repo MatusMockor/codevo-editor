@@ -6,10 +6,16 @@ import type {
   LatteTemplateTypeContext,
   LatteTemplateTypePropertySighting,
 } from "./netteTemplateTypeDiscovery";
+import {
+  latteResolvedTypeFromTemplateSightings,
+} from "./latteTemplateTypeResolution";
 
 export {
   loadNetteTemplateTypeProperties,
 } from "./netteTemplateTypeDiscovery";
+export {
+  mergeLatteResolvedTypes,
+} from "./latteTemplateTypeResolution";
 export type {
   LatteTemplateTypeCache,
   LatteTemplateTypeCacheEntry,
@@ -25,29 +31,13 @@ export async function latteTemplateTypeVariableType(
   source: string,
   variableName: string,
 ): Promise<string | null> {
-  const target = `$${variableName}`;
   const sightings = await latteTemplateTypePropertySightings(context, source);
 
   if (!context.isRequestedRootActive()) {
     return null;
   }
 
-  const resolved: (string | null)[] = [];
-
-  for (const sighting of sightings) {
-    if (sighting.property.name !== target) {
-      continue;
-    }
-
-    resolved.push(
-      context.deps.resolveDeclaredType(
-        sighting.source,
-        sighting.property.type,
-      ) ?? sighting.property.type,
-    );
-  }
-
-  return mergeLatteResolvedTypes(resolved);
+  return latteResolvedTypeFromTemplateSightings(context.deps, sightings, variableName);
 }
 
 export async function latteTemplateTypePropertySightings(
@@ -85,22 +75,4 @@ export function latteTemplateTypeNames(source: string): string[] {
   }
 
   return Array.from(names);
-}
-
-export function mergeLatteResolvedTypes(
-  types: readonly (string | null)[],
-): string | null {
-  const resolved = types.filter((type): type is string => Boolean(type));
-
-  if (resolved.length === 0) {
-    return null;
-  }
-
-  const first = resolved[0] ?? "";
-  const normalize = (type: string) =>
-    type.trim().replace(/^\\+/, "").toLowerCase();
-
-  return resolved.every((type) => normalize(type) === normalize(first))
-    ? first
-    : null;
 }

@@ -8,9 +8,12 @@ import {
 import type { PhpFrameworkViewDataVariable } from "../domain/phpFrameworkProviders";
 import type { NetteViewDataEntry } from "./netteViewDataEntries";
 import {
-  mergeLatteResolvedTypes,
   type LatteTemplateTypePropertySighting,
 } from "./netteTemplateTypes";
+import {
+  latteResolvedTypeFromTemplateSightings,
+  mergeLatteResolvedTypes,
+} from "./latteTemplateTypeResolution";
 
 export interface LatteVariableCandidate {
   detail: string;
@@ -236,29 +239,17 @@ async function latteTemplateTypeVariableType(
   source: string,
   variableName: string,
 ): Promise<string | null> {
-  const target = `$${variableName}`;
   const sightings = await context.loadTemplateTypePropertySightings(source);
 
   if (!context.isRequestedRootActive()) {
     return null;
   }
 
-  const resolved: (string | null)[] = [];
-
-  for (const sighting of sightings) {
-    if (sighting.property.name !== target) {
-      continue;
-    }
-
-    resolved.push(
-      context.deps.resolveDeclaredType(
-        sighting.source,
-        sighting.property.type,
-      ) ?? sighting.property.type,
-    );
-  }
-
-  return mergeLatteResolvedTypes(resolved);
+  return latteResolvedTypeFromTemplateSightings(
+    context.deps,
+    sightings,
+    variableName,
+  );
 }
 
 async function latteLocalVariableType(
