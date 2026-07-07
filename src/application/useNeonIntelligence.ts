@@ -28,7 +28,6 @@
 
 import { useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpFrameworkSupportsNeonConfigIntelligence } from "../domain/phpFrameworkProviders";
 import {
   detectNeonClassReferenceAt,
   detectNeonIncludeAt,
@@ -48,11 +47,14 @@ import {
 } from "../domain/netteDiContainer";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
+  createNeonRequestContext,
+  offsetAtEditorPosition,
+  type NeonRequestContext as NeonRuntimeRequestContext,
+} from "./neonIntelligenceRuntime";
+import {
   editorPositionAtOffset,
-  evictOtherRootConfigCacheEntries,
   loadNeonProjectConfig,
   NEON_EXTENSION,
   neonResolvableServiceType,
@@ -61,7 +63,6 @@ import {
   resolveNeonServiceTypeFromMaps,
   type NeonConfigCache,
   type NeonConfigInFlight,
-  type NeonProjectConfigRequestContext,
 } from "./neonProjectConfigDiscovery";
 
 export type { NeonConfigCache } from "./neonProjectConfigDiscovery";
@@ -176,9 +177,8 @@ export interface NeonIntelligence {
 
 const NEON_MAX_COMPLETIONS = 100;
 
-/** Everything one NEON navigation / completion request threads down its chain. */
 type NeonRequestContext =
-  NeonProjectConfigRequestContext<NeonIntelligenceDependencies>;
+  NeonRuntimeRequestContext<NeonIntelligenceDependencies>;
 
 /**
  * Builds the NEON intelligence API from an accessor to the current dependencies
@@ -201,28 +201,17 @@ export function createNeonIntelligence(
     source: string,
     offset: number,
   ): Promise<boolean> => {
-    const deps = getDependencies();
-    evictOtherRootConfigCacheEntries(configCache, deps.workspaceRoot);
-
-    if (!isNeonSemanticActive(deps)) {
-      return false;
-    }
-
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
-      return false;
-    }
-
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
-    const context: NeonRequestContext = {
+    const context = createNeonRequestContext(
+      getDependencies(),
       configCache,
       configInFlight,
-      deps,
-      isRequestedRootActive,
-      requestedRoot,
-    };
+    );
+
+    if (!context) {
+      return false;
+    }
+
+    const { deps, isRequestedRootActive, requestedRoot } = context;
     const classReference = detectNeonClassReferenceAt(source, offset);
 
     if (classReference) {
@@ -276,29 +265,18 @@ export function createNeonIntelligence(
     source: string,
     position: EditorPosition,
   ): Promise<NeonCompletionItem[]> => {
-    const deps = getDependencies();
-    evictOtherRootConfigCacheEntries(configCache, deps.workspaceRoot);
-
-    if (!isNeonSemanticActive(deps)) {
-      return [];
-    }
-
-    const requestedRoot = deps.workspaceRoot;
-
-    if (!requestedRoot) {
-      return [];
-    }
-
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
-    const offset = offsetAtEditorPosition(source, position);
-    const context: NeonRequestContext = {
+    const context = createNeonRequestContext(
+      getDependencies(),
       configCache,
       configInFlight,
-      deps,
-      isRequestedRootActive,
-      requestedRoot,
-    };
+    );
+
+    if (!context) {
+      return [];
+    }
+
+    const { deps, isRequestedRootActive, requestedRoot } = context;
+    const offset = offsetAtEditorPosition(source, position);
 
     const parameterCompletion = neonParameterCompletionContextAt(source, offset);
 
@@ -377,15 +355,6 @@ export function useNeonIntelligence(
   }
 
   return apiRef.current;
-}
-
-function isNeonSemanticActive(deps: NeonIntelligenceDependencies): boolean {
-  return (
-    deps.isSemanticIntelligenceActive &&
-    phpFrameworkSupportsNeonConfigIntelligence(
-      deps.frameworkIntelligence.providers,
-    )
-  );
 }
 
 /**
@@ -976,23 +945,4 @@ function collapseRelative(path: string): string[] | null {
   }
 
   return result.length > 0 ? result : null;
-}
-
-function offsetAtEditorPosition(source: string, position: EditorPosition): number {
-  const lines = source.split("\n");
-  const targetLine = Math.max(0, position.lineNumber - 1);
-
-  if (targetLine >= lines.length) {
-    return source.length;
-  }
-
-  let offset = 0;
-
-  for (let line = 0; line < targetLine; line += 1) {
-    offset += (lines[line]?.length ?? 0) + 1;
-  }
-
-  const column = Math.max(0, position.column - 1);
-
-  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
