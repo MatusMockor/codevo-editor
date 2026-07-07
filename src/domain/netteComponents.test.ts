@@ -5,6 +5,8 @@ import {
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
   netteComponentClassFromCreateMethod,
+  netteCreateComponentFactoryContextAt,
+  netteCreateComponentFactoryContexts,
   netteComponentUsagesInLatte,
   netteCreateComponentMethodName,
   nettePresenterLifecycleInfo,
@@ -427,6 +429,19 @@ describe("netteComponentClassFromCreateMethod", () => {
     ).toBe("ContactFormControl");
   });
 
+  it("keeps a fully-qualified class inferred from return new", () => {
+    const source = [
+      "protected function createComponentProductList()",
+      "{",
+      "  return new \\App\\Components\\ProductList\\ProductListControl();",
+      "}",
+    ].join("\n");
+
+    expect(
+      netteComponentClassFromCreateMethod(source, "createComponentProductList"),
+    ).toBe("\\App\\Components\\ProductList\\ProductListControl");
+  });
+
   it("reads the class from a docblock @return when nothing else is present", () => {
     const source = [
       "/**",
@@ -555,5 +570,105 @@ describe("netteComponentClassFromCreateMethod", () => {
     expect(
       netteComponentClassFromCreateMethod(source, "createComponentContactForm"),
     ).toBeNull();
+  });
+});
+
+describe("netteCreateComponentFactoryContexts", () => {
+  it("identifies component name, return type and factory-created class", () => {
+    const source = [
+      "class ProductPresenter",
+      "{",
+      "  final protected function createComponentContactForm(): ContactFormControl",
+      "  {",
+      "    return new FallbackControl();",
+      "  }",
+      "}",
+    ].join("\n");
+
+    expect(netteCreateComponentFactoryContexts(source)).toEqual([
+      {
+        componentName: "contactForm",
+        controlClass: "ContactFormControl",
+        docblockReturnType: null,
+        factoryCreatedControlClass: "FallbackControl",
+        methodName: "createComponentContactForm",
+        nameEnd:
+          source.indexOf("createComponentContactForm") +
+          "createComponentContactForm".length,
+        nameStart: source.indexOf("createComponentContactForm"),
+        returnType: "ContactFormControl",
+      },
+    ]);
+  });
+
+  it("uses return new as the control class when no return type is declared", () => {
+    const source = [
+      "class ProductPresenter",
+      "{",
+      "  public static function createComponentGrid()",
+      "  {",
+      "    return new \\App\\UI\\Grid\\GridControl($this->gridFactory);",
+      "  }",
+      "}",
+    ].join("\n");
+
+    expect(netteCreateComponentFactoryContexts(source)[0]).toMatchObject({
+      componentName: "grid",
+      controlClass: "\\App\\UI\\Grid\\GridControl",
+      factoryCreatedControlClass: "\\App\\UI\\Grid\\GridControl",
+      methodName: "createComponentGrid",
+      returnType: null,
+    });
+  });
+
+  it("ignores return new text inside comments and strings", () => {
+    const source = [
+      "class ProductPresenter",
+      "{",
+      "  protected function createComponentMenu()",
+      "  {",
+      "    // return new CommentedControl();",
+      "    $debug = 'return new StringControl()';",
+      "    return new MenuControl();",
+      "  }",
+      "}",
+    ].join("\n");
+
+    expect(netteCreateComponentFactoryContexts(source)[0]).toMatchObject({
+      componentName: "menu",
+      controlClass: "MenuControl",
+      factoryCreatedControlClass: "MenuControl",
+    });
+  });
+
+  it("keeps body matching stable when comments contain braces", () => {
+    const source = [
+      "class ProductPresenter",
+      "{",
+      "  protected function createComponentMenu() /* { */",
+      "  {",
+      "    /* } return new WrongControl(); */",
+      "    return new MenuControl();",
+      "  }",
+      "}",
+    ].join("\n");
+
+    expect(
+      netteComponentClassFromCreateMethod(source, "createComponentMenu"),
+    ).toBe("MenuControl");
+  });
+
+  it("returns the rich context at a createComponent method-name offset", () => {
+    const source =
+      "protected function createComponentPaginator(): PaginatorControl {}";
+    const offset = offsetOf(source, "createComponentPaginator", 5);
+
+    expect(netteCreateComponentFactoryContextAt(source, offset)).toMatchObject({
+      componentName: "paginator",
+      controlClass: "PaginatorControl",
+      factoryCreatedControlClass: null,
+      methodName: "createComponentPaginator",
+      returnType: "PaginatorControl",
+    });
   });
 });

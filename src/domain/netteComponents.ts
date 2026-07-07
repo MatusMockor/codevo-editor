@@ -93,6 +93,19 @@ export interface NetteCreateComponentDetection {
   nameStart: number;
 }
 
+/** Rich PhpStorm-like facts for one `createComponent<Name>()` factory. */
+export interface NetteCreateComponentFactoryContext
+  extends NetteCreateComponentDetection {
+  /** The native return type class, when the method has one. */
+  returnType: string | null;
+  /** The docblock `@return` class, when no native return type is decisive. */
+  docblockReturnType: string | null;
+  /** The class from the first direct `return new Foo(...)` in the body. */
+  factoryCreatedControlClass: string | null;
+  /** The best control class known to this pure domain layer. */
+  controlClass: string | null;
+}
+
 /** The kind of a component usage found in a Latte template. */
 export type NetteComponentUsageKind = "control" | "n:name" | "arrayAccess";
 
@@ -168,6 +181,7 @@ const NON_CLASS_RETURN_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const NON_CLASS_NEW_TARGETS: ReadonlySet<string> = new Set([
+  "class",
   "self",
   "static",
   "parent",
@@ -322,34 +336,18 @@ export function detectNetteCreateComponentAt(
   phpSource: string,
   offset: number,
 ): NetteCreateComponentDetection | null {
-  if (offset < 0 || offset > phpSource.length) {
+  const context = netteCreateComponentFactoryContextAt(phpSource, offset);
+
+  if (!context) {
     return null;
   }
 
-  for (const method of phpMethodDefinitions(phpSource)) {
-    if (!method.name.startsWith(CREATE_COMPONENT_PREFIX)) {
-      continue;
-    }
-
-    const suffix = method.name.slice(CREATE_COMPONENT_PREFIX.length);
-
-    if (suffix.length === 0) {
-      continue;
-    }
-
-    if (offset < method.nameStart || offset > method.nameEnd) {
-      continue;
-    }
-
-    return {
-      componentName: lcfirst(suffix),
-      methodName: method.name,
-      nameEnd: method.nameEnd,
-      nameStart: method.nameStart,
-    };
-  }
-
-  return null;
+  return {
+    componentName: context.componentName,
+    methodName: context.methodName,
+    nameEnd: context.nameEnd,
+    nameStart: context.nameStart,
+  };
 }
 
 /**
@@ -437,25 +435,93 @@ export function netteComponentClassFromCreateMethod(
     return null;
   }
 
+  return createComponentFactoryContextFromMethod(phpSource, method)?.controlClass ?? null;
+}
+
+/**
+ * Returns every `createComponent<Name>()` factory declared in a presenter/control
+ * source, with the component name and the strongest class facts the domain
+ * parser can know without filesystem/import resolution.
+ */
+export function netteCreateComponentFactoryContexts(
+  phpSource: string,
+): NetteCreateComponentFactoryContext[] {
+  const contexts: NetteCreateComponentFactoryContext[] = [];
+
+  for (const method of phpMethodDefinitions(phpSource)) {
+    const context = createComponentFactoryContextFromMethod(phpSource, method);
+
+    if (context) {
+      contexts.push(context);
+    }
+  }
+
+  return contexts;
+}
+
+/**
+ * Returns the rich factory context when `offset` sits on a
+ * `createComponent<Name>` method name, or `null` otherwise.
+ */
+export function netteCreateComponentFactoryContextAt(
+  phpSource: string,
+  offset: number,
+): NetteCreateComponentFactoryContext | null {
+  if (offset < 0 || offset > phpSource.length) {
+    return null;
+  }
+
+  for (const context of netteCreateComponentFactoryContexts(phpSource)) {
+    if (offset >= context.nameStart && offset <= context.nameEnd) {
+      return context;
+    }
+  }
+
+  return null;
+}
+
+function createComponentFactoryContextFromMethod(
+  phpSource: string,
+  method: PhpMethodDefinition,
+): NetteCreateComponentFactoryContext | null {
+  const suffix = createComponentSuffix(method.name);
+
+  if (suffix === null) {
+    return null;
+  }
+
   const afterParams = matchingParenClose(phpSource, method.openParen);
 
   if (afterParams === null) {
     return null;
   }
 
-  const returnTypeClass = returnTypeAfter(phpSource, afterParams);
+  const returnType = returnTypeAfter(phpSource, afterParams);
+  const docblockReturnType = returnType
+    ? null
+    : docblockReturnBefore(phpSource, method.signatureStart);
+  const factoryCreatedControlClass = returnNewClassInBody(phpSource, afterParams);
 
-  if (returnTypeClass) {
-    return returnTypeClass;
+  return {
+    componentName: lcfirst(suffix),
+    controlClass: returnType ?? docblockReturnType ?? factoryCreatedControlClass,
+    docblockReturnType,
+    factoryCreatedControlClass,
+    methodName: method.name,
+    nameEnd: method.nameEnd,
+    nameStart: method.nameStart,
+    returnType,
+  };
+}
+
+function createComponentSuffix(methodName: string): string | null {
+  if (!methodName.startsWith(CREATE_COMPONENT_PREFIX)) {
+    return null;
   }
 
-  const docblockClass = docblockReturnBefore(phpSource, method.signatureStart);
+  const suffix = methodName.slice(CREATE_COMPONENT_PREFIX.length);
 
-  if (docblockClass) {
-    return docblockClass;
-  }
-
-  return returnNewClassInBody(phpSource, afterParams);
+  return suffix.length > 0 ? suffix : null;
 }
 
 // --- {control} parsing ------------------------------------------------------
@@ -871,7 +937,7 @@ interface PhpMethodDefinition {
 }
 
 const PHP_METHOD_DEF =
-  /(?:\b(public|protected|private)\s+)?(?:\b(?:static|final|abstract)\s+)*\bfunction\s*&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  /((?:(?:public|protected|private|static|final|abstract)\s+)*)\bfunction\s*&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
 function phpMethodDefinitions(source: string): PhpMethodDefinition[] {
   const methods: PhpMethodDefinition[] = [];
@@ -898,11 +964,29 @@ function phpMethodDefinitions(source: string): PhpMethodDefinition[] {
       nameStart,
       openParen,
       signatureStart: match.index,
-      visibility: (match[1] as PhpMethodDefinition["visibility"]) ?? null,
+      visibility: visibilityFromModifiers(match[1] ?? ""),
     });
   }
 
   return methods;
+}
+
+function visibilityFromModifiers(
+  modifiers: string,
+): PhpMethodDefinition["visibility"] {
+  if (/\bprivate\b/.test(modifiers)) {
+    return "private";
+  }
+
+  if (/\bprotected\b/.test(modifiers)) {
+    return "protected";
+  }
+
+  if (/\bpublic\b/.test(modifiers)) {
+    return "public";
+  }
+
+  return null;
 }
 
 function nameEndBeforeParen(source: string, openParen: number): number {
@@ -1115,8 +1199,6 @@ function docblockReturnBefore(source: string, signatureStart: number): string | 
   return singleNullableUnionMember(tokens);
 }
 
-const RETURN_NEW = /\breturn\s+new\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/g;
-
 function returnNewClassInBody(source: string, afterParams: number): string | null {
   const bodyStart = methodBodyStart(source, afterParams);
 
@@ -1125,22 +1207,41 @@ function returnNewClassInBody(source: string, afterParams: number): string | nul
   }
 
   const bodyEnd = matchingBraceClose(source, bodyStart);
-  const body = source.slice(bodyStart, bodyEnd);
+  let index = bodyStart + 1;
 
-  RETURN_NEW.lastIndex = 0;
+  while (index < bodyEnd) {
+    const next = skipPhpIgnored(source, index, bodyEnd);
 
-  for (
-    let match = RETURN_NEW.exec(body);
-    match !== null;
-    match = RETURN_NEW.exec(body)
-  ) {
-    if (RETURN_NEW.lastIndex <= match.index) {
-      RETURN_NEW.lastIndex = match.index + 1;
+    if (next !== index) {
+      index = next;
+      continue;
     }
 
-    const token = match[1] ?? "";
+    if (!keywordAt(source, index, "return")) {
+      index += 1;
+      continue;
+    }
+
+    const afterReturn = skipWhitespace(source, index + "return".length);
+
+    if (!keywordAt(source, afterReturn, "new")) {
+      index = afterReturn;
+      continue;
+    }
+
+    const token = readClassNameToken(
+      source,
+      skipWhitespace(source, afterReturn + "new".length),
+      bodyEnd,
+    );
+
+    if (!token) {
+      index = afterReturn + "new".length;
+      continue;
+    }
 
     if (NON_CLASS_NEW_TARGETS.has(token.replace(/^\\/, "").toLowerCase())) {
+      index = tokenEnd(source, token, afterReturn);
       continue;
     }
 
@@ -1150,9 +1251,123 @@ function returnNewClassInBody(source: string, afterParams: number): string | nul
   return null;
 }
 
+function skipPhpIgnored(source: string, from: number, limit: number): number {
+  const character = source[from];
+  const next = source[from + 1];
+
+  if (character === "'" || character === '"') {
+    return skipQuotedPhpString(source, from, limit);
+  }
+
+  if (character === "/" && next === "/") {
+    return skipLineComment(source, from + 2, limit);
+  }
+
+  if (character === "#") {
+    return skipLineComment(source, from + 1, limit);
+  }
+
+  if (character === "/" && next === "*") {
+    return skipBlockComment(source, from + 2, limit);
+  }
+
+  return from;
+}
+
+function skipQuotedPhpString(source: string, from: number, limit: number): number {
+  const quote = source[from];
+
+  for (let index = from + 1; index < limit; index += 1) {
+    const character = source[index];
+
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+
+    if (character === quote) {
+      return index + 1;
+    }
+  }
+
+  return limit;
+}
+
+function skipLineComment(source: string, from: number, limit: number): number {
+  for (let index = from; index < limit; index += 1) {
+    if (source[index] === "\n") {
+      return index + 1;
+    }
+  }
+
+  return limit;
+}
+
+function skipBlockComment(source: string, from: number, limit: number): number {
+  for (let index = from; index + 1 < limit; index += 1) {
+    if (source[index] === "*" && source[index + 1] === "/") {
+      return index + 2;
+    }
+  }
+
+  return limit;
+}
+
+function keywordAt(source: string, offset: number, keyword: string): boolean {
+  if (
+    source.slice(offset, offset + keyword.length).toLowerCase() !==
+    keyword.toLowerCase()
+  ) {
+    return false;
+  }
+
+  return (
+    !IDENTIFIER_TAIL.test(source[offset - 1] ?? "") &&
+    !IDENTIFIER_TAIL.test(source[offset + keyword.length] ?? "")
+  );
+}
+
+function readClassNameToken(
+  source: string,
+  from: number,
+  limit: number,
+): string | null {
+  let index = from;
+
+  if (source[index] === "\\") {
+    index += 1;
+  }
+
+  if (!IDENTIFIER_HEAD.test(source[index] ?? "")) {
+    return null;
+  }
+
+  index += 1;
+
+  while (index < limit && /[A-Za-z0-9_\\]/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const token = source.slice(from, index);
+
+  return token.endsWith("\\") ? null : token;
+}
+
+function tokenEnd(source: string, token: string, from: number): number {
+  const index = source.indexOf(token, from);
+
+  return index < 0 ? from : index + token.length;
+}
+
 function methodBodyStart(source: string, afterParams: number): number | null {
   for (let index = afterParams; index < source.length; index += 1) {
     const character = source[index];
+    const skipped = skipPhpIgnored(source, index, source.length);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
 
     if (character === "{") {
       return index;
@@ -1231,6 +1446,13 @@ function matchingParenClose(source: string, openParen: number): number | null {
       continue;
     }
 
+    const skipped = skipPhpIgnored(source, index, source.length);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
     if (character === "'" || character === '"') {
       quote = character;
       continue;
@@ -1274,6 +1496,13 @@ function matchingBraceClose(source: string, openBrace: number): number {
         quote = null;
       }
 
+      continue;
+    }
+
+    const skipped = skipPhpIgnored(source, index, source.length);
+
+    if (skipped !== index) {
+      index = skipped - 1;
       continue;
     }
 

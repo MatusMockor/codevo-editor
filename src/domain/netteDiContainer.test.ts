@@ -742,4 +742,37 @@ describe("netteInjectedPropertyTypes", () => {
 
     expect(netteInjectedPropertyTypes(source)).toEqual([]);
   });
+
+  it("reads injected presenter and control properties in document order", () => {
+    const source = `<?php
+
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    #[Nette\\DI\\Attributes\\Inject]
+    public ProductRepository $products;
+}
+
+class CartSummaryControl extends Nette\\Application\\UI\\Control
+{
+    /**
+     * @inject
+     * @var CartFacade
+     */
+    public $cartFacade;
+}
+`;
+
+    expect(netteInjectedPropertyTypes(source)).toEqual([
+      {
+        name: "products",
+        type: "ProductRepository",
+        offset: offsetOf(source, "$products") + 1,
+      },
+      {
+        name: "cartFacade",
+        type: "CartFacade",
+        offset: offsetOf(source, "$cartFacade") + 1,
+      },
+    ]);
+  });
 });

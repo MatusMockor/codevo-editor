@@ -386,6 +386,77 @@ class CartSummaryControl extends Nette\\Application\\UI\\Control
     ]);
   });
 
+  it("extracts Control::render() setParameters() and add() variables for the default template", () => {
+    const source = `<?php
+
+class CartSummaryControl extends Nette\\Application\\UI\\Control
+{
+    public function render(): void
+    {
+        $cart = new ShoppingCart();
+        $this->template->setParameters([
+            'cart' => $cart,
+        ]);
+        $this->template->add('itemCount', $cart->count());
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "CartSummary:default",
+        variables: [
+          {
+            detail: "template setParameters()",
+            name: "$cart",
+            typeHint: "ShoppingCart",
+            valueExpression: "$cart",
+            valueOffset: source.indexOf("$cart,"),
+          },
+          {
+            detail: "template add()",
+            name: "$itemCount",
+            typeHint: null,
+            valueExpression: "$cart->count()",
+            valueOffset: source.indexOf("$cart->count"),
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("maps named Control::renderPart() parameters and setParameters() to that component template", () => {
+    const source = `<?php
+
+use App\\Model\\PageInfo;
+
+class ProductListControl extends Nette\\Application\\UI\\Control
+{
+    public function renderPagination(PageInfo $pageInfo): void
+    {
+        $this->template->setParameters([
+            'pageInfo' => $pageInfo,
+        ]);
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(source).bindings).toEqual([
+      {
+        viewName: "ProductList:pagination",
+        variables: [
+          {
+            detail: "template setParameters()",
+            name: "$pageInfo",
+            typeHint: "PageInfo",
+            valueExpression: "$pageInfo",
+            valueOffset: source.indexOf("$pageInfo,"),
+          },
+        ],
+      },
+    ]);
+  });
+
   it("keeps bare Presenter::render() assignments as wildcard view data", () => {
     const source = `<?php
 
@@ -436,6 +507,68 @@ class CartPresenter extends BasePresenter
       valueExpression: "$cart",
       valueOffset: source.indexOf("$cart;"),
     });
+  });
+
+  it("infers template data types from injected presenter and control properties", () => {
+    const presenterSource = `<?php
+
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    #[Nette\\DI\\Attributes\\Inject]
+    public ProductRepository $products;
+
+    public function renderShow(): void
+    {
+        $this->template->products = $this->products;
+    }
+}
+`;
+
+    const controlSource = `<?php
+class CartSummaryControl extends Nette\\Application\\UI\\Control
+{
+    /**
+     * @inject
+     * @var CartFacade
+     */
+    public $cartFacade;
+
+    public function render(): void
+    {
+        $this->template->cartFacade = $this->cartFacade;
+    }
+}
+`;
+
+    expect(netteViewDataEntryFromSource(presenterSource).bindings).toEqual([
+      {
+        viewName: "Product:show",
+        variables: [
+          {
+            detail: "template data",
+            name: "$products",
+            typeHint: "ProductRepository",
+            valueExpression: "$this->products",
+            valueOffset: presenterSource.indexOf("$this->products;"),
+          },
+        ],
+      },
+    ]);
+
+    expect(netteViewDataEntryFromSource(controlSource).bindings).toEqual([
+      {
+        viewName: "CartSummary:default",
+        variables: [
+          {
+            detail: "template data",
+            name: "$cartFacade",
+            typeHint: "CartFacade",
+            valueExpression: "$this->cartFacade",
+            valueOffset: controlSource.indexOf("$this->cartFacade;"),
+          },
+        ],
+      },
+    ]);
   });
 
   it("keeps the full arrow-function value expression instead of truncating at its inner =>", () => {
