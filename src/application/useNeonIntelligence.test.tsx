@@ -601,6 +601,34 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
     );
   });
 
+  it("navigates a cross-file @service::method reference to the service type method", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    router: @routerFactory::createRouter\n",
+      "config/services.neon":
+        "services:\n    routerFactory: Crm\\ApplicationModule\\Router\\RouterFactory\n",
+    });
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openDirectPhpMethodTarget,
+      openTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    router: @routerFactory::createRouter\n";
+    const offset = source.indexOf("createRouter") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "Crm\\ApplicationModule\\Router\\RouterFactory",
+      "createRouter",
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
   it("navigates a class-typed @service to an anonymous service in a module config", async () => {
     const { listDirectory, readFileContent } = buildNeonWorkspace({
       "config/config.neon":

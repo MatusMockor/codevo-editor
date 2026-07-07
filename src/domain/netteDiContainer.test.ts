@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectNeonParameterReferenceAt,
+  detectNeonServiceMethodReferenceAt,
   detectNeonServiceReferenceAt,
   detectNeonServiceSetupMethodAt,
   neonGeneratedServiceNamesFromServices,
@@ -426,6 +427,29 @@ describe("detectNeonServiceReferenceAt", () => {
     const inString = offsetOf(source, "@support", 2);
 
     expect(detectNeonServiceReferenceAt(source, inString)).toBeNull();
+  });
+});
+
+describe("detectNeonServiceMethodReferenceAt", () => {
+  it("detects the method part of an @service::method reference", () => {
+    const source =
+      "services:\n    router: @routerFactory::createRouter\n";
+    const onMethod = offsetOf(source, "createRouter", 3);
+
+    expect(detectNeonServiceMethodReferenceAt(source, onMethod)).toEqual({
+      methodName: "createRouter",
+      methodSpan: spanOf(source, "createRouter"),
+      serviceName: "routerFactory",
+      serviceSpan: spanOf(source, "@routerFactory"),
+    });
+  });
+
+  it("does not detect the service part as a service method reference", () => {
+    const source =
+      "services:\n    router: @routerFactory::createRouter\n";
+    const onService = offsetOf(source, "@routerFactory", 3);
+
+    expect(detectNeonServiceMethodReferenceAt(source, onService)).toBeNull();
   });
 });
 

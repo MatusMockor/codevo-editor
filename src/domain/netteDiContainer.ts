@@ -107,6 +107,17 @@ export interface NeonServiceReference {
   span: NeonSpan;
 }
 
+export interface NeonServiceMethodReference {
+  /** The referenced service name/type without the leading `@`. */
+  serviceName: string;
+  /** The method name after `::`. */
+  methodName: string;
+  /** The whole `@service` token, the `@` included. */
+  serviceSpan: NeonSpan;
+  /** The method-name token range after `::`. */
+  methodSpan: NeonSpan;
+}
+
 export interface NeonServiceReferenceCompletionContext {
   /** The characters already typed after `@` (may be empty). */
   prefix: string;
@@ -1518,6 +1529,48 @@ export function detectNeonServiceReferenceAt(
     if (offset >= reference.span.start && offset <= reference.span.end) {
       return reference;
     }
+  }
+
+  return null;
+}
+
+/** The method part of an `@service::method` reference at `offset`, or `null`. */
+export function detectNeonServiceMethodReferenceAt(
+  source: string,
+  offset: number,
+): NeonServiceMethodReference | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  for (const reference of neonServiceReferences(source)) {
+    const separatorStart = reference.span.end;
+    const methodStart = separatorStart + 2;
+
+    if (
+      source[separatorStart] !== ":" ||
+      source[separatorStart + 1] !== ":" ||
+      !isMethodNameStart(source[methodStart] ?? "")
+    ) {
+      continue;
+    }
+
+    let methodEnd = methodStart + 1;
+
+    while (isIdentifierContinuation(source[methodEnd] ?? "")) {
+      methodEnd += 1;
+    }
+
+    if (offset < methodStart || offset > methodEnd) {
+      continue;
+    }
+
+    return {
+      methodName: source.slice(methodStart, methodEnd),
+      methodSpan: { start: methodStart, end: methodEnd },
+      serviceName: reference.name,
+      serviceSpan: reference.span,
+    };
   }
 
   return null;
