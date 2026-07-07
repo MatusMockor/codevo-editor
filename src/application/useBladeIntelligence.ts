@@ -36,7 +36,6 @@ import {
 import {
   bladeLaravelHelperCompletionContextAt,
   bladeLaravelStringLiteralHelperAt,
-  type BladeLaravelHelperCompletionContext,
 } from "../domain/bladeLaravelHelperCompletions";
 import {
   bladeForeachLoopBindingsAt,
@@ -55,21 +54,11 @@ import {
 } from "../domain/laravelPathResolution";
 import { phpLaravelCollectionModelTypeCandidate } from "../domain/phpFrameworkLaravel";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
-import {
-  phpLaravelConfigCompletionInsertText,
-  type PhpLaravelConfigTarget,
-} from "../domain/phpLaravelConfig";
-import {
-  phpLaravelJsonTranslationCompletionInsertText,
-  phpLaravelTranslationCompletionInsertText,
-  type PhpLaravelTranslationTarget,
-} from "../domain/phpLaravelTranslations";
 import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
 import { type PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { PhpLaravelNamedRouteTarget } from "./useLaravelTargets";
 import type {
   BladeCompletionItem,
   BladeIntelligence,
@@ -91,6 +80,10 @@ import {
   bladeShortTypeName,
   editorPositionAtOffset,
 } from "./bladePhpCompletionContext";
+import {
+  bladeLaravelHelperNameCompletions,
+  provideBladeLaravelHelperCompletionItems,
+} from "./bladeLaravelHelperCompletionItems";
 import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
@@ -781,18 +774,10 @@ export function useBladeIntelligence(
       }
 
       if (phpLikeCompletion?.kind === "helper") {
-        const normalizedPrefix = phpLikeCompletion.prefix.toLowerCase();
-
-        return BLADE_LARAVEL_HELPERS.filter((helper) =>
-          helper.label.toLowerCase().startsWith(normalizedPrefix),
-        ).map((helper) => ({
-          detail: helper.detail,
-          insertText: helper.insertText,
-          kind: "helper",
-          label: helper.label,
+        return bladeLaravelHelperNameCompletions(phpLikeCompletion.prefix, {
           replaceEnd: phpLikeCompletion.end,
           replaceStart: phpLikeCompletion.start,
-        }));
+        });
       }
 
       if (isLaravelFrameworkActive) {
@@ -1191,154 +1176,3 @@ const BLADE_BUILT_IN_VARIABLES: PhpLaravelViewVariable[] = [
     valueOffset: null,
   },
 ];
-
-interface BladeLaravelHelperCompletionDependencies {
-  collectPhpLaravelConfigTargets: () => Promise<PhpLaravelConfigTarget[]>;
-  collectPhpLaravelNamedRouteTargets: (
-    currentSource: string,
-    currentPath: string,
-  ) => Promise<PhpLaravelNamedRouteTarget[]>;
-  collectPhpLaravelTranslationTargets: () => Promise<PhpLaravelTranslationTarget[]>;
-  currentDocumentContent: string;
-  currentDocumentPath: string;
-  isRequestedRootActive: () => boolean;
-}
-
-/**
- * Resolves `route()` / `config()` / `trans()` / `__()` string-literal
- * completions for Blade files by reusing the same target collectors and
- * insert-text formatting the PHP completion path uses
- * (`providePhpMethodCompletions`). Kept as a thin, isolation-guarded adapter
- * over `bladeLaravelHelperCompletionContextAt` so the target-collection and
- * insert-text logic is never duplicated.
- */
-async function provideBladeLaravelHelperCompletionItems(
-  helperCompletion: BladeLaravelHelperCompletionContext,
-  offset: number,
-  dependencies: BladeLaravelHelperCompletionDependencies,
-): Promise<BladeCompletionItem[]> {
-  const replaceStart = offset - helperCompletion.prefix.length;
-  const replaceEnd = offset;
-  const normalizedPrefix = helperCompletion.prefix.toLowerCase();
-
-  if (helperCompletion.kind === "route") {
-    const routes = await dependencies.collectPhpLaravelNamedRouteTargets(
-      dependencies.currentDocumentContent,
-      dependencies.currentDocumentPath,
-    );
-
-    if (!dependencies.isRequestedRootActive()) {
-      return [];
-    }
-
-    return routes
-      .filter((route) => route.name.toLowerCase().startsWith(normalizedPrefix))
-      .slice(0, 80)
-      .map((route) => ({
-        detail: route.relativePath ?? undefined,
-        insertText: phpNamedRouteCompletionInsertText(
-          route.name,
-          helperCompletion.prefix,
-        ),
-        kind: "helper" as const,
-        label: route.name,
-        replaceEnd,
-        replaceStart,
-      }));
-  }
-
-  if (helperCompletion.kind === "trans") {
-    const targets = await dependencies.collectPhpLaravelTranslationTargets();
-
-    if (!dependencies.isRequestedRootActive()) {
-      return [];
-    }
-
-    return targets
-      .filter((target) => target.key.toLowerCase().startsWith(normalizedPrefix))
-      .slice(0, 80)
-      .map((target) => ({
-        detail: target.relativePath,
-        insertText: target.relativePath.endsWith(".json")
-          ? phpLaravelJsonTranslationCompletionInsertText(
-              target.key,
-              helperCompletion.prefix,
-            )
-          : phpLaravelTranslationCompletionInsertText(
-              target.key,
-              helperCompletion.prefix,
-            ),
-        kind: "helper" as const,
-        label: target.key,
-        replaceEnd,
-        replaceStart,
-      }));
-  }
-
-  const targets = await dependencies.collectPhpLaravelConfigTargets();
-
-  if (!dependencies.isRequestedRootActive()) {
-    return [];
-  }
-
-  return targets
-    .filter((target) => target.key.toLowerCase().startsWith(normalizedPrefix))
-    .slice(0, 80)
-    .map((target) => ({
-      detail: target.relativePath,
-      insertText: phpLaravelConfigCompletionInsertText(
-        target.key,
-        helperCompletion.prefix,
-      ),
-      kind: "helper" as const,
-      label: target.key,
-      replaceEnd,
-      replaceStart,
-    }));
-}
-
-const BLADE_LARAVEL_HELPERS = [
-  {
-    detail: "Laravel helper",
-    insertText: "old()",
-    label: "old",
-  },
-  {
-    detail: "Laravel helper",
-    insertText: "route()",
-    label: "route",
-  },
-  {
-    detail: "Laravel helper",
-    insertText: "asset()",
-    label: "asset",
-  },
-  {
-    detail: "Laravel helper",
-    insertText: "config()",
-    label: "config",
-  },
-  {
-    detail: "Laravel translation helper",
-    insertText: "__()",
-    label: "__",
-  },
-  {
-    detail: "Laravel helper",
-    insertText: "csrf_field()",
-    label: "csrf_field",
-  },
-] as const;
-
-function phpNamedRouteCompletionInsertText(
-  routeName: string,
-  prefix: string,
-): string {
-  const lastDotIndex = prefix.lastIndexOf(".");
-
-  if (lastDotIndex < 0) {
-    return routeName;
-  }
-
-  return routeName.slice(lastDotIndex + 1);
-}
