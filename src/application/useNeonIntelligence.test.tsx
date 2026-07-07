@@ -630,6 +630,61 @@ describe("createNeonIntelligence @service definition (Fáza 3)", () => {
     );
     expect(openClassTarget).not.toHaveBeenCalled();
   });
+
+  it("navigates a class-shaped NEON service alias from another config file", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/config.neon":
+        "services:\n    consumer: App\\Consumer(@App\\Contracts\\Mailer)\n",
+      "config/services.neon": [
+        "services:",
+        "    mailer: App\\Mail\\NetteMailer",
+        "    App\\Contracts\\Mailer: @mailer",
+      ].join("\n"),
+    });
+    const openClassTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openClassTarget,
+      openTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    consumer: App\\Consumer(@App\\Contracts\\Mailer)\n";
+    const offset = source.indexOf("@App\\Contracts\\Mailer") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/config/services.neon",
+      expect.objectContaining({ lineNumber: 3 }),
+      "@App\\Contracts\\Mailer",
+    );
+    expect(openClassTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve NEON service aliases when the Nette framework is inactive", async () => {
+    const { listDirectory, readFileContent } = buildNeonWorkspace({
+      "config/services.neon": "services:\n    App\\Contracts\\Mailer: @mailer\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkIntelligence: GENERIC_FRAMEWORK,
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+    const source =
+      "services:\n    consumer: App\\Consumer(@App\\Contracts\\Mailer)\n";
+    const offset = source.indexOf("@App\\Contracts\\Mailer") + 5;
+
+    await expect(neon.provideNeonDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
 });
 
 describe("createNeonIntelligence setup method definition", () => {

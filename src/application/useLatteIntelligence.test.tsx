@@ -2738,6 +2738,25 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     ]);
   });
 
+  it("filters targets by the typed prefix inside ->redirect(status, '...')", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->redirect(303, 'Product:s');";
+    const offset = source.indexOf("Product:s") + "Product:s".length;
+    const completions = await latte.provideNettePhpLinkCompletions(
+      source,
+      offset,
+    );
+    if (!completions) {
+      throw new Error("Expected filtered Nette PHP redirect completions.");
+    }
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "Product:show",
+    ]);
+  });
+
   it("returns null when the cursor is not on a link-call string argument", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({ listDirectory, readFileContent });

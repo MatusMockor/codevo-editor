@@ -662,6 +662,18 @@ describe("detectPhpPresenterLinkAt", () => {
     );
   });
 
+  it("detects a redirect(status, 'Presenter:action') overload", () => {
+    const source = "$this->redirect(303, 'Product:show');";
+    const offset = offsetOf(source, "Product:show", 2);
+
+    expect(detectPhpPresenterLinkAt(source, offset)).toEqual({
+      call: "redirect",
+      target: "Product:show",
+      targetStart: source.indexOf("Product:show"),
+      targetEnd: source.indexOf("Product:show") + "Product:show".length,
+    });
+  });
+
   it("detects a redirectPermanent call without matching plain redirect", () => {
     const source = "$this->redirectPermanent('Home:');";
     const offset = offsetOf(source, "Home:", 2);
@@ -706,13 +718,8 @@ describe("detectPhpPresenterLinkAt", () => {
     expect(detectPhpPresenterLinkAt(source, offset)).toBeNull();
   });
 
-  // Documented gap (see the PHP_LINK_CALL / firstStringLiteralArgument
-  // comments): the legacy `redirect(302, 'Presenter:action')` HTTP-code
-  // overload is intentionally NOT detected. It is a deprecated Nette form,
-  // and requiring the first argument to be the string literal keeps this
-  // module simple and conservative rather than argument-position-aware.
-  it("does not detect a legacy redirect(code, target) call", () => {
-    const source = "$this->redirect(302, 'Product:show');";
+  it("does not detect a non-status second redirect argument", () => {
+    const source = "$this->redirect($code, 'Product:show');";
     const offset = offsetOf(source, "Product:show", 2);
 
     expect(detectPhpPresenterLinkAt(source, offset)).toBeNull();
@@ -766,6 +773,17 @@ describe("nettePresenterLinkCompletionContextAt", () => {
 
   it("offers a PHP link completion for a partial literal", () => {
     const source = "$this->link('Prod');";
+    const offset = offsetOf(source, "Prod") + "Prod".length;
+
+    expect(nettePresenterLinkCompletionContextAt(source, offset, "php")).toEqual({
+      prefix: "Prod",
+      replaceStart: source.indexOf("Prod"),
+      replaceEnd: source.indexOf("Prod") + "Prod".length,
+    });
+  });
+
+  it("offers PHP redirect completion for a status-code overload", () => {
+    const source = "$this->redirect(302, 'Prod');";
     const offset = offsetOf(source, "Prod") + "Prod".length;
 
     expect(nettePresenterLinkCompletionContextAt(source, offset, "php")).toEqual({

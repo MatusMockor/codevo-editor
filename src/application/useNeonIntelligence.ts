@@ -523,6 +523,17 @@ async function resolveNeonServiceDefinition(
     return false;
   }
 
+  const namedTypeLocation =
+    config.services.get(name) ?? config.services.get(normalizedType);
+
+  if (namedTypeLocation) {
+    return deps.openTarget(
+      namedTypeLocation.path,
+      namedTypeLocation.position,
+      `@${name}`,
+    );
+  }
+
   const location = config.serviceTypes.get(normalizedType);
 
   if (location) {

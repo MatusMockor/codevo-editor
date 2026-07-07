@@ -995,7 +995,11 @@ function phpLinkCalls(source: string): PhpLinkCall[] {
     match = PHP_LINK_CALL.exec(source)
   ) {
     const openParen = match.index + match[0].length - 1;
-    const literal = firstStringLiteralArgument(source, openParen);
+    const name = match[1] as NettePhpLinkCall;
+    const literal =
+      name === "redirect" || name === "redirectPermanent"
+        ? redirectStringLiteralArgument(source, openParen)
+        : firstStringLiteralArgument(source, openParen);
 
     if (PHP_LINK_CALL.lastIndex <= match.index) {
       PHP_LINK_CALL.lastIndex = match.index + 1;
@@ -1008,7 +1012,7 @@ function phpLinkCalls(source: string): PhpLinkCall[] {
     calls.push({
       contentEnd: literal.contentEnd,
       contentStart: literal.contentStart,
-      name: match[1] as NettePhpLinkCall,
+      name,
       text: literal.text,
     });
   }
@@ -1025,13 +1029,10 @@ interface StringLiteral {
 /**
  * Reads the FIRST argument and requires it to be a string literal.
  *
- * KNOWN GAP (intentional, not fixed here): the legacy
- * `redirect(302, 'Presenter:action')` HTTP-status-code overload puts the
- * target in the SECOND argument, so this always returns `null` for it and the
- * link is silently not detected. This is a deprecated Nette form; treating
- * argument position generically (rather than "first argument only") would
- * complicate every call site for a form real projects rarely use. Safe
- * degradation: no navigation offered, never a wrong one.
+ * The legacy `redirect(302, 'Presenter:action')` HTTP-status-code overload puts
+ * the target in the SECOND argument. We keep the generic rule first-argument-only
+ * for every call, then let redirect-like calls opt into that one conservative
+ * numeric-status overload.
  */
 function firstStringLiteralArgument(
   source: string,
@@ -1057,6 +1058,54 @@ function firstStringLiteralArgument(
     contentStart,
     text: source.slice(contentStart, contentEnd),
   };
+}
+
+function redirectStringLiteralArgument(
+  source: string,
+  openParen: number,
+): StringLiteral | null {
+  const first = firstStringLiteralArgument(source, openParen);
+
+  if (first) {
+    return first;
+  }
+
+  const second = secondTopLevelArgument(source, openParen);
+
+  if (!second || !firstRedirectArgumentIsStatusCode(source, openParen, second)) {
+    return null;
+  }
+
+  const quote = source[second.start];
+
+  if (quote !== "'" && quote !== '"') {
+    return null;
+  }
+
+  const literal = firstStringLiteralArgument(source, second.start - 1);
+
+  if (!literal || literal.contentEnd > second.end) {
+    return null;
+  }
+
+  return literal;
+}
+
+function firstRedirectArgumentIsStatusCode(
+  source: string,
+  openParen: number,
+  secondArgument: ArgumentRange,
+): boolean {
+  const comma = firstTopLevelComma(source, openParen + 1, secondArgument.start);
+
+  if (comma === null) {
+    return false;
+  }
+
+  const firstRange = trimRange(source, openParen + 1, comma);
+  const firstArgument = source.slice(firstRange.start, firstRange.end);
+
+  return /^[1-5][0-9]{2}$/.test(firstArgument);
 }
 
 function stringLiteralClose(
@@ -1520,6 +1569,21 @@ function isWhitespace(character: string | undefined): boolean {
     character === "\n" ||
     character === "\r"
   );
+}
+
+function trimRange(source: string, start: number, end: number): TokenRegion {
+  let rangeStart = Math.max(0, start);
+  let rangeEnd = Math.max(rangeStart, Math.min(end, source.length));
+
+  while (rangeStart < rangeEnd && isWhitespace(source[rangeStart])) {
+    rangeStart += 1;
+  }
+
+  while (rangeEnd > rangeStart && isWhitespace(source[rangeEnd - 1])) {
+    rangeEnd -= 1;
+  }
+
+  return { end: rangeEnd, start: rangeStart };
 }
 
 function skipWhitespace(source: string, from: number, limit: number): number {
