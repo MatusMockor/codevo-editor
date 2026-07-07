@@ -25,7 +25,6 @@
 import { useCallback, useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
-  BLADE_DIRECTIVES,
   bladeComponentNavigationCandidateRelativePaths,
   bladeViewCandidateRelativePaths,
   detectBladeComponentCompletionAt,
@@ -91,6 +90,10 @@ import {
   BLADE_BUILT_IN_VARIABLES,
   bladeVariableCompletionItems,
 } from "./bladeVariableCompletionItems";
+import {
+  bladeComponentCompletionItems,
+  bladeDirectiveCompletionItems,
+} from "./bladeStaticCompletionItems";
 import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
   invalidateBladeViewDataEntriesForPath as invalidateBladeViewDataEntriesForCachePath,
@@ -628,20 +631,13 @@ export function useBladeIntelligence(
       const phpLikeCompletion = bladePhpLikeCompletionAt(source, offset);
 
       if (directiveCompletion) {
-        const normalizedPrefix = directiveCompletion.directivePrefix.toLowerCase();
-
-        return BLADE_DIRECTIVES.filter((directive) =>
-          directive.toLowerCase().startsWith(normalizedPrefix),
-        )
-          .slice(0, 100)
-          .map((directive) => ({
-            detail: "Blade directive",
-            insertText: directive,
-            kind: "directive",
-            label: `@${directive}`,
+        return bladeDirectiveCompletionItems(
+          directiveCompletion.directivePrefix,
+          {
             replaceEnd: offset,
             replaceStart: directiveCompletion.start + 1,
-          }));
+          },
+        );
       }
 
       if (memberCompletion) {
@@ -836,19 +832,14 @@ export function useBladeIntelligence(
           return [];
         }
 
-        const normalizedPrefix = componentCompletion.prefix.toLowerCase();
-
-        return componentNames
-          .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
-          .slice(0, 100)
-          .map((name) => ({
-            detail: "Blade component",
-            insertText: name,
-            kind: "component",
-            label: name,
+        return bladeComponentCompletionItems(
+          componentNames,
+          componentCompletion.prefix,
+          {
             replaceEnd: componentCompletion.replaceEnd,
             replaceStart: componentCompletion.replaceStart,
-          }));
+          },
+        );
       }
 
       return [];
