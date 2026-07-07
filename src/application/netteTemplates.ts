@@ -2,21 +2,23 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { LatteReference } from "../domain/latteNavigation";
 import {
   latteLayoutCandidatePaths,
-  moduleTemplatesRootOf,
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
-import {
-  listLatteTemplateRelativePaths,
-} from "./netteTemplateDiscovery";
 import type {
   LatteDirectoryEntry,
-  LatteTemplateCache,
 } from "./netteTemplateDiscovery";
 
 export {
   isLatteScanSkippedDirectory,
   listLatteTemplateRelativePaths,
 } from "./netteTemplateDiscovery";
+export {
+  latteTemplateCompletions,
+} from "./netteTemplateCompletions";
+export type {
+  NetteTemplateCompletionContext,
+  NetteTemplateCompletionItem,
+} from "./netteTemplateCompletions";
 export type {
   LatteDirectoryEntry,
   LatteTemplateCache,
@@ -35,30 +37,11 @@ export interface NetteTemplateDependencies {
   toRelativePath(rootPath: string, path: string): string;
 }
 
-export interface NetteTemplateCompletionItem {
-  detail?: string;
-  insertText: string;
-  kind: "template";
-  label: string;
-  replaceStart?: number;
-  replaceEnd?: number;
-}
-
 export interface NetteTemplateResolutionContext {
   currentTemplateRelativePath: string;
   deps: NetteTemplateDependencies;
   isRequestedRootActive(): boolean;
   requestedRoot: string;
-}
-
-export interface NetteTemplateCompletionContext
-  extends NetteTemplateResolutionContext {
-  cache: LatteTemplateCache;
-  maxCompletions: number;
-  maxDepth: number;
-  maxTemplates: number;
-  scanDirectories: readonly string[];
-  ttlMs: number;
 }
 
 const LAYOUT_NAVIGATION_LABEL = "@layout";
@@ -104,35 +87,6 @@ export async function resolveLatteTemplateDefinition(
   return false;
 }
 
-export async function latteTemplateCompletions(
-  context: NetteTemplateCompletionContext,
-  includeCompletion: { prefix: string; replaceEnd: number; replaceStart: number },
-): Promise<NetteTemplateCompletionItem[]> {
-  const relativePaths = await listLatteTemplateRelativePaths(context);
-
-  if (!context.isRequestedRootActive()) {
-    return [];
-  }
-
-  const names = latteIncludeCandidateNames(
-    relativePaths,
-    context.currentTemplateRelativePath,
-  );
-  const normalizedPrefix = includeCompletion.prefix.toLowerCase();
-
-  return names
-    .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
-    .slice(0, context.maxCompletions)
-    .map((name) => ({
-      detail: "Latte template",
-      insertText: name,
-      kind: "template" as const,
-      label: name,
-      replaceEnd: includeCompletion.replaceEnd,
-      replaceStart: includeCompletion.replaceStart,
-    }));
-}
-
 async function fileExists(
   deps: NetteTemplateDependencies,
   path: string,
@@ -143,49 +97,6 @@ async function fileExists(
   } catch {
     return false;
   }
-}
-
-function latteIncludeCandidateNames(
-  relativePaths: string[],
-  currentTemplateRelativePath: string,
-): string[] {
-  const currentDirectory = dirnameOf(currentTemplateRelativePath);
-  const moduleTemplatesRoot = moduleTemplatesRootOf(currentTemplateRelativePath);
-  const names = new Set<string>();
-
-  for (const relativePath of relativePaths) {
-    if (relativePath === currentTemplateRelativePath) {
-      continue;
-    }
-
-    names.add(relativeReference(currentDirectory, relativePath));
-
-    const moduleRootReference = moduleTemplatesRootReference(
-      moduleTemplatesRoot,
-      relativePath,
-    );
-
-    if (moduleRootReference) {
-      names.add(moduleRootReference);
-    }
-  }
-
-  return Array.from(names).sort((left, right) => left.localeCompare(right));
-}
-
-function moduleTemplatesRootReference(
-  moduleTemplatesRoot: string | null,
-  targetPath: string,
-): string | null {
-  if (!moduleTemplatesRoot) {
-    return null;
-  }
-
-  if (!targetPath.startsWith(`${moduleTemplatesRoot}/`)) {
-    return null;
-  }
-
-  return targetPath.slice(moduleTemplatesRoot.length + 1);
 }
 
 function bareLayoutTagAt(source: string, offset: number): boolean {
@@ -246,36 +157,6 @@ function macroOpenBefore(source: string, offset: number): number | null {
   }
 
   return null;
-}
-
-function relativeReference(fromDirectory: string, targetPath: string): string {
-  const fromSegments = fromDirectory.length > 0 ? fromDirectory.split("/") : [];
-  const targetSegments = targetPath.split("/");
-  let common = 0;
-
-  while (
-    common < fromSegments.length &&
-    common < targetSegments.length - 1 &&
-    fromSegments[common] === targetSegments[common]
-  ) {
-    common += 1;
-  }
-
-  const ups = fromSegments.length - common;
-  const downs = targetSegments.slice(common);
-  const parts = [...Array.from({ length: ups }, () => ".."), ...downs];
-
-  return parts.join("/");
-}
-
-function dirnameOf(path: string): string {
-  const index = path.lastIndexOf("/");
-
-  if (index < 0) {
-    return "";
-  }
-
-  return path.slice(0, index);
 }
 
 function isTagNameChar(character: string): boolean {
