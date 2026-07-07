@@ -87,6 +87,7 @@ import {
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /**
  * The Monaco icon bucket a Latte completion maps to: tag → keyword,
@@ -138,8 +139,8 @@ export interface LatteDirectoryEntry {
 export interface LatteIntelligenceDependencies {
   /** Live workspace root, read AFTER each await to drop stale results. */
   currentWorkspaceRootRef: { readonly current: string | null };
+  frameworkIntelligence: PhpFrameworkIntelligence;
   getActiveDocument(): LatteIntelligenceActiveDocument | null;
-  isNetteFrameworkActive: boolean;
   isSemanticIntelligenceActive: boolean;
   joinPath(rootPath: string, relativePath: string): string;
   listDirectory(path: string): Promise<LatteDirectoryEntry[]>;
@@ -892,7 +893,7 @@ export function useLatteIntelligence(
 }
 
 function isLatteSemanticActive(deps: LatteIntelligenceDependencies): boolean {
-  return deps.isNetteFrameworkActive && deps.isSemanticIntelligenceActive;
+  return deps.frameworkIntelligence.isNette && deps.isSemanticIntelligenceActive;
 }
 
 /**

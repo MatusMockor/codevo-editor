@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   createNeonIntelligence,
   useNeonIntelligence,
@@ -11,16 +12,27 @@ import {
   type NeonIntelligence,
   type NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 const ROOT = "/ws";
+const NETTE_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: ["nette"],
+  profile: "nette",
+  providers: [phpNetteFrameworkProvider],
+});
+const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "generic",
+  providers: [],
+});
 
 function makeDeps(
   overrides: Partial<NeonIntelligenceDependencies> = {},
 ): NeonIntelligenceDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
+    frameworkIntelligence: NETTE_FRAMEWORK,
     getActiveDocument: () => ({ path: `${ROOT}/config/config.neon` }),
-    isNetteFrameworkActive: true,
     isSemanticIntelligenceActive: true,
     joinPath: (root, relativePath) => `${root}/${relativePath}`,
     listDirectory: vi.fn(async () => {
@@ -199,7 +211,7 @@ describe("createNeonIntelligence definition", () => {
 
   it("does nothing when the Nette framework is inactive", async () => {
     const openClassTarget = vi.fn(async () => true);
-    const deps = makeDeps({ isNetteFrameworkActive: false, openClassTarget });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, openClassTarget });
     const neon = createNeonIntelligence(() => deps);
     const source = "services:\n    router: App\\Router\\RouterFactory\n";
     const offset = source.indexOf("App\\Router\\RouterFactory") + 2;
@@ -318,7 +330,7 @@ describe("createNeonIntelligence completions", () => {
 
   it("returns nothing when the Nette framework is inactive", async () => {
     const searchClassNames = vi.fn(async () => ["App\\Foo"]);
-    const deps = makeDeps({ isNetteFrameworkActive: false, searchClassNames });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, searchClassNames });
     const neon = createNeonIntelligence(() => deps);
     const source = "services:\n    - App\\";
     const offset = source.length;
@@ -384,7 +396,7 @@ describe("useNeonIntelligence hook mount", () => {
   }
 
   it("exposes a stable definition/completion API and honours gating", async () => {
-    const deps = makeDeps({ isNetteFrameworkActive: false });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK });
     const harness = renderHook(deps);
     const firstApi = harness.captured.api;
 
@@ -397,7 +409,7 @@ describe("useNeonIntelligence hook mount", () => {
       }),
     ).resolves.toEqual([]);
 
-    harness.rerender(makeDeps({ isNetteFrameworkActive: false }));
+    harness.rerender(makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK }));
     expect(harness.captured.api).toBe(firstApi);
 
     harness.unmount();
@@ -461,7 +473,7 @@ describe("createNeonIntelligence %param% definition (Fáza 3)", () => {
 
   it("does nothing when the Nette framework is inactive", async () => {
     const openTarget = vi.fn(async () => true);
-    const deps = makeDeps({ isNetteFrameworkActive: false, openTarget });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, openTarget });
     const neon = createNeonIntelligence(() => deps);
     const source = "parameters:\n    dbHost: localhost\n    dsn: %dbHost%\n";
     const offset = source.indexOf("%dbHost%") + 2;
@@ -791,7 +803,7 @@ describe("createNeonIntelligence %param% + @service completion (Fáza 3)", () =>
     const listDirectory = vi.fn(async () => {
       throw new Error("no directory");
     });
-    const deps = makeDeps({ isNetteFrameworkActive: false, listDirectory });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, listDirectory });
     const neon = createNeonIntelligence(() => deps);
     const source = "parameters:\n    dsn: %db\n";
     const offset = source.indexOf("%db") + 3;

@@ -7,6 +7,13 @@ import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { useGitWorkspace } from "./useGitWorkspace";
+import {
+  gitChangeForDiffDocumentPath,
+  gitChangesReferToSameDiff,
+  gitDiffDocumentPath,
+  isGitDiffDocumentPath,
+  useGitDiffWorkspace,
+} from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useLaravelTargets } from "./useLaravelTargets";
@@ -63,6 +70,7 @@ import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import {
@@ -105,8 +113,6 @@ import {
 import {
   emptyGitStatus,
   type GitBlameLine,
-  type GitChangedFile,
-  type GitFileDiff,
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
@@ -370,7 +376,6 @@ import {
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
   phpFrameworkViewReferenceAt,
-  isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
@@ -488,10 +493,6 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
-interface OpenGitChangeOptions {
-  pin?: boolean;
-}
-
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
 interface CachedWorkspaceWorkbenchState {
@@ -591,19 +592,17 @@ export function useWorkbenchController(
     () => resolvePhpFrameworkProfile(workspaceDescriptor?.php ?? null),
     [workspaceDescriptor?.php],
   );
+  const phpFrameworkIntelligence = useMemo(
+    () => createPhpFrameworkIntelligence(phpFrameworkResolution),
+    [phpFrameworkResolution],
+  );
   const activePhpFrameworkProviders = phpFrameworkResolution.providers;
   const activePhpFrameworkProviderSignature = useMemo(
     () => phpFrameworkProviderSignature(activePhpFrameworkProviders),
     [activePhpFrameworkProviders],
   );
-  const isLaravelFrameworkActive = useMemo(
-    () => isPhpFrameworkProviderActive(activePhpFrameworkProviders, "laravel"),
-    [activePhpFrameworkProviders],
-  );
-  const isNetteFrameworkActive = useMemo(
-    () => isPhpFrameworkProviderActive(activePhpFrameworkProviders, "nette"),
-    [activePhpFrameworkProviders],
-  );
+  const isLaravelFrameworkActive = phpFrameworkIntelligence.isLaravel;
+  const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
   // Exclusive, per-workspace framework profile - the single discriminator the
   // status-bar chip and future gating key off.
   const activeFrameworkProfile = phpFrameworkResolution.profile;
@@ -685,12 +684,6 @@ export function useWorkbenchController(
     GitRepositoryStatus[]
   >([]);
   const [gitLoading, setGitLoading] = useState(false);
-  const [gitDiffLoading, setGitDiffLoading] = useState(false);
-  const [selectedGitChange, setSelectedGitChange] =
-    useState<GitChangedFile | null>(null);
-  const [gitDiffPreview, setGitDiffPreview] = useState<GitFileDiff | null>(
-    null,
-  );
   const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useState<
     Record<string, string | null>
   >({});
@@ -823,7 +816,6 @@ export function useWorkbenchController(
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
-  const gitDiffRequestTokenRef = useRef(0);
   const emptyDocumentRefreshTimeoutsRef = useRef<Set<number>>(new Set());
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
@@ -969,7 +961,6 @@ export function useWorkbenchController(
   >([]);
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
-  const selectedGitChangeRef = useRef<GitChangedFile | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<
@@ -1187,10 +1178,6 @@ export function useWorkbenchController(
   useEffect(() => {
     previewPathRef.current = previewPath;
   }, [previewPath]);
-
-  useEffect(() => {
-    selectedGitChangeRef.current = selectedGitChange;
-  }, [selectedGitChange]);
 
   useEffect(
     () => () => {
@@ -1714,6 +1701,37 @@ export function useWorkbenchController(
     setRecentLocations,
     setRecentLocationsPanelOpen,
     setWorkspaceSymbolsOpen,
+  });
+
+  const {
+    gitDiffLoading,
+    selectedGitChange,
+    gitDiffPreview,
+    gitDiffRequestTokenRef,
+    selectedGitChangeRef,
+    setGitDiffLoading,
+    setSelectedGitChange,
+    setGitDiffPreview,
+    resetGitDiffWorkspaceState,
+    clearGitDiffPreviewState,
+    loadGitDiffDocument,
+    previewGitChange,
+    openGitChange,
+  } = useGitDiffWorkspace({
+    workspaceRoot,
+    gitGateway,
+    currentWorkspaceRootRef,
+    activeDocumentRef,
+    documentsRef,
+    openPathsRef,
+    previewPathRef,
+    setDocuments,
+    setOpenPaths,
+    setPreviewPath,
+    setActivePath,
+    setMessage,
+    recordCurrentNavigationLocation,
+    reportError,
   });
 
   const isLanguageServerSessionCurrentForRoot = useCallback(
@@ -2464,10 +2482,7 @@ export function useWorkbenchController(
     setGitRepositoryStatuses([]);
     setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
     setGitLoading(false);
-    setGitDiffLoading(false);
-    selectedGitChangeRef.current = null;
-    setSelectedGitChange(null);
-    setGitDiffPreview(null);
+    resetGitDiffWorkspaceState();
     setEditorGitBaselinesByPath({});
     setPhpTree(emptyPhpTree());
     setPhpTreeExpandedNodeIds(new Set());
@@ -2520,6 +2535,7 @@ export function useWorkbenchController(
     clearPhpLocalDiagnostics,
     resetFilePrefetchState,
     resetHistory,
+    resetGitDiffWorkspaceState,
     resetSearchEverywhere,
     resetJavaScriptTypeScriptFileStructure,
     resetTextSearchState,
@@ -2866,10 +2882,7 @@ export function useWorkbenchController(
       setGitRepositoryStatuses([]);
       setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
       setGitLoading(false);
-      setGitDiffLoading(false);
-      selectedGitChangeRef.current = null;
-      setSelectedGitChange(null);
-      setGitDiffPreview(null);
+      resetGitDiffWorkspaceState();
       setEditorGitBaselinesByPath({});
       setPhpFileOutlinesByPath({});
       setPhpInheritedFileOutlinesByPath({});
@@ -3134,6 +3147,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
       resetFilePrefetchState,
+      resetGitDiffWorkspaceState,
       resetJavaScriptTypeScriptFileStructure,
       resetSearchEverywhere,
       resetTextSearchState,
@@ -3216,69 +3230,6 @@ export function useWorkbenchController(
 
     await refreshDirectory(workspaceRoot);
   }, [refreshDirectory, workspaceRoot]);
-
-  const loadGitDiffDocument = useCallback(
-    (path: string, gitChange: GitChangedFile) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const requestToken = gitDiffRequestTokenRef.current + 1;
-      gitDiffRequestTokenRef.current = requestToken;
-      recordCurrentNavigationLocation();
-      selectedGitChangeRef.current = gitChange;
-      setSelectedGitChange(gitChange);
-      setGitDiffPreview(null);
-      setGitDiffLoading(true);
-      setActivePath(path);
-
-      void gitGateway
-        .getDiff(requestedRoot, gitChange)
-        .then((diff) => {
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ) ||
-            gitDiffRequestTokenRef.current !== requestToken
-          ) {
-            return;
-          }
-
-          setGitDiffPreview(diff);
-          setMessage(`Diff ${gitChange.relativePath}`);
-        })
-        .catch((error) => {
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ) ||
-            gitDiffRequestTokenRef.current !== requestToken
-          ) {
-            return;
-          }
-
-          setGitDiffPreview(null);
-          reportError("Git Diff", error);
-        })
-        .finally(() => {
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ) ||
-            gitDiffRequestTokenRef.current !== requestToken
-          ) {
-            return;
-          }
-
-          setGitDiffLoading(false);
-        });
-    },
-    [gitGateway, recordCurrentNavigationLocation, reportError, workspaceRoot],
-  );
 
   const {
     activateDocument,
@@ -3450,15 +3401,6 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceSettings.revealActiveFileInTree,
   ]);
-
-  const clearGitDiffPreviewState = useCallback(() => {
-    gitDiffRequestTokenRef.current += 1;
-    setGitDiffLoading(false);
-    selectedGitChangeRef.current = null;
-    setSelectedGitChange(null);
-    setGitDiffPreview(null);
-    setMessage(null);
-  }, []);
 
   const {
     closeGitDiffPreview,
@@ -3677,106 +3619,6 @@ export function useWorkbenchController(
     resolveGitRepositoryTarget,
     workspaceRoot,
   ]);
-
-  const previewGitChange = useCallback(
-    async (change: GitChangedFile, options: OpenGitChangeOptions = {}) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const requestToken = gitDiffRequestTokenRef.current + 1;
-      const documentPath = gitDiffDocumentPath(change);
-      const document = gitDiffDocument(change);
-      gitDiffRequestTokenRef.current = requestToken;
-      recordCurrentNavigationLocation();
-      documentsRef.current = {
-        ...documentsRef.current,
-        [documentPath]: documentsRef.current[documentPath] ?? document,
-      };
-      activeDocumentRef.current = documentsRef.current[documentPath] ?? document;
-      setDocuments((current) => ({
-        ...current,
-        [documentPath]: current[documentPath] ?? document,
-      }));
-      if (options.pin === true) {
-        openPathsRef.current = openPathsRef.current.includes(documentPath)
-          ? openPathsRef.current
-          : [...openPathsRef.current, documentPath];
-        previewPathRef.current =
-          previewPathRef.current === documentPath ? null : previewPathRef.current;
-        setOpenPaths((current) =>
-          current.includes(documentPath) ? current : [...current, documentPath],
-        );
-        setPreviewPath((current) =>
-          current === documentPath ? null : current,
-        );
-      } else {
-        previewPathRef.current = documentPath;
-        setPreviewPath(documentPath);
-      }
-      selectedGitChangeRef.current = change;
-      setSelectedGitChange(change);
-      setGitDiffPreview(null);
-      setGitDiffLoading(true);
-      setActivePath(documentPath);
-
-      try {
-        const diff = await gitGateway.getDiff(requestedRoot, change);
-
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          gitDiffRequestTokenRef.current !== requestToken
-        ) {
-          return;
-        }
-
-        setGitDiffPreview(diff);
-        setMessage(`Diff ${change.relativePath}`);
-      } catch (error) {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          gitDiffRequestTokenRef.current !== requestToken
-        ) {
-          return;
-        }
-
-        setGitDiffPreview(null);
-        reportError("Git Diff", error);
-      } finally {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          gitDiffRequestTokenRef.current !== requestToken
-        ) {
-          return;
-        }
-
-        setGitDiffLoading(false);
-      }
-    },
-    [
-      gitGateway,
-      recordCurrentNavigationLocation,
-      reportError,
-      workspaceRoot,
-    ],
-  );
-
-  const openGitChange = useCallback(
-    async (change: GitChangedFile) => {
-      await previewGitChange(change, { pin: true });
-    },
-    [previewGitChange],
-  );
 
   const applyGitOperationStatus = useCallback(
     (status: GitStatus) => {
@@ -8088,7 +7930,6 @@ export function useWorkbenchController(
     resetBladeIntelligenceCaches,
   } = useBladeIntelligence({
     activeDocument,
-    activePhpFrameworkProviders,
     collectPhpLaravelConfigTargets,
     collectPhpLaravelNamedRouteTargets,
     collectPhpLaravelTranslationTargets,
@@ -8100,7 +7941,7 @@ export function useWorkbenchController(
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
     findPhpLaravelViewTarget,
-    isLaravelFrameworkActive,
+    frameworkIntelligence: phpFrameworkIntelligence,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
@@ -8126,8 +7967,8 @@ export function useWorkbenchController(
     shouldBlockLatteDefinitionFallback,
   } = useLatteIntelligence({
     currentWorkspaceRootRef,
+    frameworkIntelligence: phpFrameworkIntelligence,
     getActiveDocument: () => activeDocumentRef.current,
-    isNetteFrameworkActive,
     isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
     joinPath: joinWorkspacePath,
     listDirectory: (path) => workspaceFiles.readDirectory(path),
@@ -8151,8 +7992,8 @@ export function useWorkbenchController(
   // class jump uses); completion class names come from the project symbol index.
   const { provideNeonDefinition, provideNeonCompletions } = useNeonIntelligence({
     currentWorkspaceRootRef,
+    frameworkIntelligence: phpFrameworkIntelligence,
     getActiveDocument: () => activeDocumentRef.current,
-    isNetteFrameworkActive,
     isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
     joinPath: joinWorkspacePath,
     listDirectory: (path) => workspaceFiles.readDirectory(path),
@@ -13763,47 +13604,9 @@ function restoredActivePath(
   return restoredPaths[0] || null;
 }
 
-function gitDiffDocumentPath(change: GitChangedFile): string {
-  const side = change.isStaged ? "staged" : "worktree";
-  return `mockor-git-diff:${side}:${change.path}`;
-}
-
-function isGitDiffDocumentPath(path: string): boolean {
-  return path.startsWith("mockor-git-diff:");
-}
-
-function gitChangesReferToSameDiff(
-  change: GitChangedFile,
-  selectedChange: GitChangedFile,
-): boolean {
-  return (
-    gitDiffDocumentPath(change) === gitDiffDocumentPath(selectedChange) &&
-    (change.path === selectedChange.path ||
-      change.oldPath === selectedChange.path)
-  );
-}
-
 function isPersistableEditorDocumentPath(path: string): boolean {
   return !path.startsWith("mockor-git-diff:") &&
     !path.startsWith("mockor-git-history-diff:");
-}
-
-function gitDiffDocument(change: GitChangedFile): EditorDocument {
-  return {
-    content: "",
-    language: "plaintext",
-    name: `Diff: ${getFileName(change.relativePath)}`,
-    path: gitDiffDocumentPath(change),
-    readOnly: true,
-    savedContent: "",
-  };
-}
-
-function gitChangeForDiffDocumentPath(
-  path: string,
-  changes: GitChangedFile[],
-): GitChangedFile | null {
-  return changes.find((change) => gitDiffDocumentPath(change) === path) ?? null;
 }
 
 function currentWorkspaceSession(

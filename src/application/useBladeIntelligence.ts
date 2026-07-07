@@ -62,7 +62,6 @@ import {
   phpFrameworkSupportsViewData,
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import {
@@ -94,6 +93,7 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./useWorkbenchController";
+import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /**
  * A Blade completion item the controller hands to the Monaco "blade" completion
@@ -116,9 +116,8 @@ export interface BladeCompletionItem {
  */
 export interface BladeIntelligenceDependencies {
   activeDocument: { content: string; path: string } | null;
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentWorkspaceRootRef: { readonly current: string | null };
-  isLaravelFrameworkActive: boolean;
+  frameworkIntelligence: PhpFrameworkIntelligence;
   workspaceRoot: string | null;
   textSearch: Pick<TextSearchGateway, "searchText">;
   workspaceFiles: { readDirectory: (path: string) => Promise<FileEntry[]> };
@@ -195,7 +194,6 @@ export function useBladeIntelligence(
 ): BladeIntelligence {
   const {
     activeDocument,
-    activePhpFrameworkProviders,
     collectPhpLaravelConfigTargets,
     collectPhpLaravelNamedRouteTargets,
     collectPhpLaravelTranslationTargets,
@@ -207,7 +205,7 @@ export function useBladeIntelligence(
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
     findPhpLaravelViewTarget,
-    isLaravelFrameworkActive,
+    frameworkIntelligence,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
@@ -222,6 +220,8 @@ export function useBladeIntelligence(
     workspaceFiles,
     workspaceRoot,
   } = deps;
+  const activePhpFrameworkProviders = frameworkIntelligence.providers;
+  const isLaravelFrameworkActive = frameworkIntelligence.isLaravel;
 
   // Per-root cache of controller view-data entries (`view('x', [...])`,
   // `View::make`, `->with(...)`, `compact(...)` sources) feeding Blade variable
@@ -1856,4 +1856,3 @@ function phpNamedRouteCompletionInsertText(
 
   return routeName.slice(lastDotIndex + 1);
 }
-

@@ -12,11 +12,22 @@ import {
   type BladeIntelligence,
   type BladeIntelligenceDependencies,
 } from "./useBladeIntelligence";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/ws";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: ["laravel"],
+  profile: "laravel",
+  providers: PROVIDERS,
+});
+const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "generic",
+  providers: [],
+});
 const VIEW_PATH = `${ROOT}/resources/views/invoices/show.blade.php`;
 const INVOICE_CONTROLLER_PATH = `${ROOT}/app/Http/Controllers/InvoiceController.php`;
 
@@ -65,9 +76,8 @@ function makeDeps(
 ): BladeIntelligenceDependencies {
   return {
     activeDocument: { content: "", path: VIEW_PATH },
-    activePhpFrameworkProviders: PROVIDERS,
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkIntelligence: LARAVEL_FRAMEWORK,
     workspaceRoot: ROOT,
     textSearch: { searchText: vi.fn(async () => [] as TextSearchResult[]) },
     workspaceFiles: {
@@ -402,11 +412,11 @@ describe("useBladeIntelligence definition", () => {
     );
   });
 
-  it("gates Laravel helper-literal navigation behind isLaravelFrameworkActive", async () => {
+  it("gates Laravel helper-literal navigation behind the active framework", async () => {
     const collectPhpLaravelNamedRouteTargets = vi.fn(async () => []);
     const harness = renderHook(
       makeDeps({
-        isLaravelFrameworkActive: false,
+        frameworkIntelligence: GENERIC_FRAMEWORK,
         collectPhpLaravelNamedRouteTargets,
       }),
     );

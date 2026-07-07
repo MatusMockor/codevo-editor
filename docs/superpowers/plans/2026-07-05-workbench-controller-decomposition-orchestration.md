@@ -1144,6 +1144,18 @@ Integration order:
     lifecycle for line-count reduction alone.
 14. Follow-up focused hook tests for newly extracted modules are acceptable only
     when tied to a real bug, product feature, or regression risk.
+15. Post-stop product-boundary slice completed:
+    - Git diff pseudo-document behavior now lives in
+      `src/application/useGitDiffWorkspace.ts`.
+    - PHP framework activation is exposed through
+      `src/application/phpFrameworkIntelligence.ts` and injected into Blade,
+      Latte, and NEON intelligence hooks.
+    - This was allowed by the stop boundary because it separated product
+      domains: Git/Diff workspace state and Laravel/Nette framework
+      intelligence, not generic line-count churn.
+    - Verified with focused Git diff lifecycle tests, framework intelligence
+      tests, full `useWorkbenchController.preview.test.tsx`, and `npm run
+      check`.
 
 Current operational goal:
 

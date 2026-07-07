@@ -47,6 +47,7 @@ import {
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /**
  * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
@@ -94,8 +95,8 @@ export interface NeonDirectoryEntry {
 export interface NeonIntelligenceDependencies {
   /** Live workspace root, read AFTER each await to drop stale results. */
   currentWorkspaceRootRef: { readonly current: string | null };
+  frameworkIntelligence: PhpFrameworkIntelligence;
   getActiveDocument(): NeonIntelligenceActiveDocument | null;
-  isNetteFrameworkActive: boolean;
   isSemanticIntelligenceActive: boolean;
   joinPath(rootPath: string, relativePath: string): string;
   /**
@@ -405,7 +406,7 @@ export function useNeonIntelligence(
 }
 
 function isNeonSemanticActive(deps: NeonIntelligenceDependencies): boolean {
-  return deps.isNetteFrameworkActive && deps.isSemanticIntelligenceActive;
+  return deps.frameworkIntelligence.isNette && deps.isSemanticIntelligenceActive;
 }
 
 /**

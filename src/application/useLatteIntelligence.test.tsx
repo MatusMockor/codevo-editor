@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   createLatteIntelligence,
   useLatteIntelligence,
@@ -12,8 +13,19 @@ import {
   type LatteTemplateCache,
   type LatteViewDataCache,
 } from "./useLatteIntelligence";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 const ROOT = "/ws";
+const NETTE_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: ["nette"],
+  profile: "nette",
+  providers: [phpNetteFrameworkProvider],
+});
+const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [],
+  profile: "generic",
+  providers: [],
+});
 
 /**
  * Builds an in-memory workspace tree from a list of workspace-relative `.latte`
@@ -80,8 +92,8 @@ function makeDeps(
 ): LatteIntelligenceDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
+    frameworkIntelligence: NETTE_FRAMEWORK,
     getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
-    isNetteFrameworkActive: true,
     isSemanticIntelligenceActive: true,
     joinPath: (root, relativePath) => `${root}/${relativePath}`,
     listDirectory: vi.fn(async () => {
@@ -329,7 +341,7 @@ describe("createLatteIntelligence definition", () => {
     ]);
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       openTarget,
       readFileContent,
     });
@@ -492,7 +504,7 @@ describe("createLatteIntelligence completions", () => {
     const { listDirectory } = buildWorkspace([
       "app/UI/Home/partials/menu.latte",
     ]);
-    const deps = makeDeps({ isNetteFrameworkActive: false, listDirectory });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, listDirectory });
     const latte = createLatteIntelligence(() => deps);
     const source = "{include ''}";
     const offset = source.indexOf("''") + 1;
@@ -571,7 +583,7 @@ describe("useLatteIntelligence hook mount", () => {
   }
 
   it("exposes a stable definition/completion API and honours gating", async () => {
-    const deps = makeDeps({ isNetteFrameworkActive: false });
+    const deps = makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK });
     const harness = renderHook(deps);
     const firstApi = harness.captured.api;
 
@@ -581,7 +593,7 @@ describe("useLatteIntelligence hook mount", () => {
       firstApi?.provideLatteCompletions("{for", { column: 5, lineNumber: 1 }),
     ).resolves.toEqual([]);
 
-    harness.rerender(makeDeps({ isNetteFrameworkActive: false }));
+    harness.rerender(makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK }));
     expect(harness.captured.api).toBe(firstApi);
 
     harness.unmount();
@@ -1218,7 +1230,7 @@ class ProductTemplate extends Template
       source: "",
     }));
     const deps = makeDeps({
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       synthesizeTypedReceiverSource,
     });
     const latte = createLatteIntelligence(() => deps);
@@ -1975,7 +1987,7 @@ describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
     });
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       listDirectory,
       openTarget,
       readFileContent,
@@ -2094,7 +2106,7 @@ describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () =>
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
       getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       openTarget,
       readFileContent,
     });
@@ -2213,7 +2225,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
   it("returns nothing when the Nette framework is inactive", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       listDirectory,
       readFileContent,
     });
@@ -2338,7 +2350,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
   it("returns [] fast when the Nette framework is inactive (no scan)", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       listDirectory,
       readFileContent,
     });
@@ -2570,7 +2582,7 @@ class ApiConsoleControl extends Control
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
       getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       openTarget,
       readFileContent,
     });
@@ -2817,7 +2829,7 @@ describe("createLatteIntelligence {control} completion (Fáza 2)", () => {
     });
     const deps = makeDeps({
       getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
-      isNetteFrameworkActive: false,
+      frameworkIntelligence: GENERIC_FRAMEWORK,
       readFileContent,
     });
     const latte = createLatteIntelligence(() => deps);
