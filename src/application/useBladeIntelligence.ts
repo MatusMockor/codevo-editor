@@ -24,25 +24,7 @@
  */
 import { useCallback, useMemo, useRef } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  bladeComponentNavigationCandidateRelativePaths,
-  bladeViewCandidateRelativePaths,
-  detectBladeReferenceAt,
-  isInsideBladeComment,
-} from "../domain/bladeNavigation";
-import {
-  bladeLaravelStringLiteralHelperAt,
-} from "../domain/bladeLaravelHelperCompletions";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
-import {
-  resolveLaravelConfigTarget,
-  resolveLaravelTransTarget,
-  resolveLaravelViewTarget,
-} from "../domain/laravelPathResolution";
-import { phpIdentifierContextAt } from "../domain/phpNavigation";
-import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
-import { joinWorkspacePath } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   BladeCompletionItem,
   BladeIntelligence,
@@ -59,7 +41,6 @@ import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
-import { editorPositionAtOffset } from "./bladePhpCompletionContext";
 import { createBladeViewVariableResolver } from "./bladeViewVariableResolver";
 import {
   ensureBladeViewDataEntriesLoaded as loadBladeViewDataEntries,
@@ -68,6 +49,9 @@ import {
 import {
   provideBladeCompletions as provideBladeCompletionsFromProvider,
 } from "./bladeCompletionProvider";
+import {
+  provideBladeDefinition as provideBladeDefinitionFromProvider,
+} from "./bladeDefinitionProvider";
 
 export type {
   BladeCompletionItem,
@@ -298,221 +282,30 @@ export function useBladeIntelligence(
     [createMissingBladeViewCodeAction, currentWorkspaceRootRef, workspaceRoot],
   );
 
-  // Cmd+Click navigation for `.blade.php` documents. detectBladeReferenceAt
-  // (pure) classifies Blade view/component offsets; Laravel helper literals and
-  // typed view-data member access reuse the existing PHP/Laravel resolvers.
-  // Conservative: an unresolvable or non-existent reference returns false (no
-  // phpactor fallback for blade). Per-project isolation: capture the requested
-  // root up front and re-check after every await so a tab switch mid-resolution
-  // can never navigate into a stale-workspace file.
   const provideBladeDefinition = useCallback(
     async (source: string, offset: number): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return false;
-      }
-
-      if (isInsideBladeComment(source, offset)) {
-        return false;
-      }
-
-      if (isLaravelFrameworkActive) {
-        const helper = bladeLaravelStringLiteralHelperAt(source, offset);
-
-        if (helper?.helper === "view") {
-          if (!resolveLaravelViewTarget(helper.literal)) {
-            return false;
-          }
-
-          const target = await findPhpLaravelViewTarget(helper.literal);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return target
-            ? openNavigationTarget(target.path, target.position, target.name)
-            : false;
-        }
-
-        if (helper?.helper === "route") {
-          if (!activeDocument) {
-            return false;
-          }
-
-          const routes = await collectPhpLaravelNamedRouteTargets(
-            activeDocument.content,
-            activeDocument.path,
-          );
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          const target = routes.find(
-            (route) =>
-              route.name.toLowerCase() === helper.literal.toLowerCase(),
-          );
-
-          return target
-            ? openNavigationTarget(target.path, target.position, target.name)
-            : false;
-        }
-
-        if (helper?.helper === "config") {
-          if (!resolveLaravelConfigTarget(helper.literal)) {
-            return false;
-          }
-
-          const target = await findPhpLaravelConfigTarget(helper.literal);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return target
-            ? openNavigationTarget(target.path, target.position, target.key)
-            : false;
-        }
-
-        if (helper?.helper === "trans") {
-          if (!resolveLaravelTransTarget(helper.literal)) {
-            return false;
-          }
-
-          const target = await findPhpLaravelTranslationTarget(helper.literal);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return target
-            ? openNavigationTarget(target.path, target.position, target.key)
-            : false;
-        }
-
-        const memberContext = phpIdentifierContextAt(
-          source,
-          editorPositionAtOffset(source, offset),
-        );
-
-        if (
-          memberContext?.kind === "methodCall" ||
-          memberContext?.kind === "memberPropertyAccess"
-        ) {
-          const activePath = activeDocument?.path ?? "";
-          const relativePath = activePath
-            ? relativeWorkspacePath(requestedRoot, activePath)
-            : "";
-          const viewName = phpLaravelViewNameFromRelativePath(relativePath);
-          const variableName = memberContext.variableName
-            ? `$${memberContext.variableName}`
-            : "";
-          const memberName =
-            memberContext.kind === "methodCall"
-              ? memberContext.methodName
-              : memberContext.propertyName;
-
-          if (viewName && variableName && memberName) {
-            const className = await resolveBladeViewVariableTypeForView(
-              viewName,
-              variableName,
-            );
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            if (className) {
-              const openedMethod = await openDirectPhpMethodTarget(
-                className,
-                memberName,
-              );
-
-              if (!isRequestedRootActive()) {
-                return false;
-              }
-
-              if (openedMethod) {
-                return true;
-              }
-
-              if (memberContext.kind === "memberPropertyAccess") {
-                const openedAttribute = await openPhpLaravelModelAttributeTarget(
-                  className,
-                  memberName,
-                );
-
-                if (!isRequestedRootActive()) {
-                  return false;
-                }
-
-                if (openedAttribute) {
-                  return true;
-                }
-
-                return openDirectPhpPropertyTarget(className, memberName);
-              }
-            }
-          }
-        }
-      }
-
-      const reference = detectBladeReferenceAt(source, offset);
-
-      if (!reference) {
-        return false;
-      }
-
-      // Components probe the class-based PHP file before the anonymous blade
-      // view (PhpStorm parity — Laravel resolves a class component first too).
-      const candidateRelativePaths =
-        reference.kind === "component"
-          ? bladeComponentNavigationCandidateRelativePaths(reference.name)
-          : reference.kind === "view"
-            ? bladeViewCandidateRelativePaths(reference.name)
-            : [];
-
-      if (candidateRelativePaths.length === 0) {
-        return false;
-      }
-
-      for (const relativePath of candidateRelativePaths) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
-        try {
-          await readNavigationFileContent(path);
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        return openNavigationTarget(
-          path,
-          { column: 1, lineNumber: 1 },
-          reference.name,
-        );
-      }
-
-      return false;
+      return provideBladeDefinitionFromProvider(source, offset, {
+        activeDocument,
+        collectPhpLaravelNamedRouteTargets,
+        currentWorkspaceRootRef,
+        findPhpLaravelConfigTarget,
+        findPhpLaravelTranslationTarget,
+        findPhpLaravelViewTarget,
+        isLaravelFrameworkActive,
+        openDirectPhpMethodTarget,
+        openDirectPhpPropertyTarget,
+        openNavigationTarget,
+        openPhpLaravelModelAttributeTarget,
+        readNavigationFileContent,
+        relativeWorkspacePath,
+        resolveBladeViewVariableTypeForView,
+        workspaceRoot,
+      });
     },
     [
       activeDocument,
       collectPhpLaravelNamedRouteTargets,
+      currentWorkspaceRootRef,
       findPhpLaravelConfigTarget,
       findPhpLaravelTranslationTarget,
       findPhpLaravelViewTarget,
@@ -522,6 +315,7 @@ export function useBladeIntelligence(
       openNavigationTarget,
       openPhpLaravelModelAttributeTarget,
       readNavigationFileContent,
+      relativeWorkspacePath,
       resolveBladeViewVariableTypeForView,
       workspaceRoot,
     ],
