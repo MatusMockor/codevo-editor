@@ -1878,6 +1878,21 @@ class ProductsAdminPresenter extends AdminPresenter
 }
 `;
 
+const SUBSCRIPTION_TYPE_GROUP_ADMIN_PRESENTER_SOURCE = `<?php
+namespace App\\EfabricaSubscriptionsModule\\Presenters;
+
+class SubscriptionTypeGroupAdminPresenter extends AdminPresenter
+{
+    public function renderShowBasic(int $id): void
+    {
+    }
+
+    public function renderShowAddons(int $id): void
+    {
+    }
+}
+`;
+
 describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
   it("navigates a {link Product:show} to the presenter renderShow method", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
@@ -2014,6 +2029,33 @@ describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
       "/ws/app/UI/Product/ProductPresenter.php",
       expect.objectContaining({ lineNumber: 13 }),
       "edit",
+    );
+  });
+
+  it("resolves a relative n:href from an ebox-crm style presenter partial", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php":
+        SUBSCRIPTION_TYPE_GROUP_ADMIN_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/partials/@showSubmenu.latte`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = `<a n:href="showBasic $group['id']">Basic</a>`;
+    const offset = source.indexOf("showBasic") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php",
+      expect.objectContaining({ lineNumber: 6 }),
+      "showBasic",
     );
   });
 

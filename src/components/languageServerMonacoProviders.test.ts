@@ -1276,6 +1276,72 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("inserts Laravel database connection completions as plain string suffixes", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "config/database.php",
+        insertText: "pgsql",
+        kind: "config" as const,
+        name: "pgsql",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return DB::connection('pg');",
+        word: {
+          endColumn: 31,
+          startColumn: 29,
+        },
+      }),
+      {
+        column: 31,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail: "Laravel config - config/database.php",
+        documentation: "Laravel config\n\npgsql",
+        insertText: "pgsql",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description: "config - config/database.php",
+          detail: "",
+          label: "pgsql",
+        },
+      }),
+    ]);
+    expect(providePhpMethodCompletions).toHaveBeenCalledWith(
+      "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
+      {
+        column: 31,
+        lineNumber: 4,
+      },
+    );
+  });
+
   it("inserts Laravel translation key completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
