@@ -29,6 +29,11 @@ import {
   phpLaravelConfigTargetFromSource,
 } from "./phpLaravelConfig";
 import {
+  phpLaravelEnvEntriesFromSource,
+  phpLaravelEnvReferenceContextAt,
+  phpLaravelEnvTargetFromSource,
+} from "./phpLaravelEnv";
+import {
   phpLaravelJsonTranslationKeysFromSource,
   phpLaravelJsonTranslationTargetFromSource,
   phpLaravelTranslationKeysFromSource,
@@ -51,6 +56,11 @@ import {
 } from "./phpLaravelValidation";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
 import type { PhpProjectDescriptor } from "./workspace";
+import { phpLaravelScopedStringCompletionContextAt } from "./phpLaravelScopedCompletions";
+import {
+  detectPhpPresenterLinkAt,
+  nettePresenterLinkCompletionContextAt,
+} from "./latteLinkNavigation";
 
 export interface PhpFrameworkMemberCompletionContext {
   declaringClassName: string;
@@ -163,6 +173,37 @@ export interface PhpFrameworkConfigKeysContext {
 export interface PhpFrameworkConfigTargetContext {
   fileName: string;
   key: string;
+  source: string;
+}
+
+/**
+ * An environment-variable reference detected at the cursor (e.g. the
+ * `env('APP_...')` argument). Framework-agnostic mirror of Laravel's env
+ * reference so PHP literal completion routing can be provider-owned.
+ */
+export interface PhpFrameworkEnvReference {
+  name: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+/** An environment-variable key declared in a source (its name + position). */
+export interface PhpFrameworkEnvEntry {
+  name: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkEnvReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkEnvEntriesContext {
+  source: string;
+}
+
+export interface PhpFrameworkEnvTargetContext {
+  name: string;
   source: string;
 }
 
@@ -322,6 +363,42 @@ export interface PhpFrameworkStringLiteralContext {
   source: string;
 }
 
+export interface PhpFrameworkPhpStringCompletionContext {
+  position: EditorPosition;
+  source: string;
+}
+
+export interface PhpFrameworkPhpPresenterLinkContext {
+  offset: number;
+  source: string;
+}
+
+/**
+ * A PHP presenter-link target detected in a framework-owned link API (today
+ * Nette's `$this->link(...)` / redirects). Shape mirrors the Nette detector but
+ * keeps central completion/navigation code off Nette-specific imports.
+ */
+export interface PhpFrameworkPhpPresenterLink {
+  call: string;
+  target: string;
+  targetEnd: number;
+  targetStart: number;
+}
+
+/** Replace range for PHP presenter-link target completions. */
+export interface PhpFrameworkPhpPresenterLinkCompletion {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+export type PhpFrameworkTargetCollectionKind = "routes" | "viewData";
+
+export interface PhpFrameworkTargetCollectionCapability {
+  kind: PhpFrameworkTargetCollectionKind;
+  searchQueries: readonly string[];
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   /**
@@ -351,6 +428,7 @@ export interface PhpFrameworkProvider {
      */
     magicSource?: string;
   };
+  targetCollections?: readonly PhpFrameworkTargetCollectionCapability[];
   routes?: {
     referenceAt?: (
       context: PhpFrameworkRouteReferenceContext,
@@ -376,6 +454,17 @@ export interface PhpFrameworkProvider {
     targetFromSource?: (
       context: PhpFrameworkConfigTargetContext,
     ) => PhpFrameworkConfigKey | null;
+  };
+  env?: {
+    referenceAt?: (
+      context: PhpFrameworkEnvReferenceContext,
+    ) => PhpFrameworkEnvReference | null;
+    entriesFromSource?: (
+      context: PhpFrameworkEnvEntriesContext,
+    ) => PhpFrameworkEnvEntry[];
+    targetFromSource?: (
+      context: PhpFrameworkEnvTargetContext,
+    ) => PhpFrameworkEnvEntry | null;
   };
   translations?: {
     referenceAt?: (
@@ -428,6 +517,32 @@ export interface PhpFrameworkProvider {
     helperAt?: (
       context: PhpFrameworkStringLiteralContext,
     ) => PhpFrameworkStringLiteralHelperMatch | null;
+  };
+  php?: {
+    /**
+     * Provider-owned gate for PHP string-literal completion contexts. This is
+     * intentionally broad: central Monaco code can ask "should framework
+     * completions own this string?" without importing Laravel/Nette parsers.
+     */
+    isScopedStringCompletionContext?: (
+      context: PhpFrameworkPhpStringCompletionContext,
+    ) => boolean;
+    /**
+     * Provider-owned PHP presenter-link navigation target detector. Today Nette
+     * owns this (`$this->link(...)`, redirects), but the central definition path
+     * should only dispatch through the provider seam.
+     */
+    presenterLinkAt?: (
+      context: PhpFrameworkPhpPresenterLinkContext,
+    ) => PhpFrameworkPhpPresenterLink | null;
+    /**
+     * Provider-owned PHP presenter-link completion replace range detector. Kept
+     * separate from `presenterLinkAt` because completions fire on partial/empty
+     * strings that navigation intentionally ignores.
+     */
+    presenterLinkCompletionAt?: (
+      context: PhpFrameworkPhpPresenterLinkContext,
+    ) => PhpFrameworkPhpPresenterLinkCompletion | null;
   };
   neon?: {
     /**
@@ -582,6 +697,16 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelNamedRouteReferenceContextAt(source, position),
     searchQueries: laravelRouteSearchQueries,
   },
+  targetCollections: [
+    {
+      kind: "routes",
+      searchQueries: laravelRouteSearchQueries,
+    },
+    {
+      kind: "viewData",
+      searchQueries: laravelViewDataSearchQueries,
+    },
+  ],
   config: {
     referenceAt: ({ position, source }) =>
       phpLaravelConfigReferenceContextAt(source, position),
@@ -589,6 +714,13 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelConfigKeysFromSource(source, fileName),
     targetFromSource: ({ fileName, key, source }) =>
       phpLaravelConfigTargetFromSource(source, fileName, key),
+  },
+  env: {
+    referenceAt: ({ position, source }) =>
+      phpLaravelEnvReferenceContextAt(source, position),
+    entriesFromSource: ({ source }) => phpLaravelEnvEntriesFromSource(source),
+    targetFromSource: ({ name, source }) =>
+      phpLaravelEnvTargetFromSource(source, name),
   },
   translations: {
     referenceAt: ({ position, source }) =>
@@ -619,6 +751,10 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   stringLiterals: {
     helperAt: ({ offset, source }) =>
       detectLaravelStringLiteralHelper(source, offset),
+  },
+  php: {
+    isScopedStringCompletionContext: ({ position, source }) =>
+      phpLaravelScopedStringCompletionContextAt(source, position),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -678,6 +814,12 @@ export const NETTE_MAGIC_DIAGNOSTIC_SOURCE = "nette-magic";
 export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   id: "nette",
   appliesTo: (php) => isNettePhpProject(php),
+  targetCollections: [
+    {
+      kind: "viewData",
+      searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
+    },
+  ],
   diagnostics: {
     // Method-level Nette magic suppression (spec §4.6): a call on the Latte
     // template object (`$this->template->foo()`) or on a magically-obtained
@@ -714,6 +856,12 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   latte: {
     supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,
+  },
+  php: {
+    presenterLinkAt: ({ offset, source }) =>
+      detectPhpPresenterLinkAt(source, offset),
+    presenterLinkCompletionAt: ({ offset, source }) =>
+      nettePresenterLinkCompletionContextAt(source, offset, "php"),
   },
 };
 
@@ -853,7 +1001,7 @@ export function phpFrameworkRouteDefinitionsFromSource(
 export function phpFrameworkRouteSearchQueries(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): readonly string[] {
-  return providers.flatMap((provider) => provider.routes?.searchQueries ?? []);
+  return phpFrameworkTargetSearchQueries("routes", providers);
 }
 
 /**
@@ -864,6 +1012,51 @@ export function phpFrameworkSupportsRoutes(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.routes !== undefined);
+}
+
+export function phpFrameworkTargetSearchQueries(
+  kind: PhpFrameworkTargetCollectionKind,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap((provider) => {
+    const queries =
+      provider.targetCollections
+        ?.filter((collection) => collection.kind === kind)
+        .flatMap((collection) => collection.searchQueries) ?? [];
+
+    if (queries.length > 0) {
+      return queries;
+    }
+
+    return legacyTargetSearchQueries(provider, kind);
+  });
+}
+
+export function phpFrameworkSupportsTargetCollection(
+  kind: PhpFrameworkTargetCollectionKind,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => {
+    const collections = provider.targetCollections?.filter(
+      (collection) => collection.kind === kind,
+    );
+
+    return (
+      (collections !== undefined && collections.length > 0) ||
+      legacyTargetSearchQueries(provider, kind).length > 0
+    );
+  });
+}
+
+function legacyTargetSearchQueries(
+  provider: PhpFrameworkProvider,
+  kind: PhpFrameworkTargetCollectionKind,
+): readonly string[] {
+  if (kind === "routes") {
+    return provider.routes?.searchQueries ?? [];
+  }
+
+  return provider.viewData?.searchQueries ?? [];
 }
 
 /**
@@ -924,6 +1117,53 @@ export function phpFrameworkConfigTargetFromSource(
   }
 
   return null;
+}
+
+export function phpFrameworkEnvReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkEnvReference | null {
+  for (const provider of providers) {
+    const reference = provider.env?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return reference;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkEnvEntriesFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkEnvEntry[] {
+  return providers.flatMap(
+    (provider) => provider.env?.entriesFromSource?.({ source }) ?? [],
+  );
+}
+
+export function phpFrameworkEnvTargetFromSource(
+  source: string,
+  name: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkEnvEntry | null {
+  for (const provider of providers) {
+    const target = provider.env?.targetFromSource?.({ name, source });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkSupportsEnv(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some((provider) => provider.env !== undefined);
 }
 
 /**
@@ -1107,7 +1347,7 @@ export function phpFrameworkViewDataEntryFromSource(
 export function phpFrameworkViewDataSearchQueries(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): readonly string[] {
-  return providers.flatMap((provider) => provider.viewData?.searchQueries ?? []);
+  return phpFrameworkTargetSearchQueries("viewData", providers);
 }
 
 /**
@@ -1189,6 +1429,63 @@ export function phpFrameworkStringLiteralHelperAt(
   }
 
   return null;
+}
+
+export function phpFrameworkScopedStringCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.php?.isScopedStringCompletionContext?.({ position, source }) ??
+      false,
+  );
+}
+
+export function phpFrameworkPhpPresenterLinkAt(
+  source: string,
+  offset: number,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkPhpPresenterLink | null {
+  for (const provider of providers) {
+    const link = provider.php?.presenterLinkAt?.({ offset, source });
+
+    if (link) {
+      return link;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkPhpPresenterLinkCompletionAt(
+  source: string,
+  offset: number,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkPhpPresenterLinkCompletion | null {
+  for (const provider of providers) {
+    const completion = provider.php?.presenterLinkCompletionAt?.({
+      offset,
+      source,
+    });
+
+    if (completion) {
+      return completion;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkSupportsPhpPresenterLinks(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.php?.presenterLinkAt !== undefined ||
+      provider.php?.presenterLinkCompletionAt !== undefined,
+  );
 }
 
 /**

@@ -4,13 +4,17 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
+  usePhpFrameworkTargets,
   useLaravelTargets,
+  type PhpFrameworkTargets,
+  type PhpFrameworkTargetsDependencies,
   type LaravelTargets,
   type LaravelTargetsDependencies,
 } from "./useLaravelTargets";
 import {
   phpFrameworkRouteDefinitionsFromSource,
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { phpLaravelGateAbilityDefinitions } from "../domain/phpLaravelAuthorization";
 import { phpLaravelMiddlewareAliasDefinitions } from "../domain/phpLaravelMiddleware";
@@ -77,6 +81,15 @@ interface Harness {
   unmount: () => void;
 }
 
+interface FrameworkHarness {
+  hook: () => PhpFrameworkTargets;
+  ref: { current: string | null };
+  searchText: ReturnType<typeof vi.fn>;
+  readFileContent: ReturnType<typeof vi.fn>;
+  readWorkspaceDirectory: ReturnType<typeof vi.fn>;
+  unmount: () => void;
+}
+
 function renderLaravelTargets(
   overrides: Partial<LaravelTargetsDependencies> = {},
 ): Harness {
@@ -130,6 +143,154 @@ function renderLaravelTargets(
     },
   };
 }
+
+function renderPhpFrameworkTargets(
+  overrides: Partial<PhpFrameworkTargetsDependencies> = {},
+): FrameworkHarness {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const captured: { hook: PhpFrameworkTargets | null } = { hook: null };
+
+  const ref: { current: string | null } = { current: ROOT };
+  const searchText = vi.fn(async () => [] as TextSearchResult[]);
+  const readFileContent = vi.fn(async () => "");
+  const readWorkspaceDirectory = vi.fn(async () => [] as FileEntry[]);
+
+  const deps: PhpFrameworkTargetsDependencies = {
+    currentWorkspaceRootRef: ref,
+    workspaceRoot: ROOT,
+    textSearch: { searchText } as never,
+    readNavigationFileContent: readFileContent as never,
+    readWorkspaceDirectory: readWorkspaceDirectory as never,
+    relativeWorkspacePath,
+    joinWorkspacePath,
+    isPhpPath,
+    activePhpFrameworkProviders: PROVIDERS,
+    ...overrides,
+  };
+
+  function HarnessComponent() {
+    captured.hook = usePhpFrameworkTargets(deps);
+    return null;
+  }
+
+  act(() => {
+    root.render(<HarnessComponent />);
+  });
+
+  return {
+    hook: () => {
+      if (!captured.hook) {
+        throw new Error("hook not mounted");
+      }
+      return captured.hook;
+    },
+    ref,
+    searchText,
+    readFileContent,
+    readWorkspaceDirectory,
+    unmount: () => {
+      act(() => {
+        root.unmount();
+      });
+    },
+  };
+}
+
+describe("usePhpFrameworkTargets", () => {
+  it("adapts the active Laravel provider to neutral named route collection", async () => {
+    const source =
+      "<?php\nRoute::get('/comments')->name('comments.definition');\n";
+    const currentPath = `${ROOT}/routes/web.php`;
+    const harness = renderPhpFrameworkTargets();
+
+    const targets = await harness
+      .hook()
+      .collectNamedRouteTargets(source, currentPath);
+
+    const expected = phpFrameworkRouteDefinitionsFromSource(source, PROVIDERS)
+      .map((definition) => ({
+        ...definition,
+        path: currentPath,
+        relativePath: "routes/web.php",
+      }))
+      .sort((left, right) => {
+        const nameOrder = left.name.localeCompare(right.name);
+        if (nameOrder !== 0) {
+          return nameOrder;
+        }
+        return left.path.localeCompare(right.path);
+      });
+
+    expect(expected.length).toBeGreaterThan(0);
+    expect(targets).toEqual(expected);
+    expect(harness.searchText).toHaveBeenCalledWith(ROOT, "->name(", 200);
+
+    harness.unmount();
+  });
+
+  it("returns empty targets when no framework provider is active", async () => {
+    const harness = renderPhpFrameworkTargets({
+      activePhpFrameworkProviders: [],
+    });
+
+    expect(
+      await harness
+        .hook()
+        .collectNamedRouteTargets(
+          "<?php Route::get('/x')->name('x');",
+          `${ROOT}/routes/web.php`,
+        ),
+    ).toEqual([]);
+    expect(
+      await harness
+        .hook()
+        .collectAuthorizationAbilityTargets(
+          "<?php Gate::define('x', fn () => true);",
+          `${ROOT}/app/Providers/AuthServiceProvider.php`,
+        ),
+    ).toEqual([]);
+    expect(await harness.hook().collectEnvironmentTargets()).toEqual([]);
+    expect(await harness.hook().collectViewTargets()).toEqual([]);
+    expect(await harness.hook().collectConfigTargets()).toEqual([]);
+    expect(await harness.hook().collectTranslationTargets()).toEqual([]);
+    expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
+    expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
+    expect(await harness.hook().findTranslationTarget("messages.welcome")).toBeNull();
+    expect(harness.searchText).not.toHaveBeenCalled();
+    expect(harness.readFileContent).not.toHaveBeenCalled();
+    expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("keeps the Laravel adapter inert for a non-Laravel provider", async () => {
+    const harness = renderPhpFrameworkTargets({
+      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+    });
+
+    expect(
+      await harness
+        .hook()
+        .collectNamedRouteTargets(
+          "<?php Route::get('/x')->name('x');",
+          `${ROOT}/routes/web.php`,
+        ),
+    ).toEqual([]);
+    expect(await harness.hook().collectEnvironmentTargets()).toEqual([]);
+    expect(await harness.hook().collectViewTargets()).toEqual([]);
+    expect(await harness.hook().collectConfigTargets()).toEqual([]);
+    expect(await harness.hook().collectTranslationTargets()).toEqual([]);
+    expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
+    expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
+    expect(await harness.hook().findTranslationTarget("messages.welcome")).toBeNull();
+    expect(harness.searchText).not.toHaveBeenCalled();
+    expect(harness.readFileContent).not.toHaveBeenCalled();
+    expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+});
 
 describe("useLaravelTargets", () => {
   it("collects named route targets 1:1 with the domain parser", async () => {
@@ -256,6 +417,14 @@ describe("useLaravelTargets", () => {
   it("returns empty collectors when Laravel is inactive", async () => {
     const harness = renderLaravelTargets({ isLaravelFrameworkActive: false });
 
+    expect(
+      await harness
+        .hook()
+        .collectPhpLaravelNamedRouteTargets(
+          "<?php Route::get('/x')->name('x');",
+          `${ROOT}/routes/web.php`,
+        ),
+    ).toEqual([]);
     expect(
       await harness
         .hook()

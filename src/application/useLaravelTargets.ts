@@ -13,6 +13,7 @@ import {
   phpFrameworkSupportsViews,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationTargetFromSource,
+  isPhpFrameworkProviderActive,
   type PhpFrameworkProvider,
   type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
@@ -293,6 +294,7 @@ function useConfigDerivedLaravelTarget<Property extends string>(
 // `invalidatePhpLaravelTargetCache`) so it can never leak across project tabs or
 // serve stale targets after a reindex.
 const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
+const EMPTY_PHP_FRAMEWORK_PROVIDERS: readonly PhpFrameworkProvider[] = [];
 
 interface PhpLaravelTargetCacheEntry<T> {
   expiresAt: number;
@@ -406,6 +408,50 @@ export interface LaravelTargets {
   invalidatePhpLaravelTargetCache: () => void;
 }
 
+export type PhpFrameworkTargetsDependencies = Omit<
+  LaravelTargetsDependencies,
+  "isLaravelFrameworkActive"
+>;
+
+export interface PhpFrameworkTargets {
+  collectNamedRouteTargets: LaravelTargets["collectPhpLaravelNamedRouteTargets"];
+  collectAuthorizationAbilityTargets: LaravelTargets["collectPhpLaravelGateAbilityTargets"];
+  collectMiddlewareAliasTargets: LaravelTargets["collectPhpLaravelMiddlewareAliasTargets"];
+  collectEnvironmentTargets: LaravelTargets["collectPhpLaravelEnvTargets"];
+  collectViewTargets: LaravelTargets["collectPhpLaravelViewTargets"];
+  collectConfigTargets: LaravelTargets["collectPhpLaravelConfigTargets"];
+  collectTranslationTargets: LaravelTargets["collectPhpLaravelTranslationTargets"];
+  collectAuthGuardTargets: LaravelTargets["collectPhpLaravelAuthGuardTargets"];
+  collectCacheStoreTargets: LaravelTargets["collectPhpLaravelCacheStoreTargets"];
+  collectDatabaseConnectionTargets: LaravelTargets["collectPhpLaravelDatabaseConnectionTargets"];
+  collectBroadcastConnectionTargets: LaravelTargets["collectPhpLaravelBroadcastConnectionTargets"];
+  collectQueueConnectionTargets: LaravelTargets["collectPhpLaravelQueueConnectionTargets"];
+  collectRedisConnectionTargets: LaravelTargets["collectPhpLaravelRedisConnectionTargets"];
+  collectMailMailerTargets: LaravelTargets["collectPhpLaravelMailMailerTargets"];
+  collectPasswordBrokerTargets: LaravelTargets["collectPhpLaravelPasswordBrokerTargets"];
+  collectLogChannelTargets: LaravelTargets["collectPhpLaravelLogChannelTargets"];
+  collectStorageDiskTargets: LaravelTargets["collectPhpLaravelStorageDiskTargets"];
+  findViewTarget: LaravelTargets["findPhpLaravelViewTarget"];
+  findConfigTarget: LaravelTargets["findPhpLaravelConfigTarget"];
+  findTranslationTarget: LaravelTargets["findPhpLaravelTranslationTarget"];
+  findAuthGuardTarget: LaravelTargets["findPhpLaravelAuthGuardTarget"];
+  findCacheStoreTarget: LaravelTargets["findPhpLaravelCacheStoreTarget"];
+  findDatabaseConnectionTarget: LaravelTargets["findPhpLaravelDatabaseConnectionTarget"];
+  findBroadcastConnectionTarget: LaravelTargets["findPhpLaravelBroadcastConnectionTarget"];
+  findQueueConnectionTarget: LaravelTargets["findPhpLaravelQueueConnectionTarget"];
+  findRedisConnectionTarget: LaravelTargets["findPhpLaravelRedisConnectionTarget"];
+  findMailMailerTarget: LaravelTargets["findPhpLaravelMailMailerTarget"];
+  findPasswordBrokerTarget: LaravelTargets["findPhpLaravelPasswordBrokerTarget"];
+  findLogChannelTarget: LaravelTargets["findPhpLaravelLogChannelTarget"];
+  findStorageDiskTarget: LaravelTargets["findPhpLaravelStorageDiskTarget"];
+  invalidateTargetCache: LaravelTargets["invalidatePhpLaravelTargetCache"];
+}
+
+export interface PhpFrameworkTargetCollectorAdapter {
+  providerId: string;
+  useTargets: (dependencies: PhpFrameworkTargetsDependencies) => PhpFrameworkTargets;
+}
+
 /**
  * Laravel workspace target collectors (named routes, gate abilities, middleware
  * aliases, `.env` entries, plus the memoized view/config/translation directory
@@ -416,7 +462,7 @@ export interface LaravelTargets {
  * order, `.env`-first-wins, per-root cache hit/miss/invalidate, per-project
  * isolation) is identical to the pre-extraction inline collectors.
  */
-export function useLaravelTargets(
+function useLaravelFrameworkTargetAdapter(
   dependencies: LaravelTargetsDependencies,
 ): LaravelTargets {
   const {
@@ -431,6 +477,9 @@ export function useLaravelTargets(
     activePhpFrameworkProviders,
     isLaravelFrameworkActive,
   } = dependencies;
+  const targetPhpFrameworkProviders = isLaravelFrameworkActive
+    ? activePhpFrameworkProviders
+    : EMPTY_PHP_FRAMEWORK_PROVIDERS;
 
   const engineDeps = useMemo<WorkspaceTargetCollectorDeps>(
     () => ({
@@ -521,12 +570,12 @@ export function useLaravelTargets(
     ): Promise<PhpLaravelNamedRouteTarget[]> => {
       const collect = createWorkspaceTargetCollector(engineDeps, {
         kind: "textSearch",
-        isEnabled: () => phpFrameworkSupportsRoutes(activePhpFrameworkProviders),
-        queries: () => phpFrameworkRouteSearchQueries(activePhpFrameworkProviders),
+        isEnabled: () => phpFrameworkSupportsRoutes(targetPhpFrameworkProviders),
+        queries: () => phpFrameworkRouteSearchQueries(targetPhpFrameworkProviders),
         parseDefinitions: (source) =>
           phpFrameworkRouteDefinitionsFromSource(
             source,
-            activePhpFrameworkProviders,
+            targetPhpFrameworkProviders,
           ),
       });
 
@@ -535,7 +584,7 @@ export function useLaravelTargets(
         currentDocument: { content: currentSource, path: currentPath },
       });
     },
-    [engineDeps, activePhpFrameworkProviders, workspaceRoot],
+    [engineDeps, targetPhpFrameworkProviders, workspaceRoot],
   );
 
   const collectPhpLaravelGateAbilityTargets = useCallback(
@@ -606,7 +655,7 @@ export function useLaravelTargets(
       engineDeps,
       {
         kind: "directoryScan",
-        isEnabled: () => phpFrameworkSupportsViews(activePhpFrameworkProviders),
+        isEnabled: () => phpFrameworkSupportsViews(targetPhpFrameworkProviders),
         roots: ["resources/views"],
         recursive: true,
         parseEntry: ({ path, relativePath }) => {
@@ -631,7 +680,7 @@ export function useLaravelTargets(
     return collect({ workspaceRoot });
   }, [
     engineDeps,
-    activePhpFrameworkProviders,
+    targetPhpFrameworkProviders,
     readPhpLaravelTargetCache,
     workspaceRoot,
     writePhpLaravelTargetCache,
@@ -644,7 +693,7 @@ export function useLaravelTargets(
       engineDeps,
       {
         kind: "directoryScan",
-        isEnabled: () => phpFrameworkSupportsConfig(activePhpFrameworkProviders),
+        isEnabled: () => phpFrameworkSupportsConfig(targetPhpFrameworkProviders),
         roots: ["config"],
         readsContent: true,
         // A flat config scan never memoizes an unreadable `config/`; it
@@ -676,7 +725,7 @@ export function useLaravelTargets(
             ...phpFrameworkConfigKeysFromSource(
               content,
               fileName,
-              activePhpFrameworkProviders,
+              targetPhpFrameworkProviders,
             ).map((target) => ({
               ...target,
               path,
@@ -697,7 +746,7 @@ export function useLaravelTargets(
     return collect({ workspaceRoot });
   }, [
     engineDeps,
-    activePhpFrameworkProviders,
+    targetPhpFrameworkProviders,
     readPhpLaravelTargetCache,
     workspaceRoot,
     writePhpLaravelTargetCache,
@@ -711,7 +760,7 @@ export function useLaravelTargets(
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
     if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !phpFrameworkSupportsTranslations(targetPhpFrameworkProviders) ||
       !requestedRoot
     ) {
       return [];
@@ -763,7 +812,7 @@ export function useLaravelTargets(
       return left.localeCompare(right);
     });
   }, [
-    activePhpFrameworkProviders,
+    targetPhpFrameworkProviders,
     currentWorkspaceRootRef,
     joinWorkspacePath,
     readWorkspaceDirectory,
@@ -778,7 +827,7 @@ export function useLaravelTargets(
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
     if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !phpFrameworkSupportsTranslations(targetPhpFrameworkProviders) ||
       !requestedRoot
     ) {
       return [];
@@ -831,7 +880,7 @@ export function useLaravelTargets(
       left.relativePath.localeCompare(right.relativePath),
     );
   }, [
-    activePhpFrameworkProviders,
+    targetPhpFrameworkProviders,
     currentWorkspaceRootRef,
     joinWorkspacePath,
     readWorkspaceDirectory,
@@ -847,7 +896,7 @@ export function useLaravelTargets(
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
     if (
-      !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+      !phpFrameworkSupportsTranslations(targetPhpFrameworkProviders) ||
       !requestedRoot
     ) {
       return [];
@@ -919,7 +968,7 @@ export function useLaravelTargets(
           for (const target of phpFrameworkTranslationKeysFromSource(
             content,
             fileName,
-            activePhpFrameworkProviders,
+            targetPhpFrameworkProviders,
           )) {
             const key = target.key.toLowerCase();
 
@@ -962,7 +1011,7 @@ export function useLaravelTargets(
 
         for (const target of phpFrameworkJsonTranslationKeysFromSource(
           content,
-          activePhpFrameworkProviders,
+          targetPhpFrameworkProviders,
         )) {
           const key = target.key.toLowerCase();
 
@@ -996,7 +1045,7 @@ export function useLaravelTargets(
 
     return result;
   }, [
-    activePhpFrameworkProviders,
+    targetPhpFrameworkProviders,
     collectPhpLaravelJsonTranslationFiles,
     collectPhpLaravelTranslationLocaleRoots,
     currentWorkspaceRootRef,
@@ -1016,7 +1065,7 @@ export function useLaravelTargets(
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !phpFrameworkSupportsViews(activePhpFrameworkProviders) ||
+        !phpFrameworkSupportsViews(targetPhpFrameworkProviders) ||
         !requestedRoot
       ) {
         return null;
@@ -1054,7 +1103,7 @@ export function useLaravelTargets(
       return null;
     },
     [
-      activePhpFrameworkProviders,
+      targetPhpFrameworkProviders,
       currentWorkspaceRootRef,
       joinWorkspacePath,
       readNavigationFileContent,
@@ -1069,7 +1118,7 @@ export function useLaravelTargets(
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !phpFrameworkSupportsConfig(activePhpFrameworkProviders) ||
+        !phpFrameworkSupportsConfig(targetPhpFrameworkProviders) ||
         !requestedRoot
       ) {
         return null;
@@ -1100,7 +1149,7 @@ export function useLaravelTargets(
           content,
           fileName,
           configKey,
-          activePhpFrameworkProviders,
+          targetPhpFrameworkProviders,
         );
 
         if (!target) {
@@ -1121,7 +1170,7 @@ export function useLaravelTargets(
       }
     },
     [
-      activePhpFrameworkProviders,
+      targetPhpFrameworkProviders,
       currentWorkspaceRootRef,
       joinWorkspacePath,
       readNavigationFileContent,
@@ -1194,7 +1243,7 @@ export function useLaravelTargets(
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !phpFrameworkSupportsTranslations(activePhpFrameworkProviders) ||
+        !phpFrameworkSupportsTranslations(targetPhpFrameworkProviders) ||
         !requestedRoot
       ) {
         return null;
@@ -1228,7 +1277,7 @@ export function useLaravelTargets(
               content,
               fileName,
               translationKey,
-              activePhpFrameworkProviders,
+              targetPhpFrameworkProviders,
             );
 
             if (!target) {
@@ -1270,7 +1319,7 @@ export function useLaravelTargets(
           const target = phpFrameworkJsonTranslationTargetFromSource(
             content,
             translationKey,
-            activePhpFrameworkProviders,
+            targetPhpFrameworkProviders,
           );
 
           if (!target) {
@@ -1293,7 +1342,7 @@ export function useLaravelTargets(
       return null;
     },
     [
-      activePhpFrameworkProviders,
+      targetPhpFrameworkProviders,
       collectPhpLaravelJsonTranslationFiles,
       collectPhpLaravelTranslationLocaleRoots,
       currentWorkspaceRootRef,
@@ -1336,4 +1385,92 @@ export function useLaravelTargets(
     findPhpLaravelStorageDiskTarget: storageDiskTarget.find,
     invalidatePhpLaravelTargetCache,
   };
+}
+
+function phpFrameworkTargetsFromLaravelTargets(
+  laravelTargets: LaravelTargets,
+): PhpFrameworkTargets {
+  return {
+    collectNamedRouteTargets: laravelTargets.collectPhpLaravelNamedRouteTargets,
+    collectAuthorizationAbilityTargets:
+      laravelTargets.collectPhpLaravelGateAbilityTargets,
+    collectMiddlewareAliasTargets:
+      laravelTargets.collectPhpLaravelMiddlewareAliasTargets,
+    collectEnvironmentTargets: laravelTargets.collectPhpLaravelEnvTargets,
+    collectViewTargets: laravelTargets.collectPhpLaravelViewTargets,
+    collectConfigTargets: laravelTargets.collectPhpLaravelConfigTargets,
+    collectTranslationTargets:
+      laravelTargets.collectPhpLaravelTranslationTargets,
+    collectAuthGuardTargets: laravelTargets.collectPhpLaravelAuthGuardTargets,
+    collectCacheStoreTargets: laravelTargets.collectPhpLaravelCacheStoreTargets,
+    collectDatabaseConnectionTargets:
+      laravelTargets.collectPhpLaravelDatabaseConnectionTargets,
+    collectBroadcastConnectionTargets:
+      laravelTargets.collectPhpLaravelBroadcastConnectionTargets,
+    collectQueueConnectionTargets:
+      laravelTargets.collectPhpLaravelQueueConnectionTargets,
+    collectRedisConnectionTargets:
+      laravelTargets.collectPhpLaravelRedisConnectionTargets,
+    collectMailMailerTargets: laravelTargets.collectPhpLaravelMailMailerTargets,
+    collectPasswordBrokerTargets:
+      laravelTargets.collectPhpLaravelPasswordBrokerTargets,
+    collectLogChannelTargets: laravelTargets.collectPhpLaravelLogChannelTargets,
+    collectStorageDiskTargets:
+      laravelTargets.collectPhpLaravelStorageDiskTargets,
+    findViewTarget: laravelTargets.findPhpLaravelViewTarget,
+    findConfigTarget: laravelTargets.findPhpLaravelConfigTarget,
+    findTranslationTarget: laravelTargets.findPhpLaravelTranslationTarget,
+    findAuthGuardTarget: laravelTargets.findPhpLaravelAuthGuardTarget,
+    findCacheStoreTarget: laravelTargets.findPhpLaravelCacheStoreTarget,
+    findDatabaseConnectionTarget:
+      laravelTargets.findPhpLaravelDatabaseConnectionTarget,
+    findBroadcastConnectionTarget:
+      laravelTargets.findPhpLaravelBroadcastConnectionTarget,
+    findQueueConnectionTarget:
+      laravelTargets.findPhpLaravelQueueConnectionTarget,
+    findRedisConnectionTarget:
+      laravelTargets.findPhpLaravelRedisConnectionTarget,
+    findMailMailerTarget: laravelTargets.findPhpLaravelMailMailerTarget,
+    findPasswordBrokerTarget:
+      laravelTargets.findPhpLaravelPasswordBrokerTarget,
+    findLogChannelTarget: laravelTargets.findPhpLaravelLogChannelTarget,
+    findStorageDiskTarget: laravelTargets.findPhpLaravelStorageDiskTarget,
+    invalidateTargetCache: laravelTargets.invalidatePhpLaravelTargetCache,
+  };
+}
+
+function usePhpLaravelFrameworkTargetAdapter(
+  dependencies: PhpFrameworkTargetsDependencies,
+): PhpFrameworkTargets {
+  const isLaravelFrameworkActive = isPhpFrameworkProviderActive(
+    dependencies.activePhpFrameworkProviders,
+    "laravel",
+  );
+  const laravelTargets = useLaravelFrameworkTargetAdapter({
+    ...dependencies,
+    isLaravelFrameworkActive,
+  });
+
+  return phpFrameworkTargetsFromLaravelTargets(laravelTargets);
+}
+
+export const phpLaravelFrameworkTargetCollectorAdapter: PhpFrameworkTargetCollectorAdapter =
+  {
+    providerId: "laravel",
+    useTargets: usePhpLaravelFrameworkTargetAdapter,
+  };
+
+export const phpFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
+  [phpLaravelFrameworkTargetCollectorAdapter];
+
+export function usePhpFrameworkTargets(
+  dependencies: PhpFrameworkTargetsDependencies,
+): PhpFrameworkTargets {
+  return usePhpLaravelFrameworkTargetAdapter(dependencies);
+}
+
+export function useLaravelTargets(
+  dependencies: LaravelTargetsDependencies,
+): LaravelTargets {
+  return useLaravelFrameworkTargetAdapter(dependencies);
 }

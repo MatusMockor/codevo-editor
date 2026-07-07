@@ -37,7 +37,6 @@ import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { nettePresenterLinkCompletionContextAt } from "../domain/latteLinkNavigation";
-import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
@@ -481,6 +480,10 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     offset: number,
   ): Promise<LatteCompletion[]>;
+  isPhpFrameworkStringCompletionContext?(
+    source: string,
+    position: MonacoPosition,
+  ): boolean;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -4680,7 +4683,7 @@ async function provideCompletionItems(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
   const isFrameworkStringCompletion = Boolean(
-    phpLaravelScopedStringCompletionContextAt(source, position),
+    context.isPhpFrameworkStringCompletionContext?.(source, position),
   );
   const isScopedCompletion = Boolean(
     isMemberOrStaticAccessCompletion || isFrameworkStringCompletion,

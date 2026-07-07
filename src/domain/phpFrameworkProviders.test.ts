@@ -16,22 +16,32 @@ import {
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigReferenceAt,
   phpFrameworkConfigTargetFromSource,
+  phpFrameworkEnvEntriesFromSource,
+  phpFrameworkEnvReferenceAt,
+  phpFrameworkEnvTargetFromSource,
+  phpFrameworkPhpPresenterLinkAt,
+  phpFrameworkPhpPresenterLinkCompletionAt,
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkScopedStringCompletionContextAt,
   phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
+  phpFrameworkSupportsEnv,
   phpFrameworkSupportsNeonConfigIntelligence,
+  phpFrameworkSupportsPhpPresenterLinks,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsStringLiterals,
+  phpFrameworkSupportsTargetCollection,
   phpFrameworkSupportsTranslations,
   phpFrameworkSupportsValidation,
   phpFrameworkSupportsViewData,
   phpFrameworkSupportsViews,
+  phpFrameworkTargetSearchQueries,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
@@ -58,6 +68,11 @@ import {
   phpLaravelConfigTargetFromSource,
 } from "./phpLaravelConfig";
 import {
+  phpLaravelEnvEntriesFromSource,
+  phpLaravelEnvReferenceContextAt,
+  phpLaravelEnvTargetFromSource,
+} from "./phpLaravelEnv";
+import {
   phpLaravelJsonTranslationKeysFromSource,
   phpLaravelJsonTranslationTargetFromSource,
   phpLaravelTranslationKeysFromSource,
@@ -71,6 +86,11 @@ import {
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
+import { phpLaravelScopedStringCompletionContextAt } from "./phpLaravelScopedCompletions";
+import {
+  detectPhpPresenterLinkAt,
+  nettePresenterLinkCompletionContextAt,
+} from "./latteLinkNavigation";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -1576,6 +1596,14 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(queries).toContain("->name(");
       expect(queries).toContain("Route::resource");
       expect(queries).toContain("Route::apiResources");
+      expect(
+        phpFrameworkTargetSearchQueries("routes", [phpLaravelFrameworkProvider]),
+      ).toEqual(queries);
+      expect(
+        phpFrameworkSupportsTargetCollection("routes", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(true);
     });
 
     it("reports route support only for providers shipping the capability", () => {
@@ -1610,6 +1638,44 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
         phpFrameworkRouteDefinitionsFromSource(definitionSource, []),
       ).toEqual([]);
       expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
+    });
+
+    it("supports generic target collection descriptors and legacy query fields", () => {
+      const descriptorProvider: PhpFrameworkProvider = {
+        id: "descriptor",
+        targetCollections: [
+          { kind: "routes", searchQueries: ["route-anchor"] },
+          { kind: "viewData", searchQueries: ["view-anchor"] },
+        ],
+      };
+      const legacyProvider: PhpFrameworkProvider = {
+        id: "legacy",
+        routes: {
+          searchQueries: ["legacy-route-anchor"],
+        },
+      };
+
+      expect(
+        phpFrameworkTargetSearchQueries("routes", [
+          descriptorProvider,
+          legacyProvider,
+        ]),
+      ).toEqual(["route-anchor", "legacy-route-anchor"]);
+      expect(
+        phpFrameworkTargetSearchQueries("viewData", [
+          descriptorProvider,
+          legacyProvider,
+        ]),
+      ).toEqual(["view-anchor"]);
+      expect(
+        phpFrameworkSupportsTargetCollection("routes", [
+          descriptorProvider,
+          legacyProvider,
+        ]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsTargetCollection("viewData", [legacyProvider]),
+      ).toBe(false);
     });
   });
 
@@ -1693,6 +1759,73 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toEqual([]);
       expect(
         phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", []),
+      ).toBeNull();
+    });
+  });
+
+  describe("env capability", () => {
+    const referenceSource = "<?php\n\nreturn env('APP_NAME');\n";
+    const referencePosition = { column: 21, lineNumber: 3 };
+    const envSource = "APP_ENV=local\nAPP_NAME=Codevo\n";
+
+    it("dispatches Laravel env references 1:1 through the provider", () => {
+      const direct = phpLaravelEnvReferenceContextAt(
+        referenceSource,
+        referencePosition,
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkEnvReferenceAt(referenceSource, referencePosition, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Laravel env entries and targets 1:1 through the provider", () => {
+      const directEntries = phpLaravelEnvEntriesFromSource(envSource);
+      const directTarget = phpLaravelEnvTargetFromSource(envSource, "APP_ENV");
+
+      expect(directEntries.length).toBeGreaterThan(0);
+      expect(directTarget).not.toBeNull();
+      expect(
+        phpFrameworkEnvEntriesFromSource(envSource, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(directEntries);
+      expect(
+        phpFrameworkEnvTargetFromSource(envSource, "APP_ENV", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(directTarget);
+    });
+
+    it("reports env support only for providers shipping the capability", () => {
+      expect(phpFrameworkSupportsEnv([phpLaravelFrameworkProvider])).toBe(true);
+      expect(phpFrameworkSupportsEnv([phpNetteFrameworkProvider])).toBe(false);
+      expect(phpFrameworkSupportsEnv([])).toBe(false);
+    });
+
+    it("stays a safe no-op for providers without the env capability", () => {
+      expect(
+        phpFrameworkEnvReferenceAt(referenceSource, referencePosition, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkEnvEntriesFromSource(envSource, [phpNetteFrameworkProvider]),
+      ).toEqual([]);
+      expect(
+        phpFrameworkEnvTargetFromSource(envSource, "APP_ENV", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkEnvReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+      expect(phpFrameworkEnvEntriesFromSource(envSource, [])).toEqual([]);
+      expect(
+        phpFrameworkEnvTargetFromSource(envSource, "APP_ENV", []),
       ).toBeNull();
     });
   });
@@ -1884,6 +2017,11 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(
         phpFrameworkViewDataSearchQueries([phpLaravelFrameworkProvider]),
       ).toEqual(["view(", "View::make", "->with(", "compact("]);
+      expect(
+        phpFrameworkTargetSearchQueries("viewData", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(["view(", "View::make", "->with(", "compact("]);
     });
 
     it("reports view-data support only for providers shipping the capability", () => {
@@ -1895,6 +2033,11 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(phpFrameworkSupportsViewData([phpNetteFrameworkProvider])).toBe(
         true,
       );
+      expect(
+        phpFrameworkSupportsTargetCollection("viewData", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(true);
       expect(phpFrameworkSupportsViewData([capabilitylessProvider])).toBe(false);
       expect(phpFrameworkSupportsViewData([])).toBe(false);
     });
@@ -2019,7 +2162,130 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toBeNull();
     });
   });
+
+  describe("PHP completion and link routing capability", () => {
+    it("dispatches Laravel scoped PHP string completion contexts through the provider", () => {
+      const source = "<?php\n\nGate::allows('upd');\n";
+      const position = positionAfter(source, "upd");
+
+      expect(phpLaravelScopedStringCompletionContextAt(source, position)).toBe(
+        true,
+      );
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(true);
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(false);
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, []),
+      ).toBe(false);
+    });
+
+    it("dispatches Nette PHP presenter-link navigation through the provider", () => {
+      const source = "<?php\n$url = $this->link('Product:show', $id);\n";
+      const offset = source.indexOf("Product:show") + "Product".length;
+      const direct = detectPhpPresenterLinkAt(source, offset);
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkPhpPresenterLinkAt(source, offset, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+      expect(
+        phpFrameworkPhpPresenterLinkAt(source, offset, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(phpFrameworkPhpPresenterLinkAt(source, offset, [])).toBeNull();
+    });
+
+    it("dispatches Nette PHP presenter-link completion ranges through the provider", () => {
+      const source = "<?php\n$url = $this->link('Pro');\n";
+      const offset = source.indexOf("Pro") + "Pro".length;
+      const direct = nettePresenterLinkCompletionContextAt(source, offset, "php");
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkPhpPresenterLinkCompletionAt(source, offset, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+      expect(
+        phpFrameworkSupportsPhpPresenterLinks([phpNetteFrameworkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsPhpPresenterLinks([phpLaravelFrameworkProvider]),
+      ).toBe(false);
+    });
+
+    it("lets custom providers own PHP completion and link routing without Laravel/Nette hooks", () => {
+      const customProvider: PhpFrameworkProvider = {
+        id: "custom-php",
+        php: {
+          isScopedStringCompletionContext: ({ position }) =>
+            position.lineNumber === 7,
+          presenterLinkAt: ({ offset }) => ({
+            call: "go",
+            target: "Dashboard:default",
+            targetEnd: offset + 3,
+            targetStart: offset,
+          }),
+          presenterLinkCompletionAt: ({ offset }) => ({
+            prefix: "Dash",
+            replaceEnd: offset + 4,
+            replaceStart: offset,
+          }),
+        },
+      };
+
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(
+          "<?php",
+          { column: 1, lineNumber: 7 },
+          [customProvider],
+        ),
+      ).toBe(true);
+      expect(
+        phpFrameworkPhpPresenterLinkAt("<?php", 10, [customProvider]),
+      ).toEqual({
+        call: "go",
+        target: "Dashboard:default",
+        targetEnd: 13,
+        targetStart: 10,
+      });
+      expect(
+        phpFrameworkPhpPresenterLinkCompletionAt("<?php", 10, [customProvider]),
+      ).toEqual({
+        prefix: "Dash",
+        replaceEnd: 14,
+        replaceStart: 10,
+      });
+    });
+  });
 });
+
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return {
+    column: lastLine.length + 1,
+    lineNumber: lines.length,
+  };
+}
 
 function phpProjectDescriptor(
   overrides: Omit<Partial<PhpProjectDescriptor>, "packages"> & {

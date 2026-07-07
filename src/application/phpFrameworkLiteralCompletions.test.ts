@@ -38,7 +38,6 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: false,
           position: positionAfter(source, "app."),
           providers: [],
           source,
@@ -74,7 +73,6 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: true,
           position: positionAfter(source, "admin."),
           providers: [phpLaravelFrameworkProvider],
           source,
@@ -116,7 +114,6 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: true,
           position: positionAfter(source, "app."),
           providers: [phpLaravelFrameworkProvider],
           source,
@@ -153,7 +150,6 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: true,
           position: positionAfter(source, "messages."),
           providers: [phpLaravelFrameworkProvider],
           source,
@@ -190,9 +186,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: true,
           position: positionAfter(source, "APP_"),
-          providers: [],
+          providers: [phpLaravelFrameworkProvider],
           source,
         },
         deps,
@@ -207,6 +202,21 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
         returnType: null,
       },
     ]);
+
+    await expect(
+      resolvePhpFrameworkLiteralCompletions(
+        {
+          activeDocument: {
+            content: source,
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          position: positionAfter(source, "APP_"),
+          providers: [],
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
   });
 
   it("completes view names with existing insert-text formatting", async () => {
@@ -227,7 +237,6 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
             content: source,
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: true,
           position: positionAfter(source, "admin.d"),
           providers: [phpLaravelFrameworkProvider],
           source,

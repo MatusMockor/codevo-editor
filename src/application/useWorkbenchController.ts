@@ -313,6 +313,7 @@ import {
 import {
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsViews,
+  phpFrameworkScopedStringCompletionContextAt,
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
   phpFrameworkProviderSignature,
@@ -5522,7 +5523,6 @@ export function useWorkbenchController(
                 path: activeDocument.path,
               }
             : null,
-          isLaravelFrameworkActive,
           position,
           providers: activePhpFrameworkProviders,
           source,
@@ -5807,6 +5807,16 @@ export function useWorkbenchController(
       resolvePhpStaticMethodCompletions,
       workspaceRoot,
     ],
+  );
+
+  const isPhpFrameworkStringCompletionContext = useCallback(
+    (source: string, position: EditorPosition): boolean =>
+      phpFrameworkScopedStringCompletionContextAt(
+        source,
+        position,
+        activePhpFrameworkProviders,
+      ),
+    [activePhpFrameworkProviders],
   );
 
   const { providePhpMethodSignature, providePhpParameterInlayHints } =
@@ -12457,6 +12467,7 @@ export function useWorkbenchController(
     provideNeonDefinition,
     provideNettePhpLinkDefinition,
     provideNettePhpLinkCompletions,
+    isPhpFrameworkStringCompletionContext,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,

@@ -3,7 +3,6 @@ import {
 } from "../domain/phpLaravelConfig";
 import {
   phpLaravelEnvCompletionInsertText,
-  phpLaravelEnvReferenceContextAt,
 } from "../domain/phpLaravelEnv";
 import {
   phpLaravelJsonTranslationCompletionInsertText,
@@ -16,6 +15,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   phpFrameworkConfigReferenceAt,
+  phpFrameworkEnvReferenceAt,
   phpFrameworkRouteReferenceAt,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkViewReferenceAt,
@@ -76,7 +76,6 @@ export interface PhpFrameworkLiteralCompletionDependencies {
 
 export interface PhpFrameworkLiteralCompletionRequest {
   activeDocument: PhpFrameworkLiteralCompletionDocument | null;
-  isLaravelFrameworkActive: boolean;
   position: EditorPosition;
   providers: readonly PhpFrameworkProvider[];
   source: string;
@@ -86,8 +85,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
   request: PhpFrameworkLiteralCompletionRequest,
   dependencies: PhpFrameworkLiteralCompletionDependencies,
 ): Promise<PhpMethodCompletion[] | null> {
-  const { activeDocument, isLaravelFrameworkActive, position, providers, source } =
-    request;
+  const { activeDocument, position, providers, source } = request;
 
   const routeContext = phpFrameworkRouteReferenceAt(source, position, providers);
 
@@ -153,9 +151,9 @@ export async function resolvePhpFrameworkLiteralCompletions(
       }));
   }
 
-  const envContext = phpLaravelEnvReferenceContextAt(source, position);
+  const envContext = phpFrameworkEnvReferenceAt(source, position, providers);
 
-  if (isLaravelFrameworkActive && envContext && activeDocument) {
+  if (envContext && activeDocument) {
     const normalizedPrefix = envContext.prefix.toLowerCase();
     const targets = await dependencies.collectEnvTargets();
 

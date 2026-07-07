@@ -1339,6 +1339,9 @@ function App() {
             provideNeonDefinition={workbench.provideNeonDefinition}
             provideNettePhpLinkDefinition={workbench.provideNettePhpLinkDefinition}
             provideNettePhpLinkCompletions={workbench.provideNettePhpLinkCompletions}
+            isPhpFrameworkStringCompletionContext={
+              workbench.isPhpFrameworkStringCompletionContext
+            }
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}

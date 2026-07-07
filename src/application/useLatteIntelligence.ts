@@ -63,17 +63,16 @@ import {
   latteVariableDeclarations,
   parseLatteForeachCollection,
 } from "../domain/latteSyntax";
-import {
-  NETTE_VIEW_DATA_SEARCH_QUERIES,
-  netteTemplateClassPropertiesFromSource,
-  netteViewDataEntryFromSource,
-} from "../domain/netteViewData";
+import { netteTemplateClassPropertiesFromSource } from "../domain/netteViewData";
 import type { NetteTemplateProperty } from "../domain/netteViewData";
 import {
+  phpFrameworkViewDataEntryFromSource,
+  phpFrameworkViewDataSearchQueries,
   phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   type PhpFrameworkViewDataEntry,
   type PhpFrameworkViewDataVariable,
+  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
   orderPhpMemberCompletionsByCategory,
@@ -246,6 +245,65 @@ export interface LatteIntelligence {
   ): Promise<LatteCompletionItem[]>;
 }
 
+export interface LatteFrameworkCapabilities {
+  detectLattePresenterLinkAt(
+    source: string,
+    offset: number,
+  ): ReturnType<typeof detectLatteLinkAt>;
+  detectPhpPresenterLinkAt(
+    source: string,
+    offset: number,
+  ): ReturnType<typeof detectPhpPresenterLinkAt>;
+  presenterLinkCompletionContextAt(
+    source: string,
+    offset: number,
+    language: "latte" | "php",
+  ): ReturnType<typeof nettePresenterLinkCompletionContextAt>;
+  parsePresenterLinkTarget(target: string): NetteLinkTarget | null;
+  presenterActionMethodCandidates(
+    action: string,
+    isSignal: boolean,
+  ): string[];
+  presenterClassCandidatePathsForLink(
+    target: NetteLinkTarget,
+    currentRelativePath: string,
+  ): string[];
+  presenterLinkTargetsFromSource(path: string, source: string): string[];
+  presenterScanDirectories: readonly string[];
+  isPresenterSourcePath(path: string): boolean;
+  supportsLattePresenterLinkIntelligence(
+    providers: readonly PhpFrameworkProvider[],
+  ): boolean;
+  supportsLatteTemplateIntelligence(
+    providers: readonly PhpFrameworkProvider[],
+  ): boolean;
+  viewDataEntryFromSource(
+    source: string,
+    providers: readonly PhpFrameworkProvider[],
+  ): PhpFrameworkViewDataEntry | null;
+  viewDataSearchQueries(
+    providers: readonly PhpFrameworkProvider[],
+  ): readonly string[];
+}
+
+export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
+  detectLattePresenterLinkAt: detectLatteLinkAt,
+  detectPhpPresenterLinkAt,
+  parsePresenterLinkTarget: parseNetteLinkTarget,
+  presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+  presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
+  presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
+  presenterScanDirectories: ["app"],
+  isPresenterSourcePath: (path) => path.endsWith("Presenter.php"),
+  presenterLinkCompletionContextAt: nettePresenterLinkCompletionContextAt,
+  supportsLattePresenterLinkIntelligence:
+    phpFrameworkSupportsLattePresenterLinkIntelligence,
+  supportsLatteTemplateIntelligence:
+    phpFrameworkSupportsLatteTemplateIntelligence,
+  viewDataEntryFromSource: phpFrameworkViewDataEntryFromSource,
+  viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
+};
+
 interface LatteTemplateCacheEntry {
   expiresAt: number;
   relativePaths: string[];
@@ -345,6 +403,7 @@ export type LatteComponentCache = Record<string, LatteComponentCacheEntry>;
  */
 interface LatteExpressionResolutionContext {
   deps: LatteIntelligenceDependencies;
+  frameworkCapabilities: LatteFrameworkCapabilities;
   isRequestedRootActive: () => boolean;
   requestedRoot: string;
   templateTypeCache: LatteTemplateTypeCache;
@@ -427,13 +486,6 @@ const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
 const LATTE_COMPONENT_CACHE_TTL_MS = 5_000;
 
 /**
- * Directory a Nette project keeps its presenters under - both the classic
- * (`app/Presenters`) and modern (`app/UI/<Name>`) conventions live below `app`,
- * so the link-target discovery scans it alone (never `vendor` / `templates`).
- */
-const LATTE_PRESENTER_SCAN_DIRECTORIES: readonly string[] = ["app"];
-
-/**
  * The Nette current-action marker (`{link this}`): a destination that reloads
  * the current presenter/action and so cannot be resolved to a named method
  * statically. Navigation is declined for it (spec §4.7).
@@ -502,6 +554,7 @@ export function createLatteIntelligence(
   presenterCache: LattePresenterCache = {},
   componentCache: LatteComponentCache = {},
   templateTypeCache: LatteTemplateTypeCache = {},
+  frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
 ): LatteIntelligence {
   /**
    * Per-instance in-flight registry for the view-data loads, so concurrent
@@ -530,7 +583,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps)) {
+    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
       return false;
     }
 
@@ -544,12 +597,13 @@ export function createLatteIntelligence(
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
     const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
 
-    if (isLattePresenterLinkIntelligenceActive(deps)) {
+    if (isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
       const linkHandled = await resolveNetteLinkDefinition(
         deps,
+        frameworkCapabilities,
         requestedRoot,
         isRequestedRootActive,
-        detectLatteLinkAt(source, offset),
+        frameworkCapabilities.detectLattePresenterLinkAt(source, offset),
         currentTemplateRelativePath,
       );
 
@@ -573,6 +627,7 @@ export function createLatteIntelligence(
     const variableHandled = await resolveNettePresenterVariableDefinition(
       {
         deps,
+        frameworkCapabilities,
         isRequestedRootActive,
         requestedRoot,
         templateTypeCache,
@@ -591,6 +646,7 @@ export function createLatteIntelligence(
     const memberHandled = await resolveLatteMemberDefinition(
       {
         deps,
+        frameworkCapabilities,
         isRequestedRootActive,
         requestedRoot,
         templateTypeCache,
@@ -666,7 +722,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps)) {
+    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
       return [];
     }
 
@@ -697,8 +753,8 @@ export function createLatteIntelligence(
       return latteTagCompletions(tagCompletion.prefix, tagCompletion.start, offset);
     }
 
-    if (isLattePresenterLinkIntelligenceActive(deps)) {
-      const linkCompletion = nettePresenterLinkCompletionContextAt(
+    if (isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
+      const linkCompletion = frameworkCapabilities.presenterLinkCompletionContextAt(
         source,
         offset,
         "latte",
@@ -709,6 +765,7 @@ export function createLatteIntelligence(
           {
             cache: presenterCache,
             deps,
+            frameworkCapabilities,
             inFlight: presenterInFlight,
             isRequestedRootActive,
             requestedRoot,
@@ -749,6 +806,7 @@ export function createLatteIntelligence(
     return latteExpressionCompletions(
       {
         deps,
+        frameworkCapabilities,
         isRequestedRootActive,
         requestedRoot,
         templateTypeCache,
@@ -772,7 +830,7 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(componentCache, deps.workspaceRoot);
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
-    if (!isLatteSemanticActive(deps)) {
+    if (!isLatteSemanticActive(deps, frameworkCapabilities)) {
       return false;
     }
 
@@ -784,18 +842,19 @@ export function createLatteIntelligence(
 
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot);
-    const detection = detectPhpPresenterLinkAt(source, offset);
+    const detection = frameworkCapabilities.detectPhpPresenterLinkAt(source, offset);
 
     if (detection) {
-      if (!isLattePresenterLinkIntelligenceActive(deps)) {
+      if (!isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)) {
         return false;
       }
 
       return resolveNettePresenterLink(
         deps,
+        frameworkCapabilities,
         requestedRoot,
         isRequestedRootActive,
-        parseNetteLinkTarget(detection.target),
+        frameworkCapabilities.parsePresenterLinkTarget(detection.target),
         currentTemplatePath(deps, requestedRoot),
         detection.target,
       );
@@ -823,8 +882,8 @@ export function createLatteIntelligence(
     evictOtherRootCacheEntries(templateTypeCache, deps.workspaceRoot);
 
     if (
-      !isLatteSemanticActive(deps) ||
-      !isLattePresenterLinkIntelligenceActive(deps)
+      !isLatteSemanticActive(deps, frameworkCapabilities) ||
+      !isLattePresenterLinkIntelligenceActive(deps, frameworkCapabilities)
     ) {
       return [];
     }
@@ -835,7 +894,7 @@ export function createLatteIntelligence(
       return [];
     }
 
-    const linkCompletion = nettePresenterLinkCompletionContextAt(
+    const linkCompletion = frameworkCapabilities.presenterLinkCompletionContextAt(
       source,
       offset,
       "php",
@@ -856,6 +915,7 @@ export function createLatteIntelligence(
       {
         cache: presenterCache,
         deps,
+        frameworkCapabilities,
         inFlight: presenterInFlight,
         isRequestedRootActive,
         requestedRoot,
@@ -905,10 +965,13 @@ export function useLatteIntelligence(
   return apiRef.current;
 }
 
-function isLatteSemanticActive(deps: LatteIntelligenceDependencies): boolean {
+function isLatteSemanticActive(
+  deps: LatteIntelligenceDependencies,
+  frameworkCapabilities: LatteFrameworkCapabilities,
+): boolean {
   return (
     deps.isSemanticIntelligenceActive &&
-    phpFrameworkSupportsLatteTemplateIntelligence(
+    frameworkCapabilities.supportsLatteTemplateIntelligence(
       deps.frameworkIntelligence.providers,
     )
   );
@@ -916,8 +979,9 @@ function isLatteSemanticActive(deps: LatteIntelligenceDependencies): boolean {
 
 function isLattePresenterLinkIntelligenceActive(
   deps: LatteIntelligenceDependencies,
+  frameworkCapabilities: LatteFrameworkCapabilities,
 ): boolean {
-  return phpFrameworkSupportsLattePresenterLinkIntelligence(
+  return frameworkCapabilities.supportsLattePresenterLinkIntelligence(
     deps.frameworkIntelligence.providers,
   );
 }
@@ -964,6 +1028,7 @@ async function fileExists(
 interface LattePresenterDiscoveryContext {
   cache: LattePresenterCache;
   deps: LatteIntelligenceDependencies;
+  frameworkCapabilities: LatteFrameworkCapabilities;
   inFlight: LattePresenterInFlight;
   isRequestedRootActive: () => boolean;
   requestedRoot: string;
@@ -977,9 +1042,10 @@ interface LattePresenterDiscoveryContext {
  */
 async function resolveNetteLinkDefinition(
   deps: LatteIntelligenceDependencies,
+  frameworkCapabilities: LatteFrameworkCapabilities,
   requestedRoot: string,
   isRequestedRootActive: () => boolean,
-  detection: ReturnType<typeof detectLatteLinkAt>,
+  detection: ReturnType<LatteFrameworkCapabilities["detectLattePresenterLinkAt"]>,
   currentRelativePath: string,
 ): Promise<boolean> {
   if (!detection) {
@@ -988,9 +1054,10 @@ async function resolveNetteLinkDefinition(
 
   return resolveNettePresenterLink(
     deps,
+    frameworkCapabilities,
     requestedRoot,
     isRequestedRootActive,
-    parseNetteLinkTarget(detection.target),
+    frameworkCapabilities.parsePresenterLinkTarget(detection.target),
     currentRelativePath,
     detection.target,
   );
@@ -1007,6 +1074,7 @@ async function resolveNetteLinkDefinition(
  */
 async function resolveNettePresenterLink(
   deps: LatteIntelligenceDependencies,
+  frameworkCapabilities: LatteFrameworkCapabilities,
   requestedRoot: string,
   isRequestedRootActive: () => boolean,
   parsed: NetteLinkTarget | null,
@@ -1017,7 +1085,7 @@ async function resolveNettePresenterLink(
     return false;
   }
 
-  const methodNames = nettePresenterActionMethodCandidates(
+  const methodNames = frameworkCapabilities.presenterActionMethodCandidates(
     parsed.action,
     parsed.isSignal,
   );
@@ -1026,7 +1094,7 @@ async function resolveNettePresenterLink(
     return false;
   }
 
-  const candidatePaths = nettePresenterClassCandidatePathsForLink(
+  const candidatePaths = frameworkCapabilities.presenterClassCandidatePathsForLink(
     parsed,
     currentRelativePath,
   );
@@ -1161,16 +1229,23 @@ async function loadNettePresenterLinkTargets(
 async function scanNettePresenterLinkTargets(
   context: LattePresenterDiscoveryContext,
 ): Promise<string[]> {
-  const { cache, deps, isRequestedRootActive, requestedRoot } = context;
+  const {
+    cache,
+    deps,
+    frameworkCapabilities,
+    isRequestedRootActive,
+    requestedRoot,
+  } = context;
   const presenterPaths = new Set<string>();
   const scanState: LatteTemplateScanState = {
     templatesFound: 0,
     visitedDirectories: new Set<string>(),
   };
 
-  for (const directory of LATTE_PRESENTER_SCAN_DIRECTORIES) {
+  for (const directory of frameworkCapabilities.presenterScanDirectories) {
     await collectNettePresenterPaths(
       deps,
+      frameworkCapabilities,
       deps.joinPath(requestedRoot, directory),
       presenterPaths,
       isRequestedRootActive,
@@ -1210,7 +1285,10 @@ async function scanNettePresenterLinkTargets(
       return [];
     }
 
-    for (const target of nettePresenterLinkTargetsFromSource(path, content)) {
+    for (const target of frameworkCapabilities.presenterLinkTargetsFromSource(
+      path,
+      content,
+    )) {
       targets.add(target);
     }
   }
@@ -1238,6 +1316,7 @@ async function scanNettePresenterLinkTargets(
  */
 async function collectNettePresenterPaths(
   deps: LatteIntelligenceDependencies,
+  frameworkCapabilities: LatteFrameworkCapabilities,
   directory: string,
   into: Set<string>,
   isRequestedRootActive: () => boolean,
@@ -1286,6 +1365,7 @@ async function collectNettePresenterPaths(
 
       await collectNettePresenterPaths(
         deps,
+        frameworkCapabilities,
         entry.path,
         into,
         isRequestedRootActive,
@@ -1295,7 +1375,7 @@ async function collectNettePresenterPaths(
       continue;
     }
 
-    if (!entry.path.endsWith(PRESENTER_SUFFIX)) {
+    if (!frameworkCapabilities.isPresenterSourcePath(entry.path)) {
       continue;
     }
 
@@ -2819,10 +2899,27 @@ async function loadNetteViewDataEntries(
 async function scanNetteViewDataEntries(
   context: LatteExpressionResolutionContext,
 ): Promise<LatteNetteViewDataEntry[]> {
-  const { deps, isRequestedRootActive, requestedRoot, viewDataCache } = context;
+  const {
+    deps,
+    frameworkCapabilities,
+    isRequestedRootActive,
+    requestedRoot,
+    viewDataCache,
+  } = context;
+  const providers = deps.frameworkIntelligence.providers;
+  const searchQueries = frameworkCapabilities.viewDataSearchQueries(providers);
+
+  if (searchQueries.length === 0) {
+    viewDataCache[requestedRoot] = {
+      entries: [],
+      expiresAt: Date.now() + LATTE_VIEW_DATA_CACHE_TTL_MS,
+    };
+
+    return [];
+  }
 
   const searchResults = await Promise.all(
-    NETTE_VIEW_DATA_SEARCH_QUERIES.map((query) =>
+    searchQueries.map((query) =>
       deps.searchText(requestedRoot, query, LATTE_VIEW_DATA_SEARCH_LIMIT),
     ),
   );
@@ -2861,8 +2958,17 @@ async function scanNetteViewDataEntries(
       return [];
     }
 
+    const parsedEntry = frameworkCapabilities.viewDataEntryFromSource(
+      content,
+      providers,
+    );
+
+    if (!parsedEntry) {
+      continue;
+    }
+
     const entry: LatteNetteViewDataEntry = {
-      ...netteViewDataEntryFromSource(content),
+      ...parsedEntry,
       sourcePath: result.path,
     };
 

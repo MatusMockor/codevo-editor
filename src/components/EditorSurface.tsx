@@ -95,7 +95,6 @@ import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
-import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import {
   editorConfigEol,
@@ -273,6 +272,10 @@ interface EditorSurfaceProps {
     source: string,
     offset: number,
   ): Promise<LatteCompletion[]>;
+  isPhpFrameworkStringCompletionContext?(
+    source: string,
+    position: EditorPosition,
+  ): boolean;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -365,6 +368,7 @@ function EditorSurfaceComponent({
   provideNeonDefinition = async () => false,
   provideNettePhpLinkDefinition = async () => false,
   provideNettePhpLinkCompletions = async () => [],
+  isPhpFrameworkStringCompletionContext = () => false,
   providePhpCodeActions = async () => [],
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
@@ -508,6 +512,9 @@ function EditorSurfaceComponent({
   const neonDefinitionRef = useRef(provideNeonDefinition);
   const nettePhpLinkDefinitionRef = useRef(provideNettePhpLinkDefinition);
   const nettePhpLinkCompletionsRef = useRef(provideNettePhpLinkCompletions);
+  const phpFrameworkStringCompletionContextRef = useRef(
+    isPhpFrameworkStringCompletionContext,
+  );
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -731,6 +738,11 @@ function EditorSurfaceComponent({
   }, [provideNettePhpLinkCompletions]);
 
   useEffect(() => {
+    phpFrameworkStringCompletionContextRef.current =
+      isPhpFrameworkStringCompletionContext;
+  }, [isPhpFrameworkStringCompletionContext]);
+
+  useEffect(() => {
     phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
   }, [providePhpLaravelDefinition]);
 
@@ -778,7 +790,7 @@ function EditorSurfaceComponent({
     const isPhpCompletionContext = Boolean(
       phpMemberAccessCompletionContextAt(source, position) ||
         phpStaticAccessCompletionContextAt(source, position) ||
-        phpLaravelScopedStringCompletionContextAt(source, position),
+        phpFrameworkStringCompletionContextRef.current(source, position),
     );
 
     if (!isPhpCompletionContext) {
@@ -877,6 +889,8 @@ function EditorSurfaceComponent({
         nettePhpLinkDefinitionRef.current(source, offset),
       provideNettePhpLinkCompletions: (source, offset) =>
         nettePhpLinkCompletionsRef.current(source, offset),
+      isPhpFrameworkStringCompletionContext: (source, position) =>
+        phpFrameworkStringCompletionContextRef.current(source, position),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>

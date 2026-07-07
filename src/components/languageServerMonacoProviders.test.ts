@@ -28,6 +28,10 @@ import type {
   PhpMethodCompletion,
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import {
+  phpFrameworkScopedStringCompletionContextAt,
+  phpLaravelFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
@@ -11975,6 +11979,9 @@ function providerContext(
     provideNettePhpLinkDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkDefinition"]
     >;
+    isPhpFrameworkStringCompletionContext: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["isPhpFrameworkStringCompletionContext"]
+    >;
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
@@ -12024,6 +12031,12 @@ function providerContext(
     provideNeonDefinition: overrides.provideNeonDefinition,
     provideNettePhpLinkCompletions: overrides.provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition: overrides.provideNettePhpLinkDefinition,
+    isPhpFrameworkStringCompletionContext:
+      overrides.isPhpFrameworkStringCompletionContext ??
+      ((source, position) =>
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          phpLaravelFrameworkProvider,
+        ])),
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,

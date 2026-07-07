@@ -9,7 +9,9 @@ import {
 } from "../domain/phpFrameworkProviders";
 import {
   createLatteIntelligence,
+  netteLatteFrameworkCapabilities,
   useLatteIntelligence,
+  type LatteFrameworkCapabilities,
   type LatteDirectoryEntry,
   type LatteIntelligence,
   type LatteIntelligenceDependencies,
@@ -44,6 +46,51 @@ const CUSTOM_LATTE_TEMPLATE_FRAMEWORK = createPhpFrameworkIntelligence({
   matchedProviderIds: [CUSTOM_LATTE_TEMPLATE_PROVIDER.id],
   profile: "generic",
   providers: [CUSTOM_LATTE_TEMPLATE_PROVIDER],
+});
+const CUSTOM_LATTE_VIEW_DATA_PROVIDER: PhpFrameworkProvider = {
+  id: "custom-latte-view-data",
+  latte: {
+    supportsTemplateIntelligence: true,
+  },
+  viewData: {
+    entryFromSource: ({ source }) => ({
+      bindings: source.includes("assignView(")
+        ? [
+            {
+              variables: [
+                {
+                  detail: "$custom",
+                  name: "$custom",
+                  typeHint: "App\\Model\\Custom",
+                  valueExpression: "$custom",
+                  valueOffset: source.indexOf("$custom"),
+                },
+              ],
+              viewName: "Home:default",
+            },
+          ]
+        : [],
+      source,
+    }),
+    searchQueries: ["assignView("],
+  },
+};
+const CUSTOM_LATTE_VIEW_DATA_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [CUSTOM_LATTE_VIEW_DATA_PROVIDER.id],
+  profile: "generic",
+  providers: [CUSTOM_LATTE_VIEW_DATA_PROVIDER],
+});
+const CUSTOM_LATTE_LINK_PROVIDER: PhpFrameworkProvider = {
+  id: "custom-latte-link",
+  latte: {
+    supportsPresenterLinkIntelligence: true,
+    supportsTemplateIntelligence: true,
+  },
+};
+const CUSTOM_LATTE_LINK_FRAMEWORK = createPhpFrameworkIntelligence({
+  matchedProviderIds: [CUSTOM_LATTE_LINK_PROVIDER.id],
+  profile: "generic",
+  providers: [CUSTOM_LATTE_LINK_PROVIDER],
 });
 
 /**
@@ -1466,6 +1513,59 @@ class ProductTemplate extends Template
     );
   });
 
+  it("loads Latte view data through the active provider capability", async () => {
+    const presenterSource = "<?php\n$custom = new Custom();\nassignView();\n";
+    const searchText = vi.fn(async (_root: string, query: string) =>
+      query === "assignView(" ? [{ path: `${ROOT}/src/CustomPresenter.php` }] : [],
+    );
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/src/CustomPresenter.php`) {
+        return presenterSource;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    });
+    const deps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_VIEW_DATA_FRAMEWORK,
+      readFileContent,
+      searchText,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(searchText).toHaveBeenCalledTimes(1);
+    expect(searchText).toHaveBeenCalledWith(ROOT, "assignView(", 200);
+    expect(completions.find((completion) => completion.label === "$custom"))
+      .toMatchObject({ detail: "presenter data · Custom" });
+  });
+
+  it("does not scan view data when the active Latte provider has no view-data capability", async () => {
+    const searchText = vi.fn(async () => {
+      throw new Error("view-data search should come from provider capability");
+    });
+    const deps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
+      searchText,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const offset = source.indexOf("{$}") + 2;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(searchText).not.toHaveBeenCalled();
+    expect(completions.map((completion) => completion.label)).toEqual(
+      expect.arrayContaining(["$presenter", "$control"]),
+    );
+  });
+
   it("offers Nette implicit template variables in an empty expression", async () => {
     const deps = makeDeps();
     const latte = createLatteIntelligence(() => deps);
@@ -2421,6 +2521,67 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     expect(completions.every((completion) => completion.kind === "link")).toBe(
       true,
     );
+  });
+
+  it("routes PHP link completions through the injected presenter-link adapter", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "src/Screen.screen.php": "<?php\n// screen show\n",
+    });
+    const deps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_LINK_FRAMEWORK,
+      listDirectory,
+      readFileContent,
+    });
+    const source = "$this->jumpTo('Sc');";
+    const replaceStart = source.indexOf("Sc");
+    const replaceEnd = replaceStart + "Sc".length;
+    const presenterLinkTargetsFromSource = vi.fn((path: string, content: string) =>
+      path.endsWith("Screen.screen.php") && content.includes("screen show")
+        ? ["Screen.show"]
+        : [],
+    );
+    const capabilities: LatteFrameworkCapabilities = {
+      ...netteLatteFrameworkCapabilities,
+      detectPhpPresenterLinkAt: vi.fn(() => null),
+      isPresenterSourcePath: (path) => path.endsWith(".screen.php"),
+      presenterLinkCompletionContextAt: vi.fn((_source, _offset, language) =>
+        language === "php"
+          ? { prefix: "Sc", replaceEnd, replaceStart }
+          : null,
+      ),
+      presenterLinkTargetsFromSource,
+      presenterScanDirectories: ["src"],
+    };
+    const latte = createLatteIntelligence(
+      () => deps,
+      {},
+      {},
+      {},
+      {},
+      {},
+      capabilities,
+    );
+
+    const completions = await latte.provideNettePhpLinkCompletions(
+      source,
+      replaceEnd,
+    );
+
+    expect(listDirectory).toHaveBeenCalledWith(`${ROOT}/src`);
+    expect(presenterLinkTargetsFromSource).toHaveBeenCalledWith(
+      `${ROOT}/src/Screen.screen.php`,
+      expect.stringContaining("screen show"),
+    );
+    expect(completions).toEqual([
+      {
+        detail: "Nette presenter action",
+        insertText: "Screen.show",
+        kind: "link",
+        label: "Screen.show",
+        replaceEnd,
+        replaceStart,
+      },
+    ]);
   });
 
   it("filters targets by the typed prefix inside ->redirect('...')", async () => {
