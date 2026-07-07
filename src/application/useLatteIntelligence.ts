@@ -79,11 +79,6 @@ import {
   type NettePresenterInFlight,
 } from "./nettePresenterLinks";
 import {
-  currentNetteControlClassName as resolveCurrentNetteControlClassName,
-  currentNettePresenterClassName as resolveCurrentNettePresenterClassName,
-  resolveNetteControlVariableDefinition as resolveNetteCurrentControlVariableDefinition,
-} from "./netteCurrentClasses";
-import {
   isLatteScanSkippedDirectory,
   latteTemplateCompletions,
   resolveLatteTemplateDefinition,
@@ -101,29 +96,16 @@ import {
   resolveLatteBlockDefinition,
 } from "./latteBlockDefinitions";
 import {
-  resolveLatteMemberDefinition as resolveLatteExpressionMemberDefinition,
-  resolveNettePresenterVariableDefinition as resolveLattePresenterVariableDefinition,
-} from "./latteExpressionDefinitions";
+  latteExpressionCompletions,
+  resolveLatteMemberDefinition,
+  resolveNettePresenterVariableDefinition,
+  type LatteViewDataCache,
+  type LatteViewDataInFlight,
+} from "./latteExpressionIntelligence";
 import {
-  latteExpressionCompletions as resolveLatteExpressionCompletions,
-} from "./latteExpressionCompletions";
-import {
-  latteCandidateViewNames as resolveLatteCandidateViewNames,
-  loadNetteViewDataEntries,
-  type NetteViewDataCache,
-  type NetteViewDataEntry,
-  type NetteViewDataInFlight,
-} from "./netteViewDataEntries";
-import {
-  latteTemplateTypePropertySightings as netteTemplateTypePropertySightings,
   type LatteTemplateTypeCache,
   type LatteTemplateTypeInFlight,
 } from "./netteTemplateTypes";
-import {
-  collectLatteVariableCandidates as collectNetteLatteVariableCandidates,
-  resolveLatteVariableType as resolveNetteLatteVariableType,
-  type LatteVariableCandidate,
-} from "./latteVariableTypes";
 import {
   activeLatteWorkspaceContext,
   currentTemplatePath,
@@ -138,6 +120,7 @@ export type {
   LatteCompletionItem,
   LatteCompletionItemKind,
 } from "./latteCompletionItems";
+export type { LatteViewDataCache } from "./latteExpressionIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
 export interface LatteIntelligenceActiveDocument {
@@ -319,28 +302,6 @@ export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
   viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
 };
 
-export type LatteViewDataCache = NetteViewDataCache;
-type LatteViewDataInFlight = NetteViewDataInFlight;
-type LatteNetteViewDataEntry = NetteViewDataEntry;
-
-/**
- * Everything one expression-completion request carries down the resolution
- * chain: the injected deps, the root captured up front, the live-root guard,
- * and the per-instance view-data cache + in-flight registry. Bundled so the
- * deep call chain (member completion → type priority chain → view-data load)
- * threads one value instead of five parallel parameters.
- */
-interface LatteExpressionResolutionContext {
-  deps: LatteIntelligenceDependencies;
-  frameworkCapabilities: LatteFrameworkCapabilities;
-  isRequestedRootActive: () => boolean;
-  requestedRoot: string;
-  templateTypeCache: LatteTemplateTypeCache;
-  templateTypeInFlight: LatteTemplateTypeInFlight;
-  viewDataCache: LatteViewDataCache;
-  viewDataInFlight: LatteViewDataInFlight;
-}
-
 /**
  * Directories a Nette project keeps its templates under, covering both the
  * classic (`app/Presenters/templates`, top-level `templates`) and modern
@@ -360,33 +321,6 @@ const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = ["app", "templates"];
  */
 const LATTE_TEMPLATE_CACHE_TTL_MS = 5_000;
 const LATTE_MAX_COMPLETIONS = 100;
-/**
- * TTL for the per-root Nette view-data listing (spec §6b). Mirrors the template
- * cache: a short TTL bounds staleness after a presenter changes, while
- * `evictOtherRootCacheEntries` bounds cross-root growth. Precise file-change
- * invalidation is the same documented follow-up as the template cache.
- */
-const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
-
-/**
- * Result cap per view-data text search, matching the controller's Blade
- * view-data loader (`textSearch.searchText(root, query, 200)`), so a very large
- * workspace never streams an unbounded hit list into the lazy presenter scan.
- */
-const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
-const LATTE_TEMPLATE_TYPE_SEARCH_LIMIT = 50;
-const LATTE_TEMPLATE_TYPE_CACHE_TTL_MS = 5_000;
-
-/**
- * Bound on the recursion that resolves a `{foreach}` element type through nested
- * loops / relation chains, so a pathological or self-referential template never
- * recurses without end. Exceeding it yields `null` (no completions), never a
- * hang.
- */
-const MAX_LATTE_TYPE_RESOLUTION_DEPTH = 8;
-const PHP_EXTENSION = ".php";
-const PRESENTER_SUFFIX = "Presenter.php";
-const CONTROL_SUFFIX = "Control.php";
 
 /**
  * TTL for the per-root discovered `Presenter:action` link-target listing (spec
@@ -518,6 +452,7 @@ export function createLatteIntelligence(
         deps,
         frameworkCapabilities,
         isRequestedRootActive,
+        maxCompletions: LATTE_MAX_COMPLETIONS,
         requestedRoot,
         templateTypeCache,
         templateTypeInFlight,
@@ -537,6 +472,7 @@ export function createLatteIntelligence(
         deps,
         frameworkCapabilities,
         isRequestedRootActive,
+        maxCompletions: LATTE_MAX_COMPLETIONS,
         requestedRoot,
         templateTypeCache,
         templateTypeInFlight,
@@ -708,6 +644,7 @@ export function createLatteIntelligence(
         deps,
         frameworkCapabilities,
         isRequestedRootActive,
+        maxCompletions: LATTE_MAX_COMPLETIONS,
         requestedRoot,
         templateTypeCache,
         templateTypeInFlight,
@@ -870,268 +807,4 @@ export function useLatteIntelligence(
   }
 
   return apiRef.current;
-}
-
-// --- expression completions (member / filter / variable) -------------------
-
-/**
- * Cmd+B on a Latte template variable (`{$invoice}`, `{if $invoice}`) opens the
- * presenter/control sighting that fed that variable into the active template.
- * This intentionally reuses the same conservative presenter-data cache and
- * template-path matching used by `{$invoice->}` member completion.
- */
-async function resolveNettePresenterVariableDefinition(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-): Promise<boolean> {
-  return resolveLattePresenterVariableDefinition(
-    latteExpressionDefinitionContext(context),
-    source,
-    offset,
-  );
-}
-
-async function resolveNetteControlVariableDefinition(
-  context: LatteExpressionResolutionContext,
-): Promise<boolean> {
-  const currentClassContext = netteCurrentClassContext(context);
-
-  if (!currentClassContext) {
-    return false;
-  }
-
-  return resolveNetteCurrentControlVariableDefinition(currentClassContext);
-}
-
-/**
- * Cmd+B on a Latte member/property expression (`{$consent->name}`) uses the same
- * Nette/PHP receiver typing path as member completion. A resolved member opens
- * the PHP declaration; an unresolved member returns false, with
- * `shouldBlockLatteDefinitionFallback` stopping generic symbol fallback from
- * jumping to unrelated JS/PHP symbols with the same short name.
- */
-async function resolveLatteMemberDefinition(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-): Promise<boolean> {
-  return resolveLatteExpressionMemberDefinition(
-    latteExpressionDefinitionContext(context),
-    source,
-    offset,
-  );
-}
-
-function latteExpressionDefinitionContext(
-  context: LatteExpressionResolutionContext,
-) {
-  return {
-    deps: context.deps,
-    isRequestedRootActive: context.isRequestedRootActive,
-    loadViewDataEntries: () => loadLatteViewDataEntries(context),
-    resolveControlVariableDefinition: () =>
-      resolveNetteControlVariableDefinition(context),
-    resolveVariableType: (
-      source: string,
-      offset: number,
-      variableName: string,
-      depth: number,
-    ) => resolveLatteVariableType(context, source, offset, variableName, depth),
-    viewNames: () => latteCandidateViewNames(context),
-  };
-}
-
-/**
- * Completions inside a Latte PHP-like expression (`{$...}`, `{if ...}`,
- * `{foreach ...}`, `{= ...}`): `{$var->}` member access, a `|filter` name, or
- * the `{$var}` template-variable list - in that precedence order. Inert unless
- * the cursor sits inside a real expression tag (guarded by
- * `innermostLatteExpressionSpanAt`, which already masks comments,
- * `{syntax off}`, `{l}`/`{r}` and JS/CSS braces), so plain markup and the tag
- * body of a `{* comment *}` yield nothing.
- */
-async function latteExpressionCompletions(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-): Promise<LatteCompletionItem[]> {
-  return resolveLatteExpressionCompletions(
-    latteExpressionCompletionContext(context),
-    source,
-    offset,
-  );
-}
-
-function latteExpressionCompletionContext(
-  context: LatteExpressionResolutionContext,
-) {
-  return {
-    collectVariableCandidates: (source: string, offset: number) =>
-      collectLatteVariableCandidates(context, source, offset),
-    deps: context.deps,
-    isRequestedRootActive: context.isRequestedRootActive,
-    maxCompletions: LATTE_MAX_COMPLETIONS,
-    resolveVariableType: (
-      source: string,
-      offset: number,
-      variableName: string,
-      depth: number,
-    ) => resolveLatteVariableType(context, source, offset, variableName, depth),
-  };
-}
-
-async function collectLatteVariableCandidates(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-): Promise<LatteVariableCandidate[]> {
-  return collectNetteLatteVariableCandidates(
-    latteVariableTypeContext(context),
-    source,
-    offset,
-  );
-}
-
-async function resolveLatteVariableType(
-  context: LatteExpressionResolutionContext,
-  source: string,
-  offset: number,
-  variableName: string,
-  depth: number,
-): Promise<string | null> {
-  return resolveNetteLatteVariableType(
-    latteVariableTypeContext(context),
-    source,
-    offset,
-    variableName,
-    depth,
-  );
-}
-
-function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
-  return {
-    currentControlClassName: () => currentNetteControlClassName(context),
-    currentPresenterClassName: () => currentNettePresenterClassName(context),
-    deps: context.deps,
-    isRequestedRootActive: context.isRequestedRootActive,
-    loadTemplateTypePropertySightings: (source: string) =>
-      netteTemplateTypePropertySightings(
-        latteTemplateTypeContext(context),
-        source,
-      ),
-    loadViewDataEntries: () => loadLatteViewDataEntries(context),
-    maxTypeResolutionDepth: MAX_LATTE_TYPE_RESOLUTION_DEPTH,
-    viewNames: () => latteCandidateViewNames(context),
-  };
-}
-
-async function currentNetteControlClassName(
-  context: LatteExpressionResolutionContext,
-): Promise<string | null> {
-  const currentClassContext = netteCurrentClassContext(context);
-
-  if (!currentClassContext) {
-    return null;
-  }
-
-  return resolveCurrentNetteControlClassName(currentClassContext);
-}
-
-async function currentNettePresenterClassName(
-  context: LatteExpressionResolutionContext,
-): Promise<string | null> {
-  const currentClassContext = netteCurrentClassContext(context);
-
-  if (!currentClassContext) {
-    return null;
-  }
-
-  return resolveCurrentNettePresenterClassName(currentClassContext);
-}
-
-function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
-
-  if (!templateRelativePath) {
-    return null;
-  }
-
-  return {
-    createComponentSearchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
-    deps,
-    isRequestedRootActive,
-    phpExtension: PHP_EXTENSION,
-    providers: deps.frameworkIntelligence.providers,
-    requestedRoot,
-    templateRelativePath,
-  };
-}
-
-function loadLatteViewDataEntries(
-  context: LatteExpressionResolutionContext,
-): Promise<LatteNetteViewDataEntry[]> {
-  const {
-    viewDataCache,
-    deps,
-    frameworkCapabilities,
-    isRequestedRootActive,
-    requestedRoot,
-    viewDataInFlight,
-  } = context;
-
-  return loadNetteViewDataEntries({
-    cache: viewDataCache,
-    deps,
-    frameworkCapabilities,
-    inFlight: viewDataInFlight,
-    isRequestedRootActive,
-    phpExtension: PHP_EXTENSION,
-    providers: deps.frameworkIntelligence.providers,
-    requestedRoot,
-    searchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
-    ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
-  });
-}
-
-function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {
-  const {
-    templateTypeCache,
-    deps,
-    isRequestedRootActive,
-    requestedRoot,
-    templateTypeInFlight,
-  } = context;
-
-  return {
-    cache: templateTypeCache,
-    deps,
-    inFlight: templateTypeInFlight,
-    isRequestedRootActive,
-    phpExtension: PHP_EXTENSION,
-    requestedRoot,
-    searchLimit: LATTE_TEMPLATE_TYPE_SEARCH_LIMIT,
-    ttlMs: LATTE_TEMPLATE_TYPE_CACHE_TTL_MS,
-  };
-}
-
-async function latteCandidateViewNames(
-  context: LatteExpressionResolutionContext,
-): Promise<string[]> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
-
-  if (!templateRelativePath) {
-    return [];
-  }
-
-  return resolveLatteCandidateViewNames({
-    deps,
-    isRequestedRootActive,
-    presenterSuffix: PRESENTER_SUFFIX,
-    controlSuffix: CONTROL_SUFFIX,
-    requestedRoot,
-    templateRelativePath,
-  });
 }
