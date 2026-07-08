@@ -22,6 +22,7 @@ import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
+import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
@@ -6287,6 +6288,14 @@ export function useWorkbenchController(
     const registry = new CommandRegistry();
     const shortcut = (commandId: KeymapCommandId) =>
       shortcutForCommand(appSettings.keymap, commandId);
+    const activeDocumentLanguage = activeDocument
+      ? {
+          isJavaScriptTypeScriptLanguageServerDocument:
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+          isLanguageServerDocument: isLanguageServerDocument(activeDocument),
+          language: activeDocument.language,
+        }
+      : null;
     const appearanceCommands = workbenchAppearanceCommands({
       shortcut,
       zoomEditorFontIn,
@@ -6422,14 +6431,7 @@ export function useWorkbenchController(
 
     workbenchLanguageNavigationCommands({
       shortcut,
-      activeDocument: activeDocument
-        ? {
-            isJavaScriptTypeScriptLanguageServerDocument:
-              isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-            isLanguageServerDocument: isLanguageServerDocument(activeDocument),
-            language: activeDocument.language,
-          }
-        : null,
+      activeDocument: activeDocumentLanguage,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -6447,34 +6449,20 @@ export function useWorkbenchController(
       registry.register(command),
     );
 
-    registry.register({
-      id: "editor.fileStructure",
-      title: "File Structure",
-      category: "Editor",
-      shortcut: shortcut("editor.fileStructure"),
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "documentSymbol",
-            )
-          );
-        }
-
-        return isLanguageServerDocument(activeDocument);
-      },
-      run: openFileStructure,
-    });
+    workbenchLanguagePanelCommands({
+      shortcut,
+      activeDocument: activeDocumentLanguage,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      workspaceRoot,
+      openFileStructure,
+      openCallHierarchy,
+      openTypeHierarchy,
+      openReferencesPanel,
+      openFileReferencesPanel,
+    }).forEach((command) => registry.register(command));
 
     workbenchEditorHistoryCommands({
       shortcut,
@@ -6490,142 +6478,6 @@ export function useWorkbenchController(
       createGitBranch,
       commitGitChanges,
     }).forEach((command) => registry.register(command));
-
-    registry.register({
-      id: "editor.showCallHierarchy",
-      title: "Show Call Hierarchy",
-      category: "Editor",
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "callHierarchy",
-            )
-          );
-        }
-
-        return (
-          isLanguageServerDocument(activeDocument) &&
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "callHierarchy",
-          )
-        );
-      },
-      run: openCallHierarchy,
-    });
-
-    registry.register({
-      id: "editor.showTypeHierarchy",
-      title: "Show Type Hierarchy",
-      category: "Editor",
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "typeHierarchy",
-            )
-          );
-        }
-
-        return (
-          isLanguageServerDocument(activeDocument) &&
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "typeHierarchy",
-          )
-        );
-      },
-      run: openTypeHierarchy,
-    });
-
-    registry.register({
-      id: "editor.findReferences",
-      title: "Find All References",
-      category: "Editor",
-      shortcut: shortcut("editor.findReferences"),
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "references",
-            )
-          );
-        }
-
-        return (
-          isLanguageServerDocument(activeDocument) &&
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "references",
-          )
-        );
-      },
-      run: openReferencesPanel,
-    });
-
-    registry.register({
-      id: "editor.findFileReferences",
-      title: "Find File References",
-      category: "Editor",
-      shortcut: shortcut("editor.findFileReferences"),
-      isEnabled: () =>
-        Boolean(
-          activeDocument &&
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument) &&
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ),
-        ),
-      run: openFileReferencesPanel,
-    });
 
     appearanceCommands.workbenchCommands.forEach((command) =>
       registry.register(command),

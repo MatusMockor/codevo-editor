@@ -1,23 +1,13 @@
 import type { KeymapCommandId } from "../domain/keymap";
-import {
-  canUseLanguageServerFeature,
-  type LanguageServerFeature,
-} from "../domain/languageServerFeatures";
+import type { LanguageServerFeature } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { Command } from "./commandRegistry";
+import {
+  canUseActiveDocumentLanguageServerFeature,
+  type ActiveDocumentLanguage,
+} from "./workbenchLanguageServerCommandEnablement";
 
 type NavigationRun = () => unknown;
-type RunningLanguageServerRuntimeStatus = Extract<
-  LanguageServerRuntimeStatus,
-  { kind: "running" }
->;
-
-interface ActiveDocumentLanguage {
-  isJavaScriptTypeScriptLanguageServerDocument: boolean;
-  isLanguageServerDocument: boolean;
-  language: string | null | undefined;
-}
 
 interface WorkbenchLanguageNavigationCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
@@ -123,79 +113,4 @@ function fireAndForget(run: NavigationRun): Command["run"] {
   return () => {
     void run();
   };
-}
-
-function canUseActiveDocumentLanguageServerFeature({
-  activeDocument,
-  feature,
-  javaScriptTypeScriptLanguageServerRuntimeStatus,
-  javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-  languageServerRuntimeStatus,
-  languageServerRuntimeStatusRoot,
-  workspaceRoot,
-}: {
-  activeDocument: ActiveDocumentLanguage | null;
-  feature: LanguageServerFeature;
-  javaScriptTypeScriptLanguageServerRuntimeStatus:
-    | LanguageServerRuntimeStatus
-    | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
-  languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
-  languageServerRuntimeStatusRoot: string | null;
-  workspaceRoot: string | null;
-}): boolean {
-  if (!activeDocument) {
-    return false;
-  }
-
-  if (activeDocument.isJavaScriptTypeScriptLanguageServerDocument) {
-    return languageServerRuntimeSupportsFeatureForWorkspace(
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      workspaceRoot,
-      feature,
-    );
-  }
-
-  if (!activeDocument.isLanguageServerDocument) {
-    return false;
-  }
-
-  return languageServerRuntimeSupportsFeatureForWorkspace(
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    workspaceRoot,
-    feature,
-  );
-}
-
-function languageServerRuntimeSupportsFeatureForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-  feature: LanguageServerFeature,
-): status is RunningLanguageServerRuntimeStatus {
-  return (
-    isRunningLanguageServerForWorkspace(status, statusRoot, workspaceRoot) &&
-    canUseLanguageServerFeature(status.capabilities, feature)
-  );
-}
-
-function isRunningLanguageServerForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): status is RunningLanguageServerRuntimeStatus {
-  if (!workspaceRoot || !status) {
-    return false;
-  }
-
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
-
-  return (
-    status.kind === "running" &&
-    Boolean(rootedStatus) &&
-    workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
 }
