@@ -12,7 +12,6 @@ interface WorkbenchManualShortcutActions {
   toggleGitBlame: ShortcutAction;
   openFileHistory: ShortcutAction;
   openLocalHistory: ShortcutAction;
-  goToDefinition: ShortcutAction;
   goToSourceDefinition: ShortcutAction;
   goToDeclaration: ShortcutAction;
   goToTypeDefinition: ShortcutAction;
@@ -70,10 +69,6 @@ export function handleWorkbenchManualShortcut({
       workspaceRoot,
       actions.openLocalHistory,
     );
-  }
-
-  if (matches("editor.goToDefinition")) {
-    return consume(event, actions.goToDefinition);
   }
 
   if (matches("editor.goToSourceDefinition")) {

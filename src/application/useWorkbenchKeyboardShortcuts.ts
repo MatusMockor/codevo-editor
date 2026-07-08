@@ -43,6 +43,7 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "bookmark.next",
   "bookmark.previous",
   "editor.fileStructure",
+  "editor.goToDefinition",
   "editor.goToSymbol",
   "search.text",
 ];

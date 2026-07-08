@@ -55,9 +55,9 @@ describe("handleWorkbenchManualShortcut", () => {
     expect(actions.openFileHistory).not.toHaveBeenCalled();
   });
 
-  it("runs language navigation shortcuts without registry feature gating", () => {
+  it("keeps capability-gated language navigation shortcuts in the manual path", () => {
     const actions = createActions();
-    const event = keyboardEvent({ key: "b", metaKey: true });
+    const event = keyboardEvent({ altKey: true, key: "b", metaKey: true });
 
     const handled = handleWorkbenchManualShortcut({
       actions,
@@ -67,14 +67,13 @@ describe("handleWorkbenchManualShortcut", () => {
     });
 
     expect(handled).toBe(true);
-    expect(actions.goToDefinition).toHaveBeenCalledTimes(1);
+    expect(actions.goToImplementation).toHaveBeenCalledTimes(1);
   });
 });
 
 function createActions() {
   return {
     goToDeclaration: vi.fn(),
-    goToDefinition: vi.fn(),
     goToImplementation: vi.fn(),
     goToSourceDefinition: vi.fn(),
     goToSuperMethod: vi.fn(),

@@ -89,6 +89,31 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("routes go to definition through registry enablement", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToDefinition",
+      isEnabled: () => true,
+      run,
+      title: "Go to Definition",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "b", metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(actions.goToDefinition).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),
