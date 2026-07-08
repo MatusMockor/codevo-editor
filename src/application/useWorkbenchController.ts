@@ -3063,7 +3063,11 @@ export function useWorkbenchController(
     [openWorkspacePath, workspaceRoot],
   );
 
-  const { closeWorkspaceTab, quitApplication } = useWorkbenchCloseLifecycle({
+  const {
+    closeApplicationWindow,
+    closeWorkspaceTab,
+    quitApplication,
+  } = useWorkbenchCloseLifecycle({
     workspaceRoot,
     dirtyCount,
     appSettingsRef,
@@ -3910,6 +3914,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnosticsForPath,
     loadGitDiffDocument,
     closeGitDiffPreview,
+    closeEmptyWorkbenchSurface: closeApplicationWindow,
     isGitDiffDocumentPath,
     gitChangeForDiffDocumentPath,
     reportError,

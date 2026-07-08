@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
@@ -51,6 +52,7 @@ export interface WorkbenchCloseLifecycleDependencies {
 
 export interface WorkbenchCloseLifecycle {
   closeWorkspaceTab: (path: string) => Promise<void>;
+  closeApplicationWindow: () => void;
   quitApplication: () => void;
 }
 
@@ -79,6 +81,33 @@ export function useWorkbenchCloseLifecycle(
     clearActiveWorkspace,
     reportError,
   } = dependencies;
+
+  const disposeWorkspaceTabResources = useCallback(
+    async (tabPath: string, targetRootPath: string) => {
+      delete workspaceStateCacheRef.current[tabPath];
+      delete workspaceStateCacheRef.current[targetRootPath];
+      delete editorConfigCacheRef.current[tabPath];
+      delete editorConfigCacheRef.current[targetRootPath];
+
+      forgetLatencyTrackerForRoot(targetRootPath);
+      forgetLanguageServerRuntimeStatuses(targetRootPath);
+      await Promise.allSettled([
+        closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
+        closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
+      ]);
+      await stopProjectRuntimes(targetRootPath);
+      forgetLanguageServerRuntimeStatuses(targetRootPath);
+    },
+    [
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+      closeSyncedLanguageServerDocumentsForRoot,
+      editorConfigCacheRef,
+      forgetLanguageServerRuntimeStatuses,
+      forgetLatencyTrackerForRoot,
+      stopProjectRuntimes,
+      workspaceStateCacheRef,
+    ],
+  );
 
   const closeWorkspaceTab = useCallback(
     async (path: string) => {
@@ -120,18 +149,7 @@ export function useWorkbenchCloseLifecycle(
             ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
             : currentSettings.recentWorkspacePath;
 
-        delete workspaceStateCacheRef.current[tabPath];
-        delete workspaceStateCacheRef.current[targetRootPath];
-        delete editorConfigCacheRef.current[tabPath];
-        delete editorConfigCacheRef.current[targetRootPath];
-        forgetLatencyTrackerForRoot(targetRootPath);
-        forgetLanguageServerRuntimeStatuses(targetRootPath);
-        await Promise.allSettled([
-          closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-          closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-        ]);
-        await stopProjectRuntimes(targetRootPath);
-        forgetLanguageServerRuntimeStatuses(targetRootPath);
+        await disposeWorkspaceTabResources(tabPath, targetRootPath);
 
         try {
           await persistAppSettings({
@@ -161,18 +179,7 @@ export function useWorkbenchCloseLifecycle(
         nextTabs[nextTabs.length - 1] ??
         null;
 
-      delete workspaceStateCacheRef.current[tabPath];
-      delete workspaceStateCacheRef.current[targetRootPath];
-      delete editorConfigCacheRef.current[tabPath];
-      delete editorConfigCacheRef.current[targetRootPath];
-      forgetLatencyTrackerForRoot(targetRootPath);
-      forgetLanguageServerRuntimeStatuses(targetRootPath);
-      await Promise.allSettled([
-        closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-        closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-      ]);
-      await stopProjectRuntimes(targetRootPath);
-      forgetLanguageServerRuntimeStatuses(targetRootPath);
+      await disposeWorkspaceTabResources(tabPath, targetRootPath);
 
       try {
         await persistAppSettings({
@@ -195,13 +202,9 @@ export function useWorkbenchCloseLifecycle(
     [
       appSettingsRef,
       clearActiveWorkspace,
-      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-      closeSyncedLanguageServerDocumentsForRoot,
       dirtyCount,
-      editorConfigCacheRef,
       editorGitBaselineRequestTokenRef,
-      forgetLanguageServerRuntimeStatuses,
-      forgetLatencyTrackerForRoot,
+      disposeWorkspaceTabResources,
       gitDiffRequestTokenRef,
       openFileRequestTokenRef,
       openWorkspacePath,
@@ -210,7 +213,6 @@ export function useWorkbenchCloseLifecycle(
       persistAppSettings,
       prompter,
       reportError,
-      stopProjectRuntimes,
       workspaceRoot,
       workspaceStateCacheRef,
     ],
@@ -226,7 +228,18 @@ export function useWorkbenchCloseLifecycle(
     );
   }, [reportError]);
 
+  const closeApplicationWindow = useCallback(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    void getCurrentWindow()
+      .close()
+      .catch((error) => reportError("Window", error));
+  }, [reportError]);
+
   return {
+    closeApplicationWindow,
     closeWorkspaceTab,
     quitApplication,
   };

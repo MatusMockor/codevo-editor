@@ -1,6 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   useCallback,
   useEffect,
@@ -118,6 +117,7 @@ export interface DocumentLifecycleDependencies {
   // Git-diff preview flow.
   loadGitDiffDocument: (path: string, gitChange: GitChangedFile) => void;
   closeGitDiffPreview: () => void;
+  closeEmptyWorkbenchSurface: () => void;
   isGitDiffDocumentPath: (path: string) => boolean;
   gitChangeForDiffDocumentPath: (
     path: string,
@@ -198,6 +198,7 @@ export function useDocumentLifecycle(
     clearLanguageServerDiagnosticsForPath,
     loadGitDiffDocument,
     closeGitDiffPreview,
+    closeEmptyWorkbenchSurface,
     isGitDiffDocumentPath,
     gitChangeForDiffDocumentPath,
     reportError,
@@ -482,16 +483,6 @@ export function useDocumentLifecycle(
     ],
   );
 
-  const closeApplicationWindow = useCallback(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    void getCurrentWindow()
-      .close()
-      .catch((error) => reportError("Window", error));
-  }, [reportError]);
-
   const closeActiveSurface = useCallback(() => {
     if (selectedGitChangeRef.current || selectedGitChange || gitDiffLoading) {
       closeGitDiffPreview();
@@ -504,11 +495,11 @@ export function useDocumentLifecycle(
       return;
     }
 
-    closeApplicationWindow();
+    closeEmptyWorkbenchSurface();
   }, [
     activeDocument,
     activeDocumentRef,
-    closeApplicationWindow,
+    closeEmptyWorkbenchSurface,
     closeDocument,
     closeGitDiffPreview,
     gitDiffLoading,

@@ -112,6 +112,7 @@ interface Harness {
   clearLanguageServerDiagnosticsForPath: ReturnType<typeof vi.fn>;
   loadGitDiffDocument: ReturnType<typeof vi.fn>;
   closeGitDiffPreview: ReturnType<typeof vi.fn>;
+  closeEmptyWorkbenchSurface: ReturnType<typeof vi.fn>;
   setActivePath: ReturnType<typeof vi.fn>;
   setOpenPaths: ReturnType<typeof vi.fn>;
   setPreviewPath: ReturnType<typeof vi.fn>;
@@ -187,6 +188,7 @@ function renderLifecycle(
   const clearLanguageServerDiagnosticsForPath = vi.fn();
   const loadGitDiffDocument = vi.fn();
   const closeGitDiffPreview = vi.fn();
+  const closeEmptyWorkbenchSurface = vi.fn();
 
   const setDocuments = vi.fn(
     (
@@ -271,6 +273,7 @@ function renderLifecycle(
     clearLanguageServerDiagnosticsForPath,
     loadGitDiffDocument,
     closeGitDiffPreview,
+    closeEmptyWorkbenchSurface,
     isGitDiffDocumentPath: (path: string) =>
       path.startsWith("mockor-git-diff:"),
     gitChangeForDiffDocumentPath: () => null,
@@ -315,6 +318,7 @@ function renderLifecycle(
     clearLanguageServerDiagnosticsForPath,
     loadGitDiffDocument,
     closeGitDiffPreview,
+    closeEmptyWorkbenchSurface,
     setActivePath,
     setOpenPaths,
     setPreviewPath,
@@ -829,6 +833,24 @@ describe("useDocumentLifecycle", () => {
 
       expect(harness.syncClosedDocument).toHaveBeenCalledWith(second);
       expect(harness.setActivePath).toHaveBeenCalledWith(first.path);
+      harness.unmount();
+    });
+
+    it("delegates Cmd+W with no active document to the workbench shell", () => {
+      const harness = renderLifecycle({
+        activeDocument: null,
+        activePath: null,
+        documents: {},
+        openPaths: [],
+      });
+
+      act(() => {
+        harness.lifecycle().closeActiveSurface();
+      });
+
+      expect(harness.closeGitDiffPreview).not.toHaveBeenCalled();
+      expect(harness.syncClosedDocument).not.toHaveBeenCalled();
+      expect(harness.closeEmptyWorkbenchSurface).toHaveBeenCalledTimes(1);
       harness.unmount();
     });
   });
