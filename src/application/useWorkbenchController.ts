@@ -18,6 +18,7 @@ import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecyc
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
+import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
 import { workbenchFloatingSurfaceCommands } from "./workbenchFloatingSurfaceCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
@@ -6358,25 +6359,14 @@ export function useWorkbenchController(
       navigateForward: navigateForwardInHistory,
     }).forEach((command) => registry.register(command));
 
-    registry.register({
-      id: "editor.save",
-      title: "Save File",
-      category: "Editor",
-      shortcut: shortcut("editor.save"),
-      isEnabled: (context) =>
-        context.hasActiveDocument && context.activeDocumentDirty,
-      run: saveActiveDocument,
-    });
-
-    registry.register({
-      id: "editor.closeTab",
-      title: "Close",
-      category: "Editor",
-      shortcut: shortcut("editor.closeTab"),
-      isEnabled: () =>
-        Boolean(activeDocument || selectedGitChange || gitDiffLoading || isTauri()),
-      run: closeActiveSurface,
-    });
+    workbenchEditorSurfaceCommands({
+      shortcut,
+      canCloseActiveSurface: Boolean(
+        activeDocument || selectedGitChange || gitDiffLoading || isTauri(),
+      ),
+      saveActiveDocument,
+      closeActiveSurface,
+    }).forEach((command) => registry.register(command));
 
     workbenchLanguageNavigationCommands({
       shortcut,
