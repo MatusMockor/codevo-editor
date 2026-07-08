@@ -36,7 +36,6 @@ import {
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import { nettePresenterLinkCompletionContextAt } from "../domain/latteLinkNavigation";
 import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
@@ -69,8 +68,11 @@ import {
   type BladeCompletion,
   type LatteCompletion,
   type NeonCompletion,
-  toMonacoLatteCompletion,
 } from "./templateLanguageMonacoProviders";
+import {
+  phpNettePresenterLinkCompletionSuggestions,
+  provideNettePhpPresenterLinkDefinition,
+} from "./nettePhpLinkMonacoProviders";
 
 export type {
   BladeCompletion,
@@ -1186,44 +1188,6 @@ async function providePhpFrameworkStringLiteralDefinition(
 
   try {
     return await provideDefinition(source, offset);
-  } catch (error) {
-    if (isPhpDocumentContextActive(context, documentContext)) {
-      context.reportError(error);
-    }
-
-    return false;
-  }
-}
-
-/**
- * Attempts Nette presenter-link navigation (`$this->link('Presenter:action')`,
- * `->redirect(...)`, ...) for a PHP document, ahead of the Laravel string-literal
- * / phpactor resolvers. Returns `true` when the request was handled (the
- * controller opened the presenter at its action method), so the caller stops and
- * Monaco does not navigate. Inert outside a Nette semantic project (the
- * controller callback gates on the framework profile + tier). Per-project
- * isolation is enforced inside the controller callback.
- */
-async function provideNettePhpPresenterLinkDefinition(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-): Promise<boolean> {
-  if (!context.provideNettePhpLinkDefinition) {
-    return false;
-  }
-
-  const documentContext = activePhpDocumentContext(context, model);
-
-  if (!documentContext) {
-    return false;
-  }
-
-  const source = modelSource(model, documentContext.activeDocument.content);
-  const offset = offsetAtMonacoPosition(source, position);
-
-  try {
-    return await context.provideNettePhpLinkDefinition(source, offset);
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);
@@ -4127,68 +4091,6 @@ function phpPostfixCompletionSuggestions(
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
   }));
-}
-
-/**
- * `$this->link('...')` / `->redirect(...)` / `->forward(...)` / ... presenter
- * link completion for a PHP document (Nette). Mirrors
- * {@link phpPostfixCompletionSuggestions}: the domain's PURE
- * `nettePresenterLinkCompletionContextAt` check runs FIRST (a single bounded
- * regex scan), so a cursor anywhere else in the document — the overwhelming
- * majority of keystrokes, and every keystroke in a Laravel/generic project —
- * costs nothing and never reaches the controller. Only a cursor inside such a
-   * link-call's string argument awaits `context.provideNettePhpLinkCompletions`,
-   * which owns the framework/semantic-tier gating and the per-root presenter
-   * discovery cache (shared with the Latte-side `{link}` completion). Returns
-   * `null` when the cursor is NOT on a link target OR the active framework is
-   * not Nette — so the caller falls through to the regular phpactor / method /
-   * variable / snippet pipeline — or an array (possibly empty) when Nette owns
-   * the context.
- */
-async function phpNettePresenterLinkCompletionSuggestions(
-  monaco: MonacoApi,
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  source: string,
-  position: MonacoPosition,
-  range: Monaco.IRange,
-  request: { rootPath: string; sessionId: number | null },
-): Promise<Monaco.languages.CompletionItem[] | null> {
-  const offset = offsetAtMonacoPosition(source, position);
-  const linkCompletionContext = nettePresenterLinkCompletionContextAt(
-    source,
-    offset,
-    "php",
-  );
-
-  if (!linkCompletionContext || !context.provideNettePhpLinkCompletions) {
-    return null;
-  }
-
-  try {
-    const completions = await context.provideNettePhpLinkCompletions(
-      source,
-      offset,
-    );
-
-    if (completions === null) {
-      return null;
-    }
-
-    if (!isPhpDocumentContextActive(context, request)) {
-      return [];
-    }
-
-    return completions.map((completion, index) =>
-      toMonacoLatteCompletion(monaco, model, source, range, completion, index),
-    );
-  } catch (error) {
-    if (isPhpDocumentContextActive(context, request)) {
-      context.reportError(error);
-    }
-
-    return [];
-  }
 }
 
 /**
