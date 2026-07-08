@@ -17,6 +17,7 @@ import {
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
+import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -6922,62 +6923,18 @@ export function useWorkbenchController(
       run: openFileReferencesPanel,
     });
 
-    registry.register({
-      id: "commands.show",
-      title: "Show Commands",
-      category: "Workbench",
-      shortcut: shortcut("commands.show"),
-      isEnabled: () => true,
-      run: () => setPaletteOpen(true),
-    });
-
     appearanceCommands.workbenchCommands.forEach((command) =>
       registry.register(command),
     );
 
-    registry.register({
-      id: "panel.showProblems",
-      title: "Show Problems",
-      category: "Workbench",
-      isEnabled: () => true,
-      run: () => showBottomPanelView("problems"),
-    });
-
-    registry.register({
-      id: "panel.showIndex",
-      title: "Show Index",
-      category: "Index",
-      isEnabled: () => true,
-      run: () => showBottomPanelView("index"),
-    });
-
-    registry.register({
-      id: "panel.toggle",
-      title: "Toggle Panel",
-      category: "Workbench",
-      shortcut: shortcut("panel.toggle"),
-      isEnabled: () => true,
-      run: toggleBottomPanel,
-    });
-
-    registry.register({
-      id: "panel.toggleTodo",
-      title: "Toggle TODO Panel",
-      category: "Workbench",
-      shortcut: shortcut("panel.toggleTodo"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: toggleTodoPanel,
-    });
-
-    registry.register({
-      id: "panel.refreshTodo",
-      title: "Refresh TODO Comments",
-      category: "Workbench",
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void refreshWorkspaceTodos();
-      },
-    });
+    workbenchPanelCommands({
+      shortcut,
+      openCommandsPalette: () => setPaletteOpen(true),
+      showBottomPanelView,
+      toggleBottomPanel,
+      toggleTodoPanel,
+      refreshWorkspaceTodos,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "bookmark.toggle",
@@ -7017,24 +6974,6 @@ export function useWorkbenchController(
       shortcut: shortcut("bookmark.showPanel"),
       isEnabled: (context) => context.hasWorkspace,
       run: toggleBookmarksPanel,
-    });
-
-    registry.register({
-      id: "terminal.show",
-      title: "Show Terminal",
-      category: "Terminal",
-      shortcut: shortcut("terminal.show"),
-      isEnabled: () => true,
-      run: () => showBottomPanelView("terminal"),
-    });
-
-    registry.register({
-      id: "runtime.show",
-      title: "Show Runtime Panel",
-      category: "Workbench",
-      shortcut: shortcut("runtime.show"),
-      isEnabled: () => true,
-      run: () => showBottomPanelView("runtime"),
     });
 
     registry.register({
