@@ -73,22 +73,37 @@ describe("workbenchFloatingSurfaceCommands", () => {
 
   it("enables workspace commands only with a workspace", () => {
     const commands = createCommands().filter(
-      (command) => command.id !== "workbench.searchEverywhere",
+      (command) =>
+        ![
+          "editor.recentFiles",
+          "editor.recentLocations",
+          "workbench.searchEverywhere",
+        ].includes(command.id),
     );
 
     expect(
       commands.map((command) => command.isEnabled(context({ hasWorkspace: false }))),
-    ).toEqual([false, false, false, false, false, false]);
+    ).toEqual([false, false, false, false]);
     expect(
       commands.map((command) => command.isEnabled(context({ hasWorkspace: true }))),
-    ).toEqual([true, true, true, true, true, true]);
+    ).toEqual([true, true, true, true]);
   });
 
-  it("always enables search everywhere", () => {
-    const command = commandById("workbench.searchEverywhere", createCommands());
+  it("always enables global floating surfaces", () => {
+    const commands = [
+      commandById("editor.recentFiles", createCommands()),
+      commandById("editor.recentLocations", createCommands()),
+      commandById("workbench.searchEverywhere", createCommands()),
+    ];
 
-    expect(command.isEnabled(context({ hasWorkspace: false }))).toBe(true);
-    expect(command.isEnabled(context({ hasWorkspace: true }))).toBe(true);
+    expect(
+      commands.map((command) =>
+        command.isEnabled(context({ hasWorkspace: false })),
+      ),
+    ).toEqual([true, true, true]);
+    expect(
+      commands.map((command) => command.isEnabled(context({ hasWorkspace: true }))),
+    ).toEqual([true, true, true]);
   });
 
   it("gates workspace symbols behind symbol search readiness", () => {

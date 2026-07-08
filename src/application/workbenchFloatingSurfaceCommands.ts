@@ -38,7 +38,7 @@ export function workbenchFloatingSurfaceCommands({
       title: "Recent Files",
       category: "File",
       shortcut: shortcut("editor.recentFiles"),
-      isEnabled: (context) => context.hasWorkspace,
+      isEnabled: () => true,
       run: openRecentFilesSwitcher,
     },
     {
@@ -46,7 +46,7 @@ export function workbenchFloatingSurfaceCommands({
       title: "Recent Locations",
       category: "File",
       shortcut: shortcut("editor.recentLocations"),
-      isEnabled: (context) => context.hasWorkspace,
+      isEnabled: () => true,
       run: openRecentLocationsPanel,
     },
     {

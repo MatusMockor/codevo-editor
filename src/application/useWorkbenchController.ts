@@ -424,6 +424,8 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "commands.show",
   "class.quickOpen",
   "file.quickOpen",
+  "editor.recentFiles",
+  "editor.recentLocations",
   "git.stashChanges",
   "git.showStashes",
   "git.switchBranch",
@@ -6884,18 +6886,6 @@ export function useWorkbenchController(
       if (matches("navigation.forward")) {
         event.preventDefault();
         void navigateForwardInHistory();
-        return;
-      }
-
-      if (matches("editor.recentFiles")) {
-        event.preventDefault();
-        openRecentFilesSwitcher();
-        return;
-      }
-
-      if (matches("editor.recentLocations")) {
-        event.preventDefault();
-        openRecentLocationsPanel();
         return;
       }
 
