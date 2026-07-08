@@ -1,14 +1,11 @@
 import { netteCreateComponentFactoryContexts } from "../domain/netteComponents";
-import {
-  componentClassCandidatePathsForTemplate,
-  presenterCandidatePathsForTemplate,
-} from "../domain/nettePathResolution";
 import { netteComponentViewOwnerNameFromType } from "../domain/netteComponentViewOwners";
 import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
 import { phpTypeNamesEqual } from "../domain/phpTypes";
+import { componentOwnerCandidatePathsForTemplate } from "./netteTemplateOwnerCandidates";
 
 export interface NetteCreateComponentTypeResolver {
   resolveDeclaredType(source: string, typeHint: string | null): string | null;
@@ -31,21 +28,6 @@ interface PhpMethodBodyRange {
 }
 
 const LATTE_TEMPLATE_EXTENSION = ".latte";
-
-/**
- * The PHP classes that may own a Nette template: first the presenter candidates,
- * then colocated component/control candidates. Kept here as an application-level
- * resolver because callers need the same ownership rule for navigation,
- * completion and view-data mapping.
- */
-export function componentOwnerCandidatePathsForTemplate(
-  templateRelativePath: string,
-): string[] {
-  return Array.from(new Set([
-    ...presenterCandidatePathsForTemplate(templateRelativePath),
-    ...componentClassCandidatePathsForTemplate(templateRelativePath),
-  ]));
-}
 
 /**
  * Some legacy Nette projects keep a component template under a presenter's

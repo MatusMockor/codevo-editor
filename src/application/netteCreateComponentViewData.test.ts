@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  componentOwnerCandidatePathsForTemplate,
   factoryDerivedLatteCandidateViewNames,
   netteCreateComponentViewDataEntryFromSource,
 } from "./netteCreateComponentViewData";
+import { componentOwnerCandidatePathsForTemplate } from "./netteTemplateOwnerCandidates";
 
 const ROOT = "/ws";
 

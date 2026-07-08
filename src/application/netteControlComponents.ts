@@ -15,7 +15,7 @@ import {
 } from "../domain/nettePathResolution";
 import {
   componentOwnerCandidatePathsForTemplate,
-} from "./netteCreateComponentViewData";
+} from "./netteTemplateOwnerCandidates";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 
