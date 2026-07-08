@@ -1,8 +1,6 @@
 import { detectNetteCreateComponentAt } from "../domain/netteComponents";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import {
-  activeLatteWorkspaceContext,
-  currentTemplatePath,
   isLattePresenterLinkIntelligenceActive,
 } from "./latteIntelligenceRuntime";
 import { resolveNetteCreateComponentReverse } from "./netteControlComponents";
@@ -12,7 +10,7 @@ import {
 import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
 import { isLatteScanSkippedDirectory } from "./netteTemplateDiscovery";
 import {
-  evictLatteProviderCaches,
+  activeLatteProviderRequest,
   LATTE_PRESENTER_CACHE_TTL_MS,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
@@ -24,19 +22,18 @@ export async function provideNettePhpLinkDefinition(
   source: string,
   offset: number,
 ): Promise<boolean> {
-  const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+  const request = activeLatteProviderRequest(options);
 
-  const workspaceContext = activeLatteWorkspaceContext(
-    deps,
-    options.frameworkCapabilities,
-  );
-
-  if (!workspaceContext) {
+  if (!request) {
     return false;
   }
 
-  const { isRequestedRootActive, requestedRoot } = workspaceContext;
+  const {
+    currentTemplateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = request;
   const detection = options.frameworkCapabilities.detectPhpPresenterLinkAt(
     source,
     offset,
@@ -49,7 +46,7 @@ export async function provideNettePhpLinkDefinition(
 
     return resolveNettePresenterLink(
       {
-        currentRelativePath: currentTemplatePath(deps, requestedRoot),
+        currentRelativePath: currentTemplateRelativePath,
         deps,
         frameworkCapabilities: options.frameworkCapabilities,
         isDirectorySkipped: isLatteScanSkippedDirectory,
@@ -69,7 +66,7 @@ export async function provideNettePhpLinkDefinition(
     isRequestedRootActive,
     detectNetteCreateComponentAt(source, offset),
     source,
-    currentTemplatePath(deps, requestedRoot),
+    currentTemplateRelativePath,
   );
 }
 
@@ -78,17 +75,18 @@ export async function provideNettePhpLinkCompletions(
   source: string,
   offset: number,
 ): Promise<LatteCompletionItem[] | null> {
-  const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+  const request = activeLatteProviderRequest(options);
 
-  const workspaceContext = activeLatteWorkspaceContext(
-    deps,
-    options.frameworkCapabilities,
-  );
-
-  if (!workspaceContext) {
+  if (!request) {
     return null;
   }
+
+  const {
+    currentTemplateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = request;
 
   if (!isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
     return null;
@@ -105,12 +103,10 @@ export async function provideNettePhpLinkCompletions(
     return null;
   }
 
-  const { isRequestedRootActive, requestedRoot } = workspaceContext;
-
   return lattePresenterLinkCompletions(
     {
       cache: options.caches.presenterCache,
-      currentRelativePath: currentTemplatePath(deps, requestedRoot),
+      currentRelativePath: currentTemplateRelativePath,
       deps,
       frameworkCapabilities: options.frameworkCapabilities,
       inFlight: options.inFlight.presenterInFlight,

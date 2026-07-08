@@ -11,8 +11,6 @@ import {
   latteExpressionCompletions,
 } from "./latteExpressionIntelligence";
 import {
-  activeLatteWorkspaceContext,
-  currentTemplatePath,
   isLattePresenterLinkIntelligenceActive,
   offsetAtEditorPosition,
 } from "./latteIntelligenceRuntime";
@@ -31,7 +29,7 @@ import {
   latteTemplateCompletions,
 } from "./netteTemplateCompletions";
 import {
-  evictLatteProviderCaches,
+  activeLatteProviderRequest,
   LATTE_COMPONENT_CACHE_TTL_MS,
   LATTE_MAX_COMPLETIONS,
   LATTE_PRESENTER_CACHE_TTL_MS,
@@ -47,19 +45,18 @@ export async function provideLatteCompletions(
   source: string,
   position: EditorPosition,
 ): Promise<LatteCompletionItem[]> {
-  const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+  const request = activeLatteProviderRequest(options);
 
-  const workspaceContext = activeLatteWorkspaceContext(
-    deps,
-    options.frameworkCapabilities,
-  );
-
-  if (!workspaceContext) {
+  if (!request) {
     return [];
   }
 
-  const { isRequestedRootActive, requestedRoot } = workspaceContext;
+  const {
+    currentTemplateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = request;
   const offset = offsetAtEditorPosition(source, position);
   const includeCompletion = detectLatteIncludeCompletionAt(source, offset);
 
@@ -67,7 +64,7 @@ export async function provideLatteCompletions(
     return latteTemplateCompletions(
       {
         cache: options.caches.templateCache,
-        currentTemplateRelativePath: currentTemplatePath(deps, requestedRoot),
+        currentTemplateRelativePath,
         deps,
         isRequestedRootActive,
         maxCompletions: LATTE_MAX_COMPLETIONS,
@@ -104,7 +101,7 @@ export async function provideLatteCompletions(
       return lattePresenterLinkCompletions(
         {
           cache: options.caches.presenterCache,
-          currentRelativePath: currentTemplatePath(deps, requestedRoot),
+          currentRelativePath: currentTemplateRelativePath,
           deps,
           frameworkCapabilities: options.frameworkCapabilities,
           inFlight: options.inFlight.presenterInFlight,
@@ -130,7 +127,7 @@ export async function provideLatteCompletions(
         isRequestedRootActive,
         maxCompletions: LATTE_MAX_COMPLETIONS,
         requestedRoot,
-        templateRelativePath: currentTemplatePath(deps, requestedRoot),
+        templateRelativePath: currentTemplateRelativePath,
         ttlMs: LATTE_COMPONENT_CACHE_TTL_MS,
       },
       controlCompletion,
@@ -147,7 +144,7 @@ export async function provideLatteCompletions(
         isRequestedRootActive,
         maxCompletions: LATTE_MAX_COMPLETIONS,
         requestedRoot,
-        templateRelativePath: currentTemplatePath(deps, requestedRoot),
+        templateRelativePath: currentTemplateRelativePath,
         ttlMs: LATTE_COMPONENT_CACHE_TTL_MS,
       },
       formNameCompletion,

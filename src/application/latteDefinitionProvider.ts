@@ -9,8 +9,6 @@ import {
   resolveNettePresenterVariableDefinition,
 } from "./latteExpressionIntelligence";
 import {
-  activeLatteWorkspaceContext,
-  currentTemplatePath,
   isLattePresenterLinkIntelligenceActive,
 } from "./latteIntelligenceRuntime";
 import {
@@ -27,7 +25,7 @@ import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
-  evictLatteProviderCaches,
+  activeLatteProviderRequest,
   LATTE_MAX_COMPLETIONS,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
@@ -39,20 +37,18 @@ export async function provideLatteDefinition(
   source: string,
   offset: number,
 ): Promise<boolean> {
-  const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+  const request = activeLatteProviderRequest(options);
 
-  const workspaceContext = activeLatteWorkspaceContext(
-    deps,
-    options.frameworkCapabilities,
-  );
-
-  if (!workspaceContext) {
+  if (!request) {
     return false;
   }
 
-  const { isRequestedRootActive, requestedRoot } = workspaceContext;
-  const currentTemplateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const {
+    currentTemplateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = request;
 
   if (isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
     const linkHandled = await resolveNetteLinkDefinition(
