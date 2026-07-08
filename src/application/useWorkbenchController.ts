@@ -26,10 +26,8 @@ import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteral
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
-import {
-  bestIndexedSymbolMatch,
-  editorPositionFromProjectSymbol,
-} from "./projectSymbolNavigation";
+import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
+import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -320,7 +318,6 @@ import {
   phpLaravelRouteActionMethodCompletionContextAt,
   phpMethodPosition,
   phpMethodPositionOrNull,
-  phpNamedTypePosition,
   phpSuperTypeReferences,
   resolvePhpClassName,
   type PhpMethodDefinitionHint,
@@ -5791,98 +5788,16 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  // Resolves a PHP class name (e.g. `App\Models\User`) to a navigation target:
-  // the indexed-symbol position when the workspace is indexed, otherwise the
-  // class declaration line in the first existing PSR-4 candidate file. Returns
-  // false (no navigation) when the class cannot be resolved. Carries the
-  // per-workspace isolation guards (requested-root capture + re-check after each
-  // await) so stale results are dropped on tab switch. Declared before its
-  // callers (providePhpFrameworkDefinition) so the useCallback reference is
-  // initialised first.
-  const openPhpClassTarget = useCallback(
-    async (className: string, label: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const requestedSourcePath = activeDocument?.path ?? "";
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return false;
-      }
-
-      if (shouldIndexWorkspace(intelligenceMode)) {
-        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
-          requestedRoot,
-          className,
-          25,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const indexedTarget = bestIndexedSymbolMatch(
-          indexedSymbols,
-          className,
-          requestedSourcePath,
-        );
-
-        if (indexedTarget) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            indexedTarget.path,
-            editorPositionFromProjectSymbol(indexedTarget),
-            label,
-          );
-        }
-      }
-
-      for (const path of phpClassPathCandidates(
-        requestedRoot,
-        requestedDescriptor.php,
-        className,
-      )) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            path,
-            phpNamedTypePosition(content, shortPhpName(className)),
-            label,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    },
-    [
-      activeDocument,
-      intelligenceMode,
-      openNavigationTarget,
-      projectSymbolSearch,
-      readNavigationFileContent,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
+  const { openPhpClassTarget } = usePhpClassTargetNavigation({
+    activeDocument,
+    currentWorkspaceRootRef,
+    intelligenceMode,
+    openNavigationTarget,
+    projectSymbolSearch,
+    readNavigationFileContent,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   const phpFrameworkLiteralNavigationDependencies = useMemo(
     () => ({
@@ -10451,11 +10366,6 @@ function isBlockedByManuallyCollapsedDirectory(
   }
 
   return false;
-}
-
-function shortPhpName(className: string): string {
-  const parts = className.split("\\");
-  return parts[parts.length - 1] || className;
 }
 
 function phpNormalizedReceiverExpressionIsThis(
