@@ -21,6 +21,7 @@ import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
+import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
@@ -6390,23 +6391,13 @@ export function useWorkbenchController(
       run: () => setTextSearchOpen(true),
     });
 
-    registry.register({
-      id: "navigation.back",
-      title: "Go Back",
-      category: "Navigation",
-      shortcut: shortcut("navigation.back"),
-      isEnabled: () => navigationHistory.backStack.length > 0,
-      run: navigateBackward,
-    });
-
-    registry.register({
-      id: "navigation.forward",
-      title: "Go Forward",
-      category: "Navigation",
-      shortcut: shortcut("navigation.forward"),
-      isEnabled: () => navigationHistory.forwardStack.length > 0,
-      run: navigateForwardInHistory,
-    });
+    workbenchNavigationHistoryCommands({
+      shortcut,
+      canNavigateBackward: navigationHistory.backStack.length > 0,
+      canNavigateForward: navigationHistory.forwardStack.length > 0,
+      navigateBackward,
+      navigateForward: navigateForwardInHistory,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "editor.save",
