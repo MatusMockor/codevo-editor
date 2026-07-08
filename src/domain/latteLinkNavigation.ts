@@ -23,11 +23,13 @@
  * to a real file (and a method candidate to a real method) is the integration
  * layer's job.
  *
- * MASKING is NOT re-implemented here. The `{link}`/`{plink}` detection rides on
- * `latteSyntax.ts`'s `innermostLatteExpressionSpanAt`, whose tag scanner already
- * skips `{* comment *}` and `{syntax off}` regions; the `n:href` detection checks
- * `collectLatteMaskedRegions` directly (the same single-pass scan), so a link
- * written inside a comment is never matched.
+ * MASKING is NOT re-implemented here. Single-line `{link}`/`{plink}` detection
+ * rides on `latteSyntax.ts`'s `innermostLatteExpressionSpanAt`, whose tag scanner
+ * already skips `{* comment *}` and `{syntax off}` regions. Multi-line
+ * `{link}`/`{plink}` targets use a small, bounded link-only scanner after that
+ * general scanner has ruled out "cursor is inside another Latte expression".
+ * `n:href` detection checks `collectLatteMaskedRegions` directly (the same
+ * single-pass scan), so a link written inside a comment is never matched.
  *
  * HANG-SAFETY: every scan is a single bounded pass. The `n:href` backward scan is
  * capped by `MAX_NHREF_SCAN` and stops at a tag/line boundary; the PHP call scan
@@ -116,6 +118,8 @@ const LATTE_EXTENSION = ".latte";
 
 /** Bound for the backward scan that finds an `n:href="` opening quote. */
 const MAX_NHREF_SCAN = 4000;
+/** Bound for the backward/forward scan that finds a multi-line `{link}` macro. */
+const MAX_LATTE_LINK_MACRO_SCAN = 4000;
 
 /**
  * Presenter method calls whose FIRST string argument is a link target. Ordered
@@ -835,21 +839,13 @@ function detectCurrentModuleClassic(segments: string[]): string | null {
 
 // --- Latte detection --------------------------------------------------------
 
-/**
- * KNOWN GAP (intentional, not fixed here): `innermostLatteExpressionSpanAt`
- * (see `latteSyntax.ts`'s `findLatteTagClose`) is LINE-BOUNDED — it stops a
- * tag's content at the first `\n`. A `{link}` / `{plink}` macro whose target
- * is split across lines (`{link Product:\n  show}`) is therefore not detected
- * past the line break. Real-world `{link}` usage is single-line, so this is a
- * safe, conservative miss rather than a wrong navigation.
- */
 function latteLinkMacroAt(
   source: string,
   offset: number,
 ): LatteLinkDetection | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteLinkMacroSpanAt(source, offset);
 
-  if (!span || (span.tagName !== "link" && span.tagName !== "plink")) {
+  if (!span) {
     return null;
   }
 
@@ -865,6 +861,167 @@ function latteLinkMacroAt(
     targetEnd: token.end,
     targetStart: token.start,
   };
+}
+
+interface LatteLinkMacroSpan {
+  contentEnd: number;
+  expressionStart: number;
+  tagName: "link" | "plink";
+}
+
+function latteLinkMacroSpanAt(
+  source: string,
+  offset: number,
+): LatteLinkMacroSpan | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (span?.tagName === "link" || span?.tagName === "plink") {
+    return {
+      contentEnd: span.contentEnd,
+      expressionStart: span.expressionStart,
+      tagName: span.tagName,
+    };
+  }
+
+  if (span) {
+    return null;
+  }
+
+  return multilineLatteLinkMacroSpanAt(source, offset);
+}
+
+function multilineLatteLinkMacroSpanAt(
+  source: string,
+  offset: number,
+): LatteLinkMacroSpan | null {
+  if (isInsideLatteMask(source, offset)) {
+    return null;
+  }
+
+  const scanStart = Math.max(0, offset - MAX_LATTE_LINK_MACRO_SCAN);
+
+  for (let index = offset; index >= scanStart; index -= 1) {
+    if (source[index] !== "{") {
+      continue;
+    }
+
+    const parsed = parseLatteLinkMacroOpening(source, index);
+
+    if (!parsed) {
+      continue;
+    }
+
+    const contentEnd = findMultilineLatteMacroClose(
+      source,
+      parsed.expressionStart,
+      index + MAX_LATTE_LINK_MACRO_SCAN,
+    );
+
+    if (offset < parsed.expressionStart || offset > contentEnd) {
+      continue;
+    }
+
+    return {
+      contentEnd,
+      expressionStart: parsed.expressionStart,
+      tagName: parsed.tagName,
+    };
+  }
+
+  return null;
+}
+
+function parseLatteLinkMacroOpening(
+  source: string,
+  openBrace: number,
+): ParsedLatteLinkMacroOpening | null {
+  let index = openBrace + 1;
+  const tagStart = index;
+
+  while (isAsciiLetter(source[index])) {
+    index += 1;
+  }
+
+  const tagName = source.slice(tagStart, index);
+
+  if (tagName !== "link" && tagName !== "plink") {
+    return null;
+  }
+
+  const boundary = source[index];
+
+  if (
+    boundary !== undefined &&
+    boundary !== "}" &&
+    !isWhitespace(boundary)
+  ) {
+    return null;
+  }
+
+  return {
+    expressionStart: skipWhitespace(source, index, source.length),
+    tagName,
+  };
+}
+
+interface ParsedLatteLinkMacroOpening {
+  expressionStart: number;
+  tagName: "link" | "plink";
+}
+
+function findMultilineLatteMacroClose(
+  source: string,
+  from: number,
+  maxExclusive: number,
+): number {
+  const limit = Math.min(source.length, maxExclusive);
+  let index = from;
+  let quote: string | null = null;
+  let depth = 0;
+
+  while (index < limit) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 2;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      index += 1;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      if (depth === 0) {
+        return index;
+      }
+
+      depth -= 1;
+      index += 1;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return limit;
 }
 
 /**
@@ -1415,9 +1572,9 @@ function latteMacroCompletionAt(
   source: string,
   offset: number,
 ): NetteLinkCompletionContext | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteLinkMacroSpanAt(source, offset);
 
-  if (!span || (span.tagName !== "link" && span.tagName !== "plink")) {
+  if (!span) {
     return null;
   }
 
@@ -1499,7 +1656,7 @@ function targetTokenRegion(
   from: number,
   limit: number,
 ): TokenRegion {
-  let index = skipInlineWhitespace(source, from, limit);
+  let index = skipWhitespace(source, from, limit);
   const quote = source[index];
 
   if (index < limit && (quote === "'" || quote === '"')) {
@@ -1544,30 +1701,23 @@ function isOffsetInsideMask(offset: number, region: LatteMaskedRegion): boolean 
 
 // --- small string / path utilities -----------------------------------------
 
-function skipInlineWhitespace(
-  source: string,
-  from: number,
-  limit: number,
-): number {
-  let index = from;
-
-  while (index < limit && isInlineWhitespace(source[index])) {
-    index += 1;
-  }
-
-  return index;
-}
-
-function isInlineWhitespace(character: string | undefined): boolean {
-  return character === " " || character === "\t";
-}
-
 function isWhitespace(character: string | undefined): boolean {
   return (
     character === " " ||
     character === "\t" ||
     character === "\n" ||
     character === "\r"
+  );
+}
+
+function isAsciiLetter(character: string | undefined): boolean {
+  if (character === undefined) {
+    return false;
+  }
+
+  return (
+    (character >= "A" && character <= "Z") ||
+    (character >= "a" && character <= "z")
   );
 }
 

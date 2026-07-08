@@ -523,6 +523,31 @@ describe("detectLatteLinkAt", () => {
     expect(detectLatteLinkAt(source, offset)?.target).toBe("Product:show");
   });
 
+  it("detects a multi-line {link} target", () => {
+    const source = `{link
+      Product:show,
+      id => $product->id
+    }`;
+    const offset = offsetOf(source, "Product:show", 2);
+
+    expect(detectLatteLinkAt(source, offset)).toEqual({
+      tag: "link",
+      target: "Product:show",
+      targetStart: source.indexOf("Product:show"),
+      targetEnd: source.indexOf("Product:show") + "Product:show".length,
+    });
+  });
+
+  it("detects a multi-line {plink} target", () => {
+    const source = `{plink
+      Product:show
+    }`;
+    const offset = offsetOf(source, "Product:show", 2);
+
+    expect(detectLatteLinkAt(source, offset)?.tag).toBe("plink");
+    expect(detectLatteLinkAt(source, offset)?.target).toBe("Product:show");
+  });
+
   it("takes only the first {link} argument, ignoring trailing args", () => {
     const source = "{link Product:show, $id, page => 2}";
     const offset = offsetOf(source, "Product:show", 2);
@@ -605,6 +630,17 @@ describe("detectLatteLinkAt", () => {
 
   it("returns null inside a {* comment *}", () => {
     const source = "{* {link Product:show} *}";
+    const offset = offsetOf(source, "Product:show", 2);
+
+    expect(detectLatteLinkAt(source, offset)).toBeNull();
+  });
+
+  it("returns null for a multi-line {link} inside a {* comment *}", () => {
+    const source = `{*
+      {link
+        Product:show
+      }
+    *}`;
     const offset = offsetOf(source, "Product:show", 2);
 
     expect(detectLatteLinkAt(source, offset)).toBeNull();
@@ -746,6 +782,19 @@ describe("nettePresenterLinkCompletionContextAt", () => {
       prefix: "",
       replaceStart: offset,
       replaceEnd: offset,
+    });
+  });
+
+  it("offers a completion for a multi-line {link} target", () => {
+    const source = `{link
+      Prod
+    }`;
+    const offset = offsetOf(source, "Prod") + "Prod".length;
+
+    expect(nettePresenterLinkCompletionContextAt(source, offset, "latte")).toEqual({
+      prefix: "Prod",
+      replaceStart: source.indexOf("Prod"),
+      replaceEnd: source.indexOf("Prod") + "Prod".length,
     });
   });
 
