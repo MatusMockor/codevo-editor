@@ -6673,25 +6673,13 @@ export function useWorkbenchController(
   const keyboardShortcutActions = useMemo(() => ({
     closeFloatingSurface,
     goToDefinition,
-    goToTestForActiveDocument,
-    openFileHistory,
-    openLocalHistory,
     openSearchEverywhere,
     quitApplication,
-    runTestForActiveDocument,
-    toggleBookmarkAtCursor,
-    toggleGitBlame,
   }), [
     closeFloatingSurface,
     goToDefinition,
-    goToTestForActiveDocument,
-    openFileHistory,
-    openLocalHistory,
     openSearchEverywhere,
     quitApplication,
-    runTestForActiveDocument,
-    toggleBookmarkAtCursor,
-    toggleGitBlame,
   ]);
 
   useWorkbenchKeyboardShortcuts({
@@ -6701,7 +6689,6 @@ export function useWorkbenchController(
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef,
-    workspaceRoot,
   });
 
   useEffect(() => {

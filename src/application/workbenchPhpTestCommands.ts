@@ -59,7 +59,9 @@ export function workbenchPhpTestCommands({
       category: "PHP",
       shortcut: shortcut("php.runTestFile"),
       isEnabled: (context) =>
-        context.hasWorkspace && isActiveDocumentPhpTest,
+        context.hasWorkspace &&
+        context.hasActiveDocument &&
+        isActiveDocumentPhpTest,
       run: runAllTestsForActiveDocument,
     },
   ];

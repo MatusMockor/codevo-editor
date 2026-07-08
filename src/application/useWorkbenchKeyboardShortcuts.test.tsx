@@ -158,6 +158,87 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("routes bookmark, git history, and PHP test shortcuts through registry enablement", () => {
+    const actions = createActions();
+    const registry = new CommandRegistry();
+    const commands = [
+      commandShortcutCase("bookmark.toggle", "Bookmarks", "Toggle Bookmark", {
+        key: "F11",
+      }),
+      commandShortcutCase("editor.toggleGitBlame", "Editor", "Git Blame", {
+        altKey: true,
+        key: "g",
+        metaKey: true,
+      }),
+      commandShortcutCase("editor.showFileHistory", "Editor", "File History", {
+        altKey: true,
+        key: "h",
+        metaKey: true,
+      }),
+      commandShortcutCase("editor.showLocalHistory", "Editor", "Local History", {
+        key: "h",
+        metaKey: true,
+        shiftKey: true,
+      }),
+      commandShortcutCase("php.goToTest", "PHP", "Go to Test", {
+        key: "u",
+        metaKey: true,
+        shiftKey: true,
+      }),
+      commandShortcutCase("php.runTest", "PHP", "Run Test", {
+        altKey: true,
+        key: "t",
+        metaKey: true,
+        shiftKey: true,
+      }),
+      commandShortcutCase("php.runTestFile", "PHP", "Run Test File", {
+        altKey: true,
+        key: "y",
+        metaKey: true,
+        shiftKey: true,
+      }),
+    ];
+    commands.forEach(({ category, id, run, title }) => {
+      registry.register({
+        category,
+        id,
+        isEnabled: () => true,
+        run,
+        title,
+      });
+    });
+    const harness = renderHook({
+      actions,
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultAppSettings().keymap,
+          "bookmark.toggle": "F11",
+          "editor.showFileHistory": "Cmd+Alt+H",
+          "editor.showLocalHistory": "Cmd+Shift+H",
+          "editor.toggleGitBlame": "Cmd+Alt+G",
+          "php.goToTest": "Cmd+Shift+U",
+          "php.runTest": "Cmd+Shift+Alt+T",
+          "php.runTestFile": "Cmd+Shift+Alt+Y",
+        },
+      },
+      commandRegistry: registry,
+    });
+
+    commands.forEach(({ eventInit, run }) => {
+      expect(dispatchKeyboardEvent(eventInit).defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+    expect(actions.toggleBookmarkAtCursor).not.toHaveBeenCalled();
+    expect(actions.toggleGitBlame).not.toHaveBeenCalled();
+    expect(actions.openFileHistory).not.toHaveBeenCalled();
+    expect(actions.openLocalHistory).not.toHaveBeenCalled();
+    expect(actions.goToTestForActiveDocument).not.toHaveBeenCalled();
+    expect(actions.runTestForActiveDocument).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),
@@ -187,6 +268,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
 
 interface RenderHookOptions {
   actions?: KeyboardShortcutTestActions;
+  appSettings?: ReturnType<typeof defaultAppSettings>;
   commandRegistry?: CommandRegistry;
 }
 
@@ -194,6 +276,7 @@ type KeyboardShortcutTestActions = ReturnType<typeof createActionsBase>;
 
 function renderHook({
   actions = createActions(),
+  appSettings = defaultAppSettings(),
   commandRegistry = new CommandRegistry(),
 }: RenderHookOptions = {}) {
   const container = document.createElement("div");
@@ -201,7 +284,11 @@ function renderHook({
 
   act(() => {
     root.render(
-      <HookHarness actions={actions} commandRegistry={commandRegistry} />,
+      <HookHarness
+        actions={actions}
+        appSettings={appSettings}
+        commandRegistry={commandRegistry}
+      />,
     );
   });
 
@@ -214,19 +301,20 @@ function renderHook({
 
 function HookHarness({
   actions,
+  appSettings,
   commandRegistry,
 }: {
   actions: KeyboardShortcutTestActions;
+  appSettings: ReturnType<typeof defaultAppSettings>;
   commandRegistry: CommandRegistry;
 }) {
   useWorkbenchKeyboardShortcuts({
     actions,
-    appSettingsRef: ref(defaultAppSettings()),
+    appSettingsRef: ref(appSettings),
     bareKeyShortcutsRef: ref({ keymap: null, keys: new Set<string>() }),
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef: ref(createDoubleShiftDetectorStub()),
-    workspaceRoot: "/workspace",
   });
 
   return null;
@@ -263,6 +351,21 @@ function createActionsBase() {
     saveActiveDocument: vi.fn(),
     toggleBookmarkAtCursor: vi.fn(),
     toggleGitBlame: vi.fn(),
+  };
+}
+
+function commandShortcutCase(
+  id: Parameters<CommandRegistry["register"]>[0]["id"],
+  category: string,
+  title: string,
+  eventInit: KeyboardEventInit & { key: string },
+) {
+  return {
+    category,
+    eventInit,
+    id,
+    run: vi.fn(),
+    title,
   };
 }
 

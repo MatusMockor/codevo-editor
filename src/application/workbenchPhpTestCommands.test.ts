@@ -117,7 +117,7 @@ describe("workbenchPhpTestCommands", () => {
       contexts.map((commandContext) =>
         phpTestCommand.isEnabled(commandContext),
       ),
-    ).toEqual([false, false, true, true]);
+    ).toEqual([false, false, false, true]);
     expect(
       contexts.map((commandContext) =>
         nonPhpTestCommand.isEnabled(commandContext),

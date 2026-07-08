@@ -8,7 +8,6 @@ import {
 import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import type { AppSettings } from "../domain/settings";
 import type { CommandContext, CommandRegistry } from "./commandRegistry";
-import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
 const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
@@ -39,9 +38,13 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "git.switchBranch",
   "git.newBranch",
   "git.commit",
+  "bookmark.toggle",
   "bookmark.showPanel",
   "bookmark.next",
   "bookmark.previous",
+  "editor.toggleGitBlame",
+  "editor.showFileHistory",
+  "editor.showLocalHistory",
   "editor.fileStructure",
   "editor.goToDefinition",
   "editor.goToSourceDefinition",
@@ -52,6 +55,9 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "editor.findReferences",
   "editor.findFileReferences",
   "editor.goToSymbol",
+  "php.goToTest",
+  "php.runTest",
+  "php.runTestFile",
   "search.text",
 ];
 
@@ -63,14 +69,8 @@ interface BareKeyShortcutCache {
 interface WorkbenchKeyboardShortcutActions {
   closeFloatingSurface: () => boolean;
   goToDefinition: () => unknown;
-  goToTestForActiveDocument: () => unknown;
-  openFileHistory: () => unknown;
-  openLocalHistory: () => unknown;
   openSearchEverywhere: () => unknown;
   quitApplication: () => unknown;
-  runTestForActiveDocument: () => unknown;
-  toggleBookmarkAtCursor: () => unknown;
-  toggleGitBlame: () => unknown;
 }
 
 interface UseWorkbenchKeyboardShortcutsOptions {
@@ -80,7 +80,6 @@ interface UseWorkbenchKeyboardShortcutsOptions {
   commandContext: CommandContext;
   commandRegistry: CommandRegistry;
   doubleShiftDetectorRef: MutableRefObject<DoubleShiftDetector>;
-  workspaceRoot: string | null;
 }
 
 export function useWorkbenchKeyboardShortcuts({
@@ -90,7 +89,6 @@ export function useWorkbenchKeyboardShortcuts({
   commandContext,
   commandRegistry,
   doubleShiftDetectorRef,
-  workspaceRoot,
 }: UseWorkbenchKeyboardShortcutsOptions): void {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -160,17 +158,6 @@ export function useWorkbenchKeyboardShortcuts({
       ) {
         return;
       }
-
-      if (
-        handleWorkbenchManualShortcut({
-          actions,
-          event,
-          keymap,
-          workspaceRoot,
-        })
-      ) {
-        return;
-      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -182,6 +169,5 @@ export function useWorkbenchKeyboardShortcuts({
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef,
-    workspaceRoot,
   ]);
 }
