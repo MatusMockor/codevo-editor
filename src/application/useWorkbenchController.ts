@@ -28,6 +28,7 @@ import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavi
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
+import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -282,9 +283,7 @@ import {
 } from "../domain/phpTree";
 import {
   phpMemberAccessCompletionContextAt,
-  phpMixinClassNames,
   phpStaticAccessCompletionContextAt,
-  phpTraitClassNames,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 import {
@@ -310,7 +309,6 @@ import {
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
-  phpPropertyPositionOrNull,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,
@@ -5914,120 +5912,15 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  const openDirectPhpPropertyTarget = useCallback(
-    async (className: string, propertyName: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return false;
-      }
-
-      const visitedClassNames = new Set<string>();
-      const openPropertyInClassHierarchy = async (
-        candidateClassName: string,
-      ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
-        const visitedKey = normalizedCandidate.toLowerCase();
-
-        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
-          return false;
-        }
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        visitedClassNames.add(visitedKey);
-
-        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            const position = phpPropertyPositionOrNull(content, propertyName);
-
-            if (position) {
-              if (!isRequestedRootActive()) {
-                return false;
-              }
-
-              return openNavigationTarget(path, position, `$${propertyName}`);
-            }
-
-            for (const traitName of phpTraitClassNames(content)) {
-              const resolvedTraitName = resolvePhpClassReference(
-                content,
-                traitName,
-              );
-
-              if (
-                resolvedTraitName &&
-                (await openPropertyInClassHierarchy(resolvedTraitName))
-              ) {
-                return true;
-              }
-            }
-
-            for (const mixinName of phpMixinClassNames(content)) {
-              const resolvedMixinName = resolvePhpClassReference(
-                content,
-                mixinName,
-              );
-
-              if (
-                resolvedMixinName &&
-                (await openPropertyInClassHierarchy(resolvedMixinName))
-              ) {
-                return true;
-              }
-            }
-
-            for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassReference(
-                content,
-                superTypeName,
-              );
-
-              if (
-                resolvedSuperTypeName &&
-                (await openPropertyInClassHierarchy(resolvedSuperTypeName))
-              ) {
-                return true;
-              }
-            }
-          } catch {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            continue;
-          }
-        }
-
-        return false;
-      };
-
-      return openPropertyInClassHierarchy(className);
-    },
-    [
-      openNavigationTarget,
-      readNavigationFileContent,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
+  const { openDirectPhpPropertyTarget } = usePhpPropertyTargetNavigation({
+    currentWorkspaceRootRef,
+    openNavigationTarget,
+    readNavigationFileContent,
+    resolvePhpClassReference,
+    resolvePhpClassSourcePaths,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   const phpSourceInheritsOrImplementsType = useCallback(
     async (
