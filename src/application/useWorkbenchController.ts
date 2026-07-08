@@ -6771,6 +6771,10 @@ export function useWorkbenchController(
         return;
       }
 
+      // Keep these shortcuts local until their command-palette enablement
+      // exactly matches the legacy keyboard behavior. The registry dispatcher
+      // consumes disabled shortcuts, so moving a command too early can turn a
+      // no-op-but-handled key into a skipped action.
       if (matches("editor.save")) {
         event.preventDefault();
         void saveActiveDocument();
@@ -6884,7 +6888,6 @@ export function useWorkbenchController(
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    canSearchClassOpenSymbols,
     closeActiveSurface,
     closeFloatingSurface,
     commandContext,
@@ -6895,43 +6898,19 @@ export function useWorkbenchController(
     goToSuperMethod,
     goToTestForActiveDocument,
     runTestForActiveDocument,
-    goToNextProblem,
-    goToPreviousProblem,
-    markFloatingSurfaceActivated,
     goToSourceDefinition,
     goToTypeDefinition,
-    navigateBackward,
-    navigateForwardInHistory,
-    openAppearanceSettingsPanel,
     openFileStructure,
-    openRecentFilesSwitcher,
-    openRecentLocationsPanel,
     openFileReferencesPanel,
     openReferencesPanel,
-    openSettingsPanel,
-    openWorkspaceSymbols,
     openSearchEverywhere,
     quitApplication,
-    resetEditorFontSize,
     saveActiveDocument,
-    showBottomPanelView,
-    toggleBottomPanel,
-    toggleEditorFontLigatures,
-    toggleTodoPanel,
     toggleBookmarkAtCursor,
-    toggleBookmarksPanel,
     toggleGitBlame,
     openFileHistory,
     openLocalHistory,
-    openGitStashPanel,
-    openGitBranchPanel,
-    createGitBranch,
-    commitGitChanges,
-    goToNextBookmark,
-    goToPreviousBookmark,
     workspaceRoot,
-    zoomEditorFontIn,
-    zoomEditorFontOut,
   ]);
 
   useEffect(() => {
