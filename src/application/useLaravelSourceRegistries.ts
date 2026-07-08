@@ -26,6 +26,9 @@ export interface UseLaravelSourceRegistriesDependencies {
 
 export interface LaravelSourceRegistries {
   currentPhpLaravelSourceContext(): PhpLaravelSourceContext;
+  currentPhpLaravelSourceContextForRoot(
+    rootPath: string,
+  ): PhpLaravelSourceContext;
   ensurePhpLaravelMigrationSourcesLoaded(rootPath: string): Promise<void>;
   ensurePhpLaravelProviderSourcesLoaded(rootPath: string): Promise<void>;
   invalidatePhpLaravelMigrationSourcesForPath(root: string, path: string): void;
@@ -78,16 +81,14 @@ export function useLaravelSourceRegistries({
     resetPhpLaravelProviderSourceRegistry,
   ]);
 
-  const currentPhpLaravelSourceContext =
-    useCallback((): PhpLaravelSourceContext => {
-      const root = currentWorkspaceRootRef.current;
-
-      if (!root) {
+  const currentPhpLaravelSourceContextForRoot = useCallback(
+    (rootPath: string): PhpLaravelSourceContext => {
+      if (!rootPath) {
         return { signature: "", workspaceSources: [] };
       }
 
-      const migrationEntry = currentMigrationSourceEntry(root);
-      const providerEntry = currentProviderSourceEntry(root);
+      const migrationEntry = currentMigrationSourceEntry(rootPath);
+      const providerEntry = currentProviderSourceEntry(rootPath);
       const migrationSources = migrationEntry?.sources ?? [];
       const providerSources = providerEntry?.sources ?? [];
       const signature = `m:${migrationEntry?.signature ?? ""}|p:${providerEntry?.signature ?? ""}`;
@@ -106,14 +107,23 @@ export function useLaravelSourceRegistries({
       };
     },
     [
-      currentWorkspaceRootRef,
       currentMigrationSourceEntry,
       currentProviderSourceEntry,
     ],
   );
 
+  const currentPhpLaravelSourceContext =
+    useCallback((): PhpLaravelSourceContext => {
+      const root = currentWorkspaceRootRef.current;
+
+      return root
+        ? currentPhpLaravelSourceContextForRoot(root)
+        : { signature: "", workspaceSources: [] };
+    }, [currentPhpLaravelSourceContextForRoot, currentWorkspaceRootRef]);
+
   return {
     currentPhpLaravelSourceContext,
+    currentPhpLaravelSourceContextForRoot,
     ensurePhpLaravelMigrationSourcesLoaded,
     ensurePhpLaravelProviderSourcesLoaded,
     invalidatePhpLaravelMigrationSourcesForPath,
