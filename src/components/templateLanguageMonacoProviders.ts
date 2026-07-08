@@ -1,7 +1,5 @@
 import type * as Monaco from "monaco-editor";
 import type {
-  LatteCompletion,
-  LatteCompletionKind,
   NeonCompletion,
   NeonCompletionKind,
   TemplateLanguageMonacoProviderContext,
@@ -16,6 +14,7 @@ import {
   templateReplaceRange,
 } from "./templateLanguageMonacoUtils";
 import { registerBladeTemplateMonacoProviders } from "./bladeTemplateMonacoProviders";
+import { registerLatteTemplateMonacoProviders } from "./latteTemplateMonacoProviders";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -33,6 +32,7 @@ export type {
   TemplateLanguageMonacoProviderHandlers,
 } from "./templateLanguageMonacoTypes";
 export { toMonacoBladeCompletion } from "./bladeTemplateMonacoProviders";
+export { toMonacoLatteCompletion } from "./latteTemplateMonacoProviders";
 
 export function registerTemplateLanguageMonacoProviders<
   Context extends TemplateLanguageMonacoProviderContext,
@@ -42,20 +42,7 @@ export function registerTemplateLanguageMonacoProviders<
   handlers: TemplateLanguageMonacoProviderHandlers<Context>,
 ): Disposable {
   const blade = registerBladeTemplateMonacoProviders(monaco, context, handlers);
-  const latteDefinition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("latte", {
-        provideDefinition: (model, position) =>
-          provideLatteDefinition(context, model, position),
-      })
-    : { dispose: () => undefined };
-  const latteCompletion = monaco.languages.registerCompletionItemProvider(
-    "latte",
-    {
-      triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/"],
-      provideCompletionItems: (model, position) =>
-        provideLatteCompletionItems(monaco, context, model, position),
-    },
-  );
+  const latte = registerLatteTemplateMonacoProviders(monaco, context);
   const neonDefinition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("neon", {
         provideDefinition: (model, position) =>
@@ -74,89 +61,11 @@ export function registerTemplateLanguageMonacoProviders<
   return {
     dispose: () => {
       blade.dispose();
-      latteDefinition.dispose();
-      latteCompletion.dispose();
+      latte.dispose();
       neonDefinition.dispose();
       neonCompletion.dispose();
     },
   };
-}
-
-async function provideLatteDefinition(
-  context: TemplateLanguageMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-): Promise<Monaco.languages.Location[] | null> {
-  if (!context.provideLatteDefinition) {
-    return null;
-  }
-
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
-
-  if (!documentContext) {
-    return null;
-  }
-
-  const source = modelSource(model, documentContext.activeDocument.content);
-  const offset = offsetAtMonacoPosition(source, position);
-
-  try {
-    await context.provideLatteDefinition(source, offset);
-  } catch (error) {
-    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
-      context.reportError(error);
-    }
-  }
-
-  return null;
-}
-
-async function provideLatteCompletionItems(
-  monaco: MonacoApi,
-  context: TemplateLanguageMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-): Promise<Monaco.languages.CompletionList> {
-  if (!context.provideLatteCompletions) {
-    return { suggestions: [] };
-  }
-
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
-
-  if (!documentContext) {
-    return { suggestions: [] };
-  }
-
-  const source = modelSource(model, documentContext.activeDocument.content);
-  const word = model.getWordUntilPosition(position);
-  const fallbackRange = templateCompletionFallbackRange(position, word);
-
-  try {
-    const completions = await context.provideLatteCompletions(source, position);
-
-    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
-      return { suggestions: [] };
-    }
-
-    return {
-      suggestions: completions.map((completion, index) =>
-        toMonacoLatteCompletion(
-          monaco,
-          model,
-          source,
-          fallbackRange,
-          completion,
-          index,
-        ),
-      ),
-    };
-  } catch (error) {
-    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
-      context.reportError(error);
-    }
-
-    return { suggestions: [] };
-  }
 }
 
 async function provideNeonDefinition(
@@ -236,35 +145,6 @@ async function provideNeonCompletionItems(
   }
 }
 
-export function toMonacoLatteCompletion(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  source: string,
-  fallbackRange: Monaco.IRange,
-  completion: LatteCompletion,
-  index: number,
-): Monaco.languages.CompletionItem {
-  const range =
-    completion.replaceStart != null && completion.replaceEnd != null
-      ? templateReplaceRange(
-          monaco,
-          model,
-          source,
-          completion.replaceStart,
-          completion.replaceEnd,
-        )
-      : fallbackRange;
-
-  return {
-    detail: completion.detail,
-    insertText: completion.insertText,
-    kind: monacoLatteCompletionKind(monaco, completion.kind),
-    label: completion.label,
-    range,
-    sortText: `0_${String(index).padStart(4, "0")}`,
-  };
-}
-
 export function toMonacoNeonCompletion(
   monaco: MonacoApi,
   model: MonacoModel,
@@ -292,37 +172,6 @@ export function toMonacoNeonCompletion(
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
   };
-}
-
-function monacoLatteCompletionKind(
-  monaco: MonacoApi,
-  kind: LatteCompletionKind,
-): Monaco.languages.CompletionItemKind {
-  if (kind === "template") {
-    return monaco.languages.CompletionItemKind.File;
-  }
-
-  if (kind === "variable") {
-    return monaco.languages.CompletionItemKind.Variable;
-  }
-
-  if (kind === "member") {
-    return monaco.languages.CompletionItemKind.Field;
-  }
-
-  if (kind === "filter") {
-    return monaco.languages.CompletionItemKind.Function;
-  }
-
-  if (kind === "link") {
-    return monaco.languages.CompletionItemKind.Method;
-  }
-
-  if (kind === "component") {
-    return monaco.languages.CompletionItemKind.Module;
-  }
-
-  return monaco.languages.CompletionItemKind.Keyword;
 }
 
 function monacoNeonCompletionKind(
