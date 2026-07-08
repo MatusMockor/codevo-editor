@@ -8,10 +8,10 @@ import {
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
 import {
-  factoryDerivedLatteCandidateViewNames,
   netteCreateComponentViewDataEntryFromSource,
-  type NetteCreateComponentTypeResolver,
 } from "./netteCreateComponentViewData";
+import type { NetteCreateComponentTypeResolver } from "./netteCreateComponentContracts";
+import { factoryDerivedLatteCandidateViewNames } from "./netteFactoryDerivedLatteViewNames";
 
 export interface NetteViewDataSearchResult {
   path: string;
