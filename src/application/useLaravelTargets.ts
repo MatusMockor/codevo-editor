@@ -1,10 +1,7 @@
 import { useCallback, useMemo, type MutableRefObject } from "react";
 import {
-  phpFrameworkConfigKeysFromSource,
-  phpFrameworkConfigTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteSearchQueries,
-  phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
   type PhpFrameworkProvider,
   type PhpFrameworkRouteDefinition,
@@ -21,15 +18,10 @@ import {
   phpLaravelEnvEntriesFromSource,
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
-import {
-  phpLaravelConfigFileNameFromRelativePath,
-  phpLaravelConfigKeyCandidateRelativePath,
-  type PhpLaravelConfigTarget,
-} from "../domain/phpLaravelConfig";
+import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
 import type { PhpLaravelViewTarget } from "../domain/phpLaravelViews";
 import { type FileEntry, type TextSearchGateway } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   phpLaravelAuthGuardTargetDefinition,
   phpLaravelBroadcastConnectionTargetDefinition,
@@ -53,6 +45,7 @@ import {
   type PhpLaravelRedisConnectionTarget,
   type PhpLaravelStorageDiskTarget,
 } from "./phpLaravelConfigDerivedTargets";
+import { createPhpLaravelConfigTargetResolver } from "./phpLaravelConfigTargets";
 import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
 import { createPhpLaravelTranslationTargetResolver } from "./phpLaravelTranslationTargets";
 import {
@@ -60,9 +53,9 @@ import {
   type PhpLaravelViewNavigationTarget,
 } from "./phpLaravelViewTargets";
 import {
-  createWorkspaceTargetCollector,
   type WorkspaceFileTarget,
   type WorkspaceTargetCollectorDeps,
+  createWorkspaceTargetCollector,
 } from "./phpWorkspaceTargetCollector";
 
 export type PhpLaravelNamedRouteTarget =
@@ -356,71 +349,31 @@ function useLaravelFrameworkTargetAdapter(
     ],
   );
 
-  const collectPhpLaravelConfigTargets = useCallback((): Promise<
-    PhpLaravelConfigTarget[]
-  > => {
-    const collect = createWorkspaceTargetCollector<PhpLaravelConfigTarget>(
+  const configTargetResolver = useMemo(
+    () =>
+      createPhpLaravelConfigTargetResolver({
+        currentWorkspaceRootRef,
+        workspaceRoot,
+        phpFrameworkProviders: targetPhpFrameworkProviders,
+        workspaceTargetCollectorDeps: engineDeps,
+        readNavigationFileContent,
+        joinWorkspacePath,
+        readCachedConfigTargets: (root) =>
+          readPhpLaravelTargetCache(root, "config"),
+        writeCachedConfigTargets: (root, targets) =>
+          writePhpLaravelTargetCache(root, "config", targets),
+      }),
+    [
+      currentWorkspaceRootRef,
+      workspaceRoot,
+      targetPhpFrameworkProviders,
       engineDeps,
-      {
-        kind: "directoryScan",
-        isEnabled: () => phpFrameworkSupportsConfig(targetPhpFrameworkProviders),
-        roots: ["config"],
-        readsContent: true,
-        // A flat config scan never memoizes an unreadable `config/`; it
-        // re-attempts the scan on the next call (matches the pre-extraction
-        // early return before the cache write).
-        rescanAfterDirectoryReadFailure: true,
-        parseEntry: ({ path, relativePath, content }) => {
-          const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
-
-          if (!fileName) {
-            return [];
-          }
-
-          // The file-level target is recorded before the file is read so it
-          // survives a read failure.
-          const fileTarget: PhpLaravelConfigTarget = {
-            key: fileName,
-            path,
-            position: { column: 1, lineNumber: 1 },
-            relativePath,
-          };
-
-          if (content === undefined) {
-            return [fileTarget];
-          }
-
-          return [
-            fileTarget,
-            ...phpFrameworkConfigKeysFromSource(
-              content,
-              fileName,
-              targetPhpFrameworkProviders,
-            ).map((target) => ({
-              ...target,
-              path,
-              relativePath,
-            })),
-          ];
-        },
-        dedupKey: (target) => target.key.toLowerCase(),
-        compareTargets: (left, right) => left.key.localeCompare(right.key),
-        cache: {
-          read: (root) => readPhpLaravelTargetCache(root, "config"),
-          write: (root, targets) =>
-            writePhpLaravelTargetCache(root, "config", targets),
-        },
-      },
-    );
-
-    return collect({ workspaceRoot });
-  }, [
-    engineDeps,
-    targetPhpFrameworkProviders,
-    readPhpLaravelTargetCache,
-    workspaceRoot,
-    writePhpLaravelTargetCache,
-  ]);
+      readNavigationFileContent,
+      joinWorkspacePath,
+      readPhpLaravelTargetCache,
+      writePhpLaravelTargetCache,
+    ],
+  );
 
   const translationTargetResolver = useMemo(
     () =>
@@ -450,73 +403,6 @@ function useLaravelFrameworkTargetAdapter(
     ],
   );
 
-  const findPhpLaravelConfigTarget = useCallback(
-    async (configKey: string): Promise<PhpLaravelConfigTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsConfig(targetPhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return null;
-      }
-
-      const relativePath = phpLaravelConfigKeyCandidateRelativePath(configKey);
-
-      if (!relativePath) {
-        return null;
-      }
-
-      const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
-
-      if (!fileName) {
-        return null;
-      }
-
-      const path = joinWorkspacePath(requestedRoot, relativePath);
-
-      try {
-        const content = await readNavigationFileContent(path);
-
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        const target = phpFrameworkConfigTargetFromSource(
-          content,
-          fileName,
-          configKey,
-          targetPhpFrameworkProviders,
-        );
-
-        if (!target) {
-          return null;
-        }
-
-        return {
-          ...target,
-          path,
-          relativePath,
-        };
-      } catch {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        return null;
-      }
-    },
-    [
-      targetPhpFrameworkProviders,
-      currentWorkspaceRootRef,
-      joinWorkspacePath,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
-
   // The ten config-derived collectors below (auth guards, cache stores,
   // database/broadcast/queue/redis connections, mail mailers, password
   // brokers, log channels, storage disks) are all thin, declarative wrappers
@@ -524,53 +410,53 @@ function useLaravelFrameworkTargetAdapter(
   // useConfigDerivedLaravelTarget for the shared collect/find skeleton.
   const authGuardTarget = useConfigDerivedLaravelTarget(
     phpLaravelAuthGuardTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const cacheStoreTarget = useConfigDerivedLaravelTarget(
     phpLaravelCacheStoreTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const databaseConnectionTarget = useConfigDerivedLaravelTarget(
     phpLaravelDatabaseConnectionTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const broadcastConnectionTarget = useConfigDerivedLaravelTarget(
     phpLaravelBroadcastConnectionTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const queueConnectionTarget = useConfigDerivedLaravelTarget(
     phpLaravelQueueConnectionTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const redisConnectionTarget = useConfigDerivedLaravelTarget(
     phpLaravelRedisConnectionTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const mailMailerTarget = useConfigDerivedLaravelTarget(
     phpLaravelMailMailerTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const passwordBrokerTarget = useConfigDerivedLaravelTarget(
     phpLaravelPasswordBrokerTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const logChannelTarget = useConfigDerivedLaravelTarget(
     phpLaravelLogChannelTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
   const storageDiskTarget = useConfigDerivedLaravelTarget(
     phpLaravelStorageDiskTargetDefinition,
-    collectPhpLaravelConfigTargets,
-    findPhpLaravelConfigTarget,
+    configTargetResolver.collect,
+    configTargetResolver.find,
   );
 
   return {
@@ -579,7 +465,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelMiddlewareAliasTargets,
     collectPhpLaravelEnvTargets,
     collectPhpLaravelViewTargets: viewTargetResolver.collect,
-    collectPhpLaravelConfigTargets,
+    collectPhpLaravelConfigTargets: configTargetResolver.collect,
     collectPhpLaravelTranslationTargets: translationTargetResolver.collect,
     collectPhpLaravelAuthGuardTargets: authGuardTarget.collect,
     collectPhpLaravelCacheStoreTargets: cacheStoreTarget.collect,
@@ -592,7 +478,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelLogChannelTargets: logChannelTarget.collect,
     collectPhpLaravelStorageDiskTargets: storageDiskTarget.collect,
     findPhpLaravelViewTarget: viewTargetResolver.find,
-    findPhpLaravelConfigTarget,
+    findPhpLaravelConfigTarget: configTargetResolver.find,
     findPhpLaravelTranslationTarget: translationTargetResolver.find,
     findPhpLaravelAuthGuardTarget: authGuardTarget.find,
     findPhpLaravelCacheStoreTarget: cacheStoreTarget.find,
