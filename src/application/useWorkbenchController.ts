@@ -30,6 +30,7 @@ import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
+import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
@@ -6756,9 +6757,6 @@ export function useWorkbenchController(
         return;
       }
 
-      const matches = (commandId: KeymapCommandId) =>
-        matchesShortcut(event, shortcutForCommand(keymap, commandId));
-
       if (
         dispatchWorkbenchShortcutCommand({
           commandContext,
@@ -6771,118 +6769,34 @@ export function useWorkbenchController(
         return;
       }
 
-      // Keep these shortcuts local until their command-palette enablement
-      // exactly matches the legacy keyboard behavior. The registry dispatcher
-      // consumes disabled shortcuts, so moving a command too early can turn a
-      // no-op-but-handled key into a skipped action.
-      if (matches("editor.save")) {
-        event.preventDefault();
-        void saveActiveDocument();
+      if (
+        handleWorkbenchManualShortcut({
+          actions: {
+            closeActiveSurface,
+            goToDeclaration,
+            goToDefinition,
+            goToImplementation,
+            goToSourceDefinition,
+            goToSuperMethod,
+            goToTestForActiveDocument,
+            goToTypeDefinition,
+            openFileHistory,
+            openFileReferencesPanel,
+            openFileStructure,
+            openLocalHistory,
+            openReferencesPanel,
+            runTestForActiveDocument,
+            saveActiveDocument,
+            toggleBookmarkAtCursor,
+            toggleGitBlame,
+          },
+          event,
+          keymap,
+          workspaceRoot,
+        })
+      ) {
         return;
       }
-
-      if (matches("editor.closeTab")) {
-        event.preventDefault();
-        closeActiveSurface();
-        return;
-      }
-
-      if (matches("editor.fileStructure")) {
-        event.preventDefault();
-        openFileStructure();
-        return;
-      }
-
-      if (matches("bookmark.toggle")) {
-        event.preventDefault();
-        toggleBookmarkAtCursor();
-        return;
-      }
-
-      if (matches("editor.toggleGitBlame")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          toggleGitBlame();
-        }
-        return;
-      }
-
-      if (matches("editor.showFileHistory")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void openFileHistory();
-        }
-        return;
-      }
-
-      if (matches("editor.showLocalHistory")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void openLocalHistory();
-        }
-        return;
-      }
-
-      if (matches("editor.goToDefinition")) {
-        event.preventDefault();
-        void goToDefinition();
-        return;
-      }
-
-      if (matches("editor.goToSourceDefinition")) {
-        event.preventDefault();
-        void goToSourceDefinition();
-        return;
-      }
-
-      if (matches("editor.goToDeclaration")) {
-        event.preventDefault();
-        void goToDeclaration();
-        return;
-      }
-
-      if (matches("editor.goToTypeDefinition")) {
-        event.preventDefault();
-        void goToTypeDefinition();
-        return;
-      }
-
-      if (matches("editor.goToImplementation")) {
-        event.preventDefault();
-        void goToImplementation();
-        return;
-      }
-
-      if (matches("editor.goToSuperMethod")) {
-        event.preventDefault();
-        void goToSuperMethod();
-        return;
-      }
-
-      if (matches("php.goToTest")) {
-        event.preventDefault();
-        void goToTestForActiveDocument();
-        return;
-      }
-
-      if (matches("php.runTest")) {
-        event.preventDefault();
-        void runTestForActiveDocument();
-        return;
-      }
-
-      if (matches("editor.findReferences")) {
-        event.preventDefault();
-        void openReferencesPanel();
-        return;
-      }
-
-      if (matches("editor.findFileReferences")) {
-        event.preventDefault();
-        void openFileReferencesPanel();
-        return;
-      }
-
     }
 
     window.addEventListener("keydown", handleKeyDown);
