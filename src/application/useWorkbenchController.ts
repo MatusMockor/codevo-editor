@@ -25,6 +25,7 @@ import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
+import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -6294,39 +6295,16 @@ export function useWorkbenchController(
       openAppearanceSettingsPanel,
     });
 
-    registry.register({
-      id: "workspace.open",
-      title: "Open Workspace",
-      category: "Workspace",
-      isEnabled: () => true,
-      run: openWorkspace,
-    });
-
-    registry.register({
-      id: "workspace.refresh",
-      title: "Refresh Workspace",
-      category: "Workspace",
-      isEnabled: (context) => context.hasWorkspace,
-      run: refreshWorkspace,
-    });
-
-    registry.register({
-      id: "workspace.trust",
-      title: workspaceTrust?.trusted
-        ? "Revoke Workspace Trust"
-        : "Trust Workspace",
-      category: "Workspace",
-      isEnabled: (context) => context.hasWorkspace,
-      run: toggleWorkspaceTrust,
-    });
-
-    registry.register({
-      id: "file.new",
-      title: "New File",
-      category: "File",
-      isEnabled: (context) => context.hasWorkspace,
-      run: createFile,
-    });
+    workbenchWorkspaceFileCommands({
+      isWorkspaceTrusted: workspaceTrust?.trusted,
+      openWorkspace,
+      refreshWorkspace,
+      toggleWorkspaceTrust,
+      createFile,
+      createDirectory,
+      renameActiveDocument,
+      deleteActiveDocument,
+    }).forEach((command) => registry.register(command));
 
     workbenchPhpTestCommands({
       shortcut,
@@ -6428,30 +6406,6 @@ export function useWorkbenchController(
       shortcut: shortcut("navigation.forward"),
       isEnabled: () => navigationHistory.forwardStack.length > 0,
       run: navigateForwardInHistory,
-    });
-
-    registry.register({
-      id: "folder.new",
-      title: "New Folder",
-      category: "File",
-      isEnabled: (context) => context.hasWorkspace,
-      run: createDirectory,
-    });
-
-    registry.register({
-      id: "file.rename",
-      title: "Rename Active File",
-      category: "File",
-      isEnabled: (context) => context.hasActiveDocument,
-      run: renameActiveDocument,
-    });
-
-    registry.register({
-      id: "file.delete",
-      title: "Delete Active File",
-      category: "File",
-      isEnabled: (context) => context.hasActiveDocument,
-      run: deleteActiveDocument,
     });
 
     registry.register({
