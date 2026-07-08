@@ -23,6 +23,7 @@ import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigat
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
+import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -87,9 +88,6 @@ import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralComp
 import { resolvePhpFrameworkScopedCompletions } from "./phpFrameworkScopedCompletions";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
-import {
-  phpSuperMethodHierarchyReferences,
-} from "./usePhpCodeActions";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 import {
   synthesizePhpTypedReceiverSource,
@@ -311,7 +309,6 @@ import {
   phpClassPathCandidates,
   phpDocMethodPositionOrNull,
   phpPropertyPositionOrNull,
-  phpEnclosingMethodNameAt,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
@@ -6933,139 +6930,18 @@ export function useWorkbenchController(
     openPhpClassTarget,
   ]);
 
-  const goToSuperMethod = useCallback(async (): Promise<boolean> => {
-    if (!activeDocument || activeDocument.language !== "php") {
-      return false;
-    }
-
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const source = activeDocument.content;
-    const methodName = phpEnclosingMethodNameAt(source, editorPosition);
-
-    if (!methodName) {
-      return false;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedDescriptor = workspaceDescriptor;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (!requestedRoot || !requestedDescriptor?.php) {
-      return false;
-    }
-
-    // Walk a super type's hierarchy (extends / implements / used traits /
-    // mixins) looking for the overridden method declaration. The current class
-    // is intentionally excluded: navigation must land on the PARENT / interface
-    // declaration, never on the method we are standing in.
-    const visitedClassNames = new Set<string>();
-    const openSuperMethodInHierarchy = async (
-      candidateClassName: string,
-    ): Promise<boolean> => {
-      const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
-      const visitedKey = normalizedCandidate.toLowerCase();
-
-      if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
-        return false;
-      }
-
-      visitedClassNames.add(visitedKey);
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          const position =
-            phpMethodPositionOrNull(content, methodName) ??
-            phpDocMethodPositionOrNull(content, methodName);
-
-          if (position) {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            return openNavigationTarget(path, position, `${methodName}()`);
-          }
-
-          for (const superReference of phpSuperMethodHierarchyReferences(
-            content,
-          )) {
-            const resolvedReference = resolvePhpClassReference(
-              content,
-              superReference,
-            );
-
-            if (
-              resolvedReference &&
-              (await openSuperMethodInHierarchy(resolvedReference))
-            ) {
-              return true;
-            }
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-          }
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    };
-
-    for (const superReference of phpSuperMethodHierarchyReferences(source)) {
-      const resolvedReference = resolvePhpClassReference(source, superReference);
-
-      if (
-        resolvedReference &&
-        (await openSuperMethodInHierarchy(resolvedReference))
-      ) {
-        return true;
-      }
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-    }
-
-    if (!isRequestedRootActive()) {
-      return false;
-    }
-
-    setMessage(`No super method found for ${methodName}().`);
-    return false;
-  }, [
+  const { goToSuperMethod } = usePhpSuperMethodNavigation({
     activeDocument,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
     openNavigationTarget,
     readNavigationFileContent,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
+    setMessage,
     workspaceDescriptor,
     workspaceRoot,
-  ]);
+  });
 
   const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
     if (!activeDocument) {
