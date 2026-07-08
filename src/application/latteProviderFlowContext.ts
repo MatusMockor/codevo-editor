@@ -5,7 +5,7 @@ import type {
 } from "./latteIntelligenceContracts";
 import type { LatteViewDataCache } from "./latteExpressionIntelligence";
 import type { LatteViewDataInFlight } from "./latteExpressionIntelligence";
-import type { NetteControlCache } from "./netteControlComponents";
+import type { NetteControlCache } from "./netteControlContracts";
 import type {
   NettePresenterCache,
   NettePresenterInFlight,

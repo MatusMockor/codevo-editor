@@ -4,8 +4,8 @@ import {
   latteControlCompletionAt,
   netteControlReferenceAt,
   resolveNetteControlDefinition,
-  type NetteControlCache,
 } from "./netteControlComponents";
+import type { NetteControlCache } from "./netteControlContracts";
 
 const ROOT = "/ws";
 const PRESENTER = `<?php

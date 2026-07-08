@@ -1,5 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { type NetteControlCache } from "./netteControlComponents";
+import { type NetteControlCache } from "./netteControlContracts";
 import { type NettePresenterCache } from "./nettePresenterLinkDiscovery";
 import { type LatteTemplateCache } from "./netteTemplateDiscovery";
 import {

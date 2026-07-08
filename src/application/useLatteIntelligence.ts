@@ -13,7 +13,7 @@ import type {
 import {
   createLatteIntelligence,
 } from "./latteProviderFlows";
-import type { NetteControlCache } from "./netteControlComponents";
+import type { NetteControlCache } from "./netteControlContracts";
 import type { NettePresenterCache } from "./nettePresenterLinkDiscovery";
 import type { LatteTemplateCache } from "./netteTemplateDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";

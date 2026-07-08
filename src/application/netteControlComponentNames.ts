@@ -1,5 +1,5 @@
 import { nettePresenterLifecycleInfo } from "../domain/netteComponents";
-import type { NetteControlCompletionContext } from "./netteControlComponents";
+import type { NetteControlCompletionContext } from "./netteControlContracts";
 import {
   componentOwnerCandidatePathsForTemplate,
 } from "./netteTemplateOwnerCandidates";
