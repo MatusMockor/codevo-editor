@@ -24,6 +24,7 @@ import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMe
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
+import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import {
   bestIndexedSymbolMatch,
   editorPositionFromProjectSymbol,
@@ -6946,239 +6947,19 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
-    if (!activeDocument) {
-      return false;
-    }
-
-    if (!workspaceRoot) {
-      return false;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const symbolName = identifierAtEditorPosition(
-      activeDocument.content,
-      editorPosition,
-    );
-
-    if (!symbolName) {
-      return false;
-    }
-
-    try {
-      if (activeDocument.language === "php") {
-        const context = phpIdentifierContextAt(
-          activeDocument.content,
-          editorPosition,
-        );
-
-        if (!context) {
-          return false;
-        }
-
-        if (context.kind === "methodCall") {
-          return goToPhpMethodCallDefinition(context);
-        }
-
-        if (context.kind === "staticMethodCall") {
-          return goToPhpStaticMethodCallDefinition(context);
-        }
-
-        if (context.kind === "classConstant") {
-          return goToPhpClassConstantDefinition(context);
-        }
-
-        if (context.kind === "laravelRelationString") {
-          return goToPhpLaravelRelationStringDefinition(context);
-        }
-
-        if (context.kind === "laravelNamedRouteString") {
-          return goToPhpLaravelNamedRouteDefinition(context);
-        }
-
-        if (context.kind === "laravelTranslationString") {
-          return goToPhpLaravelTranslationDefinition(context);
-        }
-
-        if (context.kind === "laravelEnvString") {
-          return goToPhpLaravelEnvDefinition(context);
-        }
-
-        if (context.kind === "laravelConfigString") {
-          return goToPhpLaravelConfigDefinition(context);
-        }
-
-        if (context.kind === "laravelAuthGuardString") {
-          return goToPhpLaravelAuthGuardDefinition(context);
-        }
-
-        if (context.kind === "laravelGateAbilityString") {
-          return goToPhpLaravelGateAbilityDefinition(context);
-        }
-
-        if (context.kind === "laravelMiddlewareAliasString") {
-          return goToPhpLaravelMiddlewareAliasDefinition(context);
-        }
-
-        if (context.kind === "laravelCacheStoreString") {
-          return goToPhpLaravelCacheStoreDefinition(context);
-        }
-
-        if (context.kind === "laravelDatabaseConnectionString") {
-          return goToPhpLaravelDatabaseConnectionDefinition(context);
-        }
-
-        if (context.kind === "laravelBroadcastConnectionString") {
-          return goToPhpLaravelBroadcastConnectionDefinition(context);
-        }
-
-        if (context.kind === "laravelQueueConnectionString") {
-          return goToPhpLaravelQueueConnectionDefinition(context);
-        }
-
-        if (context.kind === "laravelRedisConnectionString") {
-          return goToPhpLaravelRedisConnectionDefinition(context);
-        }
-
-        if (context.kind === "laravelMailMailerString") {
-          return goToPhpLaravelMailMailerDefinition(context);
-        }
-
-        if (context.kind === "laravelPasswordBrokerString") {
-          return goToPhpLaravelPasswordBrokerDefinition(context);
-        }
-
-        if (context.kind === "laravelLogChannelString") {
-          return goToPhpLaravelLogChannelDefinition(context);
-        }
-
-        if (context.kind === "laravelStorageDiskString") {
-          return goToPhpLaravelStorageDiskDefinition(context);
-        }
-
-        if (context.kind === "laravelViewString") {
-          return goToPhpLaravelViewDefinition(context);
-        }
-
-        if (context.kind === "laravelRouteActionMethod") {
-          const className = resolvePhpClassName(
-            activeDocument.content,
-            context.className,
-          );
-
-          if (!className) {
-            return false;
-          }
-
-          return openDirectPhpMethodTarget(className, context.methodName);
-        }
-
-        if (context.kind !== "classIdentifier") {
-          return false;
-        }
-
-        const openedClassTarget = await goToPhpClassIdentifierDefinition(
-          context.name,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        if (openedClassTarget) {
-          return true;
-        }
-
-        if (!shouldIndexWorkspace(intelligenceMode)) {
-          setMessage("Enable Smart Index or IDE Mode to search indexed symbols.");
-          return false;
-        }
-
-        const symbols = await projectSymbolSearch.searchProjectSymbols(
-          requestedRoot,
-          context.name,
-          25,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const target = bestIndexedSymbolMatch(
-          symbols,
-          context.name,
-          activeDocument.path,
-        );
-
-        if (!target) {
-          setMessage(`No indexed symbol found for ${context.name}.`);
-          return false;
-        }
-
-        return openNavigationTarget(
-          target.path,
-          editorPositionFromProjectSymbol(target),
-          target.name,
-        );
-      }
-
-      if (!shouldIndexWorkspace(intelligenceMode)) {
-        setMessage("Enable Smart Index or IDE Mode to search indexed symbols.");
-        return false;
-      }
-
-      const symbols = await projectSymbolSearch.searchProjectSymbols(
-        requestedRoot,
-        symbolName,
-        25,
-      );
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      const target = bestIndexedSymbolMatch(
-        symbols,
-        symbolName,
-        activeDocument.path,
-      );
-
-      if (!target) {
-        setMessage(`No indexed symbol found for ${symbolName}.`);
-        return false;
-      }
-
-      return openNavigationTarget(
-        target.path,
-        editorPositionFromProjectSymbol(target),
-        target.name,
-      );
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(
-        requestedRoot,
-        "Go to Definition",
-        error,
-      );
-      return false;
-    }
-  }, [
+  const { goToIndexedSymbolDefinition } = usePhpIndexedDefinitionNavigation({
     activeDocument,
-    goToPhpLaravelAuthGuardDefinition,
+    activeEditorPositionRef,
+    currentWorkspaceRootRef,
     goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
-    goToPhpLaravelCacheStoreDefinition,
+    goToPhpLaravelAuthGuardDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
+    goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
+    goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
@@ -7192,13 +6973,15 @@ export function useWorkbenchController(
     goToPhpLaravelViewDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
+    identifierAtEditorPosition,
     intelligenceMode,
     openDirectPhpMethodTarget,
     openNavigationTarget,
     projectSymbolSearch,
     reportErrorForActiveWorkspaceRoot,
+    setMessage,
     workspaceRoot,
-  ]);
+  });
 
   const {
     goToDeclaration,
