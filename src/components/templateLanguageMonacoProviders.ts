@@ -1,6 +1,11 @@
 import type * as Monaco from "monaco-editor";
-import type { UserSnippet } from "../domain/snippets";
+import {
+  normalizeUserSnippets,
+  snippetCompletionSuggestions,
+  type UserSnippet,
+} from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
@@ -122,39 +127,6 @@ export interface TemplateLanguageMonacoProviderHandlers<
     range: Monaco.Range,
     actionContext: Monaco.languages.CodeActionContext,
   ): Promise<Monaco.languages.CodeActionList>;
-  provideBladeCompletionItems(
-    monaco: MonacoApi,
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.CompletionList>;
-  provideBladeDefinition(
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.Location[] | null>;
-  provideLatteCompletionItems(
-    monaco: MonacoApi,
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.CompletionList>;
-  provideLatteDefinition(
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.Location[] | null>;
-  provideNeonCompletionItems(
-    monaco: MonacoApi,
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.CompletionList>;
-  provideNeonDefinition(
-    context: Context,
-    model: MonacoModel,
-    position: MonacoPosition,
-  ): Promise<Monaco.languages.Location[] | null>;
 }
 
 export function registerTemplateLanguageMonacoProviders<
@@ -167,7 +139,7 @@ export function registerTemplateLanguageMonacoProviders<
   const bladeDefinition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("blade", {
         provideDefinition: (model, position) =>
-          handlers.provideBladeDefinition(context, model, position),
+          provideBladeDefinition(context, model, position),
       })
     : { dispose: () => undefined };
   const bladeCompletion = monaco.languages.registerCompletionItemProvider(
@@ -177,7 +149,7 @@ export function registerTemplateLanguageMonacoProviders<
       // during natural typing.
       triggerCharacters: ["@", "'", "\"", "-", ".", "$", ">"],
       provideCompletionItems: (model, position) =>
-        handlers.provideBladeCompletionItems(monaco, context, model, position),
+        provideBladeCompletionItems(monaco, context, model, position),
     },
   );
   const bladeCodeActions = context.provideBladeCodeActions
@@ -199,7 +171,7 @@ export function registerTemplateLanguageMonacoProviders<
   const latteDefinition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("latte", {
         provideDefinition: (model, position) =>
-          handlers.provideLatteDefinition(context, model, position),
+          provideLatteDefinition(context, model, position),
       })
     : { dispose: () => undefined };
   const latteCompletion = monaco.languages.registerCompletionItemProvider(
@@ -207,13 +179,13 @@ export function registerTemplateLanguageMonacoProviders<
     {
       triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/"],
       provideCompletionItems: (model, position) =>
-        handlers.provideLatteCompletionItems(monaco, context, model, position),
+        provideLatteCompletionItems(monaco, context, model, position),
     },
   );
   const neonDefinition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("neon", {
         provideDefinition: (model, position) =>
-          handlers.provideNeonDefinition(context, model, position),
+          provideNeonDefinition(context, model, position),
       })
     : { dispose: () => undefined };
   const neonCompletion = monaco.languages.registerCompletionItemProvider(
@@ -221,7 +193,7 @@ export function registerTemplateLanguageMonacoProviders<
     {
       triggerCharacters: ["\\", ":", " ", "-", "%", "@"],
       provideCompletionItems: (model, position) =>
-        handlers.provideNeonCompletionItems(monaco, context, model, position),
+        provideNeonCompletionItems(monaco, context, model, position),
     },
   );
 
@@ -236,6 +208,351 @@ export function registerTemplateLanguageMonacoProviders<
       neonCompletion.dispose();
     },
   };
+}
+
+async function provideBladeDefinition(
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideBladeDefinition) {
+    return null;
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "blade");
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideBladeDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideBladeCompletionItems(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideBladeCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "blade");
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
+  const snippetSuggestions = bladeSnippetSuggestions(
+    monaco,
+    context,
+    model,
+    position,
+    word,
+  );
+
+  try {
+    const completions = await context.provideBladeCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: [
+        ...completions.map((completion, index) =>
+          toMonacoBladeCompletion(
+            monaco,
+            model,
+            source,
+            fallbackRange,
+            completion,
+            index,
+          ),
+        ),
+        ...snippetSuggestions,
+      ],
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+async function provideLatteDefinition(
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideLatteDefinition) {
+    return null;
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideLatteDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideLatteCompletionItems(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideLatteCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideLatteCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoLatteCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+async function provideNeonDefinition(
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideNeonDefinition) {
+    return null;
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "neon");
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideNeonDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideNeonCompletionItems(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideNeonCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "neon");
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideNeonCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoNeonCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+function activeTemplateDocumentContext(
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  language: "blade" | "latte" | "neon",
+) {
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!activeDocument || !rootPath) {
+    return null;
+  }
+
+  if (activeDocument.language !== language) {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path || path !== activeDocument.path) {
+    return null;
+  }
+
+  return { activeDocument, path, rootPath };
+}
+
+function bladeSnippetSuggestions(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number; word?: string },
+): Monaco.languages.CompletionItem[] {
+  const typedWord = typeof word.word === "string" ? word.word : "";
+  const line = model.getLineContent?.(position.lineNumber) ?? "";
+  const hasLeadingAt = line[word.startColumn - 2] === "@";
+  const typed = hasLeadingAt ? `@${typedWord}` : typedWord;
+  const startColumn = hasLeadingAt
+    ? Math.max(1, word.startColumn - 1)
+    : word.startColumn;
+  const range = {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn,
+    startLineNumber: position.lineNumber,
+  };
+
+  return snippetCompletionSuggestions(
+    monaco,
+    "blade",
+    typed,
+    range,
+    normalizeUserSnippets(context.getUserSnippets?.() ?? []),
+  ) as Monaco.languages.CompletionItem[];
+}
+
+function isStoredWorkspaceRootActive(
+  context: TemplateLanguageMonacoProviderContext,
+  rootPath: string,
+): boolean {
+  const activeRootPath = context.getWorkspaceRoot?.() ?? null;
+
+  return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
+}
+
+function modelSource(model: MonacoModel, fallbackSource: string): string {
+  try {
+    return model.getValue();
+  } catch {
+    return fallbackSource;
+  }
+}
+
+function modelPath(model: MonacoModel): string | null {
+  const uri = model.uri;
+
+  if (uri.fsPath) {
+    return uri.fsPath;
+  }
+
+  if (uri.path) {
+    return decodeURIComponent(uri.path);
+  }
+
+  return null;
+}
+
+function offsetAtMonacoPosition(source: string, position: MonacoPosition): number {
+  const lines = source.split("\n");
+  const targetLine = Math.max(0, position.lineNumber - 1);
+  let offset = 0;
+
+  for (let line = 0; line < targetLine && line < lines.length; line += 1) {
+    offset += (lines[line]?.length ?? 0) + 1;
+  }
+
+  if (targetLine >= lines.length) {
+    return source.length;
+  }
+
+  const column = Math.max(0, position.column - 1);
+
+  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
 
 export function toMonacoBladeCompletion(
