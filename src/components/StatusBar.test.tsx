@@ -3,6 +3,10 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  LARGE_SMART_DOCUMENT_STATUS_LABEL,
+  LARGE_SMART_DOCUMENT_STATUS_TITLE,
+} from "../domain/largeDocumentPolicy";
 import { defaultStatusBarItemVisibility } from "../domain/settings";
 import { StatusBar } from "./StatusBar";
 
@@ -219,6 +223,106 @@ describe("StatusBar", () => {
     expect(host.textContent).toContain(
       "example-web · JS/TS · Inferred (partial) · npm",
     );
+  });
+
+  it("shows a passive large file mode chip with an explanatory tooltip", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/storage/logs/laravel.log"
+          dirtyCount={0}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          largeDocumentStatus={{
+            label: LARGE_SMART_DOCUMENT_STATUS_LABEL,
+            title: LARGE_SMART_DOCUMENT_STATUS_TITLE,
+          }}
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const chip = host.querySelector(".status-large-file-mode");
+
+    expect(chip?.textContent).toBe(LARGE_SMART_DOCUMENT_STATUS_LABEL);
+    expect(chip?.getAttribute("title")).toBe(
+      LARGE_SMART_DOCUMENT_STATUS_TITLE,
+    );
+  });
+
+  it("hides large file mode when its status bar item is toggled off", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/vendor/CarbonInterface.php"
+          dirtyCount={0}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          largeDocumentStatus={{
+            label: LARGE_SMART_DOCUMENT_STATUS_LABEL,
+            title: LARGE_SMART_DOCUMENT_STATUS_TITLE,
+          }}
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={{
+            ...defaultStatusBarItemVisibility(),
+            largeFileMode: false,
+          }}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    expect(host.querySelector(".status-large-file-mode")).toBeNull();
+  });
+
+  it("lists large file mode in the status bar visibility menu", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="php"
+          activePath="/workspace/vendor/CarbonInterface.php"
+          dirtyCount={0}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const footer = host.querySelector<HTMLElement>("footer.status-bar");
+    await act(async () => {
+      footer?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: 20,
+          clientY: 20,
+        }),
+      );
+    });
+
+    const menuLabels = Array.from(
+      host.querySelectorAll<HTMLLabelElement>(".status-bar-menu-item"),
+    ).map((label) => label.textContent);
+
+    expect(menuLabels).toContain("Large file mode");
   });
 
   it("does not re-render when the parent re-renders with identical props", async () => {

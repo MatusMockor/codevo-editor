@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   isLargeSmartDocument,
   isLargeSmartDocumentContent,
+  largeSmartDocumentStatus,
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  LARGE_SMART_DOCUMENT_STATUS_LABEL,
+  LARGE_SMART_DOCUMENT_STATUS_TITLE,
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
 } from "./largeDocumentPolicy";
 
@@ -27,5 +30,21 @@ describe("largeDocumentPolicy", () => {
 
   it("accepts document-like objects", () => {
     expect(isLargeSmartDocument({ content: "x" })).toBe(false);
+  });
+
+  it("does not show a large file status for normal or missing documents", () => {
+    expect(largeSmartDocumentStatus({ content: "x" })).toBeNull();
+    expect(largeSmartDocumentStatus(null)).toBeNull();
+  });
+
+  it("returns a stable large file status for documents over policy", () => {
+    expect(
+      largeSmartDocumentStatus({
+        content: "x".repeat(LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      }),
+    ).toEqual({
+      label: LARGE_SMART_DOCUMENT_STATUS_LABEL,
+      title: LARGE_SMART_DOCUMENT_STATUS_TITLE,
+    });
   });
 });

@@ -1123,6 +1123,7 @@ const statusBarItems: Array<{
   { key: "workspaceInfo", label: "Project info" },
   { key: "index", label: "Index" },
   { key: "languageServer", label: "IDE engine" },
+  { key: "largeFileMode", label: "Large file mode" },
   { key: "workspaceTrust", label: "Trust" },
   { key: "mode", label: "Mode" },
   { key: "language", label: "Language" },

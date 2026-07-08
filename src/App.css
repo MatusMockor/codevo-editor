@@ -3774,6 +3774,11 @@ button.problem-row:focus-visible {
   font-weight: 600;
 }
 
+.status-large-file-mode {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
 .status-ide-activity {
   position: relative;
   gap: 6px;

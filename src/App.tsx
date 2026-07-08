@@ -52,6 +52,7 @@ import {
   languageServerStatusLabel,
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
+import { largeSmartDocumentStatus } from "./domain/largeDocumentPolicy";
 import { shouldStartLanguageServer } from "./domain/intelligence";
 import type { FrameworkProfile } from "./domain/phpFrameworkProviders";
 import type { EditorPosition } from "./domain/languageServerFeatures";
@@ -303,6 +304,10 @@ function App() {
   const activeLanguage = useMemo(
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
+  );
+  const activeLargeDocumentStatus = useMemo(
+    () => largeSmartDocumentStatus(workbench.activeDocument),
+    [workbench.activeDocument?.content],
   );
   // Stable list of open document paths for EditorSurface's model-dispose effect.
   // openDocuments is replaced on every keystroke (fresh document objects), so we
@@ -1396,6 +1401,7 @@ function App() {
         gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch ?? null}
         gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
         intelligenceMode={workbench.intelligenceMode}
+        largeDocumentStatus={activeLargeDocumentStatus}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
         onOpenRuntimePanel={openRuntimePanel}

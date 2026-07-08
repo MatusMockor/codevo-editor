@@ -5,6 +5,7 @@ import type {
   StatusBarItemVisibility,
 } from "../domain/settings";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { LargeSmartDocumentStatus } from "../domain/largeDocumentPolicy";
 import type { IntelligenceMode } from "../domain/workspace";
 
 interface StatusBarProps {
@@ -24,6 +25,7 @@ interface StatusBarProps {
   ideActivityLabel: string | null;
   ideActivityState: IdeActivityState | null;
   intelligenceMode: IntelligenceMode;
+  largeDocumentStatus?: LargeSmartDocumentStatus | null;
   message: string | null;
   statusBar: StatusBarItemVisibility;
   warningCount?: number;
@@ -73,6 +75,7 @@ const statusBarItems: Array<{
   { key: "workspaceInfo", label: "Project info" },
   { key: "index", label: "Index" },
   { key: "languageServer", label: "IDE engine" },
+  { key: "largeFileMode", label: "Large file mode" },
   { key: "workspaceTrust", label: "Trust" },
   { key: "mode", label: "Mode" },
   { key: "language", label: "Language" },
@@ -94,6 +97,7 @@ function StatusBarComponent({
   ideActivityLabel,
   ideActivityState,
   intelligenceMode,
+  largeDocumentStatus = null,
   message,
   onChangeVisibility,
   onOpenRuntimePanel,
@@ -223,6 +227,14 @@ function StatusBarComponent({
       ) : null}
       {statusBar.mode ? (
         <span className="status-mode">{formatMode(intelligenceMode)}</span>
+      ) : null}
+      {statusBar.largeFileMode && largeDocumentStatus ? (
+        <span
+          className="status-large-file-mode"
+          title={largeDocumentStatus.title}
+        >
+          {largeDocumentStatus.label}
+        </span>
       ) : null}
       {statusBar.cursorPosition && cursorPosition ? (
         <button

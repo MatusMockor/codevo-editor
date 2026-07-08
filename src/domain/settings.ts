@@ -202,6 +202,7 @@ export interface StatusBarItemVisibility {
   gitBranch: boolean;
   index: boolean;
   language: boolean;
+  largeFileMode: boolean;
   languageServer: boolean;
   message: boolean;
   mode: boolean;
@@ -347,6 +348,7 @@ export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
     gitBranch: true,
     index: true,
     language: true,
+    largeFileMode: true,
     languageServer: true,
     message: true,
     mode: true,
@@ -591,6 +593,10 @@ export function normalizeStatusBarItemVisibility(
     gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),
     index: normalizeBoolean(value.index, defaults.index),
     language: normalizeBoolean(value.language, defaults.language),
+    largeFileMode: normalizeBoolean(
+      value.largeFileMode,
+      defaults.largeFileMode,
+    ),
     languageServer: normalizeBoolean(
       value.languageServer,
       defaults.languageServer,
