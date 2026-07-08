@@ -58,6 +58,12 @@ import {
 import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionNewFile,
+  PhpCodeActionRange,
+  PhpCodeActionTextEdit,
+} from "../application/phpCodeActionTypes";
 import {
   registerTemplateLanguageMonacoProviders,
   type BladeCompletion,
@@ -74,6 +80,11 @@ export type {
   NeonCompletion,
   NeonCompletionKind,
 } from "./templateLanguageMonacoProviders";
+export type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionNewFile,
+  PhpCodeActionRange,
+} from "../application/phpCodeActionTypes";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -107,51 +118,6 @@ export interface PhpWorkspaceEditApplicationContext {
   rootPath: string;
 }
 
-export interface PhpCodeActionTextEditRange {
-  endColumn: number;
-  endLineNumber: number;
-  startColumn: number;
-  startLineNumber: number;
-}
-
-export interface PhpCodeActionTextEdit {
-  range: PhpCodeActionTextEditRange;
-  text: string;
-}
-
-/**
- * A brand-new file a PHP code action creates as part of its edit (e.g. "Extract
- * interface" writes a sibling `<Class>Interface.php`). `path` is an absolute
- * filesystem path inside the active root. When the host provides a disk
- * callback, the monaco mapper routes it through an atomic command; otherwise it
- * falls back to a file-create resource edit plus a content insertion.
- */
-export interface PhpCodeActionNewFile {
-  content: string;
-  path: string;
-  title?: string;
-}
-
-export interface PhpCodeActionDescriptor {
-  edits: PhpCodeActionTextEdit[];
-  isPreferred?: boolean;
-  kind?: string;
-  newFile?: PhpCodeActionNewFile;
-  title: string;
-}
-
-/**
- * The cursor / selection that a PHP code-action request covers, expressed as
- * 0-based character offsets into the source. `start === end` denotes an empty
- * selection (a bare cursor); a non-empty selection has `start < end`. These
- * power the position-aware actions ("Create method / property from usage" reads
- * the cursor offset; "Extract variable" reads the selection span) while the
- * existing class-level actions ignore it.
- */
-export interface PhpCodeActionRange {
-  end: number;
-  start: number;
-}
 export type PhpWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: PhpWorkspaceEditApplicationContext,
