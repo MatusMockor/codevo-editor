@@ -16,6 +16,7 @@ import {
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
+import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
@@ -6936,45 +6937,13 @@ export function useWorkbenchController(
       refreshWorkspaceTodos,
     }).forEach((command) => registry.register(command));
 
-    registry.register({
-      id: "bookmark.toggle",
-      title: "Toggle Bookmark",
-      category: "Bookmarks",
-      shortcut: shortcut("bookmark.toggle"),
-      isEnabled: (context) => context.hasActiveDocument,
-      run: toggleBookmarkAtCursor,
-    });
-
-    registry.register({
-      id: "bookmark.next",
-      title: "Next Bookmark",
-      category: "Bookmarks",
-      shortcut: shortcut("bookmark.next"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void goToNextBookmark();
-      },
-    });
-
-    registry.register({
-      id: "bookmark.previous",
-      title: "Previous Bookmark",
-      category: "Bookmarks",
-      shortcut: shortcut("bookmark.previous"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void goToPreviousBookmark();
-      },
-    });
-
-    registry.register({
-      id: "bookmark.showPanel",
-      title: "Show Bookmarks",
-      category: "Bookmarks",
-      shortcut: shortcut("bookmark.showPanel"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: toggleBookmarksPanel,
-    });
+    workbenchBookmarkCommands({
+      shortcut,
+      toggleBookmarkAtCursor,
+      goToNextBookmark,
+      goToPreviousBookmark,
+      toggleBookmarksPanel,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "smart.toggle",
