@@ -1,0 +1,233 @@
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vitest";
+import { defaultAppSettings, type AppSettings } from "../domain/settings";
+import type { EditorDocument } from "../domain/workspace";
+import {
+  useWorkbenchCloseLifecycle,
+  type WorkbenchCloseLifecycle,
+  type WorkbenchCloseLifecycleDependencies,
+} from "./useWorkbenchCloseLifecycle";
+
+const tauriMocks = vi.hoisted(() => ({
+  closeWindow: vi.fn(async () => undefined),
+  invoke: vi.fn(async () => undefined),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: tauriMocks.invoke,
+  isTauri: () => true,
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    close: tauriMocks.closeWindow,
+  }),
+}));
+
+const WORKSPACE_A = "/workspace-a";
+const WORKSPACE_B = "/workspace-b";
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+
+  return { promise, resolve };
+}
+
+function dirtyDocument(path: string): EditorDocument {
+  return {
+    content: "edited",
+    language: "php",
+    name: path.split("/").pop() ?? path,
+    path,
+    savedContent: "saved",
+  };
+}
+
+interface Harness {
+  appSettingsRef: { current: AppSettings };
+  closeSyncedJavaScriptTypeScriptDocumentsForRoot: ReturnType<typeof vi.fn>;
+  closeSyncedLanguageServerDocumentsForRoot: ReturnType<typeof vi.fn>;
+  lifecycle: () => WorkbenchCloseLifecycle;
+  persistAppSettings: ReturnType<typeof vi.fn>;
+  prompter: { confirm: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn> };
+  stopProjectRuntimes: ReturnType<typeof vi.fn>;
+  unmount: () => void;
+  workspaceStateCacheRef: {
+    current: WorkbenchCloseLifecycleDependencies["workspaceStateCacheRef"]["current"];
+  };
+}
+
+function renderLifecycle(
+  overrides: Partial<WorkbenchCloseLifecycleDependencies> = {},
+): Harness {
+  const container = globalThis.document.createElement("div");
+  const root = createRoot(container);
+  const captured: { lifecycle: WorkbenchCloseLifecycle | null } = {
+    lifecycle: null,
+  };
+  const appSettingsRef: { current: AppSettings } = {
+    current: {
+      ...defaultAppSettings(),
+      recentWorkspacePath: WORKSPACE_B,
+      workspaceTabs: [WORKSPACE_A, WORKSPACE_B],
+    },
+  };
+  const workspaceStateCacheRef = {
+    current: {},
+  };
+  const editorConfigCacheRef = {
+    current: {},
+  };
+  const prompter = { confirm: vi.fn(() => true), prompt: vi.fn(() => null) };
+  const persistAppSettings = vi.fn(async (settings: AppSettings) => {
+    appSettingsRef.current = settings;
+  });
+  const closeSyncedLanguageServerDocumentsForRoot = vi.fn(
+    async () => undefined,
+  );
+  const closeSyncedJavaScriptTypeScriptDocumentsForRoot = vi.fn(
+    async () => undefined,
+  );
+  const stopProjectRuntimes = vi.fn(async () => undefined);
+
+  const dependencies: WorkbenchCloseLifecycleDependencies = {
+    appSettingsRef,
+    clearActiveWorkspace: vi.fn(async () => undefined),
+    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    closeSyncedLanguageServerDocumentsForRoot,
+    dirtyCount: 0,
+    editorConfigCacheRef,
+    editorGitBaselineRequestTokenRef: { current: 0 },
+    forgetLanguageServerRuntimeStatuses: vi.fn(),
+    forgetLatencyTrackerForRoot: vi.fn(),
+    gitDiffRequestTokenRef: { current: 0 },
+    openFileRequestTokenRef: { current: 0 },
+    openWorkspacePath: vi.fn(async () => undefined),
+    openWorkspaceRequestPathRef: { current: null },
+    openWorkspaceRequestTokenRef: { current: 0 },
+    persistAppSettings,
+    prompter,
+    reportError: vi.fn(),
+    stopProjectRuntimes,
+    workspaceRoot: WORKSPACE_B,
+    workspaceStateCacheRef,
+    ...overrides,
+  };
+
+  function TestHost(): null {
+    captured.lifecycle = useWorkbenchCloseLifecycle(dependencies);
+    return null;
+  }
+
+  act(() => {
+    root.render(<TestHost />);
+  });
+
+  return {
+    appSettingsRef,
+    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    closeSyncedLanguageServerDocumentsForRoot,
+    lifecycle: () => {
+      if (!captured.lifecycle) {
+        throw new Error("Lifecycle not rendered");
+      }
+
+      return captured.lifecycle;
+    },
+    persistAppSettings,
+    prompter,
+    stopProjectRuntimes,
+    unmount: () => root.unmount(),
+    workspaceStateCacheRef,
+  };
+}
+
+describe("useWorkbenchCloseLifecycle", () => {
+  it("keeps an inactive dirty workspace tab when discard is declined", async () => {
+    const harness = renderLifecycle();
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      documents: {
+        [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
+          `${WORKSPACE_A}/src/Dirty.php`,
+        ),
+      },
+    };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
+      WORKSPACE_A,
+      WORKSPACE_B,
+    ]);
+    harness.unmount();
+  });
+
+  it("closes synced documents before stopping an inactive workspace runtime", async () => {
+    const phpClosed = createDeferred<void>();
+    const jsClosed = createDeferred<void>();
+    const closePhpDocuments = vi.fn(() => phpClosed.promise);
+    const closeJavaScriptTypeScriptDocuments = vi.fn(() => jsClosed.promise);
+    const harness = renderLifecycle({
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot:
+        closeJavaScriptTypeScriptDocuments,
+      closeSyncedLanguageServerDocumentsForRoot: closePhpDocuments,
+    });
+
+    let closePromise!: Promise<void>;
+
+    await act(async () => {
+      closePromise = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+      await Promise.resolve();
+    });
+
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+
+    phpClosed.resolve();
+    jsClosed.resolve();
+
+    await act(async () => {
+      await closePromise;
+    });
+
+    expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(harness.persistAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: WORKSPACE_B,
+        workspaceTabs: [WORKSPACE_B],
+      }),
+    );
+    harness.unmount();
+  });
+
+  it("closes the current Tauri window through the workbench lifecycle", () => {
+    const harness = renderLifecycle();
+
+    act(() => {
+      harness.lifecycle().closeApplicationWindow();
+    });
+
+    expect(tauriMocks.closeWindow).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+});
