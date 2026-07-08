@@ -54,10 +54,11 @@ import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { usePhpDiagnosticContextFilter } from "./usePhpDiagnosticContextFilter";
 import { usePhpTraitHostPredicates } from "./usePhpTraitHostPredicates";
+import { usePhpMethodCompletionResolvers } from "./usePhpMethodCompletionResolvers";
 import {
-  usePhpMethodCompletionResolvers,
-} from "./usePhpMethodCompletionResolvers";
-import { phpTraitThisCompletionContextAt } from "./phpTraitThisCompletionContext";
+  phpNormalizedReceiverExpressionIsThis,
+  usePhpMethodCompletionProvider,
+} from "./usePhpMethodCompletionProvider";
 import { usePhpClassHierarchyPredicates } from "./usePhpClassHierarchyPredicates";
 import { usePhpClassMemberCollectors } from "./usePhpClassMemberCollectors";
 import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
@@ -90,8 +91,6 @@ import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
-import { resolvePhpFrameworkScopedCompletions } from "./phpFrameworkScopedCompletions";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
@@ -278,11 +277,6 @@ import {
   type PhpTreeGateway,
 } from "../domain/phpTree";
 import {
-  phpMemberAccessCompletionContextAt,
-  phpStaticAccessCompletionContextAt,
-  type PhpMethodCompletion,
-} from "../domain/phpMethodCompletions";
-import {
   phpLaravelCollectionModelTypeCandidate,
   phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
   phpLaravelEloquentBuilderModelTypeCandidate,
@@ -297,13 +291,9 @@ import {
 import {
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsViews,
-  phpFrameworkValidationRuleCompletions,
-  phpFrameworkValidationRuleReferenceAt,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
-  phpLaravelRelationStringCompletionContextAt,
-  phpLaravelRouteActionMethodCompletionContextAt,
   resolvePhpClassName,
 } from "../domain/phpNavigation";
 import {
@@ -5444,310 +5434,39 @@ export function useWorkbenchController(
     resolvePhpExpressionType,
   });
 
-  const providePhpMethodCompletions = useCallback(
-    async (
-      source: string,
-      position: EditorPosition,
-    ): Promise<PhpMethodCompletion[]> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return [];
-      }
-
-      const literalCompletions = await resolvePhpFrameworkLiteralCompletions(
-        {
-          activeDocument: activeDocument
-            ? {
-                content: source,
-                path: activeDocument.path,
-              }
-            : null,
-          position,
-          providers: activePhpFrameworkProviders,
-          source,
-        },
-        {
-          collectConfigTargets,
-          collectEnvTargets: collectEnvironmentTargets,
-          collectNamedRouteTargets,
-          collectTranslationTargets,
-          collectViewTargets,
-          isRequestStillCurrent: isRequestedRootActive,
-        },
-      );
-
-      if (literalCompletions !== null) {
-        return literalCompletions;
-      }
-
-      const scopedCompletions = await resolvePhpFrameworkScopedCompletions(
-        {
-          activeDocument: activeDocument
-            ? {
-                path: activeDocument.path,
-              }
-            : null,
-          isLaravelFrameworkActive,
-          position,
-          source,
-        },
-        {
-          collectAuthGuardTargets,
-          collectBroadcastConnectionTargets:
-            collectBroadcastConnectionTargets,
-          collectCacheStoreTargets,
-          collectDatabaseConnectionTargets:
-            collectDatabaseConnectionTargets,
-          collectGateAbilityTargets: collectAuthorizationAbilityTargets,
-          collectLogChannelTargets,
-          collectMailMailerTargets,
-          collectMiddlewareAliasTargets,
-          collectPasswordBrokerTargets,
-          collectQueueConnectionTargets,
-          collectRedisConnectionTargets,
-          collectStorageDiskTargets,
-          isRequestStillCurrent: isRequestedRootActive,
-        },
-      );
-
-      if (scopedCompletions !== null) {
-        return scopedCompletions;
-      }
-
-      const routeActionContext =
-        phpLaravelRouteActionMethodCompletionContextAt(source, position);
-
-      if (isLaravelFrameworkActive && routeActionContext) {
-        const resolvedClassName = resolvePhpClassReference(
-          source,
-          routeActionContext.className,
-        );
-
-        if (!resolvedClassName) {
-          return [];
-        }
-
-        const methods = await collectPhpMethodsForClass(resolvedClassName);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const normalizedPrefix = routeActionContext.prefix.toLowerCase();
-
-        return phpMethodCompletionsWithStableMetadata(
-          methods
-            .filter((method) =>
-              phpLaravelRouteActionMethodCompletionMatches(
-                method,
-                normalizedPrefix,
-              ),
-            )
-            .sort((left, right) =>
-              phpMethodCompletionSortOrder(left, right, normalizedPrefix),
-            )
-            .slice(0, 80),
-        );
-      }
-
-      const validationRuleContext = phpFrameworkValidationRuleReferenceAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
-      );
-
-      if (validationRuleContext) {
-        return phpFrameworkValidationRuleCompletions(
-          validationRuleContext.prefix,
-          activePhpFrameworkProviders,
-        )
-          .slice(0, 80)
-          .map((rule) => ({
-            declaringClassName: "Laravel validation rule",
-            insertText: rule.insertText,
-            kind: "config",
-            name: rule.name,
-            parameters: "",
-            returnType: null,
-          }));
-      }
-
-      const relationContext = phpLaravelRelationStringCompletionContextAt(
-        source,
-        position,
-      );
-
-      if (isLaravelFrameworkActive && relationContext) {
-        const staticClassName = relationContext.className
-          ? resolvePhpClassReference(source, relationContext.className)
-          : null;
-        const receiverModelType = relationContext.receiverExpression
-          ? await resolvePhpEloquentBuilderModelType(
-              source,
-              position,
-              relationContext.receiverExpression,
-            )
-          : null;
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const receiverType =
-          !receiverModelType && relationContext.receiverExpression
-            ? await resolvePhpExpressionType(
-                source,
-                position,
-                relationContext.receiverExpression,
-              )
-            : null;
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        const relationBaseOwnerType =
-          staticClassName ?? receiverModelType ?? receiverType;
-        const relationOwnerType = relationBaseOwnerType
-          ? await resolvePhpLaravelRelationPathOwnerType(
-              relationBaseOwnerType,
-              relationContext.previousRelationNames ?? [],
-            )
-          : null;
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        if (!relationOwnerType) {
-          return [];
-        }
-
-        const normalizedPrefix = relationContext.prefix.toLowerCase();
-        const relations =
-          await collectPhpLaravelRelationCompletionsForClass(relationOwnerType);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return relations
-          .filter((relation) =>
-            relation.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .sort((left, right) => {
-            const leftExact =
-              left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-            const rightExact =
-              right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-
-            if (leftExact !== rightExact) {
-              return leftExact - rightExact;
-            }
-
-            return left.name.localeCompare(right.name);
-          })
-          .slice(0, 80);
-      }
-
-      const accessContext = phpMemberAccessCompletionContextAt(source, position);
-      const staticAccessContext = phpStaticAccessCompletionContextAt(
-        source,
-        position,
-      );
-
-      // Warm the per-root migration + provider caches off the hot path so
-      // model-attribute columns and provider-registered Builder macros surface
-      // once ready. Fire-and-forget: this request is served from whatever is
-      // already cached.
-      if (isLaravelFrameworkActive && (accessContext || staticAccessContext)) {
-        void ensurePhpFrameworkSourceCollectionsLoaded(requestedRoot);
-      }
-
-      const traitThisContext = accessContext
-        ? phpTraitThisCompletionContextAt(source, position)
-        : null;
-
-      const methods = staticAccessContext
-        ? await resolvePhpStaticMethodCompletions(
-            source,
-            staticAccessContext.className,
-          )
-        : accessContext
-          ? await resolvePhpReceiverMethodCompletions(
-              source,
-              position,
-              accessContext.receiverExpression,
-              traitThisContext,
-            )
-          : [];
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const normalizedPrefix = (
-        staticAccessContext?.prefix ??
-        accessContext?.prefix ??
-        ""
-      ).toLowerCase();
-
-      return phpMethodCompletionsWithStableMetadata(
-        methods
-          .filter((method) =>
-            method.name.toLowerCase().startsWith(normalizedPrefix),
-          )
-          .sort((left, right) => {
-            const leftExact =
-              left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-            const rightExact =
-              right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-
-            if (leftExact !== rightExact) {
-              return leftExact - rightExact;
-            }
-
-            return left.name.localeCompare(right.name);
-          })
-          .slice(0, 80),
-      );
-    },
-    [
-      collectAuthGuardTargets,
-      collectCacheStoreTargets,
-      collectBroadcastConnectionTargets,
-      collectConfigTargets,
-      collectDatabaseConnectionTargets,
-      collectEnvironmentTargets,
-      collectLogChannelTargets,
-      collectMailMailerTargets,
-      collectPasswordBrokerTargets,
-      collectQueueConnectionTargets,
-      collectRedisConnectionTargets,
-      collectStorageDiskTargets,
-      collectTranslationTargets,
-      collectPhpLaravelRelationCompletionsForClass,
-      collectNamedRouteTargets,
-      collectAuthorizationAbilityTargets,
-      collectMiddlewareAliasTargets,
-      collectViewTargets,
-      collectPhpMethodsForClass,
-      activeDocument,
-      activePhpFrameworkProviders,
-      ensurePhpFrameworkSourceCollectionsLoaded,
-      isLaravelFrameworkActive,
-      resolvePhpClassReference,
-      resolvePhpEloquentBuilderModelType,
-      resolvePhpExpressionType,
-      resolvePhpLaravelRelationPathOwnerType,
-      resolvePhpReceiverMethodCompletions,
-      resolvePhpStaticMethodCompletions,
-      workspaceRoot,
-    ],
-  );
+  const { providePhpMethodCompletions } = usePhpMethodCompletionProvider({
+    activeDocument,
+    activePhpFrameworkProviders,
+    collectAuthGuardTargets,
+    collectBroadcastConnectionTargets,
+    collectCacheStoreTargets,
+    collectConfigTargets,
+    collectDatabaseConnectionTargets,
+    collectEnvTargets: collectEnvironmentTargets,
+    collectGateAbilityTargets: collectAuthorizationAbilityTargets,
+    collectLogChannelTargets,
+    collectMailMailerTargets,
+    collectMiddlewareAliasTargets,
+    collectNamedRouteTargets,
+    collectPasswordBrokerTargets,
+    collectPhpLaravelRelationCompletionsForClass,
+    collectPhpMethodsForClass,
+    collectQueueConnectionTargets,
+    collectRedisConnectionTargets,
+    collectStorageDiskTargets,
+    collectTranslationTargets,
+    collectViewTargets,
+    currentWorkspaceRootRef,
+    ensurePhpFrameworkSourceCollectionsLoaded,
+    isLaravelFrameworkActive,
+    resolvePhpClassReference,
+    resolvePhpEloquentBuilderModelType,
+    resolvePhpExpressionType,
+    resolvePhpLaravelRelationPathOwnerType,
+    resolvePhpReceiverMethodCompletions,
+    resolvePhpStaticMethodCompletions,
+    workspaceRoot,
+  });
 
   const { providePhpMethodSignature, providePhpParameterInlayHints } =
     usePhpSignatureHelpProvider({
@@ -9826,70 +9545,6 @@ function isBlockedByManuallyCollapsedDirectory(
   }
 
   return false;
-}
-
-function phpNormalizedReceiverExpressionIsThis(
-  receiverExpression: string,
-): boolean {
-  return receiverExpression.trim().replace(/\?->/g, "->") === "$this";
-}
-
-function phpMethodCompletionsWithStableMetadata(
-  completions: PhpMethodCompletion[],
-): PhpMethodCompletion[] {
-  return completions.map(phpMethodCompletionWithStableMetadata);
-}
-
-function phpLaravelRouteActionMethodCompletionMatches(
-  method: PhpMethodCompletion,
-  normalizedPrefix: string,
-): boolean {
-  if ((method.kind ?? "method") !== "method") {
-    return false;
-  }
-
-  if (method.isStatic) {
-    return false;
-  }
-
-  if (method.visibility && method.visibility !== "public") {
-    return false;
-  }
-
-  return method.name.toLowerCase().startsWith(normalizedPrefix);
-}
-
-function phpMethodCompletionSortOrder(
-  left: PhpMethodCompletion,
-  right: PhpMethodCompletion,
-  normalizedPrefix: string,
-): number {
-  const leftExact = left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-  const rightExact = right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
-
-  if (leftExact !== rightExact) {
-    return leftExact - rightExact;
-  }
-
-  return left.name.localeCompare(right.name);
-}
-
-function phpMethodCompletionWithStableMetadata(
-  completion: PhpMethodCompletion,
-): PhpMethodCompletion {
-  if (!completion.visibility) {
-    return completion;
-  }
-
-  const { visibility, ...stableCompletion } = completion;
-
-  Object.defineProperty(stableCompletion, "visibility", {
-    configurable: true,
-    enumerable: false,
-    value: visibility,
-  });
-
-  return stableCompletion;
 }
 
 function indexProgressNoticeGroup(rootPath: string): string {
