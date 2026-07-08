@@ -23,23 +23,17 @@ import {
   lattePresenterLinkCompletions,
 } from "./nettePresenterLinkCompletions";
 import {
-  isLatteScanSkippedDirectory,
-} from "./netteTemplateDiscovery";
-import {
   latteTemplateCompletions,
 } from "./netteTemplateCompletions";
 import {
   latteExpressionResolutionContext,
+  latteTemplateCompletionContext,
+  netteControlCompletionContext,
+  nettePresenterLinkCompletionContext,
 } from "./netteLatteProviderOptions";
 import {
   activeLatteProviderRequest,
-  LATTE_COMPONENT_CACHE_TTL_MS,
   LATTE_MAX_COMPLETIONS,
-  LATTE_PRESENTER_CACHE_TTL_MS,
-  LATTE_TEMPLATE_CACHE_TTL_MS,
-  LATTE_TEMPLATE_SCAN_DIRECTORIES,
-  MAX_LATTE_SCAN_DEPTH,
-  MAX_LATTE_TEMPLATE_FILES,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 
@@ -54,29 +48,13 @@ export async function provideLatteCompletions(
     return [];
   }
 
-  const {
-    currentTemplateRelativePath,
-    deps,
-    isRequestedRootActive,
-    requestedRoot,
-  } = request;
+  const { deps } = request;
   const offset = offsetAtEditorPosition(source, position);
   const includeCompletion = detectLatteIncludeCompletionAt(source, offset);
 
   if (includeCompletion) {
     return latteTemplateCompletions(
-      {
-        cache: options.caches.templateCache,
-        currentTemplateRelativePath,
-        deps,
-        isRequestedRootActive,
-        maxCompletions: LATTE_MAX_COMPLETIONS,
-        maxDepth: MAX_LATTE_SCAN_DEPTH,
-        maxTemplates: MAX_LATTE_TEMPLATE_FILES,
-        requestedRoot,
-        scanDirectories: LATTE_TEMPLATE_SCAN_DIRECTORIES,
-        ttlMs: LATTE_TEMPLATE_CACHE_TTL_MS,
-      },
+      latteTemplateCompletionContext(options, request),
       includeCompletion,
     );
   }
@@ -102,19 +80,7 @@ export async function provideLatteCompletions(
 
     if (linkCompletion) {
       return lattePresenterLinkCompletions(
-        {
-          cache: options.caches.presenterCache,
-          currentRelativePath: currentTemplateRelativePath,
-          deps,
-          frameworkCapabilities: options.frameworkCapabilities,
-          inFlight: options.inFlight.presenterInFlight,
-          isDirectorySkipped: isLatteScanSkippedDirectory,
-          isRequestedRootActive,
-          maxDepth: MAX_LATTE_SCAN_DEPTH,
-          maxPresenters: MAX_LATTE_TEMPLATE_FILES,
-          requestedRoot,
-          ttlMs: LATTE_PRESENTER_CACHE_TTL_MS,
-        },
+        nettePresenterLinkCompletionContext(options, request),
         linkCompletion,
       );
     }
@@ -124,15 +90,7 @@ export async function provideLatteCompletions(
 
   if (controlCompletion) {
     return latteControlCompletions(
-      {
-        componentCache: options.caches.componentCache,
-        deps,
-        isRequestedRootActive,
-        maxCompletions: LATTE_MAX_COMPLETIONS,
-        requestedRoot,
-        templateRelativePath: currentTemplateRelativePath,
-        ttlMs: LATTE_COMPONENT_CACHE_TTL_MS,
-      },
+      netteControlCompletionContext(options, request),
       controlCompletion,
     );
   }
@@ -141,15 +99,7 @@ export async function provideLatteCompletions(
 
   if (formNameCompletion) {
     return latteControlCompletions(
-      {
-        componentCache: options.caches.componentCache,
-        deps,
-        isRequestedRootActive,
-        maxCompletions: LATTE_MAX_COMPLETIONS,
-        requestedRoot,
-        templateRelativePath: currentTemplateRelativePath,
-        ttlMs: LATTE_COMPONENT_CACHE_TTL_MS,
-      },
+      netteControlCompletionContext(options, request),
       formNameCompletion,
     );
   }

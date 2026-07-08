@@ -19,18 +19,14 @@ import {
   resolveNetteLinkDefinition,
 } from "./nettePresenterLinkDefinitions";
 import {
-  isLatteScanSkippedDirectory,
-} from "./netteTemplateDiscovery";
-import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
   latteExpressionResolutionContext,
+  nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
 import {
   activeLatteProviderRequest,
-  MAX_LATTE_SCAN_DEPTH,
-  MAX_LATTE_TEMPLATE_FILES,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 
@@ -54,16 +50,7 @@ export async function provideLatteDefinition(
 
   if (isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
     const linkHandled = await resolveNetteLinkDefinition(
-      {
-        currentRelativePath: currentTemplateRelativePath,
-        deps,
-        frameworkCapabilities: options.frameworkCapabilities,
-        isDirectorySkipped: isLatteScanSkippedDirectory,
-        isRequestedRootActive,
-        maxDepth: MAX_LATTE_SCAN_DEPTH,
-        maxPresenters: MAX_LATTE_TEMPLATE_FILES,
-        requestedRoot,
-      },
+      nettePresenterLinkDefinitionContext(options, request),
       options.frameworkCapabilities.detectLattePresenterLinkAt(source, offset),
     );
 

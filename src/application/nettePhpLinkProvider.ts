@@ -8,12 +8,12 @@ import {
   lattePresenterLinkCompletions,
 } from "./nettePresenterLinkCompletions";
 import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
-import { isLatteScanSkippedDirectory } from "./netteTemplateDiscovery";
+import {
+  nettePresenterLinkCompletionContext,
+  nettePresenterLinkDefinitionContext,
+} from "./netteLatteProviderOptions";
 import {
   activeLatteProviderRequest,
-  LATTE_PRESENTER_CACHE_TTL_MS,
-  MAX_LATTE_SCAN_DEPTH,
-  MAX_LATTE_TEMPLATE_FILES,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 
@@ -45,16 +45,7 @@ export async function provideNettePhpLinkDefinition(
     }
 
     return resolveNettePresenterLink(
-      {
-        currentRelativePath: currentTemplateRelativePath,
-        deps,
-        frameworkCapabilities: options.frameworkCapabilities,
-        isDirectorySkipped: isLatteScanSkippedDirectory,
-        isRequestedRootActive,
-        maxDepth: MAX_LATTE_SCAN_DEPTH,
-        maxPresenters: MAX_LATTE_TEMPLATE_FILES,
-        requestedRoot,
-      },
+      nettePresenterLinkDefinitionContext(options, request),
       options.frameworkCapabilities.parsePresenterLinkTarget(detection.target),
       detection.target,
     );
@@ -81,12 +72,7 @@ export async function provideNettePhpLinkCompletions(
     return null;
   }
 
-  const {
-    currentTemplateRelativePath,
-    deps,
-    isRequestedRootActive,
-    requestedRoot,
-  } = request;
+  const { deps } = request;
 
   if (!isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
     return null;
@@ -104,19 +90,7 @@ export async function provideNettePhpLinkCompletions(
   }
 
   return lattePresenterLinkCompletions(
-    {
-      cache: options.caches.presenterCache,
-      currentRelativePath: currentTemplateRelativePath,
-      deps,
-      frameworkCapabilities: options.frameworkCapabilities,
-      inFlight: options.inFlight.presenterInFlight,
-      isDirectorySkipped: isLatteScanSkippedDirectory,
-      isRequestedRootActive,
-      maxDepth: MAX_LATTE_SCAN_DEPTH,
-      maxPresenters: MAX_LATTE_TEMPLATE_FILES,
-      requestedRoot,
-      ttlMs: LATTE_PRESENTER_CACHE_TTL_MS,
-    },
+    nettePresenterLinkCompletionContext(options, request),
     linkCompletion,
   );
 }
