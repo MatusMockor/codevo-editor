@@ -12,39 +12,20 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { buildCreateMissingBladeViewCodeAction } from "./phpBladeViewCodeActions";
-import {
-  phpGenerateAccessorsCodeAction,
-  phpGenerateConstructorCodeAction,
-  phpGenerateConstructorWithPromotionCodeAction,
-  phpGeneratePhpDocCodeAction,
-} from "./phpClassGenerateCodeActions";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
+import {
+  collectPhpClassScopedCodeActions,
+  collectPhpFileScopedCodeActions,
+} from "./phpCodeActionLocalCollector";
 import { phpExtractInterfaceCodeAction } from "./phpExtractInterfaceCodeActions";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 import { orderPhpCodeActions } from "./phpCodeActionOrdering";
-import { phpCreateFromUsageCodeAction } from "./phpCreateMemberCodeActions";
-import {
-  phpAddParameterCodeAction,
-  phpAddParameterTypeCodeAction,
-  phpAddReturnTypeCodeAction,
-  phpExtractMethodCodeAction,
-  phpExtractVariableCodeAction,
-  phpInlineVariableCodeAction,
-  phpIntroduceConstantCodeAction,
-  phpIntroduceFieldCodeAction,
-} from "./phpLocalRefactorCodeActions";
-import {
-  phpRemoveUnusedImportCodeAction,
-  phpRemoveUnusedMethodCodeAction,
-  phpRemoveUnusedVariableCodeAction,
-} from "./phpInspectionCodeActions";
 import {
   phpImportClassCodeActions,
   phpImportClassShortNameAt,
-  phpOptimizeImportsCodeAction,
 } from "./phpImportCodeActions";
 import {
   phpImplementMethodsCodeAction,
@@ -155,83 +136,7 @@ export function usePhpCodeActions({
         return [];
       }
 
-      const actions: PhpCodeActionDescriptor[] = [];
-
-      // "Remove unused import" pairs with the unused-import inspection. It is a
-      // single-line deletion valid anywhere a top-level `use` sits (not only in
-      // a class), so it runs before the class-only guard below. Offered only
-      // when the cursor is on a conservatively-detected unused class import.
-      const removeUnusedImportAction = phpRemoveUnusedImportCodeAction(
-        source,
-        range,
-      );
-
-      if (removeUnusedImportAction) {
-        actions.push(removeUnusedImportAction);
-      }
-
-      // "Remove unused variable" pairs with the unused-variable inspection. A
-      // local assignment can sit in a class method OR a free function, and the
-      // action is offered only for a side-effect-free assignment, so it runs
-      // before the class-only guard below.
-      const removeUnusedVariableAction = phpRemoveUnusedVariableCodeAction(
-        source,
-        range,
-      );
-
-      if (removeUnusedVariableAction) {
-        actions.push(removeUnusedVariableAction);
-      }
-
-      // "Extract variable" is a pure single-file synthesis from the current
-      // selection and is valid anywhere a PHP expression sits (class body or a
-      // free function), so it runs before the class-only guard below.
-      const extractVariableAction = phpExtractVariableCodeAction(source, range);
-
-      if (extractVariableAction) {
-        actions.push(extractVariableAction);
-      }
-
-      // "Inline variable" is the inverse of "Extract variable": from the cursor
-      // on a single-assignment local it deletes the declaration and substitutes
-      // the value at every usage. Like extract it is a pure single-file
-      // synthesis valid in a class body or a free function, so it runs before
-      // the class-only guard below.
-      const inlineVariableAction = phpInlineVariableCodeAction(source, range);
-
-      if (inlineVariableAction) {
-        actions.push(inlineVariableAction);
-      }
-
-      // "Add parameter" (Change Signature - slice 1) appends an optional
-      // placeholder parameter to the enclosing function's signature. It is a
-      // pure single-file synthesis valid on a class method OR a free function,
-      // so it runs before the class-only guard below.
-      const addParameterAction = phpAddParameterCodeAction(source, range);
-
-      if (addParameterAction) {
-        actions.push(addParameterAction);
-      }
-
-      // "Add return type" / "Add type hint" (PhpStorm Alt+Enter) conservatively
-      // infer a missing return type / parameter type and insert it. Both are
-      // pure single-file additive insertions valid on a class method OR a free
-      // function (and, for the return type, an abstract / interface
-      // declaration), so they run before the class-only guard below.
-      const addReturnTypeAction = phpAddReturnTypeCodeAction(source, range);
-
-      if (addReturnTypeAction) {
-        actions.push(addReturnTypeAction);
-      }
-
-      const addParameterTypeAction = phpAddParameterTypeCodeAction(
-        source,
-        range,
-      );
-
-      if (addParameterTypeAction) {
-        actions.push(addParameterTypeAction);
-      }
+      const actions = collectPhpFileScopedCodeActions(source, range);
 
       // "Create class X" (PhpStorm Alt+Enter) when the cursor sits on a
       // referenced-but-unresolved class/interface/trait/enum (`new X()`,
@@ -277,37 +182,7 @@ export function usePhpCodeActions({
       }
 
       const structure = parsePhpClassStructure(source);
-
-      // "Create method / property from usage" is a pure single-file synthesis
-      // from the cursor offset; offered only when the cursor sits on an
-      // unresolved `$this->member` usage inside the class.
-      const createFromUsageAction = phpCreateFromUsageCodeAction(source, range);
-
-      if (createFromUsageAction) {
-        actions.push(createFromUsageAction);
-      }
-
-      // "Remove unused method" pairs with the unused-private-method inspection.
-      // Offered only when the cursor sits on a conservatively-detected unused
-      // private method; deletes the whole method (and its decorating lines).
-      const removeUnusedMethodAction = phpRemoveUnusedMethodCodeAction(
-        source,
-        range,
-      );
-
-      if (removeUnusedMethodAction) {
-        actions.push(removeUnusedMethodAction);
-      }
-
-      // "Extract method" lifts a contiguous, whole-statement selection inside a
-      // class method into a new private method and replaces it with a call. It
-      // is a pure single-file synthesis from the selection; the conservative
-      // planner returns null whenever the extraction could change behaviour.
-      const extractMethodAction = phpExtractMethodCodeAction(source, range);
-
-      if (extractMethodAction) {
-        actions.push(extractMethodAction);
-      }
+      actions.push(...collectPhpClassScopedCodeActions(source, range, structure));
 
       // "Extract interface" (PhpStorm) synthesises a sibling
       // `<Class>Interface.php` from the class's public instance methods and adds
@@ -333,24 +208,6 @@ export function usePhpCodeActions({
         if (existingInterface === null) {
           actions.push(extractInterfaceAction);
         }
-      }
-
-      // "Introduce constant / field" are pure single-file syntheses keyed off the
-      // cursor offset on a scalar literal (or a local variable for the field).
-      // Both insert at the top of the class body and replace the original token.
-      const introduceConstantAction = phpIntroduceConstantCodeAction(
-        source,
-        range,
-      );
-
-      if (introduceConstantAction) {
-        actions.push(introduceConstantAction);
-      }
-
-      const introduceFieldAction = phpIntroduceFieldCodeAction(source, range);
-
-      if (introduceFieldAction) {
-        actions.push(introduceFieldAction);
       }
 
       const declaredMethodNames = new Set(
@@ -384,44 +241,6 @@ export function usePhpCodeActions({
 
       if (overrideMethodsAction) {
         actions.push(overrideMethodsAction);
-      }
-
-      const accessorsAction = phpGenerateAccessorsCodeAction(source, structure);
-
-      if (accessorsAction) {
-        actions.push(accessorsAction);
-      }
-
-      const constructorAction = phpGenerateConstructorCodeAction(
-        source,
-        structure,
-      );
-
-      if (constructorAction) {
-        actions.push(constructorAction);
-      }
-
-      const constructorWithPromotionAction =
-        phpGenerateConstructorWithPromotionCodeAction(source, structure);
-
-      if (constructorWithPromotionAction) {
-        actions.push(constructorWithPromotionAction);
-      }
-
-      const generatePhpDocAction = phpGeneratePhpDocCodeAction(
-        source,
-        structure,
-        range,
-      );
-
-      if (generatePhpDocAction) {
-        actions.push(generatePhpDocAction);
-      }
-
-      const optimizeImportsAction = phpOptimizeImportsCodeAction(source);
-
-      if (optimizeImportsAction) {
-        actions.push(optimizeImportsAction);
       }
 
       // "Import class" (PhpStorm Alt+Enter -> Import): when the cursor sits on an
