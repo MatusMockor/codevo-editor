@@ -14,10 +14,7 @@ import {
   phpLaravelMiddlewareAliasDefinitions,
   type PhpLaravelMiddlewareAliasDefinition,
 } from "../domain/phpLaravelMiddleware";
-import {
-  phpLaravelEnvEntriesFromSource,
-  type PhpLaravelEnvTarget,
-} from "../domain/phpLaravelEnv";
+import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
 import type { PhpLaravelViewTarget } from "../domain/phpLaravelViews";
@@ -46,6 +43,7 @@ import {
   type PhpLaravelStorageDiskTarget,
 } from "./phpLaravelConfigDerivedTargets";
 import { createPhpLaravelConfigTargetResolver } from "./phpLaravelConfigTargets";
+import { createPhpLaravelEnvTargetResolver } from "./phpLaravelEnvTargets";
 import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
 import { createPhpLaravelTranslationTargetResolver } from "./phpLaravelTranslationTargets";
 import {
@@ -302,26 +300,15 @@ function useLaravelFrameworkTargetAdapter(
     [engineDeps, isLaravelFrameworkActive, workspaceRoot],
   );
 
-  const collectPhpLaravelEnvTargets = useCallback((): Promise<
-    PhpLaravelEnvTarget[]
-  > => {
-    const collect = createWorkspaceTargetCollector<PhpLaravelEnvTarget>(
-      engineDeps,
-      {
-        kind: "knownFiles",
-        isEnabled: () => isLaravelFrameworkActive,
-        relativePaths: [".env", ".env.example"],
-        parseTargets: ({ content, path, relativePath }) =>
-          phpLaravelEnvEntriesFromSource(content).map((entry) => ({
-            ...entry,
-            path,
-            relativePath,
-          })),
-      },
-    );
-
-    return collect({ workspaceRoot });
-  }, [engineDeps, isLaravelFrameworkActive, workspaceRoot]);
+  const envTargetResolver = useMemo(
+    () =>
+      createPhpLaravelEnvTargetResolver({
+        workspaceRoot,
+        phpFrameworkProviders: targetPhpFrameworkProviders,
+        workspaceTargetCollectorDeps: engineDeps,
+      }),
+    [workspaceRoot, targetPhpFrameworkProviders, engineDeps],
+  );
 
   const viewTargetResolver = useMemo(
     () =>
@@ -463,7 +450,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelNamedRouteTargets,
     collectPhpLaravelGateAbilityTargets,
     collectPhpLaravelMiddlewareAliasTargets,
-    collectPhpLaravelEnvTargets,
+    collectPhpLaravelEnvTargets: envTargetResolver.collect,
     collectPhpLaravelViewTargets: viewTargetResolver.collect,
     collectPhpLaravelConfigTargets: configTargetResolver.collect,
     collectPhpLaravelTranslationTargets: translationTargetResolver.collect,
