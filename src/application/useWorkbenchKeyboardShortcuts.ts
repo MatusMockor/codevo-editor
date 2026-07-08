@@ -42,6 +42,7 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "bookmark.showPanel",
   "bookmark.next",
   "bookmark.previous",
+  "editor.fileStructure",
   "editor.goToSymbol",
   "search.text",
 ];
@@ -62,7 +63,6 @@ interface WorkbenchKeyboardShortcutActions {
   goToTypeDefinition: () => unknown;
   openFileHistory: () => unknown;
   openFileReferencesPanel: () => unknown;
-  openFileStructure: () => unknown;
   openLocalHistory: () => unknown;
   openReferencesPanel: () => unknown;
   openSearchEverywhere: () => unknown;

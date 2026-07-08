@@ -5,7 +5,7 @@ import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler"
 describe("handleWorkbenchManualShortcut", () => {
   it("runs the matched manual shortcut action", () => {
     const actions = createActions();
-    const event = keyboardEvent({ key: "r", metaKey: true });
+    const event = keyboardEvent({ key: "F11" });
 
     const handled = handleWorkbenchManualShortcut({
       actions,
@@ -16,7 +16,7 @@ describe("handleWorkbenchManualShortcut", () => {
 
     expect(handled).toBe(true);
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(actions.openFileStructure).toHaveBeenCalledTimes(1);
+    expect(actions.toggleBookmarkAtCursor).toHaveBeenCalledTimes(1);
   });
 
   it("does not consume unmatched shortcuts", () => {
@@ -32,7 +32,7 @@ describe("handleWorkbenchManualShortcut", () => {
 
     expect(handled).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(actions.openFileStructure).not.toHaveBeenCalled();
+    expect(actions.toggleBookmarkAtCursor).not.toHaveBeenCalled();
   });
 
   it("preserves workspace-gated git history shortcut consumption", () => {
@@ -82,7 +82,6 @@ function createActions() {
     goToTypeDefinition: vi.fn(),
     openFileHistory: vi.fn(),
     openFileReferencesPanel: vi.fn(),
-    openFileStructure: vi.fn(),
     openLocalHistory: vi.fn(),
     openReferencesPanel: vi.fn(),
     runTestForActiveDocument: vi.fn(),

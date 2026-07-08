@@ -64,6 +64,31 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("routes file structure through registry enablement", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.fileStructure",
+      isEnabled: () => false,
+      run,
+      title: "File Structure",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "r", metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+    expect(actions.openFileStructure).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),
