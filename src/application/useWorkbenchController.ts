@@ -17,6 +17,7 @@ import {
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
+import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
@@ -285,10 +286,6 @@ import {
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
 import {
-  phpLaravelEnvTargetFromSource,
-  type PhpLaravelEnvTarget,
-} from "../domain/phpLaravelEnv";
-import {
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsViews,
   resolvePhpFrameworkProfile,
@@ -387,8 +384,6 @@ export interface WorkbenchControllerOptions {
 interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
-
-type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
@@ -5113,56 +5108,13 @@ export function useWorkbenchController(
     frameworkIntelligence: phpFrameworkIntelligence,
   });
 
-  const findPhpLaravelEnvTarget = useCallback(
-    async (envName: string): Promise<PhpLaravelEnvNavigationTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return null;
-      }
-
-      for (const relativePath of [".env", ".env.example"]) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          const target = phpLaravelEnvTargetFromSource(content, envName);
-
-          if (!target) {
-            continue;
-          }
-
-          return {
-            ...target,
-            path,
-            relativePath,
-          };
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-        }
-      }
-
-      return null;
-    },
-    [
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
+  const findPhpLaravelEnvTarget = usePhpLaravelEnvTargetResolver({
+    currentWorkspaceRootRef,
+    isLaravelFrameworkActive,
+    joinWorkspacePath,
+    readNavigationFileContent,
+    workspaceRoot,
+  });
 
   const {
     phpClassHierarchyHasConstant,
