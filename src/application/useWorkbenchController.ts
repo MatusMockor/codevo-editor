@@ -25,6 +25,7 @@ import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberProperty
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
+import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import {
   bestIndexedSymbolMatch,
   editorPositionFromProjectSymbol,
@@ -314,7 +315,6 @@ import {
   phpClassPathCandidates,
   phpDocMethodPositionOrNull,
   phpPropertyPositionOrNull,
-  phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,
@@ -6771,158 +6771,25 @@ export function useWorkbenchController(
     [activeDocument, openPhpClassTarget],
   );
 
-  const goToContextualPhpDefinition = useCallback(async (): Promise<boolean> => {
-    if (!activeDocument || activeDocument.language !== "php") {
-      return false;
-    }
-
-    const editorPosition = activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const context = phpIdentifierContextAt(activeDocument.content, editorPosition);
-
-    if (!context) {
-      return false;
-    }
-
-    if (context.kind === "methodCall") {
-      return goToPhpMethodCallDefinition(context);
-    }
-
-    if (context.kind === "memberPropertyAccess") {
-      return goToPhpMemberPropertyDefinition(context);
-    }
-
-    if (context.kind === "staticMethodCall") {
-      return goToPhpStaticMethodCallDefinition(context);
-    }
-
-    if (context.kind === "classConstant") {
-      return goToPhpClassConstantDefinition(context);
-    }
-
-    if (context.kind === "laravelRelationString") {
-      return goToPhpLaravelRelationStringDefinition(context);
-    }
-
-    if (context.kind === "laravelNamedRouteString") {
-      return goToPhpLaravelNamedRouteDefinition(context);
-    }
-
-    if (context.kind === "laravelTranslationString") {
-      return goToPhpLaravelTranslationDefinition(context);
-    }
-
-    if (context.kind === "laravelEnvString") {
-      return goToPhpLaravelEnvDefinition(context);
-    }
-
-    if (context.kind === "laravelConfigString") {
-      return goToPhpLaravelConfigDefinition(context);
-    }
-
-    if (context.kind === "laravelAuthGuardString") {
-      return goToPhpLaravelAuthGuardDefinition(context);
-    }
-
-    if (context.kind === "laravelGateAbilityString") {
-      return goToPhpLaravelGateAbilityDefinition(context);
-    }
-
-    if (context.kind === "laravelMiddlewareAliasString") {
-      return goToPhpLaravelMiddlewareAliasDefinition(context);
-    }
-
-    if (context.kind === "laravelCacheStoreString") {
-      return goToPhpLaravelCacheStoreDefinition(context);
-    }
-
-    if (context.kind === "laravelDatabaseConnectionString") {
-      return goToPhpLaravelDatabaseConnectionDefinition(context);
-    }
-
-    if (context.kind === "laravelBroadcastConnectionString") {
-      return goToPhpLaravelBroadcastConnectionDefinition(context);
-    }
-
-    if (context.kind === "laravelQueueConnectionString") {
-      return goToPhpLaravelQueueConnectionDefinition(context);
-    }
-
-    if (context.kind === "laravelRedisConnectionString") {
-      return goToPhpLaravelRedisConnectionDefinition(context);
-    }
-
-    if (context.kind === "laravelMailMailerString") {
-      return goToPhpLaravelMailMailerDefinition(context);
-    }
-
-    if (context.kind === "laravelPasswordBrokerString") {
-      return goToPhpLaravelPasswordBrokerDefinition(context);
-    }
-
-    if (context.kind === "laravelLogChannelString") {
-      return goToPhpLaravelLogChannelDefinition(context);
-    }
-
-    if (context.kind === "laravelStorageDiskString") {
-      return goToPhpLaravelStorageDiskDefinition(context);
-    }
-
-    if (context.kind === "laravelViewString") {
-      return goToPhpLaravelViewDefinition(context);
-    }
-
-    if (context.kind === "laravelRouteActionMethod") {
-      const className = resolvePhpClassName(
-        activeDocument.content,
-        context.className,
-      );
-
-      if (!className) {
-        return false;
-      }
-
-      const openedMethodTarget = await openDirectPhpMethodTarget(
-        className,
-        context.methodName,
-      );
-
-      if (openedMethodTarget) {
-        return true;
-      }
-
-      return openPhpClassTarget(className, context.className);
-    }
-
-    if (context.kind === "classIdentifier") {
-      // A bare class / interface / trait / enum type reference (e.g. a
-      // constructor-promoted property or parameter type-hint). Resolve it with
-      // our deterministic use/namespace resolver and open the declaration line
-      // BEFORE phpactor, so type navigation works regardless of the indexed
-      // workspace gate. goToPhpClassIdentifierDefinition carries the
-      // per-workspace isolation guards (requested-root capture + re-check after
-      // each await) via openPhpClassTarget, and returns false for an
-      // unresolvable type so the phpactor fallback still runs.
-      return goToPhpClassIdentifierDefinition(context.name);
-    }
-
-    return false;
-  }, [
+  const { goToContextualPhpDefinition } = usePhpContextualDefinitionNavigation({
     activeDocument,
+    activeEditorPositionRef,
     goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
-    goToPhpLaravelCacheStoreDefinition,
+    goToPhpLaravelAuthGuardDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
+    goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
+    goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
+    goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
     goToPhpLaravelNamedRouteDefinition,
+    goToPhpLaravelPasswordBrokerDefinition,
+    goToPhpLaravelQueueConnectionDefinition,
+    goToPhpLaravelRedisConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
     goToPhpLaravelTranslationDefinition,
@@ -6932,7 +6799,7 @@ export function useWorkbenchController(
     goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,
     openPhpClassTarget,
-  ]);
+  });
 
   const { goToSuperMethod } = usePhpSuperMethodNavigation({
     activeDocument,
