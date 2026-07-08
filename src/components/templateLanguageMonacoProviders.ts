@@ -120,13 +120,12 @@ export interface TemplateLanguageMonacoProviderContext {
 export interface TemplateLanguageMonacoProviderHandlers<
   Context extends TemplateLanguageMonacoProviderContext,
 > {
-  provideBladeCodeActions(
+  toCodeAction(
     monaco: MonacoApi,
     context: Context,
     model: MonacoModel,
-    range: Monaco.Range,
-    actionContext: Monaco.languages.CodeActionContext,
-  ): Promise<Monaco.languages.CodeActionList>;
+    descriptor: PhpCodeActionDescriptor,
+  ): Monaco.languages.CodeAction;
 }
 
 export function registerTemplateLanguageMonacoProviders<
@@ -157,9 +156,10 @@ export function registerTemplateLanguageMonacoProviders<
         "blade",
         {
           provideCodeActions: (model, range, actionContext) =>
-            handlers.provideBladeCodeActions(
+            provideBladeCodeActions(
               monaco,
               context,
+              handlers,
               model,
               range,
               actionContext,
@@ -295,6 +295,80 @@ async function provideBladeCompletionItems(
 
     return { suggestions: [] };
   }
+}
+
+async function provideBladeCodeActions<
+  Context extends TemplateLanguageMonacoProviderContext,
+>(
+  monaco: MonacoApi,
+  context: Context,
+  handlers: TemplateLanguageMonacoProviderHandlers<Context>,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+): Promise<Monaco.languages.CodeActionList> {
+  if (
+    !context.provideBladeCodeActions ||
+    !bladeQuickFixKindRequested(actionContext.only)
+  ) {
+    return emptyBladeCodeActions();
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "blade");
+
+  if (!documentContext) {
+    return emptyBladeCodeActions();
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+
+  try {
+    const descriptors = await context.provideBladeCodeActions(
+      source,
+      codeActionOffsetRange(source, range),
+    );
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return emptyBladeCodeActions();
+    }
+
+    return {
+      actions: descriptors.map((descriptor) =>
+        handlers.toCodeAction(monaco, context, model, descriptor),
+      ),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return emptyBladeCodeActions();
+  }
+}
+
+function bladeQuickFixKindRequested(only: string | undefined): boolean {
+  return !only || only.startsWith("quickfix");
+}
+
+function emptyBladeCodeActions(): Monaco.languages.CodeActionList {
+  return { actions: [], dispose: () => undefined };
+}
+
+function codeActionOffsetRange(
+  source: string,
+  range: Monaco.Range,
+): PhpCodeActionRange {
+  const start = offsetAtMonacoPosition(source, {
+    column: range.startColumn,
+    lineNumber: range.startLineNumber,
+  } as MonacoPosition);
+  const end = offsetAtMonacoPosition(source, {
+    column: range.endColumn,
+    lineNumber: range.endLineNumber,
+  } as MonacoPosition);
+
+  return start <= end ? { end, start } : { end: start, start: end };
 }
 
 async function provideLatteDefinition(

@@ -943,7 +943,7 @@ export function registerLanguageServerMonacoProviders(
     monaco,
     context,
     {
-      provideBladeCodeActions,
+      toCodeAction: toPhpCodeAction,
     },
   );
 
@@ -984,91 +984,6 @@ export function registerLanguageServerMonacoProviders(
       templateLanguageProviders.dispose();
     },
   };
-}
-
-async function provideBladeCodeActions(
-  monaco: MonacoApi,
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  range: Monaco.Range,
-  actionContext: Monaco.languages.CodeActionContext,
-): Promise<Monaco.languages.CodeActionList> {
-  if (
-    !context.provideBladeCodeActions ||
-    !bladeQuickFixKindRequested(actionContext.only)
-  ) {
-    return emptyBladeCodeActions();
-  }
-
-  const documentContext = activeBladeDocumentContext(context, model);
-
-  if (!documentContext) {
-    return emptyBladeCodeActions();
-  }
-
-  const source = modelSource(model, documentContext.activeDocument.content);
-
-  try {
-    const descriptors = await context.provideBladeCodeActions(
-      source,
-      phpCodeActionOffsetRange(source, range),
-    );
-
-    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
-      return emptyBladeCodeActions();
-    }
-
-    return {
-      actions: descriptors.map((descriptor) =>
-        toPhpCodeAction(monaco, context, model, descriptor),
-      ),
-      dispose: () => undefined,
-    };
-  } catch (error) {
-    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
-      context.reportError(error);
-    }
-
-    return emptyBladeCodeActions();
-  }
-}
-
-function bladeQuickFixKindRequested(only: string | undefined): boolean {
-  return !only || only.startsWith("quickfix");
-}
-
-function emptyBladeCodeActions(): Monaco.languages.CodeActionList {
-  return { actions: [], dispose: () => undefined };
-}
-
-/**
- * Mirrors {@link activePhpDocumentContext} for the "blade" language. Blade has
- * no language-server runtime, so no session is required: the context only needs
- * the active document, the requested workspace root (for the post-await
- * isolation re-check), and a confirmed model/document path match.
- */
-function activeBladeDocumentContext(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-) {
-  const activeDocument = context.getActiveDocument();
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!activeDocument || !rootPath) {
-    return null;
-  }
-
-  if (activeDocument.language !== "blade") {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (!path || path !== activeDocument.path) {
-    return null;
-  }
-
-  return { activeDocument, path, rootPath };
 }
 
 async function prepareRename(
