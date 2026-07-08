@@ -29,6 +29,7 @@ import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefiniti
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
+import { usePhpImplementationNavigation } from "./usePhpImplementationNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -243,11 +244,6 @@ import {
   type DiagnosticsSummary,
 } from "../domain/diagnosticsSummary";
 import {
-  implementationChooserTitle,
-  implementationTargetFromProjectSymbol,
-  type ImplementationTarget,
-} from "../domain/implementationTargets";
-import {
   applyEditorChangeRevert,
   type EditorChangeHunk,
 } from "../domain/editorChangeMarkers";
@@ -299,9 +295,6 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import {
-  phpCurrentClassName,
-} from "../domain/phpSemanticEngine";
-import {
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsViews,
   phpFrameworkValidationRuleCompletions,
@@ -309,10 +302,8 @@ import {
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
-  phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,
-  phpSuperTypeReferences,
   resolvePhpClassName,
 } from "../domain/phpNavigation";
 import {
@@ -5922,231 +5913,20 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const phpSourceInheritsOrImplementsType = useCallback(
-    async (
-      source: string,
-      targetClassName: string,
-      visitedClassNames = new Set<string>(),
-    ): Promise<boolean> => {
-      const normalizedTargetClassName = targetClassName
-        .trim()
-        .replace(/^\\+/, "")
-        .toLowerCase();
-
-      if (!normalizedTargetClassName) {
-        return false;
-      }
-
-      const currentClassName = phpCurrentClassName(source);
-      const currentKey = currentClassName?.toLowerCase() ?? "";
-
-      if (currentKey && visitedClassNames.has(currentKey)) {
-        return false;
-      }
-
-      if (currentKey) {
-        visitedClassNames.add(currentKey);
-      }
-
-      for (const reference of phpSuperTypeReferences(source)) {
-        const resolvedClassName = resolvePhpClassReference(source, reference);
-        const resolvedKey = resolvedClassName?.toLowerCase();
-
-        if (!resolvedClassName || !resolvedKey) {
-          continue;
-        }
-
-        if (resolvedKey === normalizedTargetClassName) {
-          return true;
-        }
-
-        for (const path of await resolvePhpClassSourcePaths(resolvedClassName)) {
-          try {
-            if (
-              await phpSourceInheritsOrImplementsType(
-                await readNavigationFileContent(path),
-                targetClassName,
-                visitedClassNames,
-              )
-            ) {
-              return true;
-            }
-          } catch {
-            continue;
-          }
-        }
-      }
-
-      return false;
-    },
-    [
+  const { goToIndexedPhpImplementation } = usePhpImplementationNavigation({
+      activeDocument,
+      activeEditorPositionRef,
+      currentWorkspaceRootRef,
+      identifierAtEditorPosition,
+      intelligenceMode,
+      openNavigationTarget,
+      projectSymbolSearch,
       readNavigationFileContent,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
-    ],
-  );
-
-  const indexedPhpImplementationTargets = useCallback(
-    async (
-      editorPosition: EditorPosition,
-    ): Promise<ImplementationTarget[]> => {
-      const document = activeDocument;
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !document ||
-        document.language !== "php" ||
-        !requestedRoot ||
-        !shouldIndexWorkspace(intelligenceMode)
-      ) {
-        return [];
-      }
-
-      const declarationContext = phpImplementationDeclarationContextAt(
-        document.content,
-        editorPosition,
-      );
-      const targetClassName = phpCurrentClassName(document.content);
-
-      if (!declarationContext || !targetClassName) {
-        return [];
-      }
-
-      const { methodName } = declarationContext;
-      const normalizedMethodName = methodName.toLowerCase();
-      const normalizedTargetClassName = targetClassName.toLowerCase();
-      const symbols = await projectSymbolSearch.searchProjectSymbols(
-        requestedRoot,
-        methodName,
-        200,
-      );
-
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      const targets = new Map<string, ImplementationTarget>();
-
-      for (const symbol of symbols) {
-        if (
-          symbol.kind !== "method" ||
-          symbol.path === document.path ||
-          symbol.name.toLowerCase() !== normalizedMethodName
-        ) {
-          continue;
-        }
-
-        try {
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          const source = await readNavigationFileContent(symbol.path);
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          const candidateClassName =
-            symbol.containerName ?? phpCurrentClassName(source);
-
-          if (
-            !candidateClassName ||
-            candidateClassName.toLowerCase() === normalizedTargetClassName
-          ) {
-            continue;
-          }
-
-          if (
-            !(await phpSourceInheritsOrImplementsType(
-              source,
-              targetClassName,
-            ))
-          ) {
-            continue;
-          }
-
-          if (!isRequestedRootActive()) {
-            return [];
-          }
-
-          const target = implementationTargetFromProjectSymbol(symbol);
-          targets.set(target.id, target);
-        } catch {
-          continue;
-        }
-      }
-
-      return [...targets.values()];
-    },
-    [
-      activeDocument,
-      intelligenceMode,
-      phpSourceInheritsOrImplementsType,
-      projectSymbolSearch,
-      readNavigationFileContent,
+      setImplementationChooser,
       workspaceRoot,
-    ],
-  );
-
-  const goToIndexedPhpImplementation = useCallback(
-    async (requestedPosition?: EditorPosition): Promise<boolean> => {
-      const document = activeDocument;
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
-
-      if (!document || !requestedRoot || !editorPosition) {
-        return false;
-      }
-
-      const targets = await indexedPhpImplementationTargets(editorPosition);
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      if (targets.length === 0) {
-        return false;
-      }
-
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
-
-      if (targets.length > 1) {
-        setImplementationChooser({
-          targets,
-          title: implementationChooserTitle(symbolName),
-        });
-        return true;
-      }
-
-      const [target] = targets;
-
-      if (!target) {
-        return false;
-      }
-
-      setImplementationChooser(null);
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      await openNavigationTarget(target.path, target.position, target.label);
-      return true;
-    },
-    [
-      activeDocument,
-      indexedPhpImplementationTargets,
-      openNavigationTarget,
-      workspaceRoot,
-    ],
-  );
+    });
 
   const {
     openPhpLaravelDynamicWhereTarget,
