@@ -114,12 +114,12 @@ import {
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
-  registerLanguageServerMonacoProviders,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import { useEditorSurfaceLanguageProviderRegistration } from "./useEditorSurfaceLanguageProviderRegistration";
 import {
   useEditorSurfaceFrameworkProviderRefs,
   type EditorSurfaceFrameworkIntelligenceProviders,
@@ -798,74 +798,43 @@ function EditorSurfaceComponent({
     };
   }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange]);
 
-  useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    const disposable = registerLanguageServerMonacoProviders(monacoApi, {
-      applyPhpCodeActionNewFile: (newFile) =>
-        applyPhpCodeActionNewFileRef.current(newFile),
-      applyWorkspaceEdit: (edit, editContext) =>
-        applyPhpWorkspaceEditRef.current(edit, editContext),
-      clearLanguageServerDiagnosticsForPath: (path) =>
-        clearLanguageServerDiagnosticsForPathRef.current(path),
+  useEditorSurfaceLanguageProviderRegistration({
+    dependencies: {
       featuresGateway: languageServerFeaturesGateway,
-      flushPendingDocumentChange: (path) => flushPendingRef.current(path),
-      getActiveDocument: () => activeDocumentRef.current,
-      getRuntimeStatus: () => runtimeStatusRef.current,
-      getUserSnippets: () => userSnippetsRef.current,
-      getWorkspaceRoot: () => workspaceRoot,
-      isDocumentSynced: (rootPath, path) =>
-        workspaceRootKeysEqual(rootPath, workspaceRoot) &&
-        Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
-      isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
-      limitNavigationResultsToOpenModels: true,
-      provideBladeCodeActions: (source, range) =>
-        bladeCodeActionsRef.current(source, range),
-      provideBladeCompletions: (source, position) =>
-        bladeCompletionsRef.current(source, position),
-      provideBladeDefinition: (source, offset) =>
-        bladeDefinitionRef.current(source, offset),
-      provideLatteCompletions: (source, position) =>
-        latteCompletionsRef.current(source, position),
-      provideLatteDefinition: (source, offset) =>
-        latteDefinitionRef.current(source, offset),
-      provideNeonCompletions: (source, position) =>
-        neonCompletionsRef.current(source, position),
-      provideNeonDefinition: (source, offset) =>
-        neonDefinitionRef.current(source, offset),
-      providePhpPresenterLinkDefinition: (source, offset) =>
-        phpPresenterLinkDefinitionRef.current(source, offset),
-      providePhpPresenterLinkCompletions: (source, offset) =>
-        phpPresenterLinkCompletionsRef.current(source, offset),
-      isPhpFrameworkStringCompletionContext: (source, position) =>
-        phpFrameworkStringCompletionContextRef.current(source, position),
-      providePhpCodeActions: (source, range) =>
-        phpCodeActionsRef.current(source, range),
-      providePhpFrameworkDefinition: (source, offset) =>
-        phpFrameworkDefinitionRef.current(source, offset),
-      providePhpMethodCompletions: (source, position) =>
-        phpMethodCompletionsRef.current(source, position),
-      providePhpMethodSignature: (source, position) =>
-        phpMethodSignatureRef.current(source, position),
-      providePhpParameterInlayHints: (source, range) =>
-        phpParameterInlayHintsRef.current(source, range),
-      recordCompletionLatency: (durationMs, rootPath) =>
-        recordCompletionLatencyRef.current?.(durationMs, rootPath),
+      monacoApi,
       refreshGateway: languageServerRefreshGateway,
-      reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
-    });
-
-    return () => disposable.dispose();
-  }, [
-    languageServerFeaturesGateway,
-    languageServerRefreshGateway,
-    monacoApi,
-    phpLanguageServerWorkspaceEditGateway,
-    workspaceRoot,
-  ]);
+      workspaceRoot,
+    },
+    refs: {
+      activeDocumentRef,
+      applyPhpCodeActionNewFileRef,
+      applyPhpWorkspaceEditRef,
+      bladeCodeActionsRef,
+      bladeCompletionsRef,
+      bladeDefinitionRef,
+      clearLanguageServerDiagnosticsForPathRef,
+      errorReporterRef,
+      flushPendingRef,
+      isLanguageServerDocumentSyncedRef,
+      latteCompletionsRef,
+      latteDefinitionRef,
+      neonCompletionsRef,
+      neonDefinitionRef,
+      phpCodeActionsRef,
+      phpFrameworkDefinitionRef,
+      phpFrameworkStringCompletionContextRef,
+      phpInlayHintsEnabledRef,
+      phpMethodCompletionsRef,
+      phpMethodSignatureRef,
+      phpParameterInlayHintsRef,
+      phpPresenterLinkCompletionsRef,
+      phpPresenterLinkDefinitionRef,
+      recordCompletionLatencyRef,
+      runtimeStatusRef,
+      userSnippetsRef,
+    },
+  });
 
   useEffect(() => {
     if (!monacoApi) {
