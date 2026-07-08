@@ -60,12 +60,13 @@ import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   registerTemplateLanguageMonacoProviders,
+  templateCompletionFallbackRange,
   type BladeCompletion,
-  type BladeCompletionKind,
   type LatteCompletion,
-  type LatteCompletionKind,
   type NeonCompletion,
-  type NeonCompletionKind,
+  toMonacoBladeCompletion,
+  toMonacoLatteCompletion,
+  toMonacoNeonCompletion,
 } from "./templateLanguageMonacoProviders";
 
 export type {
@@ -1083,7 +1084,7 @@ async function provideBladeCompletionItems(
 
   const source = modelSource(model, documentContext.activeDocument.content);
   const word = model.getWordUntilPosition(position);
-  const fallbackRange = bladeCompletionFallbackRange(position, word);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
   const snippetSuggestions = bladeSnippetSuggestions(
     monaco,
     context,
@@ -1178,74 +1179,6 @@ function emptyBladeCodeActions(): Monaco.languages.CodeActionList {
   return { actions: [], dispose: () => undefined };
 }
 
-function toMonacoBladeCompletion(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  source: string,
-  fallbackRange: Monaco.IRange,
-  completion: BladeCompletion,
-  index: number,
-): Monaco.languages.CompletionItem {
-  const range =
-    completion.replaceStart != null && completion.replaceEnd != null
-      ? bladeReplaceRange(
-          monaco,
-          model,
-          source,
-          completion.replaceStart,
-          completion.replaceEnd,
-        )
-      : fallbackRange;
-
-  return {
-    detail: completion.detail,
-    insertText: completion.insertText,
-    kind: monacoBladeCompletionKind(monaco, completion.kind),
-    label: completion.label,
-    range,
-    sortText: `0_${String(index).padStart(4, "0")}`,
-  };
-}
-
-function monacoBladeCompletionKind(
-  monaco: MonacoApi,
-  kind: BladeCompletionKind,
-): Monaco.languages.CompletionItemKind {
-  if (kind === "view") {
-    return monaco.languages.CompletionItemKind.File;
-  }
-
-  if (kind === "component") {
-    return monaco.languages.CompletionItemKind.Field;
-  }
-
-  if (kind === "variable") {
-    return monaco.languages.CompletionItemKind.Variable;
-  }
-
-  if (kind === "helper") {
-    return monaco.languages.CompletionItemKind.Function;
-  }
-
-  if (kind === "member") {
-    return monaco.languages.CompletionItemKind.Method;
-  }
-
-  return monaco.languages.CompletionItemKind.Keyword;
-}
-
-function bladeCompletionFallbackRange(
-  position: MonacoPosition,
-  word: { endColumn: number; startColumn: number },
-): Monaco.IRange {
-  return {
-    endColumn: word.endColumn,
-    endLineNumber: position.lineNumber,
-    startColumn: word.startColumn,
-    startLineNumber: position.lineNumber,
-  };
-}
-
 /**
  * Go-to-definition for a `.latte` document: delegates to the controller's Latte
  * resolver, which navigates to the referenced template and resolves `true` when
@@ -1301,7 +1234,7 @@ async function provideLatteCompletionItems(
 
   const source = modelSource(model, documentContext.activeDocument.content);
   const word = model.getWordUntilPosition(position);
-  const fallbackRange = bladeCompletionFallbackRange(position, word);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
 
   try {
     const completions = await context.provideLatteCompletions(source, position);
@@ -1329,66 +1262,6 @@ async function provideLatteCompletionItems(
 
     return { suggestions: [] };
   }
-}
-
-function toMonacoLatteCompletion(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  source: string,
-  fallbackRange: Monaco.IRange,
-  completion: LatteCompletion,
-  index: number,
-): Monaco.languages.CompletionItem {
-  const range =
-    completion.replaceStart != null && completion.replaceEnd != null
-      ? bladeReplaceRange(
-          monaco,
-          model,
-          source,
-          completion.replaceStart,
-          completion.replaceEnd,
-        )
-      : fallbackRange;
-
-  return {
-    detail: completion.detail,
-    insertText: completion.insertText,
-    kind: monacoLatteCompletionKind(monaco, completion.kind),
-    label: completion.label,
-    range,
-    sortText: `0_${String(index).padStart(4, "0")}`,
-  };
-}
-
-function monacoLatteCompletionKind(
-  monaco: MonacoApi,
-  kind: LatteCompletionKind,
-): Monaco.languages.CompletionItemKind {
-  if (kind === "template") {
-    return monaco.languages.CompletionItemKind.File;
-  }
-
-  if (kind === "variable") {
-    return monaco.languages.CompletionItemKind.Variable;
-  }
-
-  if (kind === "member") {
-    return monaco.languages.CompletionItemKind.Field;
-  }
-
-  if (kind === "filter") {
-    return monaco.languages.CompletionItemKind.Function;
-  }
-
-  if (kind === "link") {
-    return monaco.languages.CompletionItemKind.Method;
-  }
-
-  if (kind === "component") {
-    return monaco.languages.CompletionItemKind.Module;
-  }
-
-  return monaco.languages.CompletionItemKind.Keyword;
 }
 
 /**
@@ -1480,7 +1353,7 @@ async function provideNeonCompletionItems(
 
   const source = modelSource(model, documentContext.activeDocument.content);
   const word = model.getWordUntilPosition(position);
-  const fallbackRange = bladeCompletionFallbackRange(position, word);
+  const fallbackRange = templateCompletionFallbackRange(position, word);
 
   try {
     const completions = await context.provideNeonCompletions(source, position);
@@ -1508,54 +1381,6 @@ async function provideNeonCompletionItems(
 
     return { suggestions: [] };
   }
-}
-
-function toMonacoNeonCompletion(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  source: string,
-  fallbackRange: Monaco.IRange,
-  completion: NeonCompletion,
-  index: number,
-): Monaco.languages.CompletionItem {
-  const range =
-    completion.replaceStart != null && completion.replaceEnd != null
-      ? bladeReplaceRange(
-          monaco,
-          model,
-          source,
-          completion.replaceStart,
-          completion.replaceEnd,
-        )
-      : fallbackRange;
-
-  return {
-    detail: completion.detail,
-    insertText: completion.insertText,
-    kind: monacoNeonCompletionKind(monaco, completion.kind),
-    label: completion.label,
-    range,
-    sortText: `0_${String(index).padStart(4, "0")}`,
-  };
-}
-
-function monacoNeonCompletionKind(
-  monaco: MonacoApi,
-  kind: NeonCompletionKind,
-): Monaco.languages.CompletionItemKind {
-  if (kind === "parameter") {
-    return monaco.languages.CompletionItemKind.Variable;
-  }
-
-  if (kind === "service") {
-    return monaco.languages.CompletionItemKind.Value;
-  }
-
-  if (kind === "method") {
-    return monaco.languages.CompletionItemKind.Method;
-  }
-
-  return monaco.languages.CompletionItemKind.Class;
 }
 
 /**
@@ -1622,54 +1447,6 @@ function bladeSnippetSuggestions(
     range,
     contextUserSnippets(context),
   ) as Monaco.languages.CompletionItem[];
-}
-
-/**
- * Converts a 0-based character offset span into a Monaco range using the model's
- * own offset/position mapping when available, falling back to a manual scan of
- * `source` so the provider stays testable with a stubbed model.
- */
-function bladeReplaceRange(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  source: string,
-  startOffset: number,
-  endOffset: number,
-): Monaco.IRange {
-  const start = monacoPositionAtOffset(model, source, startOffset);
-  const end = monacoPositionAtOffset(model, source, endOffset);
-
-  return new monaco.Range(
-    start.lineNumber,
-    start.column,
-    end.lineNumber,
-    end.column,
-  );
-}
-
-function monacoPositionAtOffset(
-  model: MonacoModel,
-  source: string,
-  offset: number,
-): { column: number; lineNumber: number } {
-  const positionAt = (
-    model as MonacoModel & {
-      getPositionAt?: (value: number) => MonacoPosition;
-    }
-  ).getPositionAt;
-
-  if (typeof positionAt === "function") {
-    const position = positionAt.call(model, offset);
-
-    return { column: position.column, lineNumber: position.lineNumber };
-  }
-
-  const clamped = Math.max(0, Math.min(offset, source.length));
-  const before = source.slice(0, clamped);
-  const lineNumber = before.split("\n").length;
-  const lineStart = before.lastIndexOf("\n") + 1;
-
-  return { column: clamped - lineStart + 1, lineNumber };
 }
 
 /**
