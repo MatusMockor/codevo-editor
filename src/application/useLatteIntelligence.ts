@@ -13,11 +13,9 @@ import type {
 import {
   createLatteIntelligence,
 } from "./latteProviderFlows";
-import type { NetteControlCache } from "./netteControlContracts";
-import type { NettePresenterCache } from "./nettePresenterLinkDiscovery";
-import type { LatteTemplateCache } from "./netteTemplateDiscovery";
-import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
-import type { LatteViewDataCache } from "./latteExpressionIntelligence";
+import {
+  createLatteIntelligenceCaches,
+} from "./latteIntelligenceCaches";
 
 export type {
   LatteFrameworkCapabilities,
@@ -39,21 +37,19 @@ export function useLatteIntelligence(
 ): LatteIntelligence {
   const dependenciesRef = useRef(dependencies);
   dependenciesRef.current = dependencies;
-  const templateCacheRef = useRef<LatteTemplateCache>({});
-  const viewDataCacheRef = useRef<LatteViewDataCache>({});
-  const presenterCacheRef = useRef<NettePresenterCache>({});
-  const componentCacheRef = useRef<NetteControlCache>({});
-  const templateTypeCacheRef = useRef<LatteTemplateTypeCache>({});
+  const cachesRef = useRef(createLatteIntelligenceCaches());
   const apiRef = useRef<LatteIntelligence | null>(null);
 
   if (!apiRef.current) {
+    const caches = cachesRef.current;
+
     apiRef.current = createLatteIntelligence(
       () => dependenciesRef.current,
-      templateCacheRef.current,
-      viewDataCacheRef.current,
-      presenterCacheRef.current,
-      componentCacheRef.current,
-      templateTypeCacheRef.current,
+      caches.templateCache,
+      caches.viewDataCache,
+      caches.presenterCache,
+      caches.componentCache,
+      caches.templateTypeCache,
     );
   }
 
