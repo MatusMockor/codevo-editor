@@ -18,6 +18,7 @@ import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecyc
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
+import { workbenchFloatingSurfaceCommands } from "./workbenchFloatingSurfaceCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
@@ -6327,79 +6328,27 @@ export function useWorkbenchController(
       runAllTestsForActiveDocument,
     }).forEach((command) => registry.register(command));
 
-    registry.register({
-      id: "file.quickOpen",
-      title: "Quick Open File",
-      category: "File",
-      shortcut: shortcut("file.quickOpen"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
+    workbenchFloatingSurfaceCommands({
+      shortcut,
+      canSearchWorkspaceSymbols: canSearchClassOpenSymbols,
+      openQuickOpenFile: () => {
         setClassOpenOpen(false);
         setWorkspaceSymbolsOpen(false);
         setRecentFilesSwitcherOpen(false);
         setQuickOpenOpen(true);
       },
-    });
-
-    registry.register({
-      id: "editor.recentFiles",
-      title: "Recent Files",
-      category: "File",
-      shortcut: shortcut("editor.recentFiles"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: openRecentFilesSwitcher,
-    });
-
-    registry.register({
-      id: "editor.recentLocations",
-      title: "Recent Locations",
-      category: "File",
-      shortcut: shortcut("editor.recentLocations"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: openRecentLocationsPanel,
-    });
-
-    registry.register({
-      id: "class.quickOpen",
-      title: "Open Class",
-      category: "PHP",
-      shortcut: shortcut("class.quickOpen"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
+      openRecentFilesSwitcher,
+      openRecentLocationsPanel,
+      openClassOpen: () => {
         setQuickOpenOpen(false);
         setWorkspaceSymbolsOpen(false);
         setRecentFilesSwitcherOpen(false);
         setClassOpenOpen(true);
       },
-    });
-
-    registry.register({
-      id: "editor.goToSymbol",
-      title: "Go to Symbol in Workspace",
-      category: "Editor",
-      shortcut: shortcut("editor.goToSymbol"),
-      isEnabled: (context) =>
-        context.hasWorkspace && canSearchClassOpenSymbols,
-      run: openWorkspaceSymbols,
-    });
-
-    registry.register({
-      id: "workbench.searchEverywhere",
-      title: "Search Everywhere",
-      category: "Workbench",
-      shortcut: shortcut("workbench.searchEverywhere"),
-      isEnabled: () => true,
-      run: openSearchEverywhere,
-    });
-
-    registry.register({
-      id: "search.text",
-      title: "Search Text",
-      category: "Search",
-      shortcut: shortcut("search.text"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => setTextSearchOpen(true),
-    });
+      openWorkspaceSymbols,
+      openSearchEverywhere,
+      openTextSearch: () => setTextSearchOpen(true),
+    }).forEach((command) => registry.register(command));
 
     workbenchNavigationHistoryCommands({
       shortcut,
