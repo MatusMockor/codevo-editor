@@ -7386,6 +7386,32 @@ export function useWorkbenchController(
       workspaceRoot,
     },
   });
+  const frameworkIntelligenceProviders = useMemo(
+    () => ({
+      provideBladeCodeActions,
+      provideBladeCompletions,
+      provideBladeDefinition,
+      provideLatteCompletions,
+      provideLatteDefinition,
+      provideNeonCompletions,
+      provideNeonDefinition,
+      provideNettePhpLinkCompletions,
+      provideNettePhpLinkDefinition,
+      isPhpFrameworkStringCompletionContext,
+    }),
+    [
+      isPhpFrameworkStringCompletionContext,
+      provideBladeCodeActions,
+      provideBladeCompletions,
+      provideBladeDefinition,
+      provideLatteCompletions,
+      provideLatteDefinition,
+      provideNeonCompletions,
+      provideNeonDefinition,
+      provideNettePhpLinkCompletions,
+      provideNettePhpLinkDefinition,
+    ],
+  );
 
   const goToPhpMethodCallDefinition = useCallback(
     async (
@@ -12438,6 +12464,7 @@ export function useWorkbenchController(
     previewFile,
     previewPath,
     applyPhpCodeActionNewFile,
+    frameworkIntelligenceProviders,
     provideBladeCodeActions,
     provideBladeCompletions,
     provideBladeDefinition,

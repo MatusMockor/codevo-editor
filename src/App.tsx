@@ -1330,17 +1330,8 @@ function App() {
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
-            provideBladeCodeActions={workbench.provideBladeCodeActions}
-            provideBladeCompletions={workbench.provideBladeCompletions}
-            provideBladeDefinition={workbench.provideBladeDefinition}
-            provideLatteCompletions={workbench.provideLatteCompletions}
-            provideLatteDefinition={workbench.provideLatteDefinition}
-            provideNeonCompletions={workbench.provideNeonCompletions}
-            provideNeonDefinition={workbench.provideNeonDefinition}
-            provideNettePhpLinkDefinition={workbench.provideNettePhpLinkDefinition}
-            provideNettePhpLinkCompletions={workbench.provideNettePhpLinkCompletions}
-            isPhpFrameworkStringCompletionContext={
-              workbench.isPhpFrameworkStringCompletionContext
+            frameworkIntelligenceProviders={
+              workbench.frameworkIntelligenceProviders
             }
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
