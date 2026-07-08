@@ -79,6 +79,7 @@ import {
 } from "./useWorkbenchLanguageNavigation";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
+import { useLanguageServerDiagnosticsSubscriptions } from "./useLanguageServerDiagnosticsSubscriptions";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
 import {
   applyLanguageServerTextEdits,
@@ -175,6 +176,7 @@ import {
   languageServerDiagnosticNoticeMessage,
   languageServerDiagnosticNoticeSeverity,
   type LanguageServerDiagnostic,
+  type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import {
@@ -250,7 +252,6 @@ import {
   isLanguageServerActive,
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
-  type UnsubscribeFn,
 } from "../domain/languageServerRuntime";
 import {
   cachedLanguageServerRuntimeStatusForRoot,
@@ -788,6 +789,13 @@ export function useWorkbenchController(
     options.diagnosticsFlushScheduler ??
       animationFrameDiagnosticsFlushScheduler(),
   );
+  const createDiagnosticsCoalescer = useCallback(
+    (
+      sink: (event: LanguageServerDiagnosticEvent) => void,
+      scheduler: DiagnosticsFlushScheduler,
+    ) => new DiagnosticsCoalescer(sink, scheduler),
+    [],
+  );
   const javaScriptTypeScriptDocumentVersionsRef = useRef<Record<string, number>>(
     {},
   );
@@ -1227,6 +1235,12 @@ export function useWorkbenchController(
       reportLanguageServerError(error);
     },
     [isUnknownDocumentForUnsyncedPath, reportLanguageServerError],
+  );
+  const reportJavaScriptTypeScriptLanguageServerError = useCallback(
+    (error: unknown) => {
+      reportError("JavaScript/TypeScript", error);
+    },
+    [reportError],
   );
 
   // Records a PHP completion round-trip latency reported by the Monaco
@@ -8381,117 +8395,20 @@ export function useWorkbenchController(
     };
   }, [handleManagedPhpactorInstallCompletion, phpToolGateway, reportError]);
 
-  useEffect(() => {
-    let active = true;
-    let unsubscribe: UnsubscribeFn | null = null;
-    const coalescer = new DiagnosticsCoalescer(
-      applyLanguageServerDiagnostics,
-      diagnosticsFlushSchedulerRef.current,
-    );
-    languageServerDiagnosticsCoalescerRef.current = coalescer;
-
-    languageServerDiagnosticsGateway
-      .subscribeDiagnostics((event) => {
-        if (!active) {
-          return;
-        }
-
-        coalescer.enqueue(event);
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribe = dispose;
-      })
-      .catch((error) => {
-        if (
-          !active ||
-          (workspaceRoot &&
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot))
-        ) {
-          return;
-        }
-
-        reportLanguageServerError(error);
-      });
-
-    // The subscription (and its coalescer) is re-established per workspace root.
-    // Disposing the coalescer here only discards events buffered in the current
-    // frame for the root being switched AWAY from; those belong to the now
-    // background tab (filtered by the sink guards anyway) and the active tab's
-    // server re-publishes its own diagnostics, so no active-view diagnostic is
-    // lost. The buffer is flushed once per frame while a root stays active.
-    return () => {
-      active = false;
-      unsubscribe?.();
-      coalescer.dispose();
-      if (languageServerDiagnosticsCoalescerRef.current === coalescer) {
-        languageServerDiagnosticsCoalescerRef.current = null;
-      }
-    };
-  }, [
-    applyLanguageServerDiagnostics,
+  useLanguageServerDiagnosticsSubscriptions({
+    workspaceRoot,
+    currentWorkspaceRootRef,
+    diagnosticsFlushSchedulerRef,
+    languageServerDiagnosticsCoalescerRef,
+    javaScriptTypeScriptDiagnosticsCoalescerRef,
     languageServerDiagnosticsGateway,
-    reportLanguageServerError,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    let active = true;
-    let unsubscribe: UnsubscribeFn | null = null;
-    const coalescer = new DiagnosticsCoalescer(
-      applyJavaScriptTypeScriptLanguageServerDiagnostics,
-      diagnosticsFlushSchedulerRef.current,
-    );
-    javaScriptTypeScriptDiagnosticsCoalescerRef.current = coalescer;
-
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway
-      .subscribeDiagnostics((event) => {
-        if (!active) {
-          return;
-        }
-
-        coalescer.enqueue(event);
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribe = dispose;
-      })
-      .catch((error) => {
-        if (
-          !active ||
-          (workspaceRoot &&
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot))
-        ) {
-          return;
-        }
-
-        reportError("JavaScript/TypeScript", error);
-      });
-
-    // See the PHP diagnostics effect: the coalescer is re-established per root
-    // and only discards the current frame's buffer for the switched-away root.
-    return () => {
-      active = false;
-      unsubscribe?.();
-      coalescer.dispose();
-      if (javaScriptTypeScriptDiagnosticsCoalescerRef.current === coalescer) {
-        javaScriptTypeScriptDiagnosticsCoalescerRef.current = null;
-      }
-    };
-  }, [
-    applyJavaScriptTypeScriptLanguageServerDiagnostics,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-    reportError,
-    workspaceRoot,
-  ]);
+    createDiagnosticsCoalescer,
+    applyLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnostics,
+    reportLanguageServerError,
+    reportJavaScriptTypeScriptLanguageServerError,
+  });
 
   useEffect(() => {
     if (
