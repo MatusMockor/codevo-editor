@@ -1,5 +1,6 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { WorkbenchNotice } from "./workbenchNotice";
+import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
 import {
   nextProblemLocation,
   previousProblemLocation,
@@ -404,14 +405,5 @@ export function useWorkbenchNavigation(
     goToNextProblem,
     goToPreviousProblem,
     readNavigationFileContent,
-  };
-}
-
-function editorPositionFromProjectSymbol(
-  symbol: ProjectSymbolSearchResult,
-): EditorPosition {
-  return {
-    column: Math.max(1, Number(symbol.column)),
-    lineNumber: Math.max(1, Number(symbol.lineNumber)),
   };
 }

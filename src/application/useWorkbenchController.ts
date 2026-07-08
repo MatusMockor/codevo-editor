@@ -24,6 +24,10 @@ import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMe
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
+import {
+  bestIndexedSymbolMatch,
+  editorPositionFromProjectSymbol,
+} from "./projectSymbolNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -334,7 +338,6 @@ import {
 } from "../domain/phpImportsOrganizer";
 import type {
   ProjectSymbolSearchGateway,
-  ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
@@ -10798,52 +10801,6 @@ function isBlockedByManuallyCollapsedDirectory(
   }
 
   return false;
-}
-
-function bestIndexedSymbolMatch(
-  symbols: ProjectSymbolSearchResult[],
-  query: string,
-  activePath: string,
-): ProjectSymbolSearchResult | null {
-  const normalizedQuery = query.toLowerCase();
-  const exactMatchOutsideActiveFile = symbols.find(
-    (symbol) =>
-      symbol.path !== activePath &&
-      isExactProjectSymbolMatch(symbol, normalizedQuery),
-  );
-
-  if (exactMatchOutsideActiveFile) {
-    return exactMatchOutsideActiveFile;
-  }
-
-  const exactMatch = symbols.find((symbol) =>
-    isExactProjectSymbolMatch(symbol, normalizedQuery),
-  );
-
-  if (exactMatch) {
-    return exactMatch;
-  }
-
-  return null;
-}
-
-function isExactProjectSymbolMatch(
-  symbol: ProjectSymbolSearchResult,
-  normalizedQuery: string,
-): boolean {
-  return (
-    symbol.name.toLowerCase() === normalizedQuery ||
-    symbol.fullyQualifiedName.toLowerCase() === normalizedQuery
-  );
-}
-
-function editorPositionFromProjectSymbol(
-  symbol: ProjectSymbolSearchResult,
-): EditorPosition {
-  return {
-    column: Math.max(1, Number(symbol.column)),
-    lineNumber: Math.max(1, Number(symbol.lineNumber)),
-  };
 }
 
 function shortPhpName(className: string): string {
