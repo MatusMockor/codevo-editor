@@ -65,6 +65,7 @@ import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
 import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
 import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
 import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
+import { usePhpLaravelMorphMapResolver } from "./usePhpLaravelMorphMapResolver";
 import { usePhpExpressionTypeResolver } from "./usePhpExpressionTypeResolver";
 import { usePhpLaravelRelationResolver } from "./usePhpLaravelRelationResolver";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
@@ -281,7 +282,6 @@ import {
   phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeFromExpression,
-  phpLaravelMorphMapEntriesFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
 import {
@@ -481,6 +481,7 @@ export function useWorkbenchController(
     useState<WorkspaceDescriptor | null>(null);
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
   const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
+  const resetPhpLaravelMorphMapModelTypeCacheRef = useRef<() => void>(() => {});
   // One detection pass per workspace: the active provider set and the exclusive
   // profile ("laravel" | "nette" | "generic") are derived from the same result,
   // so they can never disagree (no second source of truth).
@@ -843,9 +844,6 @@ export function useWorkbenchController(
   >(null);
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
-  const phpLaravelMorphMapModelTypeCacheRef = useRef<
-    Record<string, string | null>
-  >({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
@@ -4277,7 +4275,7 @@ export function useWorkbenchController(
       pinDocument(activeDocument.path);
       if (activeDocument.language === "php") {
         phpFrameworkBindingCacheRef.current = {};
-        phpLaravelMorphMapModelTypeCacheRef.current = {};
+        resetPhpLaravelMorphMapModelTypeCacheRef.current();
         updateLocalPhpDiagnostics(
           activeDocument.path,
           localPhpDiagnosticsFromSource(content, []),
@@ -4904,93 +4902,20 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const resolvePhpLaravelProjectMorphMapModelType =
-    useCallback(async (): Promise<string | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !isLaravelFrameworkActive ||
-        !requestedRoot ||
-        !workspaceDescriptor?.php ||
-        !isRequestedRootActive()
-      ) {
-        return null;
-      }
-
-      const cacheKey = `${requestedRoot}:${activePhpFrameworkProviderSignature}`;
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          phpLaravelMorphMapModelTypeCacheRef.current,
-          cacheKey,
-        )
-      ) {
-        return phpLaravelMorphMapModelTypeCacheRef.current[cacheKey] ?? null;
-      }
-
-      const modelTypes = new Set<string>();
-      const searchResults = await Promise.all(
-        ["morphMap", "enforceMorphMap"].map((query) =>
-          textSearch.searchText(requestedRoot, query, 200),
-        ),
-      );
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      const visitedPaths = new Set<string>();
-
-      for (const result of searchResults.flat()) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
-
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          for (const entry of phpLaravelMorphMapEntriesFromSource(content)) {
-            modelTypes.add(entry.modelClassName.replace(/^\\+/, ""));
-          }
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          continue;
-        }
-      }
-
-      const modelType =
-        modelTypes.size === 1 ? (Array.from(modelTypes)[0] ?? null) : null;
-
-      if (!isRequestedRootActive()) {
-        return null;
-      }
-
-      phpLaravelMorphMapModelTypeCacheRef.current[cacheKey] = modelType;
-
-      return modelType;
-    }, [
-      activePhpFrameworkProviderSignature,
-      isLaravelFrameworkActive,
-      readNavigationFileContent,
-      textSearch,
-      workspaceDescriptor,
-      workspaceRoot,
-    ]);
+  const {
+    resetPhpLaravelMorphMapModelTypeCache,
+    resolvePhpLaravelProjectMorphMapModelType,
+  } = usePhpLaravelMorphMapResolver({
+    activePhpFrameworkProviderSignature,
+    currentWorkspaceRootRef,
+    isLaravelFrameworkActive,
+    readNavigationFileContent,
+    textSearch,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
+  resetPhpLaravelMorphMapModelTypeCacheRef.current =
+    resetPhpLaravelMorphMapModelTypeCache;
 
   const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
     (rootPath: string): void => {
@@ -5793,7 +5718,7 @@ export function useWorkbenchController(
     phpClassSourcePathCacheRef.current = {};
     resetPhpClassMemberCacheRef.current();
     phpFrameworkBindingCacheRef.current = {};
-    phpLaravelMorphMapModelTypeCacheRef.current = {};
+    resetPhpLaravelMorphMapModelTypeCache();
     invalidateFrameworkTargetCache();
     resetPhpFrameworkSourceRegistries();
     resetBladeIntelligenceCaches();
