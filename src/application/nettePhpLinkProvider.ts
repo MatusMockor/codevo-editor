@@ -19,7 +19,7 @@ import {
   latteProviderRequestContext,
 } from "./latteProviderRequestContext";
 
-export async function provideNettePhpLinkDefinition(
+export async function providePhpPresenterLinkDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
@@ -63,7 +63,18 @@ export async function provideNettePhpLinkDefinition(
   );
 }
 
-export async function provideNettePhpLinkCompletions(
+/**
+ * @deprecated Use {@link providePhpPresenterLinkDefinition}.
+ */
+export async function provideNettePhpLinkDefinition(
+  options: LatteProviderFlowFactoryOptions,
+  source: string,
+  offset: number,
+): Promise<boolean> {
+  return providePhpPresenterLinkDefinition(options, source, offset);
+}
+
+export async function providePhpPresenterLinkCompletions(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
@@ -95,4 +106,15 @@ export async function provideNettePhpLinkCompletions(
     nettePresenterLinkCompletionContext(options, request),
     linkCompletion,
   );
+}
+
+/**
+ * @deprecated Use {@link providePhpPresenterLinkCompletions}.
+ */
+export async function provideNettePhpLinkCompletions(
+  options: LatteProviderFlowFactoryOptions,
+  source: string,
+  offset: number,
+): Promise<LatteCompletionItem[] | null> {
+  return providePhpPresenterLinkCompletions(options, source, offset);
 }

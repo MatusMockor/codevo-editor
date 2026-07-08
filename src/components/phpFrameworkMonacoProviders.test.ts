@@ -9,7 +9,7 @@ describe("php framework Monaco providers", () => {
   it("lets Nette presenter links handle definitions before generic framework strings", async () => {
     const source = "<?php\n$this->link('Product:show');";
     const context = providerContext({
-      provideNettePhpLinkDefinition: vi.fn(async () => true),
+      providePhpPresenterLinkDefinition: vi.fn(async () => true),
       providePhpFrameworkDefinition: vi.fn(async () => true),
     });
 
@@ -20,7 +20,7 @@ describe("php framework Monaco providers", () => {
         positionAt(source, source.indexOf("Product")),
       ),
     ).resolves.toBe(true);
-    expect(context.provideNettePhpLinkDefinition).toHaveBeenCalledWith(
+    expect(context.providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       source,
       source.indexOf("Product"),
     );
@@ -31,7 +31,7 @@ describe("php framework Monaco providers", () => {
     const source = "<?php\n$value = config('app.name');";
     const offset = source.indexOf("app.name");
     const context = providerContext({
-      provideNettePhpLinkDefinition: vi.fn(async () => false),
+      providePhpPresenterLinkDefinition: vi.fn(async () => false),
       providePhpFrameworkDefinition: vi.fn(async () => true),
     });
 

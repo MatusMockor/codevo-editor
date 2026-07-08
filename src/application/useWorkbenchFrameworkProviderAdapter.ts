@@ -19,9 +19,14 @@ export function useWorkbenchFrameworkProviderAdapter(
       provideLatteDefinition: intelligence.provideLatteDefinition,
       provideNeonCompletions: intelligence.provideNeonCompletions,
       provideNeonDefinition: intelligence.provideNeonDefinition,
+      providePhpPresenterLinkCompletions:
+        intelligence.providePhpPresenterLinkCompletions,
+      providePhpPresenterLinkDefinition:
+        intelligence.providePhpPresenterLinkDefinition,
       provideNettePhpLinkCompletions:
-        intelligence.provideNettePhpLinkCompletions,
-      provideNettePhpLinkDefinition: intelligence.provideNettePhpLinkDefinition,
+        intelligence.providePhpPresenterLinkCompletions,
+      provideNettePhpLinkDefinition:
+        intelligence.providePhpPresenterLinkDefinition,
       isPhpFrameworkStringCompletionContext:
         intelligence.isPhpFrameworkStringCompletionContext,
     }),
@@ -34,8 +39,8 @@ export function useWorkbenchFrameworkProviderAdapter(
       intelligence.provideLatteDefinition,
       intelligence.provideNeonCompletions,
       intelligence.provideNeonDefinition,
-      intelligence.provideNettePhpLinkCompletions,
-      intelligence.provideNettePhpLinkDefinition,
+      intelligence.providePhpPresenterLinkCompletions,
+      intelligence.providePhpPresenterLinkDefinition,
     ],
   );
 }

@@ -22,8 +22,8 @@ import {
   provideLatteCompletions as provideLatteCompletionsFlow,
 } from "./latteCompletionProvider";
 import {
-  provideNettePhpLinkCompletions as provideNettePhpLinkCompletionsFlow,
-  provideNettePhpLinkDefinition as provideNettePhpLinkDefinitionFlow,
+  providePhpPresenterLinkCompletions as providePhpPresenterLinkCompletionsFlow,
+  providePhpPresenterLinkDefinition as providePhpPresenterLinkDefinitionFlow,
 } from "./nettePhpLinkProvider";
 
 export interface LatteProviderFlows {
@@ -32,10 +32,24 @@ export interface LatteProviderFlows {
     position: EditorPosition,
   ): Promise<LatteCompletionItem[]>;
   provideLatteDefinition(source: string, offset: number): Promise<boolean>;
+  providePhpPresenterLinkCompletions(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletionItem[] | null>;
+  providePhpPresenterLinkDefinition(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkCompletions}.
+   */
   provideNettePhpLinkCompletions(
     source: string,
     offset: number,
   ): Promise<LatteCompletionItem[] | null>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkDefinition}.
+   */
   provideNettePhpLinkDefinition(
     source: string,
     offset: number,
@@ -77,14 +91,19 @@ export function createLatteIntelligence(
 export function createLatteProviderFlows(
   options: LatteProviderFlowFactoryOptions,
 ): LatteProviderFlows {
+  const providePhpPresenterLinkCompletions = (source: string, offset: number) =>
+    providePhpPresenterLinkCompletionsFlow(options, source, offset);
+  const providePhpPresenterLinkDefinition = (source: string, offset: number) =>
+    providePhpPresenterLinkDefinitionFlow(options, source, offset);
+
   return {
     provideLatteCompletions: (source, position) =>
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset) =>
       provideLatteDefinitionFlow(options, source, offset),
-    provideNettePhpLinkCompletions: (source, offset) =>
-      provideNettePhpLinkCompletionsFlow(options, source, offset),
-    provideNettePhpLinkDefinition: (source, offset) =>
-      provideNettePhpLinkDefinitionFlow(options, source, offset),
+    providePhpPresenterLinkCompletions,
+    providePhpPresenterLinkDefinition,
+    provideNettePhpLinkCompletions: providePhpPresenterLinkCompletions,
+    provideNettePhpLinkDefinition: providePhpPresenterLinkDefinition,
   };
 }

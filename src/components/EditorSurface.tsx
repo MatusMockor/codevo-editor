@@ -374,8 +374,8 @@ function EditorSurfaceComponent({
     latteDefinitionRef,
     neonCompletionsRef,
     neonDefinitionRef,
-    nettePhpLinkCompletionsRef,
-    nettePhpLinkDefinitionRef,
+    phpPresenterLinkCompletionsRef,
+    phpPresenterLinkDefinitionRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
   } = useEditorSurfaceFrameworkProviderRefs({
@@ -835,10 +835,10 @@ function EditorSurfaceComponent({
         neonCompletionsRef.current(source, position),
       provideNeonDefinition: (source, offset) =>
         neonDefinitionRef.current(source, offset),
-      provideNettePhpLinkDefinition: (source, offset) =>
-        nettePhpLinkDefinitionRef.current(source, offset),
-      provideNettePhpLinkCompletions: (source, offset) =>
-        nettePhpLinkCompletionsRef.current(source, offset),
+      providePhpPresenterLinkDefinition: (source, offset) =>
+        phpPresenterLinkDefinitionRef.current(source, offset),
+      providePhpPresenterLinkCompletions: (source, offset) =>
+        phpPresenterLinkCompletionsRef.current(source, offset),
       isPhpFrameworkStringCompletionContext: (source, position) =>
         phpFrameworkStringCompletionContextRef.current(source, position),
       providePhpCodeActions: (source, range) =>

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  phpNettePresenterLinkCompletionSuggestions,
-  provideNettePhpPresenterLinkDefinition,
-  type NettePhpLinkMonacoProviderContext,
+  phpPresenterLinkCompletionSuggestions,
+  providePhpPresenterLinkDefinition,
+  type PhpPresenterLinkMonacoProviderContext,
 } from "./nettePhpLinkMonacoProviders";
 import type { LatteCompletion } from "./templateLanguageMonacoProviders";
 
@@ -10,17 +10,17 @@ describe("nette PHP link Monaco providers", () => {
   it("delegates presenter-link definition with the current PHP source offset", async () => {
     const source = "<?php\n$this->link('Product:show');";
     const context = providerContext({
-      provideNettePhpLinkDefinition: vi.fn(async () => true),
+      providePhpPresenterLinkDefinition: vi.fn(async () => true),
     });
 
-    const handled = await provideNettePhpPresenterLinkDefinition(
+    const handled = await providePhpPresenterLinkDefinition(
       context,
       model(source),
       positionAt(source, source.indexOf("Product")),
     );
 
     expect(handled).toBe(true);
-    expect(context.provideNettePhpLinkDefinition).toHaveBeenCalledWith(
+    expect(context.providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       source,
       source.indexOf("Product"),
     );
@@ -31,7 +31,7 @@ describe("nette PHP link Monaco providers", () => {
     const replaceStart = source.indexOf("Pro");
     const replaceEnd = replaceStart + "Pro".length;
     const context = providerContext({
-      provideNettePhpLinkCompletions: vi.fn(async () => [
+      providePhpPresenterLinkCompletions: vi.fn(async () => [
         {
           detail: "App\\Presentation\\ProductPresenter::renderShow",
           insertText: "Product:show",
@@ -43,7 +43,7 @@ describe("nette PHP link Monaco providers", () => {
       ]),
     });
 
-    const suggestions = await phpNettePresenterLinkCompletionSuggestions(
+    const suggestions = await phpPresenterLinkCompletionSuggestions(
       monaco(),
       context,
       model(source),
@@ -53,7 +53,7 @@ describe("nette PHP link Monaco providers", () => {
       { rootPath: "/workspace", sessionId: 7 },
     );
 
-    expect(context.provideNettePhpLinkCompletions).toHaveBeenCalledWith(
+    expect(context.providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
       source,
       replaceEnd,
     );
@@ -77,10 +77,10 @@ describe("nette PHP link Monaco providers", () => {
   it("falls through without calling Nette completion outside presenter-link strings", async () => {
     const source = "<?php\n$label = 'Product:show';";
     const context = providerContext({
-      provideNettePhpLinkCompletions: vi.fn(async () => []),
+      providePhpPresenterLinkCompletions: vi.fn(async () => []),
     });
 
-    const suggestions = await phpNettePresenterLinkCompletionSuggestions(
+    const suggestions = await phpPresenterLinkCompletionSuggestions(
       monaco(),
       context,
       model(source),
@@ -91,7 +91,26 @@ describe("nette PHP link Monaco providers", () => {
     );
 
     expect(suggestions).toBeNull();
-    expect(context.provideNettePhpLinkCompletions).not.toHaveBeenCalled();
+    expect(context.providePhpPresenterLinkCompletions).not.toHaveBeenCalled();
+  });
+
+  it("keeps the temporary Nette callback aliases working", async () => {
+    const source = "<?php\n$this->link('Product:show');";
+    const context = providerContext({
+      provideNettePhpLinkDefinition: vi.fn(async () => true),
+    });
+
+    await expect(
+      providePhpPresenterLinkDefinition(
+        context,
+        model(source),
+        positionAt(source, source.indexOf("Product")),
+      ),
+    ).resolves.toBe(true);
+    expect(context.provideNettePhpLinkDefinition).toHaveBeenCalledWith(
+      source,
+      source.indexOf("Product"),
+    );
   });
 
   it("drops stale async completions without reporting an error", async () => {
@@ -102,14 +121,16 @@ describe("nette PHP link Monaco providers", () => {
       getRuntimeStatus: () =>
         ({
           capabilities: {},
-          kind: "running",
-          rootPath: "/workspace",
-          sessionId,
-        }) as ReturnType<NettePhpLinkMonacoProviderContext["getRuntimeStatus"]>,
-      provideNettePhpLinkCompletions: vi.fn(async () => completion.promise),
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId,
+      }) as ReturnType<
+        PhpPresenterLinkMonacoProviderContext["getRuntimeStatus"]
+      >,
+      providePhpPresenterLinkCompletions: vi.fn(async () => completion.promise),
     });
 
-    const suggestionsPromise = phpNettePresenterLinkCompletionSuggestions(
+    const suggestionsPromise = phpPresenterLinkCompletionSuggestions(
       monaco(),
       context,
       model(source),
@@ -133,23 +154,25 @@ describe("nette PHP link Monaco providers", () => {
 });
 
 function providerContext(
-  overrides: Partial<NettePhpLinkMonacoProviderContext> = {},
-): NettePhpLinkMonacoProviderContext {
+  overrides: Partial<PhpPresenterLinkMonacoProviderContext> = {},
+): PhpPresenterLinkMonacoProviderContext {
   return {
     getActiveDocument: () => ({
-        content: "",
-        language: "php",
-        name: "ProductPresenter.php",
-        path: "/workspace/app/Presenters/ProductPresenter.php",
-        savedContent: "",
-      }),
+      content: "",
+      language: "php",
+      name: "ProductPresenter.php",
+      path: "/workspace/app/Presenters/ProductPresenter.php",
+      savedContent: "",
+    }),
     getRuntimeStatus: () =>
       ({
         capabilities: {},
         kind: "running",
         rootPath: "/workspace",
         sessionId: 7,
-      }) as ReturnType<NettePhpLinkMonacoProviderContext["getRuntimeStatus"]>,
+      }) as ReturnType<
+        PhpPresenterLinkMonacoProviderContext["getRuntimeStatus"]
+      >,
     getWorkspaceRoot: () => "/workspace",
     reportError: vi.fn(),
     ...overrides,

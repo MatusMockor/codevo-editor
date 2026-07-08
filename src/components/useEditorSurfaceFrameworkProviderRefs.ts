@@ -28,10 +28,26 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     position: EditorPosition,
   ): Promise<NeonCompletion[]>;
   provideNeonDefinition?(source: string, offset: number): Promise<boolean>;
+  providePhpPresenterLinkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  providePhpPresenterLinkCompletions?(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletion[] | null>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkDefinition?(
     source: string,
     offset: number,
   ): Promise<boolean>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkCompletions?(
     source: string,
     offset: number,
@@ -82,12 +98,14 @@ export function useEditorSurfaceFrameworkProviderRefs({
   const resolvedProvideNeonDefinition =
     frameworkIntelligenceProviders?.provideNeonDefinition ??
     noopPhpFrameworkDefinition;
-  const resolvedProvideNettePhpLinkDefinition =
+  const resolvedProvidePhpPresenterLinkDefinition =
+    frameworkIntelligenceProviders?.providePhpPresenterLinkDefinition ??
     frameworkIntelligenceProviders?.provideNettePhpLinkDefinition ??
     noopPhpFrameworkDefinition;
-  const resolvedProvideNettePhpLinkCompletions =
+  const resolvedProvidePhpPresenterLinkCompletions =
+    frameworkIntelligenceProviders?.providePhpPresenterLinkCompletions ??
     frameworkIntelligenceProviders?.provideNettePhpLinkCompletions ??
-    noopNettePhpLinkCompletions;
+    noopPhpPresenterLinkCompletions;
   const resolvedIsPhpFrameworkStringCompletionContext =
     frameworkIntelligenceProviders?.isPhpFrameworkStringCompletionContext ??
     noopPhpFrameworkStringCompletionContext;
@@ -99,11 +117,11 @@ export function useEditorSurfaceFrameworkProviderRefs({
   const latteDefinitionRef = useRef(resolvedProvideLatteDefinition);
   const neonCompletionsRef = useRef(resolvedProvideNeonCompletions);
   const neonDefinitionRef = useRef(resolvedProvideNeonDefinition);
-  const nettePhpLinkDefinitionRef = useRef(
-    resolvedProvideNettePhpLinkDefinition,
+  const phpPresenterLinkDefinitionRef = useRef(
+    resolvedProvidePhpPresenterLinkDefinition,
   );
-  const nettePhpLinkCompletionsRef = useRef(
-    resolvedProvideNettePhpLinkCompletions,
+  const phpPresenterLinkCompletionsRef = useRef(
+    resolvedProvidePhpPresenterLinkCompletions,
   );
   const phpFrameworkStringCompletionContextRef = useRef(
     resolvedIsPhpFrameworkStringCompletionContext,
@@ -141,12 +159,14 @@ export function useEditorSurfaceFrameworkProviderRefs({
   }, [resolvedProvideNeonDefinition]);
 
   useEffect(() => {
-    nettePhpLinkDefinitionRef.current = resolvedProvideNettePhpLinkDefinition;
-  }, [resolvedProvideNettePhpLinkDefinition]);
+    phpPresenterLinkDefinitionRef.current =
+      resolvedProvidePhpPresenterLinkDefinition;
+  }, [resolvedProvidePhpPresenterLinkDefinition]);
 
   useEffect(() => {
-    nettePhpLinkCompletionsRef.current = resolvedProvideNettePhpLinkCompletions;
-  }, [resolvedProvideNettePhpLinkCompletions]);
+    phpPresenterLinkCompletionsRef.current =
+      resolvedProvidePhpPresenterLinkCompletions;
+  }, [resolvedProvidePhpPresenterLinkCompletions]);
 
   useEffect(() => {
     phpFrameworkStringCompletionContextRef.current =
@@ -165,8 +185,10 @@ export function useEditorSurfaceFrameworkProviderRefs({
     latteDefinitionRef,
     neonCompletionsRef,
     neonDefinitionRef,
-    nettePhpLinkCompletionsRef,
-    nettePhpLinkDefinitionRef,
+    phpPresenterLinkCompletionsRef,
+    phpPresenterLinkDefinitionRef,
+    nettePhpLinkCompletionsRef: phpPresenterLinkCompletionsRef,
+    nettePhpLinkDefinitionRef: phpPresenterLinkDefinitionRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
   };
@@ -178,6 +200,6 @@ const noopPhpCodeActions = async (): Promise<PhpCodeActionDescriptor[]> => [];
 const noopBladeCompletions = async (): Promise<BladeCompletion[]> => [];
 const noopLatteCompletions = async (): Promise<LatteCompletion[]> => [];
 const noopNeonCompletions = async (): Promise<NeonCompletion[]> => [];
-const noopNettePhpLinkCompletions = async (): Promise<
+const noopPhpPresenterLinkCompletions = async (): Promise<
   LatteCompletion[] | null
 > => null;

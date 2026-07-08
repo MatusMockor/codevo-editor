@@ -17,20 +17,42 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 
-export interface NettePhpLinkMonacoProviderContext {
+export interface PhpPresenterLinkMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  providePhpPresenterLinkDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  providePhpPresenterLinkCompletions?(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletion[] | null>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkDefinition?(
     source: string,
     offset: number,
   ): Promise<boolean>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkCompletions?(
     source: string,
     offset: number,
   ): Promise<LatteCompletion[] | null>;
   reportError(error: unknown): void;
 }
+
+/**
+ * @deprecated Use {@link PhpPresenterLinkMonacoProviderContext}.
+ */
+export type NettePhpLinkMonacoProviderContext =
+  PhpPresenterLinkMonacoProviderContext;
 
 /**
  * Attempts Nette presenter-link navigation (`$this->link('Presenter:action')`,
@@ -42,12 +64,16 @@ export interface NettePhpLinkMonacoProviderContext {
  * isolation is enforced inside the controller callback and guarded here before
  * reporting errors.
  */
-export async function provideNettePhpPresenterLinkDefinition(
-  context: NettePhpLinkMonacoProviderContext,
+export async function providePhpPresenterLinkDefinition(
+  context: PhpPresenterLinkMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<boolean> {
-  if (!context.provideNettePhpLinkDefinition) {
+  const provideDefinition =
+    context.providePhpPresenterLinkDefinition ??
+    context.provideNettePhpLinkDefinition;
+
+  if (!provideDefinition) {
     return false;
   }
 
@@ -61,7 +87,7 @@ export async function provideNettePhpPresenterLinkDefinition(
   const offset = offsetAtMonacoPosition(source, position);
 
   try {
-    return await context.provideNettePhpLinkDefinition(source, offset);
+    return await provideDefinition(source, offset);
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);
@@ -72,6 +98,17 @@ export async function provideNettePhpPresenterLinkDefinition(
 }
 
 /**
+ * @deprecated Use {@link providePhpPresenterLinkDefinition}.
+ */
+export async function provideNettePhpPresenterLinkDefinition(
+  context: PhpPresenterLinkMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<boolean> {
+  return providePhpPresenterLinkDefinition(context, model, position);
+}
+
+/**
  * `$this->link('...')` / `->redirect(...)` / `->forward(...)` / ... presenter
  * link completion for a PHP document (Nette). The domain's pure
  * `nettePresenterLinkCompletionContextAt` check runs first (a single bounded
@@ -79,9 +116,9 @@ export async function provideNettePhpPresenterLinkDefinition(
  * `null` when the cursor is not on a link target or the active framework is not
  * Nette; returns an array (possibly empty) when Nette owns the context.
  */
-export async function phpNettePresenterLinkCompletionSuggestions(
+export async function phpPresenterLinkCompletionSuggestions(
   monaco: MonacoApi,
-  context: NettePhpLinkMonacoProviderContext,
+  context: PhpPresenterLinkMonacoProviderContext,
   model: MonacoModel,
   source: string,
   position: MonacoPosition,
@@ -94,16 +131,16 @@ export async function phpNettePresenterLinkCompletionSuggestions(
     offset,
     "php",
   );
+  const provideCompletions =
+    context.providePhpPresenterLinkCompletions ??
+    context.provideNettePhpLinkCompletions;
 
-  if (!linkCompletionContext || !context.provideNettePhpLinkCompletions) {
+  if (!linkCompletionContext || !provideCompletions) {
     return null;
   }
 
   try {
-    const completions = await context.provideNettePhpLinkCompletions(
-      source,
-      offset,
-    );
+    const completions = await provideCompletions(source, offset);
 
     if (completions === null) {
       return null;
@@ -123,4 +160,27 @@ export async function phpNettePresenterLinkCompletionSuggestions(
 
     return [];
   }
+}
+
+/**
+ * @deprecated Use {@link phpPresenterLinkCompletionSuggestions}.
+ */
+export async function phpNettePresenterLinkCompletionSuggestions(
+  monaco: MonacoApi,
+  context: PhpPresenterLinkMonacoProviderContext,
+  model: MonacoModel,
+  source: string,
+  position: MonacoPosition,
+  range: Monaco.IRange,
+  request: { rootPath: string; sessionId: number | null },
+): Promise<Monaco.languages.CompletionItem[] | null> {
+  return phpPresenterLinkCompletionSuggestions(
+    monaco,
+    context,
+    model,
+    source,
+    position,
+    range,
+    request,
+  );
 }

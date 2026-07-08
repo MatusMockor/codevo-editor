@@ -11213,12 +11213,12 @@ describe("registerLanguageServerMonacoProviders nette php link definition", () =
     const registered = createRegisteredProviders();
     const source = "<?php\n$this->link('Product:show');\n";
     const offset = source.indexOf("Product:show") + 2;
-    const provideNettePhpLinkDefinition = vi.fn(async () => true);
+    const providePhpPresenterLinkDefinition = vi.fn(async () => true);
     const definitionGateway = featuresGateway();
     const context = providerContext({
       activeDocument: document(),
       featuresGateway: definitionGateway,
-      provideNettePhpLinkDefinition,
+      providePhpPresenterLinkDefinition,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -11228,7 +11228,10 @@ describe("registerLanguageServerMonacoProviders nette php link definition", () =
         positionForOffset(source, offset),
       ),
     ).resolves.toBeNull();
-    expect(provideNettePhpLinkDefinition).toHaveBeenCalledWith(source, offset);
+    expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
+      source,
+      offset,
+    );
     expect(definitionGateway.definition).not.toHaveBeenCalled();
   });
 
@@ -11259,7 +11262,7 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     const registered = createRegisteredProviders();
     const source = "<?php\n$this->link('Pro');\n";
     const offset = source.indexOf("Pro") + 2;
-    const provideNettePhpLinkCompletions = vi.fn(async () => [
+    const providePhpPresenterLinkCompletions = vi.fn(async () => [
       {
         detail: "Nette presenter action",
         insertText: "Product:show",
@@ -11273,7 +11276,7 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     const context = providerContext({
       activeDocument: document(),
       featuresGateway: gateway,
-      provideNettePhpLinkCompletions,
+      providePhpPresenterLinkCompletions,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -11282,7 +11285,10 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
       positionForOffset(source, offset),
     );
 
-    expect(provideNettePhpLinkCompletions).toHaveBeenCalledWith(source, offset);
+    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
+      source,
+      offset,
+    );
     expect(gateway.completion).not.toHaveBeenCalled();
     expect(result.suggestions).toEqual([
       expect.objectContaining({
@@ -12022,6 +12028,12 @@ function providerContext(
     provideNeonDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonDefinition"]
     >;
+    providePhpPresenterLinkCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpPresenterLinkCompletions"]
+    >;
+    providePhpPresenterLinkDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpPresenterLinkDefinition"]
+    >;
     provideNettePhpLinkCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkCompletions"]
     >;
@@ -12081,6 +12093,10 @@ function providerContext(
     provideLatteDefinition: overrides.provideLatteDefinition,
     provideNeonCompletions: overrides.provideNeonCompletions,
     provideNeonDefinition: overrides.provideNeonDefinition,
+    providePhpPresenterLinkCompletions:
+      overrides.providePhpPresenterLinkCompletions,
+    providePhpPresenterLinkDefinition:
+      overrides.providePhpPresenterLinkDefinition,
     provideNettePhpLinkCompletions: overrides.provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition: overrides.provideNettePhpLinkDefinition,
     isPhpFrameworkStringCompletionContext:

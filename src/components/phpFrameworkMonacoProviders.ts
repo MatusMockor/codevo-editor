@@ -6,9 +6,9 @@ import {
   offsetAtMonacoPosition,
 } from "./phpMonacoDocumentContext";
 import {
-  phpNettePresenterLinkCompletionSuggestions,
-  provideNettePhpPresenterLinkDefinition,
-  type NettePhpLinkMonacoProviderContext,
+  phpPresenterLinkCompletionSuggestions,
+  providePhpPresenterLinkDefinition,
+  type PhpPresenterLinkMonacoProviderContext,
 } from "./nettePhpLinkMonacoProviders";
 
 type MonacoApi = typeof Monaco;
@@ -16,7 +16,7 @@ type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 
 export interface PhpFrameworkMonacoProviderContext
-  extends NettePhpLinkMonacoProviderContext {
+  extends PhpPresenterLinkMonacoProviderContext {
   isPhpFrameworkStringCompletionContext?(
     source: string,
     position: MonacoPosition,
@@ -49,8 +49,8 @@ export async function providePhpFrameworkDefinitionBeforeLsp(
   position: MonacoPosition,
 ): Promise<boolean> {
   if (
-    context.provideNettePhpLinkDefinition &&
-    (await provideNettePhpPresenterLinkDefinition(context, model, position))
+    presenterLinkDefinitionProvider(context) &&
+    (await providePhpPresenterLinkDefinition(context, model, position))
   ) {
     return true;
   }
@@ -71,7 +71,7 @@ export async function phpFrameworkCompletionSuggestions(
   range: Monaco.IRange,
   request: { rootPath: string; sessionId: number | null },
 ): Promise<Monaco.languages.CompletionItem[] | null> {
-  return phpNettePresenterLinkCompletionSuggestions(
+  return phpPresenterLinkCompletionSuggestions(
     monaco,
     context,
     model,
@@ -125,4 +125,13 @@ function frameworkStringLiteralDefinitionProvider(
   context: PhpFrameworkMonacoProviderContext,
 ) {
   return context.providePhpFrameworkDefinition ?? context.providePhpLaravelDefinition;
+}
+
+function presenterLinkDefinitionProvider(
+  context: PhpFrameworkMonacoProviderContext,
+) {
+  return (
+    context.providePhpPresenterLinkDefinition ??
+    context.provideNettePhpLinkDefinition
+  );
 }

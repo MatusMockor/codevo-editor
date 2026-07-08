@@ -75,10 +75,26 @@ export interface LatteIntelligence {
   ): Promise<LatteCompletionItem[]>;
   provideLatteDefinition(source: string, offset: number): Promise<boolean>;
   shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
+  providePhpPresenterLinkDefinition(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
+  providePhpPresenterLinkCompletions(
+    source: string,
+    offset: number,
+  ): Promise<LatteCompletionItem[] | null>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkDefinition(
     source: string,
     offset: number,
   ): Promise<boolean>;
+  /**
+   * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
+   * temporary compatibility alias while Nette-specific callers migrate.
+   */
   provideNettePhpLinkCompletions(
     source: string,
     offset: number,
