@@ -29,6 +29,7 @@ import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistory
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
+import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
@@ -6401,6 +6402,12 @@ export function useWorkbenchController(
       openTypeHierarchy,
       openReferencesPanel,
       openFileReferencesPanel,
+    }).forEach((command) => registry.register(command));
+
+    workbenchProblemNavigationCommands({
+      shortcut,
+      goToNextProblem,
+      goToPreviousProblem,
     }).forEach((command) => registry.register(command));
 
     workbenchEditorHistoryCommands({
