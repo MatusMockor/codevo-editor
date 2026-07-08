@@ -18,6 +18,7 @@ import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecyc
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
+import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
@@ -6735,60 +6736,13 @@ export function useWorkbenchController(
       },
     });
 
-    registry.register({
-      id: "git.stashChanges",
-      title: "Git: Stash Changes",
-      category: "Git",
-      shortcut: shortcut("git.stashChanges"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void openGitStashPanel();
-      },
-    });
-
-    registry.register({
-      id: "git.showStashes",
-      title: "Git: Show Stashes",
-      category: "Git",
-      shortcut: shortcut("git.showStashes"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void openGitStashPanel();
-      },
-    });
-
-    registry.register({
-      id: "git.switchBranch",
-      title: "Git: Switch Branch",
-      category: "Git",
-      shortcut: shortcut("git.switchBranch"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void openGitBranchPanel();
-      },
-    });
-
-    registry.register({
-      id: "git.newBranch",
-      title: "Git: New Branch",
-      category: "Git",
-      shortcut: shortcut("git.newBranch"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void createGitBranch();
-      },
-    });
-
-    registry.register({
-      id: "git.commit",
-      title: "Git: Commit",
-      category: "Git",
-      shortcut: shortcut("git.commit"),
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void commitGitChanges();
-      },
-    });
+    workbenchGitWorkflowCommands({
+      shortcut,
+      openGitStashPanel,
+      openGitBranchPanel,
+      createGitBranch,
+      commitGitChanges,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "editor.showCallHierarchy",
