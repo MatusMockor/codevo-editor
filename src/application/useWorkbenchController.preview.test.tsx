@@ -52854,7 +52854,7 @@ class SendShipmentNotification
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("partials.alert") + 1,
         );
@@ -52901,7 +52901,7 @@ class SendShipmentNotification
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("codevo-qa.partials.card") +
             "codevo-qa.partials.card".length,
@@ -53027,7 +53027,7 @@ class SendShipmentNotification
 
     let handled = false;
     await act(async () => {
-      handled = await getWorkbench().provideBladeDefinition(
+      handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
         bladeSource,
         bladeSource.indexOf("comments.show") + 1,
       );
@@ -53089,7 +53089,7 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
 
     let handled = false;
     await act(async () => {
-      handled = await getWorkbench().provideBladeDefinition(
+      handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
         bladeSource,
         bladeSource.indexOf("comments.show") + 1,
       );
@@ -53181,7 +53181,7 @@ class Comment extends Model
 
     let handled = false;
     await act(async () => {
-      handled = await getWorkbench().provideBladeDefinition(
+      handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
         bladeSource,
         bladeSource.indexOf("author") + 1,
       );
@@ -53230,7 +53230,7 @@ class Comment extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("forms.input") + 1,
         );
@@ -53274,7 +53274,7 @@ class Comment extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("alert") + 1,
         );
@@ -53322,7 +53322,7 @@ class Comment extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("alert") + 1,
         );
@@ -53365,7 +53365,7 @@ class Comment extends Model
 
       let handled = false;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("user-profile") + 1,
         );
@@ -53402,7 +53402,7 @@ class Comment extends Model
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("alert") + 1,
         );
@@ -53440,7 +53440,7 @@ class Comment extends Model
 
       let handled = true;
       await act(async () => {
-        handled = await getWorkbench().provideBladeDefinition(
+        handled = await getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("partials.missing") + 1,
         );
@@ -53488,7 +53488,7 @@ class Comment extends Model
 
       let definitionPromise: Promise<boolean> = Promise.resolve(false);
       await act(async () => {
-        definitionPromise = getWorkbench().provideBladeDefinition(
+        definitionPromise = getWorkbench().frameworkIntelligenceProviders.provideBladeDefinition(
           bladeSource,
           bladeSource.indexOf("partials.alert") + 1,
         );
@@ -53531,10 +53531,10 @@ class Comment extends Model
       });
 
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
           column: 5,
           lineNumber: 1,
         });
@@ -53592,10 +53592,10 @@ class Comment extends Model
       });
 
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
           column: bladeSource.indexOf("')") + 1,
           lineNumber: 1,
         });
@@ -53657,10 +53657,10 @@ class Comment extends Model
       });
 
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
           column: bladeSource.indexOf("\n") + 1,
           lineNumber: 1,
         });
@@ -53713,10 +53713,10 @@ class Comment extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("\n") + 1,
         lineNumber: 1,
       });
@@ -53773,10 +53773,10 @@ class Comment extends Model
 
     const completeComponents = async (): Promise<string[]> => {
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
           bladeSource,
           {
             column: bladeSource.indexOf("\n") + 1,
@@ -53867,10 +53867,10 @@ class CommentController
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$co") + "$co".length + 1,
         lineNumber: 1,
       });
@@ -53982,10 +53982,10 @@ class Comment extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
         lineNumber: 1,
       });
@@ -54103,10 +54103,10 @@ class Comment extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
         lineNumber: 1,
       });
@@ -54238,11 +54238,11 @@ class Invoice extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       const memberLine = "    {{ $invoice-> }}";
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: memberLine.indexOf("$invoice->") + "$invoice->".length + 1,
         lineNumber: 3,
       });
@@ -54348,10 +54348,10 @@ class Comment extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$comments->") + "$comments->".length + 1,
         lineNumber: 1,
       });
@@ -54480,10 +54480,10 @@ class Post extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
         lineNumber: 1,
       });
@@ -54562,10 +54562,10 @@ class CommentController
 
     const completeVariables = async () => {
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
           column: bladeSource.indexOf("$co") + "$co".length + 1,
           lineNumber: 1,
         });
@@ -54665,17 +54665,17 @@ class CommentController
       lineNumber: 1,
     };
     let firstPromise: Promise<
-      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+      Awaited<ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>>
     > = Promise.resolve([]);
     let secondPromise: Promise<
-      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+      Awaited<ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>>
     > = Promise.resolve([]);
     await act(async () => {
-      firstPromise = getWorkbench().provideBladeCompletions(
+      firstPromise = getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         position,
       );
-      secondPromise = getWorkbench().provideBladeCompletions(
+      secondPromise = getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         position,
       );
@@ -54693,10 +54693,10 @@ class CommentController
     ]);
 
     let first: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     let second: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       first = await firstPromise;
@@ -54748,10 +54748,10 @@ class CommentController
     });
 
     let completionsPromise: Promise<
-      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+      Awaited<ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>>
     > = Promise.resolve([]);
     await act(async () => {
-      completionsPromise = getWorkbench().provideBladeCompletions(bladeSource, {
+      completionsPromise = getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$comment->") + "$comment->".length + 1,
         lineNumber: 1,
       });
@@ -54774,7 +54774,7 @@ class CommentController
     ]);
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       completions = await completionsPromise;
@@ -54800,10 +54800,10 @@ class CommentController
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$e") + "$e".length + 1,
         lineNumber: 1,
       });
@@ -54834,10 +54834,10 @@ class CommentController
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("ro") + "ro".length + 1,
         lineNumber: 1,
       });
@@ -54943,10 +54943,10 @@ class Comment extends Model
 
     for (const position of memberContexts) {
       let completions: Awaited<
-        ReturnType<WorkbenchController["provideBladeCompletions"]>
+        ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
       > = [];
       await act(async () => {
-        completions = await getWorkbench().provideBladeCompletions(
+        completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
           bladeSource,
           position,
         );
@@ -55014,10 +55014,10 @@ class InvoiceController
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: bladeSource.indexOf("$") + "$".length + 1,
         lineNumber: 1,
       });
@@ -55117,10 +55117,10 @@ class Invoice extends Model
     });
 
     let variableCompletions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      variableCompletions = await getWorkbench().provideBladeCompletions(
+      variableCompletions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         {
           column: "  {{ $".length + 1,
@@ -55140,10 +55140,10 @@ class Invoice extends Model
     );
 
     let memberCompletions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      memberCompletions = await getWorkbench().provideBladeCompletions(
+      memberCompletions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         {
           column: "  {{ $invoice->".length + 1,
@@ -55219,10 +55219,10 @@ class ReportController
     });
 
     let variableCompletions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      variableCompletions = await getWorkbench().provideBladeCompletions(
+      variableCompletions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         {
           column: "  {{ $".length + 1,
@@ -55238,10 +55238,10 @@ class ReportController
     expect(rowVariable?.detail).toBe("foreach item");
 
     let memberCompletions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
-      memberCompletions = await getWorkbench().provideBladeCompletions(
+      memberCompletions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(
         bladeSource,
         {
           column: "  {{ $row->".length + 1,
@@ -55291,10 +55291,10 @@ class ReportController
     });
 
     let completionsPromise: Promise<
-      Awaited<ReturnType<WorkbenchController["provideBladeCompletions"]>>
+      Awaited<ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>>
     > = Promise.resolve([]);
     await act(async () => {
-      completionsPromise = getWorkbench().provideBladeCompletions(bladeSource, {
+      completionsPromise = getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: "  {{ $invoice->".length + 1,
         lineNumber: 2,
       });
@@ -55317,7 +55317,7 @@ class ReportController
     ]);
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       completions = await completionsPromise;
@@ -55514,11 +55514,11 @@ class WidgetPart extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       const memberLine = "    {{ $line-> }}";
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: memberLine.indexOf("$line->") + "$line->".length + 1,
         lineNumber: 3,
       });
@@ -55620,11 +55620,11 @@ class Node extends Model
     });
 
     let completions: Awaited<
-      ReturnType<WorkbenchController["provideBladeCompletions"]>
+      ReturnType<WorkbenchController["frameworkIntelligenceProviders"]["provideBladeCompletions"]>
     > = [];
     await act(async () => {
       const memberLine = "  {{ $node-> }}";
-      completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+      completions = await getWorkbench().frameworkIntelligenceProviders.provideBladeCompletions(bladeSource, {
         column: memberLine.indexOf("$node->") + "$node->".length + 1,
         lineNumber: 2,
       });
