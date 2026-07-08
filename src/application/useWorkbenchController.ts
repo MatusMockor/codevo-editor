@@ -93,6 +93,7 @@ import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
@@ -176,9 +177,6 @@ import {
   type LanguageServerDiagnostic,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
-import {
-  bladeLaravelReferenceDiagnostics,
-} from "../domain/laravelDiagnostics";
 import {
   DiagnosticsCoalescer,
   animationFrameDiagnosticsFlushScheduler,
@@ -842,7 +840,6 @@ export function useWorkbenchController(
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
-  const laravelDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
     ReturnType<typeof setTimeout>[]
   >([]);
@@ -5412,78 +5409,15 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const provideLaravelDiagnosticsForActiveDocument = useCallback(async () => {
-    const document = activeDocumentRef.current;
-    const requestedRoot = workspaceRoot;
-    const generation = laravelDiagnosticValidationGenerationRef.current + 1;
-    laravelDiagnosticValidationGenerationRef.current = generation;
-    const isRequestedStateActive = () =>
-      laravelDiagnosticValidationGenerationRef.current === generation &&
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-      activeDocumentRef.current?.path === document?.path &&
-      activeDocumentRef.current?.content === document?.content;
-
-    if (
-      !requestedRoot ||
-      !document ||
-      !isLaravelFrameworkActive ||
-      document.language !== "blade"
-    ) {
-      if (document?.path) {
-        setLaravelDiagnosticsByPath((current) => {
-          if (!(document.path in current)) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[document.path];
-          return next;
-        });
-      }
-
-      return;
-    }
-
-    const viewTargets = await collectViewTargets();
-
-    if (!isRequestedStateActive()) {
-      return;
-    }
-
-    const diagnostics = bladeLaravelReferenceDiagnostics(document.content, {
-      viewNames: viewTargets.map((target) => target.name),
-    });
-
-    setLaravelDiagnosticsByPath((current) => {
-      if (diagnostics.length === 0) {
-        if (!(document.path in current)) {
-          return current;
-        }
-
-        const next = { ...current };
-        delete next[document.path];
-        return next;
-      }
-
-      return {
-        ...current,
-        [document.path]: diagnostics,
-      };
-    });
-  }, [
+  useBladeLaravelDiagnosticsProvider({
+    activeDocument,
+    activeDocumentRef,
     collectViewTargets,
+    currentWorkspaceRootRef,
     isLaravelFrameworkActive,
+    setLaravelDiagnosticsByPath,
     workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    void provideLaravelDiagnosticsForActiveDocument();
-  }, [
-    activeDocument?.content,
-    activeDocument?.language,
-    activeDocument?.path,
-    provideLaravelDiagnosticsForActiveDocument,
-  ]);
+  });
 
   const { openDirectPhpMethodTarget, openPhpMethodHintTarget } =
     usePhpMethodTargetNavigation({
