@@ -32,17 +32,19 @@ import {
   nettePresenterLinkCompletionContext,
 } from "./netteLatteProviderOptions";
 import {
-  activeLatteProviderRequest,
   LATTE_MAX_COMPLETIONS,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
+import {
+  latteProviderRequestContext,
+} from "./latteProviderRequestContext";
 
 export async function provideLatteCompletions(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   position: EditorPosition,
 ): Promise<LatteCompletionItem[]> {
-  const request = activeLatteProviderRequest(options);
+  const request = latteProviderRequestContext(options);
 
   if (!request) {
     return [];

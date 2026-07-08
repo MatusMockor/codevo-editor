@@ -1,6 +1,4 @@
 import {
-  activeLatteWorkspaceContext,
-  currentTemplatePath,
   evictOtherRootCacheEntries,
 } from "./latteIntelligenceRuntime";
 import type {
@@ -50,38 +48,6 @@ export interface LatteProviderFlowFactoryOptions {
   frameworkCapabilities: LatteFrameworkCapabilities;
   getDependencies(): LatteIntelligenceDependencies;
   inFlight: LatteProviderFlowInFlight;
-}
-
-export interface LatteProviderRequestContext {
-  currentTemplateRelativePath: string;
-  deps: LatteIntelligenceDependencies;
-  isRequestedRootActive(): boolean;
-  requestedRoot: string;
-}
-
-export function activeLatteProviderRequest(
-  options: LatteProviderFlowFactoryOptions,
-): LatteProviderRequestContext | null {
-  const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
-
-  const workspaceContext = activeLatteWorkspaceContext(
-    deps,
-    options.frameworkCapabilities,
-  );
-
-  if (!workspaceContext) {
-    return null;
-  }
-
-  const { isRequestedRootActive, requestedRoot } = workspaceContext;
-
-  return {
-    currentTemplateRelativePath: currentTemplatePath(deps, requestedRoot),
-    deps,
-    isRequestedRootActive,
-    requestedRoot,
-  };
 }
 
 export function evictLatteProviderCaches(

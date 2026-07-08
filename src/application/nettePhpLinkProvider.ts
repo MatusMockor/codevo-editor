@@ -13,16 +13,18 @@ import {
   nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
 import {
-  activeLatteProviderRequest,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
+import {
+  latteProviderRequestContext,
+} from "./latteProviderRequestContext";
 
 export async function provideNettePhpLinkDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
 ): Promise<boolean> {
-  const request = activeLatteProviderRequest(options);
+  const request = latteProviderRequestContext(options);
 
   if (!request) {
     return false;
@@ -66,7 +68,7 @@ export async function provideNettePhpLinkCompletions(
   source: string,
   offset: number,
 ): Promise<LatteCompletionItem[] | null> {
-  const request = activeLatteProviderRequest(options);
+  const request = latteProviderRequestContext(options);
 
   if (!request) {
     return null;

@@ -26,16 +26,18 @@ import {
   nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
 import {
-  activeLatteProviderRequest,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
+import {
+  latteProviderRequestContext,
+} from "./latteProviderRequestContext";
 
 export async function provideLatteDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
 ): Promise<boolean> {
-  const request = activeLatteProviderRequest(options);
+  const request = latteProviderRequestContext(options);
 
   if (!request) {
     return false;

@@ -16,8 +16,10 @@ import {
 } from "./latteProviderFlowContext";
 import type {
   LatteProviderFlowFactoryOptions,
-  LatteProviderRequestContext,
 } from "./latteProviderFlowContext";
+import type {
+  LatteProviderRequestContext,
+} from "./latteProviderRequestContext";
 
 export function latteExpressionResolutionContext(
   options: LatteProviderFlowFactoryOptions,
