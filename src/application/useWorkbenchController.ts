@@ -5176,7 +5176,7 @@ export function useWorkbenchController(
   } = usePhpClassMemberCollectors({
     activePhpFrameworkProviderSignature,
     activePhpFrameworkProviders,
-    currentPhpLaravelSourceContext: currentPhpFrameworkSourceContext,
+    currentPhpFrameworkSourceContext,
     currentWorkspaceRootRef,
     isLaravelFrameworkActive,
     readNavigationFileContent,
@@ -5479,7 +5479,7 @@ export function useWorkbenchController(
     activePhpFrameworkProviders,
     collectPhpLaravelDynamicWhereMethodsForClass,
     collectPhpMethodsForClass,
-    currentPhpLaravelSourceContext: currentPhpFrameworkSourceContext,
+    currentPhpFrameworkSourceContext,
     isLaravelFrameworkActive,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,

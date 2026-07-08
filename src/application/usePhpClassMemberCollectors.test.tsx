@@ -52,7 +52,7 @@ function makeOptions(
   return {
     activePhpFrameworkProviderSignature: "",
     activePhpFrameworkProviders: defaultPhpFrameworkProviders,
-    currentPhpLaravelSourceContext: () => ({
+    currentPhpFrameworkSourceContext: () => ({
       signature: "",
       workspaceSources: [],
     }),

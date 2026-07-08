@@ -25,7 +25,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   phpMethodCompletionWithTemplateReturnType,
 } from "./usePhpLaravelRelationResolver";
-import type { PhpLaravelSourceContext } from "./useLaravelSourceRegistries";
+import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -40,7 +40,7 @@ interface PhpClassMemberCacheEntry {
 export interface UsePhpClassMemberCollectorsOptions {
   activePhpFrameworkProviderSignature: string;
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
-  currentPhpLaravelSourceContext: () => PhpLaravelSourceContext;
+  currentPhpFrameworkSourceContext: () => PhpFrameworkSourceRegistryContext;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   isLaravelFrameworkActive: boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
@@ -85,7 +85,7 @@ export interface PhpClassMemberCollectors {
 export function usePhpClassMemberCollectors({
   activePhpFrameworkProviderSignature,
   activePhpFrameworkProviders,
-  currentPhpLaravelSourceContext,
+  currentPhpFrameworkSourceContext,
   currentWorkspaceRootRef,
   isLaravelFrameworkActive,
   readNavigationFileContent,
@@ -214,7 +214,7 @@ export function usePhpClassMemberCollectors({
       const content = await readNavigationFileContent(path);
       const sourceSignature = phpSourceSignature(content);
       const { signature: frameworkSourceSignature, workspaceSources } =
-        currentPhpLaravelSourceContext();
+        currentPhpFrameworkSourceContext();
       const cacheKey = phpClassMemberCacheKey(
         path,
         className,
@@ -248,7 +248,7 @@ export function usePhpClassMemberCollectors({
     [
       activePhpFrameworkProviderSignature,
       activePhpFrameworkProviders,
-      currentPhpLaravelSourceContext,
+      currentPhpFrameworkSourceContext,
       readNavigationFileContent,
     ],
   );

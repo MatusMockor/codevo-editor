@@ -20,7 +20,7 @@ export interface PhpTraitThisCompletionContext {
   memberSource: string;
 }
 
-interface PhpLaravelSourceContext {
+interface PhpFrameworkSourceRegistryContext {
   workspaceSources: readonly string[];
 }
 
@@ -31,7 +31,7 @@ export interface PhpMethodCompletionResolverDependencies {
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
-  currentPhpLaravelSourceContext(): PhpLaravelSourceContext;
+  currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   isLaravelFrameworkActive: boolean;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
@@ -67,7 +67,7 @@ export function usePhpMethodCompletionResolvers(
     activePhpFrameworkProviders,
     collectPhpLaravelDynamicWhereMethodsForClass,
     collectPhpMethodsForClass,
-    currentPhpLaravelSourceContext,
+    currentPhpFrameworkSourceContext,
     isLaravelFrameworkActive,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
@@ -99,7 +99,7 @@ export function usePhpMethodCompletionResolvers(
             receiverExpression,
             semanticOptions,
           ) ?? traitThisContext.declaringClassName;
-        const { workspaceSources } = currentPhpLaravelSourceContext();
+        const { workspaceSources } = currentPhpFrameworkSourceContext();
 
         return phpMethodCompletionsFromSource(
           traitThisContext.memberSource,
@@ -162,7 +162,7 @@ export function usePhpMethodCompletionResolvers(
       activePhpFrameworkProviders,
       collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
-      currentPhpLaravelSourceContext,
+      currentPhpFrameworkSourceContext,
       isLaravelFrameworkActive,
       phpNormalizedReceiverExpressionIsThis,
       resolvePhpEloquentBuilderModelType,
