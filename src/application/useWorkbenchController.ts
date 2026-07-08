@@ -30,10 +30,9 @@ import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
-import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler";
-import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
+import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -238,9 +237,6 @@ import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
-  collectBareKeyShortcutKeys,
-  eventCanMatchKeymapShortcut,
-  matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
 } from "../domain/keymap";
@@ -408,38 +404,6 @@ const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
 const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
 const OPEN_APPEARANCE_SETTINGS_EVENT = "mockor-open-appearance-settings";
 const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
-const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
-  "workbench.openSettings",
-  "workbench.openAppearanceSettings",
-  "panel.toggle",
-  "panel.toggleTodo",
-  "terminal.show",
-  "runtime.show",
-  "editor.fontZoomIn",
-  "editor.fontZoomOut",
-  "editor.fontZoomReset",
-  "editor.toggleFontLigatures",
-  "editor.nextProblem",
-  "editor.previousProblem",
-  "navigation.back",
-  "navigation.forward",
-  "workbench.searchEverywhere",
-  "commands.show",
-  "class.quickOpen",
-  "file.quickOpen",
-  "editor.recentFiles",
-  "editor.recentLocations",
-  "git.stashChanges",
-  "git.showStashes",
-  "git.switchBranch",
-  "git.newBranch",
-  "git.commit",
-  "bookmark.showPanel",
-  "bookmark.next",
-  "bookmark.previous",
-  "editor.goToSymbol",
-  "search.text",
-];
 
 function languageServerDiagnosticsEqual(
   left: readonly LanguageServerDiagnostic[],
@@ -6706,126 +6670,59 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        doubleShiftDetectorRef.current.reset();
-
-        if (closeFloatingSurface()) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-
-        return;
-      }
-
-      // PhpStorm double-Shift -> Search Everywhere. The detector consumes every
-      // keydown so an intervening key cancels a pending first tap; it returns
-      // true only on the qualifying second bare Shift tap inside the window.
-      if (doubleShiftDetectorRef.current.handleKeyDown(event, Date.now())) {
-        event.preventDefault();
-        openSearchEverywhere();
-        return;
-      }
-
-      if (event.key === "F12") {
-        event.preventDefault();
-        void goToDefinition();
-        return;
-      }
-
-      if (matchesShortcut(event, "Cmd+Q")) {
-        event.preventDefault();
-        quitApplication();
-        return;
-      }
-
-      const keymap = appSettingsRef.current.keymap;
-
-      // Keydown hot path: a held bare key (ArrowUp/ArrowDown, plain letters)
-      // fires ~30 auto-repeat events/sec and can never match a keymap shortcut,
-      // so skip the ~35-iteration matching loop below for such events. The
-      // double-Shift detector and the explicit Escape/F12/Cmd+Q handlers above
-      // already ran, so this only short-circuits the per-command matching.
-      const bareKeyCache = bareKeyShortcutsRef.current;
-      if (bareKeyCache.keymap !== keymap) {
-        bareKeyCache.keymap = keymap;
-        bareKeyCache.keys = collectBareKeyShortcutKeys(keymap);
-      }
-
-      if (!eventCanMatchKeymapShortcut(event, bareKeyCache.keys)) {
-        return;
-      }
-
-      if (
-        dispatchWorkbenchShortcutCommand({
-          commandContext,
-          commandIds: REGISTRY_SHORTCUT_COMMAND_IDS,
-          commandRegistry,
-          event,
-          keymap,
-        })
-      ) {
-        return;
-      }
-
-      if (
-        handleWorkbenchManualShortcut({
-          actions: {
-            closeActiveSurface,
-            goToDeclaration,
-            goToDefinition,
-            goToImplementation,
-            goToSourceDefinition,
-            goToSuperMethod,
-            goToTestForActiveDocument,
-            goToTypeDefinition,
-            openFileHistory,
-            openFileReferencesPanel,
-            openFileStructure,
-            openLocalHistory,
-            openReferencesPanel,
-            runTestForActiveDocument,
-            saveActiveDocument,
-            toggleBookmarkAtCursor,
-            toggleGitBlame,
-          },
-          event,
-          keymap,
-          workspaceRoot,
-        })
-      ) {
-        return;
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
+  const keyboardShortcutActions = useMemo(() => ({
     closeActiveSurface,
     closeFloatingSurface,
-    commandContext,
-    commandRegistry,
     goToDeclaration,
     goToDefinition,
     goToImplementation,
     goToSuperMethod,
     goToTestForActiveDocument,
-    runTestForActiveDocument,
     goToSourceDefinition,
     goToTypeDefinition,
-    openFileStructure,
+    openFileHistory,
     openFileReferencesPanel,
+    openFileStructure,
+    openLocalHistory,
     openReferencesPanel,
     openSearchEverywhere,
     quitApplication,
+    runTestForActiveDocument,
     saveActiveDocument,
     toggleBookmarkAtCursor,
     toggleGitBlame,
+  }), [
+    closeActiveSurface,
+    closeFloatingSurface,
+    goToDeclaration,
+    goToDefinition,
+    goToImplementation,
+    goToSuperMethod,
+    goToSourceDefinition,
+    goToTestForActiveDocument,
+    goToTypeDefinition,
     openFileHistory,
+    openFileReferencesPanel,
+    openFileStructure,
     openLocalHistory,
-    workspaceRoot,
+    openReferencesPanel,
+    openSearchEverywhere,
+    quitApplication,
+    runTestForActiveDocument,
+    saveActiveDocument,
+    toggleBookmarkAtCursor,
+    toggleGitBlame,
   ]);
+
+  useWorkbenchKeyboardShortcuts({
+    actions: keyboardShortcutActions,
+    appSettingsRef,
+    bareKeyShortcutsRef,
+    commandContext,
+    commandRegistry,
+    doubleShiftDetectorRef,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     if (!workspaceRoot) {
