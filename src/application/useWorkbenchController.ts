@@ -919,14 +919,6 @@ export function useWorkbenchController(
     onSourcesLoaded: onPhpLaravelSourcesLoaded,
     workspaceFiles,
   });
-  const ensurePhpLaravelMigrationSourcesLoaded =
-    ensurePhpFrameworkSourceCollectionsLoaded;
-  const ensurePhpLaravelProviderSourcesLoaded =
-    ensurePhpFrameworkSourceCollectionsLoaded;
-  const invalidatePhpLaravelMigrationSourcesForPath =
-    invalidatePhpFrameworkSourcePath;
-  const invalidatePhpLaravelProviderSourcesForPath =
-    invalidatePhpFrameworkSourcePath;
   const openFileRef = useRef<
     (
       entry: FileEntry,
@@ -7287,8 +7279,7 @@ export function useWorkbenchController(
       collectPhpLaravelViewTargets: collectViewTargets,
       createMissingBladeViewCodeAction,
       currentWorkspaceRootRef,
-      ensurePhpLaravelMigrationSourcesLoaded,
-      ensurePhpLaravelProviderSourcesLoaded,
+      ensurePhpFrameworkSourceCollectionsLoaded,
       findPhpLaravelConfigTarget: findConfigTarget,
       findPhpLaravelTranslationTarget: findTranslationTarget,
       findPhpLaravelViewTarget: findViewTarget,
@@ -9280,8 +9271,7 @@ export function useWorkbenchController(
     forgetRecentLocationsForPath,
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
-    invalidatePhpLaravelMigrationSourcesForPath,
-    invalidatePhpLaravelProviderSourcesForPath,
+    invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
     notifyJavaScriptTypeScriptFileDeleted,

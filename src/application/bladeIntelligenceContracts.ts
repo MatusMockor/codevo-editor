@@ -62,8 +62,9 @@ export interface BladeIntelligenceDependencies {
     position: EditorPosition,
     receiverExpression: string,
   ) => Promise<PhpMethodCompletion[]>;
-  ensurePhpLaravelMigrationSourcesLoaded: (requestedRoot: string) => Promise<void>;
-  ensurePhpLaravelProviderSourcesLoaded: (requestedRoot: string) => Promise<void>;
+  ensurePhpFrameworkSourceCollectionsLoaded: (
+    requestedRoot: string,
+  ) => Promise<void>;
   collectPhpLaravelViewTargets: LaravelTargets["collectPhpLaravelViewTargets"];
   collectPhpLaravelConfigTargets: LaravelTargets["collectPhpLaravelConfigTargets"];
   collectPhpLaravelNamedRouteTargets: LaravelTargets["collectPhpLaravelNamedRouteTargets"];

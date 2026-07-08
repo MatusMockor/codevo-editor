@@ -50,8 +50,7 @@ export interface BladeCompletionProviderDependencies {
   collectPhpLaravelTranslationTargets: BladeIntelligenceDependencies["collectPhpLaravelTranslationTargets"];
   collectPhpLaravelViewTargets: BladeIntelligenceDependencies["collectPhpLaravelViewTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
-  ensurePhpLaravelMigrationSourcesLoaded: BladeIntelligenceDependencies["ensurePhpLaravelMigrationSourcesLoaded"];
-  ensurePhpLaravelProviderSourcesLoaded: BladeIntelligenceDependencies["ensurePhpLaravelProviderSourcesLoaded"];
+  ensurePhpFrameworkSourceCollectionsLoaded: BladeIntelligenceDependencies["ensurePhpFrameworkSourceCollectionsLoaded"];
   isLaravelFrameworkActive: boolean;
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
   resolveBladeForeachElementTypeForVariable: (
@@ -83,8 +82,7 @@ export async function provideBladeCompletions(
     collectPhpLaravelTranslationTargets,
     collectPhpLaravelViewTargets,
     currentWorkspaceRootRef,
-    ensurePhpLaravelMigrationSourcesLoaded,
-    ensurePhpLaravelProviderSourcesLoaded,
+    ensurePhpFrameworkSourceCollectionsLoaded,
     isLaravelFrameworkActive,
     relativeWorkspacePath,
     resolveBladeForeachElementTypeForVariable,
@@ -124,8 +122,7 @@ export async function provideBladeCompletions(
     }
 
     if (isLaravelFrameworkActive) {
-      void ensurePhpLaravelMigrationSourcesLoaded(requestedRoot);
-      void ensurePhpLaravelProviderSourcesLoaded(requestedRoot);
+      void ensurePhpFrameworkSourceCollectionsLoaded(requestedRoot);
     }
 
     const viewVariableType = await resolveBladeViewVariableTypeForView(

@@ -88,11 +88,7 @@ export interface WorkbenchFileOperationsDependencies {
     rootPath: string,
     path: string,
   ) => void;
-  invalidatePhpLaravelMigrationSourcesForPath: (
-    rootPath: string,
-    path: string,
-  ) => void;
-  invalidatePhpLaravelProviderSourcesForPath: (
+  invalidatePhpFrameworkSourcePath: (
     rootPath: string,
     path: string,
   ) => void;
@@ -177,8 +173,7 @@ export function useWorkbenchFileOperations(
     forgetRecentLocationsForPath,
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
-    invalidatePhpLaravelMigrationSourcesForPath,
-    invalidatePhpLaravelProviderSourcesForPath,
+    invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
     notifyJavaScriptTypeScriptFileDeleted,
@@ -835,20 +830,12 @@ export function useWorkbenchFileOperations(
 
       queueWorkspaceGitStatusRefresh(requestedRoot);
 
-      invalidatePhpLaravelMigrationSourcesForPath(requestedRoot, event.path);
-      invalidatePhpLaravelProviderSourcesForPath(requestedRoot, event.path);
+      invalidatePhpFrameworkSourcePath(requestedRoot, event.path);
       invalidateBladeComponentNamesForPath(requestedRoot, event.path);
       invalidateBladeViewDataEntriesForPath(requestedRoot, event.path);
 
       if (event.previousPath) {
-        invalidatePhpLaravelMigrationSourcesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidatePhpLaravelProviderSourcesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
+        invalidatePhpFrameworkSourcePath(requestedRoot, event.previousPath);
         invalidateBladeComponentNamesForPath(
           requestedRoot,
           event.previousPath,
@@ -888,8 +875,7 @@ export function useWorkbenchFileOperations(
       handleExternalRemovedPath,
       invalidateBladeComponentNamesForPath,
       invalidateBladeViewDataEntriesForPath,
-      invalidatePhpLaravelMigrationSourcesForPath,
-      invalidatePhpLaravelProviderSourcesForPath,
+      invalidatePhpFrameworkSourcePath,
       queueWorkspaceDirectoryRefresh,
       queueWorkspaceGitStatusRefresh,
       refreshOpenDocumentFromExternalFileChange,
