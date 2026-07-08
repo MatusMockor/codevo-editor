@@ -58,6 +58,24 @@ import {
 import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  registerTemplateLanguageMonacoProviders,
+  type BladeCompletion,
+  type BladeCompletionKind,
+  type LatteCompletion,
+  type LatteCompletionKind,
+  type NeonCompletion,
+  type NeonCompletionKind,
+} from "./templateLanguageMonacoProviders";
+
+export type {
+  BladeCompletion,
+  BladeCompletionKind,
+  LatteCompletion,
+  LatteCompletionKind,
+  NeonCompletion,
+  NeonCompletionKind,
+} from "./templateLanguageMonacoProviders";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -260,93 +278,6 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
     "operator",
   ],
 } satisfies Monaco.languages.SemanticTokensLegend;
-
-/**
- * A single Blade completion item produced by the controller. Blade has no
- * managed language server (its syntax is Shiki's job), so completions are pure
- * data the Monaco provider maps to `Monaco.languages.CompletionItem`. The kind
- * picks the Monaco icon (directive → keyword, view → file, component → field).
- */
-export type BladeCompletionKind =
-  | "directive"
-  | "view"
-  | "component"
-  | "variable"
-  | "helper"
-  | "member";
-
-export interface BladeCompletion {
-  detail?: string;
-  insertText: string;
-  kind: BladeCompletionKind;
-  label: string;
-  /**
-   * Optional 0-based character offset span the item replaces. When omitted the
-   * provider falls back to the word Monaco computed at the cursor. Used so a
-   * `@inc` directive completion replaces the whole `@inc` token (including the
-   * `@`) and a `<x-fo` component completion replaces the dotted component name.
-   */
-  replaceStart?: number;
-  replaceEnd?: number;
-}
-
-/**
- * The Monaco icon bucket a Latte completion maps to: a Latte tag name (`{if}`,
- * `{include}`, …) is a keyword; a template name inside an `{include '...'}`
- * literal is a file; a `{$var}` template variable is a variable; a `{$var->}`
- * member is a field; a `|filter` name is a function.
- */
-export type LatteCompletionKind =
-  | "tag"
-  | "template"
-  | "variable"
-  | "member"
-  | "filter"
-  | "link"
-  | "component";
-
-/**
- * A single Latte completion item produced by the controller. Like Blade, Latte
- * has no managed language server (its syntax is a vendored Shiki grammar), so
- * completions are pure data the Monaco provider maps to a
- * `Monaco.languages.CompletionItem`.
- */
-export interface LatteCompletion {
-  detail?: string;
-  insertText: string;
-  kind: LatteCompletionKind;
-  label: string;
-  /**
-   * Optional 0-based character offset span the item replaces. When omitted the
-   * provider falls back to the word Monaco computed at the cursor. Used so a
-   * `{fore` tag completion replaces the tag-name characters after `{` and an
-   * `{include 'par` template completion replaces the typed path literal.
-   */
-  replaceStart?: number;
-  replaceEnd?: number;
-}
-
-/**
- * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
- * `%param%` parameter reference, or an `@service` reference.
- */
-export type NeonCompletionKind = "class" | "method" | "parameter" | "service";
-
-/**
- * A single NEON completion item produced by the controller. Like Latte, NEON has
- * no managed language server (its syntax is a vendored Shiki grammar), so
- * completions are pure data the Monaco provider maps to a
- * `Monaco.languages.CompletionItem`.
- */
-export interface NeonCompletion {
-  detail?: string;
-  insertText: string;
-  kind: NeonCompletionKind;
-  label: string;
-  /** Optional 0-based character offset span the item replaces (the partial FQN). */
-  replaceStart?: number;
-  replaceEnd?: number;
-}
 
 export interface LanguageServerMonacoProviderContext {
   /**
@@ -1044,80 +975,17 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentRangeSemanticTokens(context, model, range),
       })
     : { dispose: () => undefined };
-  // Blade (`.blade.php`) has no managed language server — its syntax is owned by
-  // Shiki. We register a small set of Monaco providers for the "blade" language:
-  // go-to-definition (view / component navigation) and completion (directives,
-  // view names, component names), plus safe local quick fixes. They delegate the
-  // workspace-aware resolution to controller callbacks that carry the
-  // per-project isolation guards.
-  const bladeDefinition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("blade", {
-        provideDefinition: (model, position) =>
-          provideBladeDefinition(context, model, position),
-      })
-    : { dispose: () => undefined };
-  const bladeCompletion = monaco.languages.registerCompletionItemProvider(
-    "blade",
+  const templateLanguageProviders = registerTemplateLanguageMonacoProviders(
+    monaco,
+    context,
     {
-      // `$` opens the view-variable list the moment the sigil is typed and `>`
-      // completes the `->` member access without needing Ctrl+Space, so
-      // `$invoice->` completes during natural typing (the `-` covers the case
-      // where `>` was already present when `-` is typed).
-      triggerCharacters: ["@", "'", "\"", "-", ".", "$", ">"],
-      provideCompletionItems: (model, position) =>
-        provideBladeCompletionItems(monaco, context, model, position),
-    },
-  );
-  const bladeCodeActions = context.provideBladeCodeActions
-    ? monaco.languages.registerCodeActionProvider(
-        "blade",
-        {
-          provideCodeActions: (model, range, actionContext) =>
-            provideBladeCodeActions(monaco, context, model, range, actionContext),
-        },
-        { providedCodeActionKinds: ["quickfix"] },
-      )
-    : { dispose: () => undefined };
-  // Latte (`.latte`) mirrors Blade: no managed language server (its syntax is a
-  // vendored Shiki grammar), so a small set of Monaco providers delegates the
-  // workspace-aware resolution to controller callbacks carrying the per-project
-  // isolation guards. Slice 4 wires go-to-definition (template navigation) and
-  // completion (tag names + `{include}` template names); code actions land later.
-  const latteDefinition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("latte", {
-        provideDefinition: (model, position) =>
-          provideLatteDefinition(context, model, position),
-      })
-    : { dispose: () => undefined };
-  const latteCompletion = monaco.languages.registerCompletionItemProvider(
-    "latte",
-    {
-      // `{` opens the tag list, `'`/`"` open the `{include '...'}` template list,
-      // `.`/`/` keep it refreshing as a dotted / nested path is typed, `$` opens
-      // the `{$var}` variable list, `-`/`>` open and refresh `{$var->}` member
-      // completion during natural typing, and `|` opens the filter list.
-      triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/"],
-      provideCompletionItems: (model, position) =>
-        provideLatteCompletionItems(monaco, context, model, position),
-    },
-  );
-  const neonDefinition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("neon", {
-        provideDefinition: (model, position) =>
-          provideNeonDefinition(context, model, position),
-      })
-    : { dispose: () => undefined };
-  const neonCompletion = monaco.languages.registerCompletionItemProvider(
-    "neon",
-    {
-      // `\` refreshes as a namespaced FQN is typed, `-` / `:` / ` ` open the
-      // class-name list right after a `- ` anonymous-service marker or a
-      // `key:` / `factory:` value colon; `%` opens the `%param%` list and `@`
-      // opens the `@service` list (completion is gated to the matching context,
-      // so an off-position trigger simply yields nothing).
-      triggerCharacters: ["\\", ":", " ", "-", "%", "@"],
-      provideCompletionItems: (model, position) =>
-        provideNeonCompletionItems(monaco, context, model, position),
+      provideBladeCodeActions,
+      provideBladeCompletionItems,
+      provideBladeDefinition,
+      provideLatteCompletionItems,
+      provideLatteDefinition,
+      provideNeonCompletionItems,
+      provideNeonDefinition,
     },
   );
 
@@ -1155,13 +1023,7 @@ export function registerLanguageServerMonacoProviders(
       linkedEditingRange.dispose();
       semanticTokens.dispose();
       rangeSemanticTokens.dispose();
-      bladeDefinition.dispose();
-      bladeCompletion.dispose();
-      bladeCodeActions.dispose();
-      latteDefinition.dispose();
-      latteCompletion.dispose();
-      neonDefinition.dispose();
-      neonCompletion.dispose();
+      templateLanguageProviders.dispose();
     },
   };
 }
