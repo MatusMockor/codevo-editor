@@ -114,6 +114,50 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("routes implementation and references through registry enablement", () => {
+    const actions = createActions();
+    const implementation = vi.fn();
+    const references = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToImplementation",
+      isEnabled: () => true,
+      run: implementation,
+      title: "Go to Implementation",
+    });
+    registry.register({
+      category: "Editor",
+      id: "editor.findReferences",
+      isEnabled: () => true,
+      run: references,
+      title: "Find All References",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const implementationEvent = dispatchKeyboardEvent({
+      altKey: true,
+      key: "b",
+      metaKey: true,
+    });
+    const referencesEvent = dispatchKeyboardEvent({
+      key: "F12",
+      shiftKey: true,
+    });
+
+    expect(implementationEvent.defaultPrevented).toBe(true);
+    expect(referencesEvent.defaultPrevented).toBe(true);
+    expect(implementation).toHaveBeenCalledTimes(1);
+    expect(references).toHaveBeenCalledTimes(1);
+    expect(actions.goToImplementation).not.toHaveBeenCalled();
+    expect(actions.openReferencesPanel).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),

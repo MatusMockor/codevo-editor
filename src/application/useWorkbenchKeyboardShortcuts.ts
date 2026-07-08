@@ -44,6 +44,13 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "bookmark.previous",
   "editor.fileStructure",
   "editor.goToDefinition",
+  "editor.goToSourceDefinition",
+  "editor.goToDeclaration",
+  "editor.goToTypeDefinition",
+  "editor.goToImplementation",
+  "editor.goToSuperMethod",
+  "editor.findReferences",
+  "editor.findFileReferences",
   "editor.goToSymbol",
   "search.text",
 ];
@@ -55,17 +62,10 @@ interface BareKeyShortcutCache {
 
 interface WorkbenchKeyboardShortcutActions {
   closeFloatingSurface: () => boolean;
-  goToDeclaration: () => unknown;
   goToDefinition: () => unknown;
-  goToImplementation: () => unknown;
-  goToSourceDefinition: () => unknown;
-  goToSuperMethod: () => unknown;
   goToTestForActiveDocument: () => unknown;
-  goToTypeDefinition: () => unknown;
   openFileHistory: () => unknown;
-  openFileReferencesPanel: () => unknown;
   openLocalHistory: () => unknown;
-  openReferencesPanel: () => unknown;
   openSearchEverywhere: () => unknown;
   quitApplication: () => unknown;
   runTestForActiveDocument: () => unknown;
@@ -114,7 +114,13 @@ export function useWorkbenchKeyboardShortcuts({
         return;
       }
 
-      if (event.key === "F12") {
+      if (
+        event.key === "F12" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         void actions.goToDefinition();
         return;

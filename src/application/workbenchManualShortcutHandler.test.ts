@@ -55,34 +55,31 @@ describe("handleWorkbenchManualShortcut", () => {
     expect(actions.openFileHistory).not.toHaveBeenCalled();
   });
 
-  it("keeps capability-gated language navigation shortcuts in the manual path", () => {
+  it("keeps PHP test shortcuts in the manual path", () => {
     const actions = createActions();
-    const event = keyboardEvent({ altKey: true, key: "b", metaKey: true });
+    const event = keyboardEvent({ key: "u", metaKey: true, shiftKey: true });
+    const keymap = {
+      ...defaultKeymapSettings("mac"),
+      "php.goToTest": "Cmd+Shift+U",
+    };
 
     const handled = handleWorkbenchManualShortcut({
       actions,
       event,
-      keymap: defaultKeymapSettings("mac"),
+      keymap,
       workspaceRoot: "/workspace",
     });
 
     expect(handled).toBe(true);
-    expect(actions.goToImplementation).toHaveBeenCalledTimes(1);
+    expect(actions.goToTestForActiveDocument).toHaveBeenCalledTimes(1);
   });
 });
 
 function createActions() {
   return {
-    goToDeclaration: vi.fn(),
-    goToImplementation: vi.fn(),
-    goToSourceDefinition: vi.fn(),
-    goToSuperMethod: vi.fn(),
     goToTestForActiveDocument: vi.fn(),
-    goToTypeDefinition: vi.fn(),
     openFileHistory: vi.fn(),
-    openFileReferencesPanel: vi.fn(),
     openLocalHistory: vi.fn(),
-    openReferencesPanel: vi.fn(),
     runTestForActiveDocument: vi.fn(),
     toggleBookmarkAtCursor: vi.fn(),
     toggleGitBlame: vi.fn(),

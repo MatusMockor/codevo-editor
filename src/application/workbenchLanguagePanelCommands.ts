@@ -4,7 +4,6 @@ import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntim
 import type { Command } from "./commandRegistry";
 import {
   canUseActiveDocumentLanguageServerFeature,
-  isRunningLanguageServerForWorkspace,
   type ActiveDocumentLanguage,
 } from "./workbenchLanguageServerCommandEnablement";
 
@@ -78,7 +77,7 @@ export function workbenchLanguagePanelCommands({
       title: "Find All References",
       category: "Editor",
       shortcut: shortcut("editor.findReferences"),
-      isEnabled: () => canUseFeature("references"),
+      isEnabled: () => Boolean(activeDocument),
       run: openReferencesPanel,
     },
     {
@@ -86,15 +85,7 @@ export function workbenchLanguagePanelCommands({
       title: "Find File References",
       category: "Editor",
       shortcut: shortcut("editor.findFileReferences"),
-      isEnabled: () =>
-        Boolean(
-          activeDocument?.isJavaScriptTypeScriptLanguageServerDocument &&
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ),
-        ),
+      isEnabled: () => Boolean(activeDocument),
       run: openFileReferencesPanel,
     },
   ];

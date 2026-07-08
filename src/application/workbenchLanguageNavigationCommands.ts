@@ -1,24 +1,12 @@
 import type { KeymapCommandId } from "../domain/keymap";
-import type { LanguageServerFeature } from "../domain/languageServerFeatures";
-import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { Command } from "./commandRegistry";
-import {
-  canUseActiveDocumentLanguageServerFeature,
-  type ActiveDocumentLanguage,
-} from "./workbenchLanguageServerCommandEnablement";
+import type { ActiveDocumentLanguage } from "./workbenchLanguageServerCommandEnablement";
 
 type NavigationRun = () => unknown;
 
 interface WorkbenchLanguageNavigationCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
   activeDocument: ActiveDocumentLanguage | null;
-  languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
-  languageServerRuntimeStatusRoot: string | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatus:
-    | LanguageServerRuntimeStatus
-    | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
-  workspaceRoot: string | null;
   goToDefinition: NavigationRun;
   goToSourceDefinition: NavigationRun;
   goToDeclaration: NavigationRun;
@@ -30,11 +18,6 @@ interface WorkbenchLanguageNavigationCommandsOptions {
 export function workbenchLanguageNavigationCommands({
   shortcut,
   activeDocument,
-  languageServerRuntimeStatus,
-  languageServerRuntimeStatusRoot,
-  javaScriptTypeScriptLanguageServerRuntimeStatus,
-  javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-  workspaceRoot,
   goToDefinition,
   goToSourceDefinition,
   goToDeclaration,
@@ -42,16 +25,7 @@ export function workbenchLanguageNavigationCommands({
   goToImplementation,
   goToSuperMethod,
 }: WorkbenchLanguageNavigationCommandsOptions): Command[] {
-  const canUseFeature = (feature: LanguageServerFeature) =>
-    canUseActiveDocumentLanguageServerFeature({
-      activeDocument,
-      feature,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      workspaceRoot,
-    });
+  const canAttemptNavigation = () => Boolean(activeDocument);
 
   return [
     {
@@ -59,7 +33,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToDefinition"),
-      isEnabled: () => Boolean(activeDocument),
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToDefinition),
     },
     {
@@ -67,11 +41,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Source Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToSourceDefinition"),
-      isEnabled: () =>
-        Boolean(
-          activeDocument?.isJavaScriptTypeScriptLanguageServerDocument &&
-            canUseFeature("sourceDefinition"),
-        ),
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToSourceDefinition),
     },
     {
@@ -79,7 +49,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Declaration",
       category: "Editor",
       shortcut: shortcut("editor.goToDeclaration"),
-      isEnabled: () => canUseFeature("declaration"),
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToDeclaration),
     },
     {
@@ -87,7 +57,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Type Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToTypeDefinition"),
-      isEnabled: () => canUseFeature("typeDefinition"),
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToTypeDefinition),
     },
     {
@@ -95,7 +65,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Implementation",
       category: "Editor",
       shortcut: shortcut("editor.goToImplementation"),
-      isEnabled: () => canUseFeature("implementation"),
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToImplementation),
     },
     {
@@ -103,7 +73,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Super Method",
       category: "Editor",
       shortcut: shortcut("editor.goToSuperMethod"),
-      isEnabled: () => activeDocument?.language === "php",
+      isEnabled: canAttemptNavigation,
       run: fireAndForget(goToSuperMethod),
     },
   ];

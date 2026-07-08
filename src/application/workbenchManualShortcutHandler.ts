@@ -12,15 +12,8 @@ interface WorkbenchManualShortcutActions {
   toggleGitBlame: ShortcutAction;
   openFileHistory: ShortcutAction;
   openLocalHistory: ShortcutAction;
-  goToSourceDefinition: ShortcutAction;
-  goToDeclaration: ShortcutAction;
-  goToTypeDefinition: ShortcutAction;
-  goToImplementation: ShortcutAction;
-  goToSuperMethod: ShortcutAction;
   goToTestForActiveDocument: ShortcutAction;
   runTestForActiveDocument: ShortcutAction;
-  openReferencesPanel: ShortcutAction;
-  openFileReferencesPanel: ShortcutAction;
 }
 
 interface HandleWorkbenchManualShortcutOptions {
@@ -71,40 +64,12 @@ export function handleWorkbenchManualShortcut({
     );
   }
 
-  if (matches("editor.goToSourceDefinition")) {
-    return consume(event, actions.goToSourceDefinition);
-  }
-
-  if (matches("editor.goToDeclaration")) {
-    return consume(event, actions.goToDeclaration);
-  }
-
-  if (matches("editor.goToTypeDefinition")) {
-    return consume(event, actions.goToTypeDefinition);
-  }
-
-  if (matches("editor.goToImplementation")) {
-    return consume(event, actions.goToImplementation);
-  }
-
-  if (matches("editor.goToSuperMethod")) {
-    return consume(event, actions.goToSuperMethod);
-  }
-
   if (matches("php.goToTest")) {
     return consume(event, actions.goToTestForActiveDocument);
   }
 
   if (matches("php.runTest")) {
     return consume(event, actions.runTestForActiveDocument);
-  }
-
-  if (matches("editor.findReferences")) {
-    return consume(event, actions.openReferencesPanel);
-  }
-
-  if (matches("editor.findFileReferences")) {
-    return consume(event, actions.openFileReferencesPanel);
   }
 
   return false;

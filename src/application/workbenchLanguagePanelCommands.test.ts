@@ -108,7 +108,7 @@ describe("workbenchLanguagePanelCommands", () => {
     ).toBe(false);
   });
 
-  it("enables hierarchy and references only when the active document runtime supports the feature", () => {
+  it("keeps references enabled for active documents while hierarchy follows LSP capabilities", () => {
     const commands = commandsFor({
       activeDocument: phpDocument,
       languageServerRuntimeStatus: runningStatus({
@@ -130,7 +130,7 @@ describe("workbenchLanguagePanelCommands", () => {
       .toBe(false);
   });
 
-  it("enables file references only for JS/TS documents with a matching running runtime", () => {
+  it("keeps file references enabled for active documents so the handler can show friendly messages", () => {
     expect(
       command(
         "editor.findFileReferences",
@@ -156,7 +156,7 @@ describe("workbenchLanguagePanelCommands", () => {
           workspaceRoot: "/workspace",
         }),
       ).isEnabled(context),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("invokes the exact injected callbacks and returns their values directly", () => {

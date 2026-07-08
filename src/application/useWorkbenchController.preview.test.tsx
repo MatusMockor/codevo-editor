@@ -21432,7 +21432,7 @@ describe("useWorkbenchController preview tabs", () => {
     const command = getWorkbench().commands.find(
       (candidate) => candidate.id === "editor.findFileReferences",
     );
-    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(false);
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
 
     await act(async () => {
       await command?.run();
@@ -25167,7 +25167,7 @@ final class User
     expect(getWorkbench().message).toBe("Opened type definition User.php:3:13");
   });
 
-  it("disables PHP declaration commands when capability gating fails", async () => {
+  it("keeps PHP declaration commands enabled when capability gating fails", async () => {
     const sourcePath = "/workspace/app/Services/UserService.php";
     const source = `<?php
 
@@ -25201,10 +25201,10 @@ $repository->findUser();
       getWorkbench()
         .commands.find((candidate) => candidate.id === "editor.goToDeclaration")
         ?.isEnabled(getWorkbench().commandContext),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("disables PHP type definition commands when root gating fails", async () => {
+  it("keeps PHP type definition commands enabled when root gating fails", async () => {
     const sourcePath = "/workspace/app/Services/UserService.php";
     const source = `<?php
 
@@ -25239,7 +25239,7 @@ $repository->findUser();
       getWorkbench()
         .commands.find((candidate) => candidate.id === "editor.goToTypeDefinition")
         ?.isEnabled(getWorkbench().commandContext),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("drops stale PHP declaration results after switching project tabs", async () => {
