@@ -27,164 +27,25 @@
  */
 
 import { useRef } from "react";
-import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import {
-  provideNeonCompletions as provideNeonCompletionsFromProvider,
-  type NeonCompletionItem,
-  type NeonCompletionItemKind,
-} from "./neonCompletionProvider";
-import {
-  provideNeonDefinition as provideNeonDefinitionFromProvider,
-} from "./neonDefinitionProvider";
-import { createNeonRequestContext } from "./neonIntelligenceRuntime";
+import type {
+  NeonIntelligence,
+  NeonIntelligenceDependencies,
+} from "./neonIntelligenceContracts";
+import { createNeonIntelligence } from "./neonProviderFlows";
 import {
   type NeonConfigCache,
-  type NeonConfigInFlight,
 } from "./neonProjectConfigDiscovery";
 
 export type { NeonConfigCache } from "./neonProjectConfigDiscovery";
 
-export type { NeonCompletionItem, NeonCompletionItemKind };
-
-/** The minimal shape of the active editor document the hook reads (its path). */
-export interface NeonIntelligenceActiveDocument {
-  path: string;
-}
-
-/** A workspace directory entry, narrowed to what the `.neon` config scan needs. */
-export interface NeonDirectoryEntry {
-  kind: "directory" | "file";
-  path: string;
-}
-
-/**
- * The injected surface the hook needs. Every member is a value or a tiny
- * function so the logic can be exercised with plain fakes - no controller, no
- * Monaco, no React. The controller mount supplies the real collaborators
- * (class resolver, workspace symbol search, navigation opener, path helpers,
- * framework/tier flags) and the live workspace-root ref used for the post-await
- * isolation re-checks.
- */
-export interface NeonIntelligenceDependencies {
-  /** Live workspace root, read AFTER each await to drop stale results. */
-  currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkIntelligence: PhpFrameworkIntelligence;
-  getActiveDocument(): NeonIntelligenceActiveDocument | null;
-  isSemanticIntelligenceActive: boolean;
-  joinPath(rootPath: string, relativePath: string): string;
-  /**
-   * Lists a directory's entries for the cross-file `.neon` config scan (used to
-   * merge `%param%` / `@service` definitions across the project's config files).
-   * A pass-through of the controller's workspace directory reader; an unknown
-   * directory rejects (mirroring the Tauri gateway) and is skipped.
-   */
-  listDirectory(path: string): Promise<NeonDirectoryEntry[]>;
-  /**
-   * Resolves a PHP class name (a NEON reference is already fully qualified) to
-   * its source file and opens it, resolving `true` when it navigated. A
-   * pass-through of the controller's `openPhpClassTarget` - the SAME index +
-   * PSR-4 resolver a plain `use Foo\Bar;` / `new Foo()` jump uses - so a NEON
-   * service class navigates exactly like a PHP class reference.
-   */
-  openClassTarget(className: string): Promise<boolean>;
-  openDirectPhpMethodTarget(
-    className: string,
-    methodName: string,
-  ): Promise<boolean>;
-  openTarget(
-    path: string,
-    position: EditorPosition,
-    label: string,
-  ): Promise<boolean>;
-  readFileContent(path: string): Promise<string>;
-  /**
-   * Workspace class-name search for `services:` completion: returns candidate
-   * fully-qualified class names for a typed prefix. A pass-through of the
-   * controller's project-symbol index (filtered to type symbols); an empty
-   * result (indexing off) simply yields no completions - conservative.
-   */
-  searchClassNames(
-    rootPath: string,
-    prefix: string,
-    maxResults: number,
-  ): Promise<string[]>;
-  resolvePhpReceiverCompletions(
-    source: string,
-    position: EditorPosition,
-    receiverExpression: string,
-  ): Promise<PhpMethodCompletion[]>;
-  synthesizeTypedReceiverSource(
-    variableName: string,
-    typeName: string,
-  ): { position: EditorPosition; source: string };
-  toRelativePath(rootPath: string, path: string): string;
-  /** The requested workspace root, captured up front by each async flow. */
-  workspaceRoot: string | null;
-}
-
-export interface NeonIntelligence {
-  provideNeonCompletions(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletionItem[]>;
-  provideNeonDefinition(source: string, offset: number): Promise<boolean>;
-}
-
-/**
- * Builds the NEON intelligence API from an accessor to the current dependencies
- * (read fresh on every call so gating flags and the workspace root are always
- * current). Exported for direct unit testing; the React hook is a thin, stable
- * wrapper around it.
- */
-export function createNeonIntelligence(
-  getDependencies: () => NeonIntelligenceDependencies,
-  configCache: NeonConfigCache = {},
-): NeonIntelligence {
-  /**
-   * Per-instance in-flight registry for the cross-file config scan, so concurrent
-   * completion requests (Monaco fires one per keystroke) share ONE scan per root
-   * instead of launching parallel directory reads (mirrors the Latte loaders).
-   */
-  const configInFlight: NeonConfigInFlight = new Map();
-
-  const provideNeonDefinition = async (
-    source: string,
-    offset: number,
-  ): Promise<boolean> => {
-    const context = createNeonRequestContext(
-      getDependencies(),
-      configCache,
-      configInFlight,
-    );
-
-    if (!context) {
-      return false;
-    }
-
-    return provideNeonDefinitionFromProvider(context, source, offset);
-  };
-
-  const provideNeonCompletions = async (
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletionItem[]> => {
-    const context = createNeonRequestContext(
-      getDependencies(),
-      configCache,
-      configInFlight,
-    );
-
-    if (!context) {
-      return [];
-    }
-
-    return provideNeonCompletionsFromProvider(context, source, position);
-  };
-
-  return { provideNeonCompletions, provideNeonDefinition };
-}
+export type { NeonCompletionItem, NeonCompletionItemKind } from "./neonCompletionProvider";
+export type {
+  NeonDirectoryEntry,
+  NeonIntelligence,
+  NeonIntelligenceActiveDocument,
+  NeonIntelligenceDependencies,
+} from "./neonIntelligenceContracts";
+export { createNeonIntelligence } from "./neonProviderFlows";
 
 /**
  * Thin React wrapper: keeps a live dependency ref (so the stable API always sees
