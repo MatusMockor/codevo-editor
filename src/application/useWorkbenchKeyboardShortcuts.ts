@@ -12,6 +12,8 @@ import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler"
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
 const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
+  "editor.save",
+  "editor.closeTab",
   "workbench.openSettings",
   "workbench.openAppearanceSettings",
   "panel.toggle",
@@ -50,7 +52,6 @@ interface BareKeyShortcutCache {
 }
 
 interface WorkbenchKeyboardShortcutActions {
-  closeActiveSurface: () => unknown;
   closeFloatingSurface: () => boolean;
   goToDeclaration: () => unknown;
   goToDefinition: () => unknown;
@@ -67,7 +68,6 @@ interface WorkbenchKeyboardShortcutActions {
   openSearchEverywhere: () => unknown;
   quitApplication: () => unknown;
   runTestForActiveDocument: () => unknown;
-  saveActiveDocument: () => unknown;
   toggleBookmarkAtCursor: () => unknown;
   toggleGitBlame: () => unknown;
 }

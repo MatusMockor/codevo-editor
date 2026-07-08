@@ -6676,7 +6676,6 @@ export function useWorkbenchController(
   ]);
 
   const keyboardShortcutActions = useMemo(() => ({
-    closeActiveSurface,
     closeFloatingSurface,
     goToDeclaration,
     goToDefinition,
@@ -6693,11 +6692,9 @@ export function useWorkbenchController(
     openSearchEverywhere,
     quitApplication,
     runTestForActiveDocument,
-    saveActiveDocument,
     toggleBookmarkAtCursor,
     toggleGitBlame,
   }), [
-    closeActiveSurface,
     closeFloatingSurface,
     goToDeclaration,
     goToDefinition,
@@ -6714,7 +6711,6 @@ export function useWorkbenchController(
     openSearchEverywhere,
     quitApplication,
     runTestForActiveDocument,
-    saveActiveDocument,
     toggleBookmarkAtCursor,
     toggleGitBlame,
   ]);

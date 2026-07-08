@@ -8,8 +8,6 @@ import {
 type ShortcutAction = () => unknown;
 
 interface WorkbenchManualShortcutActions {
-  saveActiveDocument: ShortcutAction;
-  closeActiveSurface: ShortcutAction;
   openFileStructure: ShortcutAction;
   toggleBookmarkAtCursor: ShortcutAction;
   toggleGitBlame: ShortcutAction;
@@ -47,14 +45,6 @@ export function handleWorkbenchManualShortcut({
   // matches the legacy keyboard behavior. The registry dispatcher consumes
   // disabled shortcuts, so moving a command too early can turn a
   // no-op-but-handled key into a skipped action.
-  if (matches("editor.save")) {
-    return consume(event, actions.saveActiveDocument);
-  }
-
-  if (matches("editor.closeTab")) {
-    return consume(event, actions.closeActiveSurface);
-  }
-
   if (matches("editor.fileStructure")) {
     return consume(event, actions.openFileStructure);
   }

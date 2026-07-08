@@ -5,7 +5,7 @@ import { handleWorkbenchManualShortcut } from "./workbenchManualShortcutHandler"
 describe("handleWorkbenchManualShortcut", () => {
   it("runs the matched manual shortcut action", () => {
     const actions = createActions();
-    const event = keyboardEvent({ key: "s", metaKey: true });
+    const event = keyboardEvent({ key: "r", metaKey: true });
 
     const handled = handleWorkbenchManualShortcut({
       actions,
@@ -16,7 +16,7 @@ describe("handleWorkbenchManualShortcut", () => {
 
     expect(handled).toBe(true);
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(actions.saveActiveDocument).toHaveBeenCalledTimes(1);
+    expect(actions.openFileStructure).toHaveBeenCalledTimes(1);
   });
 
   it("does not consume unmatched shortcuts", () => {
@@ -32,7 +32,7 @@ describe("handleWorkbenchManualShortcut", () => {
 
     expect(handled).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(actions.saveActiveDocument).not.toHaveBeenCalled();
+    expect(actions.openFileStructure).not.toHaveBeenCalled();
   });
 
   it("preserves workspace-gated git history shortcut consumption", () => {
@@ -73,7 +73,6 @@ describe("handleWorkbenchManualShortcut", () => {
 
 function createActions() {
   return {
-    closeActiveSurface: vi.fn(),
     goToDeclaration: vi.fn(),
     goToDefinition: vi.fn(),
     goToImplementation: vi.fn(),
@@ -87,7 +86,6 @@ function createActions() {
     openLocalHistory: vi.fn(),
     openReferencesPanel: vi.fn(),
     runTestForActiveDocument: vi.fn(),
-    saveActiveDocument: vi.fn(),
     toggleBookmarkAtCursor: vi.fn(),
     toggleGitBlame: vi.fn(),
   };
