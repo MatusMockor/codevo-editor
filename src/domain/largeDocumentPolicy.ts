@@ -1,5 +1,5 @@
-export const LARGE_SMART_DOCUMENT_CHARACTER_LIMIT = 512 * 1024;
-export const LARGE_SMART_DOCUMENT_LINE_LIMIT = 12_000;
+export const LARGE_SMART_DOCUMENT_CHARACTER_LIMIT = 256 * 1024;
+export const LARGE_SMART_DOCUMENT_LINE_LIMIT = 5_000;
 
 export interface LargeDocumentCandidate {
   content: string;
