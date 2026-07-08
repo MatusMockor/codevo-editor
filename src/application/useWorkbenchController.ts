@@ -20,6 +20,7 @@ import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
+import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -6962,23 +6963,11 @@ export function useWorkbenchController(
       startPhpReindex,
     }).forEach((command) => registry.register(command));
 
-    registry.register({
-      id: "phpTree.show",
-      title: "Show PHP Tree",
-      category: "PHP",
-      isEnabled: (context) =>
-        context.hasWorkspace && shouldIndexWorkspace(intelligenceMode),
-      run: () => setSidebarView("php"),
-    });
-
-    registry.register({
-      id: "phpTree.refresh",
-      title: "Refresh PHP Tree",
-      category: "PHP",
-      isEnabled: (context) =>
-        context.hasWorkspace && shouldIndexWorkspace(intelligenceMode),
-      run: refreshPhpTree,
-    });
+    workbenchPhpTreeCommands({
+      intelligenceMode,
+      showPhpTree: () => setSidebarView("php"),
+      refreshPhpTree,
+    }).forEach((command) => registry.register(command));
 
     workbenchGitSidebarCommands({
       showGitSidebar: () => setSidebarView("git"),
