@@ -29,6 +29,9 @@ import {
   latteTemplateCompletions,
 } from "./netteTemplateCompletions";
 import {
+  latteExpressionResolutionContext,
+} from "./netteLatteProviderOptions";
+import {
   activeLatteProviderRequest,
   LATTE_COMPONENT_CACHE_TTL_MS,
   LATTE_MAX_COMPLETIONS,
@@ -152,17 +155,7 @@ export async function provideLatteCompletions(
   }
 
   return latteExpressionCompletions(
-    {
-      deps,
-      frameworkCapabilities: options.frameworkCapabilities,
-      isRequestedRootActive,
-      maxCompletions: LATTE_MAX_COMPLETIONS,
-      requestedRoot,
-      templateTypeCache: options.caches.templateTypeCache,
-      templateTypeInFlight: options.inFlight.templateTypeInFlight,
-      viewDataCache: options.caches.viewDataCache,
-      viewDataInFlight: options.inFlight.viewDataInFlight,
-    },
+    latteExpressionResolutionContext(options, request),
     source,
     offset,
   );

@@ -25,8 +25,10 @@ import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
+  latteExpressionResolutionContext,
+} from "./netteLatteProviderOptions";
+import {
   activeLatteProviderRequest,
-  LATTE_MAX_COMPLETIONS,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
   type LatteProviderFlowFactoryOptions,
@@ -83,17 +85,7 @@ export async function provideLatteDefinition(
   }
 
   const variableHandled = await resolveNettePresenterVariableDefinition(
-    {
-      deps,
-      frameworkCapabilities: options.frameworkCapabilities,
-      isRequestedRootActive,
-      maxCompletions: LATTE_MAX_COMPLETIONS,
-      requestedRoot,
-      templateTypeCache: options.caches.templateTypeCache,
-      templateTypeInFlight: options.inFlight.templateTypeInFlight,
-      viewDataCache: options.caches.viewDataCache,
-      viewDataInFlight: options.inFlight.viewDataInFlight,
-    },
+    latteExpressionResolutionContext(options, request),
     source,
     offset,
   );
@@ -103,17 +95,7 @@ export async function provideLatteDefinition(
   }
 
   const memberHandled = await resolveLatteMemberDefinition(
-    {
-      deps,
-      frameworkCapabilities: options.frameworkCapabilities,
-      isRequestedRootActive,
-      maxCompletions: LATTE_MAX_COMPLETIONS,
-      requestedRoot,
-      templateTypeCache: options.caches.templateTypeCache,
-      templateTypeInFlight: options.inFlight.templateTypeInFlight,
-      viewDataCache: options.caches.viewDataCache,
-      viewDataInFlight: options.inFlight.viewDataInFlight,
-    },
+    latteExpressionResolutionContext(options, request),
     source,
     offset,
   );
