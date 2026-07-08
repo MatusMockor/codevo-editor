@@ -1,19 +1,5 @@
-import { useCallback, useMemo, type MutableRefObject } from "react";
-import {
-  phpFrameworkRouteDefinitionsFromSource,
-  phpFrameworkRouteSearchQueries,
-  phpFrameworkSupportsRoutes,
-  type PhpFrameworkProvider,
-  type PhpFrameworkRouteDefinition,
-} from "../domain/phpFrameworkProviders";
-import {
-  phpLaravelGateAbilityDefinitions,
-  type PhpLaravelGateAbilityDefinition,
-} from "../domain/phpLaravelAuthorization";
-import {
-  phpLaravelMiddlewareAliasDefinitions,
-  type PhpLaravelMiddlewareAliasDefinition,
-} from "../domain/phpLaravelMiddleware";
+import { useMemo, type MutableRefObject } from "react";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
@@ -45,23 +31,24 @@ import {
 import { createPhpLaravelConfigTargetResolver } from "./phpLaravelConfigTargets";
 import { createPhpLaravelEnvTargetResolver } from "./phpLaravelEnvTargets";
 import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
+import {
+  createPhpLaravelTextSearchTargetCollectors,
+  type PhpLaravelGateAbilityTarget,
+  type PhpLaravelMiddlewareAliasTarget,
+  type PhpLaravelNamedRouteTarget,
+} from "./phpLaravelTextSearchTargets";
 import { createPhpLaravelTranslationTargetResolver } from "./phpLaravelTranslationTargets";
 import {
   createPhpLaravelViewTargetResolver,
   type PhpLaravelViewNavigationTarget,
 } from "./phpLaravelViewTargets";
-import {
-  type WorkspaceFileTarget,
-  type WorkspaceTargetCollectorDeps,
-  createWorkspaceTargetCollector,
-} from "./phpWorkspaceTargetCollector";
+import { type WorkspaceTargetCollectorDeps } from "./phpWorkspaceTargetCollector";
 
-export type PhpLaravelNamedRouteTarget =
-  WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
-export type PhpLaravelGateAbilityTarget =
-  WorkspaceFileTarget<PhpLaravelGateAbilityDefinition>;
-export type PhpLaravelMiddlewareAliasTarget =
-  WorkspaceFileTarget<PhpLaravelMiddlewareAliasDefinition>;
+export type {
+  PhpLaravelGateAbilityTarget,
+  PhpLaravelMiddlewareAliasTarget,
+  PhpLaravelNamedRouteTarget,
+} from "./phpLaravelTextSearchTargets";
 export type {
   PhpLaravelAuthGuardTarget,
   PhpLaravelBroadcastConnectionTarget,
@@ -236,68 +223,20 @@ function useLaravelFrameworkTargetAdapter(
     invalidate: invalidatePhpLaravelTargetCache,
   } = usePhpLaravelTargetCache(currentWorkspaceRootRef);
 
-  const collectPhpLaravelNamedRouteTargets = useCallback(
-    (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelNamedRouteTarget[]> => {
-      const collect = createWorkspaceTargetCollector(engineDeps, {
-        kind: "textSearch",
-        isEnabled: () => phpFrameworkSupportsRoutes(targetPhpFrameworkProviders),
-        queries: () => phpFrameworkRouteSearchQueries(targetPhpFrameworkProviders),
-        parseDefinitions: (source) =>
-          phpFrameworkRouteDefinitionsFromSource(
-            source,
-            targetPhpFrameworkProviders,
-          ),
-      });
-
-      return collect({
+  const textSearchTargetCollectors = useMemo(
+    () =>
+      createPhpLaravelTextSearchTargetCollectors({
         workspaceRoot,
-        currentDocument: { content: currentSource, path: currentPath },
-      });
-    },
-    [engineDeps, targetPhpFrameworkProviders, workspaceRoot],
-  );
-
-  const collectPhpLaravelGateAbilityTargets = useCallback(
-    (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelGateAbilityTarget[]> => {
-      const collect = createWorkspaceTargetCollector(engineDeps, {
-        kind: "textSearch",
-        isEnabled: () => isLaravelFrameworkActive,
-        queries: () => ["Gate::define"],
-        parseDefinitions: phpLaravelGateAbilityDefinitions,
-      });
-
-      return collect({
-        workspaceRoot,
-        currentDocument: { content: currentSource, path: currentPath },
-      });
-    },
-    [engineDeps, isLaravelFrameworkActive, workspaceRoot],
-  );
-
-  const collectPhpLaravelMiddlewareAliasTargets = useCallback(
-    (
-      currentSource: string,
-      currentPath: string,
-    ): Promise<PhpLaravelMiddlewareAliasTarget[]> => {
-      const collect = createWorkspaceTargetCollector(engineDeps, {
-        kind: "textSearch",
-        isEnabled: () => isLaravelFrameworkActive,
-        queries: () => ["middlewareAliases", "routeMiddleware"],
-        parseDefinitions: phpLaravelMiddlewareAliasDefinitions,
-      });
-
-      return collect({
-        workspaceRoot,
-        currentDocument: { content: currentSource, path: currentPath },
-      });
-    },
-    [engineDeps, isLaravelFrameworkActive, workspaceRoot],
+        phpFrameworkProviders: targetPhpFrameworkProviders,
+        isLaravelFrameworkActive,
+        workspaceTargetCollectorDeps: engineDeps,
+      }),
+    [
+      workspaceRoot,
+      targetPhpFrameworkProviders,
+      isLaravelFrameworkActive,
+      engineDeps,
+    ],
   );
 
   const envTargetResolver = useMemo(
@@ -447,9 +386,12 @@ function useLaravelFrameworkTargetAdapter(
   );
 
   return {
-    collectPhpLaravelNamedRouteTargets,
-    collectPhpLaravelGateAbilityTargets,
-    collectPhpLaravelMiddlewareAliasTargets,
+    collectPhpLaravelNamedRouteTargets:
+      textSearchTargetCollectors.collectNamedRoutes,
+    collectPhpLaravelGateAbilityTargets:
+      textSearchTargetCollectors.collectGateAbilities,
+    collectPhpLaravelMiddlewareAliasTargets:
+      textSearchTargetCollectors.collectMiddlewareAliases,
     collectPhpLaravelEnvTargets: envTargetResolver.collect,
     collectPhpLaravelViewTargets: viewTargetResolver.collect,
     collectPhpLaravelConfigTargets: configTargetResolver.collect,
