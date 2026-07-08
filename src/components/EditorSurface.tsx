@@ -266,46 +266,6 @@ interface EditorSurfaceProps {
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCodeActions?(
-    source: string,
-    range: PhpCodeActionRange,
-  ): Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<BladeCompletion[]>;
-  provideBladeDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  provideLatteCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<LatteCompletion[]>;
-  provideLatteDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  provideNeonCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletion[]>;
-  provideNeonDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  provideNettePhpLinkDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  provideNettePhpLinkCompletions?(
-    source: string,
-    offset: number,
-  ): Promise<LatteCompletion[] | null>;
-  isPhpFrameworkStringCompletionContext?(
-    source: string,
-    position: EditorPosition,
-  ): boolean;
   providePhpFrameworkDefinition?(
     source: string,
     offset: number,
@@ -432,16 +392,6 @@ function EditorSurfaceComponent({
   onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
   frameworkIntelligenceProviders,
-  provideBladeCodeActions = async () => [],
-  provideBladeCompletions = async () => [],
-  provideBladeDefinition = async () => false,
-  provideLatteCompletions = async () => [],
-  provideLatteDefinition = async () => false,
-  provideNeonCompletions = async () => [],
-  provideNeonDefinition = async () => false,
-  provideNettePhpLinkDefinition = async () => false,
-  provideNettePhpLinkCompletions = async () => null,
-  isPhpFrameworkStringCompletionContext = () => false,
   providePhpCodeActions = async () => [],
   providePhpFrameworkDefinition,
   providePhpLaravelDefinition,
@@ -455,33 +405,34 @@ function EditorSurfaceComponent({
     noopPhpFrameworkDefinition;
   const resolvedProvideBladeCodeActions =
     frameworkIntelligenceProviders?.provideBladeCodeActions ??
-    provideBladeCodeActions;
+    noopPhpCodeActions;
   const resolvedProvideBladeCompletions =
     frameworkIntelligenceProviders?.provideBladeCompletions ??
-    provideBladeCompletions;
+    noopBladeCompletions;
   const resolvedProvideBladeDefinition =
     frameworkIntelligenceProviders?.provideBladeDefinition ??
-    provideBladeDefinition;
+    noopPhpFrameworkDefinition;
   const resolvedProvideLatteCompletions =
     frameworkIntelligenceProviders?.provideLatteCompletions ??
-    provideLatteCompletions;
+    noopLatteCompletions;
   const resolvedProvideLatteDefinition =
     frameworkIntelligenceProviders?.provideLatteDefinition ??
-    provideLatteDefinition;
+    noopPhpFrameworkDefinition;
   const resolvedProvideNeonCompletions =
     frameworkIntelligenceProviders?.provideNeonCompletions ??
-    provideNeonCompletions;
+    noopNeonCompletions;
   const resolvedProvideNeonDefinition =
-    frameworkIntelligenceProviders?.provideNeonDefinition ?? provideNeonDefinition;
+    frameworkIntelligenceProviders?.provideNeonDefinition ??
+    noopPhpFrameworkDefinition;
   const resolvedProvideNettePhpLinkDefinition =
     frameworkIntelligenceProviders?.provideNettePhpLinkDefinition ??
-    provideNettePhpLinkDefinition;
+    noopPhpFrameworkDefinition;
   const resolvedProvideNettePhpLinkCompletions =
     frameworkIntelligenceProviders?.provideNettePhpLinkCompletions ??
-    provideNettePhpLinkCompletions;
+    noopNettePhpLinkCompletions;
   const resolvedIsPhpFrameworkStringCompletionContext =
     frameworkIntelligenceProviders?.isPhpFrameworkStringCompletionContext ??
-    isPhpFrameworkStringCompletionContext;
+    noopPhpFrameworkStringCompletionContext;
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -3956,6 +3907,14 @@ const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
 const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 const noopLocalPhpDiagnosticsChange = () => undefined;
 const noopPhpFrameworkDefinition = async () => false;
+const noopPhpFrameworkStringCompletionContext = () => false;
+const noopPhpCodeActions = async (): Promise<PhpCodeActionDescriptor[]> => [];
+const noopBladeCompletions = async (): Promise<BladeCompletion[]> => [];
+const noopLatteCompletions = async (): Promise<LatteCompletion[]> => [];
+const noopNeonCompletions = async (): Promise<NeonCompletion[]> => [];
+const noopNettePhpLinkCompletions = async (): Promise<
+  LatteCompletion[] | null
+> => null;
 // Stable empty identities so an absent breadcrumb symbol set / path does not
 // produce a fresh array each render and break the breadcrumb path memo.
 const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];

@@ -676,8 +676,10 @@ describe("EditorSurface", () => {
           onRevealTargetHandled={vi.fn()}
           onRevertChangeHunk={vi.fn()}
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
-          provideBladeCompletions={provideBladeCompletions}
-          provideBladeDefinition={provideBladeDefinition}
+          frameworkIntelligenceProviders={{
+            provideBladeCompletions,
+            provideBladeDefinition,
+          }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
         />,
@@ -2734,7 +2736,9 @@ class InvoiceServiceTest extends TestCase
           onRevealTargetHandled={vi.fn()}
           onRevertChangeHunk={vi.fn()}
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
-          isPhpFrameworkStringCompletionContext={() => true}
+          frameworkIntelligenceProviders={{
+            isPhpFrameworkStringCompletionContext: () => true,
+          }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
         />,
