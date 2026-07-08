@@ -27,7 +27,7 @@ import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
-import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
+import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -310,17 +310,12 @@ import {
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
-  phpClassPathCandidates,
-  phpDocMethodPositionOrNull,
   phpPropertyPositionOrNull,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,
-  phpMethodPosition,
-  phpMethodPositionOrNull,
   phpSuperTypeReferences,
   resolvePhpClassName,
-  type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
 import {
   phpTestClassPlan,
@@ -5905,227 +5900,19 @@ export function useWorkbenchController(
     provideLaravelDiagnosticsForActiveDocument,
   ]);
 
-  const openPhpMethodHintTarget = useCallback(
-    async (hint: PhpMethodDefinitionHint): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return false;
-      }
-
-      for (const path of phpClassPathCandidates(
-        requestedRoot,
-        requestedDescriptor.php,
-        hint.className,
-      )) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            path,
-            phpMethodPosition(content, hint.methodName),
-            `${hint.methodName}()`,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    },
-    [
-      openNavigationTarget,
-      readNavigationFileContent,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
-
-  const openDirectPhpMethodTarget = useCallback(
-    async (className: string, methodName: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return false;
-      }
-
-      const normalizedClassName = className.toLowerCase();
-      const normalizedMethodName = methodName.toLowerCase();
-
-      if (shouldIndexWorkspace(intelligenceMode)) {
-        const symbols = await projectSymbolSearch.searchProjectSymbols(
-          requestedRoot,
-          methodName,
-          50,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const target = symbols.find(
-          (symbol) =>
-            symbol.kind === "method" &&
-            symbol.name.toLowerCase() === normalizedMethodName &&
-            symbol.containerName?.toLowerCase() === normalizedClassName,
-        );
-
-        if (target) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            target.path,
-            editorPositionFromProjectSymbol(target),
-            `${methodName}()`,
-          );
-        }
-      }
-
-      if (!requestedDescriptor?.php) {
-        return false;
-      }
-
-      const visitedClassNames = new Set<string>();
-      const openMethodInClassHierarchy = async (
-        candidateClassName: string,
-      ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
-        const visitedKey = normalizedCandidate.toLowerCase();
-
-        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
-          return false;
-        }
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        visitedClassNames.add(visitedKey);
-
-        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          try {
-            const content = await readNavigationFileContent(path);
-
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            const position =
-              phpMethodPositionOrNull(content, methodName) ??
-              phpDocMethodPositionOrNull(content, methodName);
-
-            if (position) {
-              if (!isRequestedRootActive()) {
-                return false;
-              }
-
-              return openNavigationTarget(path, position, `${methodName}()`);
-            }
-
-            for (const traitName of phpTraitClassNames(content)) {
-              const resolvedTraitName = resolvePhpClassReference(
-                content,
-                traitName,
-              );
-
-              if (
-                resolvedTraitName &&
-                (await openMethodInClassHierarchy(resolvedTraitName))
-              ) {
-                return true;
-              }
-            }
-
-            for (const mixinName of phpMixinClassNames(content)) {
-              const resolvedMixinName = resolvePhpClassReference(
-                content,
-                mixinName,
-              );
-
-              if (
-                resolvedMixinName &&
-                (await openMethodInClassHierarchy(resolvedMixinName))
-              ) {
-                return true;
-              }
-            }
-
-            for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassReference(
-                content,
-                superTypeName,
-              );
-
-              if (
-                resolvedSuperTypeName &&
-                (await openMethodInClassHierarchy(resolvedSuperTypeName))
-              ) {
-                return true;
-              }
-            }
-          } catch {
-            if (!isRequestedRootActive()) {
-              return false;
-            }
-
-            continue;
-          }
-        }
-
-        return false;
-      };
-
-      if (await openMethodInClassHierarchy(className)) {
-        return true;
-      }
-
-      const boundConcreteClassName =
-        await resolvePhpFrameworkBoundConcrete(className);
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      return boundConcreteClassName
-        ? openMethodInClassHierarchy(boundConcreteClassName)
-        : false;
-    },
-    [
+  const { openDirectPhpMethodTarget, openPhpMethodHintTarget } =
+    usePhpMethodTargetNavigation({
+      currentWorkspaceRootRef,
       intelligenceMode,
       openNavigationTarget,
       projectSymbolSearch,
       readNavigationFileContent,
-      resolvePhpFrameworkBoundConcrete,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
+      resolvePhpFrameworkBoundConcrete,
       workspaceDescriptor,
       workspaceRoot,
-    ],
-  );
+    });
 
   const openDirectPhpPropertyTarget = useCallback(
     async (className: string, propertyName: string): Promise<boolean> => {
