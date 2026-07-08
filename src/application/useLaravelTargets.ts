@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpFrameworkConfigKeysFromSource,
@@ -87,6 +87,7 @@ import {
 } from "../domain/phpLaravelViews";
 import { getFileName, type FileEntry, type TextSearchGateway } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
 import {
   createWorkspaceTargetCollector,
   type WorkspaceFileTarget,
@@ -290,26 +291,7 @@ function useConfigDerivedLaravelTarget<Property extends string>(
   return { collect, find };
 }
 
-// Laravel config/view/translation completions previously triggered a full
-// directory scan on every keystroke (recursive resources/views walk, reads of
-// every config/*.php and lang file). The targets only change when files change,
-// so they are memoized per workspace root with a short TTL. The cache is keyed
-// by workspace root and reset on workspace switch and on index reindex (through
-// `invalidatePhpLaravelTargetCache`) so it can never leak across project tabs or
-// serve stale targets after a reindex.
-const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
 const EMPTY_PHP_FRAMEWORK_PROVIDERS: readonly PhpFrameworkProvider[] = [];
-
-interface PhpLaravelTargetCacheEntry<T> {
-  expiresAt: number;
-  targets: T[];
-}
-
-interface PhpLaravelTargetCacheBucket {
-  config?: PhpLaravelTargetCacheEntry<PhpLaravelConfigTarget>;
-  translations?: PhpLaravelTargetCacheEntry<PhpLaravelTranslationTarget>;
-  views?: PhpLaravelTargetCacheEntry<PhpLaravelViewTarget>;
-}
 
 /**
  * Collaborators the Laravel target collectors need from the workbench shell.
@@ -462,66 +444,11 @@ function useLaravelFrameworkTargetAdapter(
     ],
   );
 
-  const phpLaravelTargetCacheRef = useRef<
-    Record<string, PhpLaravelTargetCacheBucket>
-  >({});
-
-  const readPhpLaravelTargetCache = useCallback(
-    <Kind extends keyof PhpLaravelTargetCacheBucket>(
-      requestedRoot: string,
-      kind: Kind,
-    ): NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"] | null => {
-      // Only serve cached targets while the requested root is still the active
-      // workspace; never let a stale tab's cache satisfy another tab's request.
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return null;
-      }
-
-      const entry = phpLaravelTargetCacheRef.current[requestedRoot]?.[kind];
-
-      if (!entry || entry.expiresAt <= Date.now()) {
-        return null;
-      }
-
-      return entry.targets as NonNullable<
-        PhpLaravelTargetCacheBucket[Kind]
-      >["targets"];
-    },
-    [currentWorkspaceRootRef],
-  );
-
-  const writePhpLaravelTargetCache = useCallback(
-    <Kind extends keyof PhpLaravelTargetCacheBucket>(
-      requestedRoot: string,
-      kind: Kind,
-      targets: NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"],
-    ): void => {
-      // Drop results computed for a root that is no longer active so the cache
-      // can never be populated with another tab's targets.
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return;
-      }
-
-      const bucket = phpLaravelTargetCacheRef.current[requestedRoot] ?? {};
-
-      phpLaravelTargetCacheRef.current[requestedRoot] = {
-        ...bucket,
-        [kind]: {
-          expiresAt: Date.now() + PHP_LARAVEL_TARGET_CACHE_TTL_MS,
-          targets,
-        },
-      };
-    },
-    [currentWorkspaceRootRef],
-  );
-
-  const invalidatePhpLaravelTargetCache = useCallback(() => {
-    phpLaravelTargetCacheRef.current = {};
-  }, []);
+  const {
+    read: readPhpLaravelTargetCache,
+    write: writePhpLaravelTargetCache,
+    invalidate: invalidatePhpLaravelTargetCache,
+  } = usePhpLaravelTargetCache(currentWorkspaceRootRef);
 
   const collectPhpLaravelNamedRouteTargets = useCallback(
     (
