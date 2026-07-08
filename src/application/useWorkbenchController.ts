@@ -76,6 +76,7 @@ import {
 import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
+import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
@@ -7290,22 +7291,7 @@ export function useWorkbenchController(
     ],
   );
 
-  const {
-    provideBladeCodeActions,
-    provideBladeCompletions,
-    provideBladeDefinition,
-    invalidateBladeComponentNamesForPath,
-    invalidateBladeViewDataEntriesForPath,
-    resetBladeIntelligenceCaches,
-    provideLatteDefinition,
-    provideLatteCompletions,
-    provideNettePhpLinkDefinition,
-    provideNettePhpLinkCompletions,
-    shouldBlockLatteDefinitionFallback,
-    provideNeonDefinition,
-    provideNeonCompletions,
-    isPhpFrameworkStringCompletionContext,
-  } = useWorkbenchFrameworkIntelligence({
+  const workbenchFrameworkIntelligence = useWorkbenchFrameworkIntelligence({
     activePhpFrameworkProviders,
     blade: {
       activeDocument,
@@ -7386,31 +7372,16 @@ export function useWorkbenchController(
       workspaceRoot,
     },
   });
-  const frameworkIntelligenceProviders = useMemo(
-    () => ({
-      provideBladeCodeActions,
-      provideBladeCompletions,
-      provideBladeDefinition,
-      provideLatteCompletions,
-      provideLatteDefinition,
-      provideNeonCompletions,
-      provideNeonDefinition,
-      provideNettePhpLinkCompletions,
-      provideNettePhpLinkDefinition,
-      isPhpFrameworkStringCompletionContext,
-    }),
-    [
-      isPhpFrameworkStringCompletionContext,
-      provideBladeCodeActions,
-      provideBladeCompletions,
-      provideBladeDefinition,
-      provideLatteCompletions,
-      provideLatteDefinition,
-      provideNeonCompletions,
-      provideNeonDefinition,
-      provideNettePhpLinkCompletions,
-      provideNettePhpLinkDefinition,
-    ],
+  const {
+    provideBladeDefinition,
+    invalidateBladeComponentNamesForPath,
+    invalidateBladeViewDataEntriesForPath,
+    resetBladeIntelligenceCaches,
+    provideLatteDefinition,
+    shouldBlockLatteDefinitionFallback,
+  } = workbenchFrameworkIntelligence;
+  const frameworkIntelligenceProviders = useWorkbenchFrameworkProviderAdapter(
+    workbenchFrameworkIntelligence,
   );
 
   const goToPhpMethodCallDefinition = useCallback(
