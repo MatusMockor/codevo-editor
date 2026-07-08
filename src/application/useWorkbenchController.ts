@@ -17,7 +17,7 @@ import {
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
-import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
+import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -909,18 +909,24 @@ export function useWorkbenchController(
     reclassifyPhpLanguageServerDiagnosticsForRootRef.current(rootPath);
   }, []);
   const {
-    currentPhpLaravelSourceContext,
-    ensurePhpLaravelMigrationSourcesLoaded,
-    ensurePhpLaravelProviderSourcesLoaded,
-    invalidatePhpLaravelMigrationSourcesForPath,
-    invalidatePhpLaravelProviderSourcesForPath,
-    resetPhpLaravelSourceRegistries,
-  } = useLaravelSourceRegistries({
+    currentPhpFrameworkSourceContext,
+    ensurePhpFrameworkSourceCollectionsLoaded,
+    invalidatePhpFrameworkSourcePath,
+    resetPhpFrameworkSourceRegistries,
+  } = usePhpFrameworkSourceRegistries({
     currentWorkspaceRootRef,
     isLaravelFrameworkActive,
     onSourcesLoaded: onPhpLaravelSourcesLoaded,
     workspaceFiles,
   });
+  const ensurePhpLaravelMigrationSourcesLoaded =
+    ensurePhpFrameworkSourceCollectionsLoaded;
+  const ensurePhpLaravelProviderSourcesLoaded =
+    ensurePhpFrameworkSourceCollectionsLoaded;
+  const invalidatePhpLaravelMigrationSourcesForPath =
+    invalidatePhpFrameworkSourcePath;
+  const invalidatePhpLaravelProviderSourcesForPath =
+    invalidatePhpFrameworkSourcePath;
   const openFileRef = useRef<
     (
       entry: FileEntry,
@@ -5048,7 +5054,7 @@ export function useWorkbenchController(
         return;
       }
 
-      const { workspaceSources } = currentPhpLaravelSourceContext();
+      const { workspaceSources } = currentPhpFrameworkSourceContext();
 
       if (workspaceSources.length === 0) {
         return;
@@ -5151,7 +5157,7 @@ export function useWorkbenchController(
         ),
       );
     },
-    [activePhpFrameworkProviders, currentPhpLaravelSourceContext],
+    [activePhpFrameworkProviders, currentPhpFrameworkSourceContext],
   );
 
   useEffect(() => {
@@ -5170,7 +5176,7 @@ export function useWorkbenchController(
   } = usePhpClassMemberCollectors({
     activePhpFrameworkProviderSignature,
     activePhpFrameworkProviders,
-    currentPhpLaravelSourceContext,
+    currentPhpLaravelSourceContext: currentPhpFrameworkSourceContext,
     currentWorkspaceRootRef,
     isLaravelFrameworkActive,
     readNavigationFileContent,
@@ -5395,10 +5401,9 @@ export function useWorkbenchController(
   usePhpDiagnosticContextFilter({
     activePhpFrameworkProviders,
     contextualDiagnosticsFilterRef,
-    currentPhpLaravelSourceContext,
+    currentPhpFrameworkSourceContext,
     currentWorkspaceRoot: () => currentWorkspaceRootRef.current,
-    ensurePhpLaravelMigrationSourcesLoaded,
-    ensurePhpLaravelProviderSourcesLoaded,
+    ensurePhpFrameworkSourceCollectionsLoaded,
     isLaravelFrameworkActive,
     isPhpPath,
     phpClassHasLaravelDynamicWhere,
@@ -5474,7 +5479,7 @@ export function useWorkbenchController(
     activePhpFrameworkProviders,
     collectPhpLaravelDynamicWhereMethodsForClass,
     collectPhpMethodsForClass,
-    currentPhpLaravelSourceContext,
+    currentPhpLaravelSourceContext: currentPhpFrameworkSourceContext,
     isLaravelFrameworkActive,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
@@ -5702,8 +5707,7 @@ export function useWorkbenchController(
       // once ready. Fire-and-forget: this request is served from whatever is
       // already cached.
       if (isLaravelFrameworkActive && (accessContext || staticAccessContext)) {
-        void ensurePhpLaravelMigrationSourcesLoaded(requestedRoot);
-        void ensurePhpLaravelProviderSourcesLoaded(requestedRoot);
+        void ensurePhpFrameworkSourceCollectionsLoaded(requestedRoot);
       }
 
       const traitThisContext = accessContext
@@ -5776,8 +5780,7 @@ export function useWorkbenchController(
       collectPhpMethodsForClass,
       activeDocument,
       activePhpFrameworkProviders,
-      ensurePhpLaravelMigrationSourcesLoaded,
-      ensurePhpLaravelProviderSourcesLoaded,
+      ensurePhpFrameworkSourceCollectionsLoaded,
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpEloquentBuilderModelType,
@@ -7369,7 +7372,7 @@ export function useWorkbenchController(
     phpFrameworkBindingCacheRef.current = {};
     phpLaravelMorphMapModelTypeCacheRef.current = {};
     invalidateFrameworkTargetCache();
-    resetPhpLaravelSourceRegistries();
+    resetPhpFrameworkSourceRegistries();
     resetBladeIntelligenceCaches();
   };
   const frameworkIntelligenceProviders = useWorkbenchFrameworkProviderAdapter(

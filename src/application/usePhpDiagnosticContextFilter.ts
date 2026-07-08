@@ -27,7 +27,7 @@ interface DiagnosticEditorPosition {
   lineNumber: number;
 }
 
-interface PhpLaravelSourceContext {
+interface PhpFrameworkSourceRegistryContext {
   workspaceSources: readonly string[];
 }
 
@@ -39,10 +39,9 @@ export type PhpContextualDiagnosticsFilter = (
 export interface PhpDiagnosticContextFilterDependencies {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   contextualDiagnosticsFilterRef: MutableRefObject<PhpContextualDiagnosticsFilter>;
-  currentPhpLaravelSourceContext(): PhpLaravelSourceContext;
+  currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   currentWorkspaceRoot(): string | null;
-  ensurePhpLaravelMigrationSourcesLoaded(rootPath: string): Promise<void>;
-  ensurePhpLaravelProviderSourcesLoaded(rootPath: string): Promise<void>;
+  ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   isLaravelFrameworkActive: boolean;
   isPhpPath(path: string): boolean;
   phpClassHasLaravelDynamicWhere(
@@ -102,10 +101,9 @@ export function usePhpDiagnosticContextFilter(
   const {
     activePhpFrameworkProviders,
     contextualDiagnosticsFilterRef,
-    currentPhpLaravelSourceContext,
+    currentPhpFrameworkSourceContext,
     currentWorkspaceRoot,
-    ensurePhpLaravelMigrationSourcesLoaded,
-    ensurePhpLaravelProviderSourcesLoaded,
+    ensurePhpFrameworkSourceCollectionsLoaded,
     isLaravelFrameworkActive,
     isPhpPath,
     phpClassHasLaravelDynamicWhere,
@@ -399,11 +397,10 @@ export function usePhpDiagnosticContextFilter(
       const workspaceRoot = currentWorkspaceRoot();
 
       if (isLaravelFrameworkActive && workspaceRoot) {
-        void ensurePhpLaravelMigrationSourcesLoaded(workspaceRoot);
-        void ensurePhpLaravelProviderSourcesLoaded(workspaceRoot);
+        void ensurePhpFrameworkSourceCollectionsLoaded(workspaceRoot);
       }
 
-      const { workspaceSources } = currentPhpLaravelSourceContext();
+      const { workspaceSources } = currentPhpFrameworkSourceContext();
 
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
         contextualExistingMethods,
@@ -422,10 +419,9 @@ export function usePhpDiagnosticContextFilter(
     },
     [
       activePhpFrameworkProviders,
-      currentPhpLaravelSourceContext,
+      currentPhpFrameworkSourceContext,
       currentWorkspaceRoot,
-      ensurePhpLaravelMigrationSourcesLoaded,
-      ensurePhpLaravelProviderSourcesLoaded,
+      ensurePhpFrameworkSourceCollectionsLoaded,
       isLaravelFrameworkActive,
       isPhpPath,
       phpClassHasLaravelDynamicWhere,
