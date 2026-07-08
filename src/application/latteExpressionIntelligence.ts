@@ -12,6 +12,8 @@ import {
 } from "./latteExpressionCompletions";
 import {
   latteCandidateViewNames as resolveLatteCandidateViewNames,
+} from "./netteLatteCandidateViewNames";
+import {
   loadNetteViewDataEntries,
   type NetteViewDataCache,
   type NetteViewDataEntry,

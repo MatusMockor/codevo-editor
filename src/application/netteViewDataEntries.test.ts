@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   hasNetteFrameworkProvider,
-  latteCandidateViewNames,
   loadNetteViewDataEntries,
   type NetteViewDataCache,
   type NetteViewDataDependencies,
   type NetteViewDataFrameworkCapabilities,
   type NetteViewDataInFlight,
 } from "./netteViewDataEntries";
+import { latteCandidateViewNames } from "./netteLatteCandidateViewNames";
 import type {
   PhpFrameworkProvider,
   PhpFrameworkViewDataEntry,
