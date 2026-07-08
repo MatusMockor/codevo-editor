@@ -877,6 +877,96 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("publishes a guarded editor surface command runner for registry commands", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editorSurfaceCommandRunnerChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorSurfaceCommandRunnerChange={editorSurfaceCommandRunnerChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const editor = editorSurfaceMocks.editor;
+    const runner = editorSurfaceCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    expect(runner).toEqual(expect.any(Function));
+
+    act(() => {
+      runner("editor.rename");
+    });
+
+    expect(editor?.focus).toHaveBeenCalledTimes(1);
+    expect(editor?.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.rename",
+      {},
+    );
+
+    editor?.focus.mockClear();
+    editor?.trigger.mockClear();
+    editor?.getModel.mockReturnValueOnce({
+      uri: {
+        fsPath: "/workspace/src/other.ts",
+        path: "/workspace/src/other.ts",
+      },
+    } as FakeModel);
+
+    act(() => {
+      runner("editor.quickFix");
+    });
+
+    expect(editor?.focus).not.toHaveBeenCalled();
+    expect(editor?.trigger).not.toHaveBeenCalled();
+  });
+
   it("clears the window chrome edit menu runner when no document is targetable", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",

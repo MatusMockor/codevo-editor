@@ -64,6 +64,7 @@ import {
   type WorkspaceDescriptor,
   type WorkspaceFileGateway,
 } from "../domain/workspace";
+import { isLargeSmartDocumentContent } from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
@@ -257,6 +258,10 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
           return emptyPhpFileOutline();
         }
 
+        if (isLargeSmartDocumentContent(source)) {
+          return emptyPhpFileOutline();
+        }
+
         return phpFileOutlineGateway.parsePhpFileOutline(path, source);
       }
 
@@ -347,6 +352,14 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
           return;
         }
 
+        if (isLargeSmartDocumentContent(source)) {
+          setPhpInheritedFileOutlinesByPath((current) => ({
+            ...current,
+            [path]: emptyPhpFileOutline(),
+          }));
+          return;
+        }
+
         const parentClassName = phpExtendsClassName(source);
         const resolvedParentClassName = parentClassName
           ? resolvePhpClassName(source, parentClassName)
@@ -378,6 +391,10 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
 
             if (!isRequestedRootActive()) {
               return;
+            }
+
+            if (isLargeSmartDocumentContent(parentSource)) {
+              continue;
             }
 
             const outline = await phpFileOutlineGateway.parsePhpFileOutline(

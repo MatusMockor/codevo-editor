@@ -25,6 +25,10 @@ import type {
   EditorMenuCommandRunner,
 } from "../domain/editorMenuCommand";
 import type {
+  EditorSurfaceCommandId,
+  EditorSurfaceCommandRunner,
+} from "../domain/editorSurfaceCommand";
+import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
@@ -53,6 +57,7 @@ import {
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
 } from "../domain/languageServerDocumentSync";
+import { isLargeSmartDocument } from "../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { SurroundWithPicker } from "./SurroundWithPicker";
 import {
@@ -225,6 +230,9 @@ interface EditorSurfaceProps {
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
   onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
+  onEditorSurfaceCommandRunnerChange?(
+    runner: EditorSurfaceCommandRunner | null,
+  ): void;
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
@@ -336,6 +344,7 @@ function EditorSurfaceComponent({
   onCloseActiveTab,
   onCursorPositionChange,
   onEditorMenuCommandRunnerChange,
+  onEditorSurfaceCommandRunnerChange,
   onGoBack,
   onGoForward,
   onGoToDefinition,
@@ -799,6 +808,35 @@ function EditorSurfaceComponent({
     };
   }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange]);
 
+  useEffect(() => {
+    if (!onEditorSurfaceCommandRunnerChange) {
+      return;
+    }
+
+    if (!editorApi || !activeDocument) {
+      onEditorSurfaceCommandRunnerChange(null);
+      return;
+    }
+
+    const targetPath = activeDocument.path;
+    const runner: EditorSurfaceCommandRunner = (commandId) => {
+      const model = editorApi.getModel();
+
+      if (!model || modelPath(model) !== targetPath) {
+        return;
+      }
+
+      editorApi.focus();
+      triggerEditorSurfaceCommand(editorApi, commandId);
+    };
+
+    onEditorSurfaceCommandRunnerChange(runner);
+
+    return () => {
+      onEditorSurfaceCommandRunnerChange(null);
+    };
+  }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange]);
+
   useEditorSurfaceLanguageProviderRegistration({
     dependencies: {
       featuresGateway: languageServerFeaturesGateway,
@@ -961,6 +999,11 @@ function EditorSurfaceComponent({
     const tokenizer = backgroundTokenizerRef.current;
 
     if (!editorApi || !activeDocument || !tokenizer) {
+      return;
+    }
+
+    if (isLargeSmartDocument(activeDocument)) {
+      tokenizer.stop();
       return;
     }
 
@@ -1249,14 +1292,13 @@ function EditorSurfaceComponent({
         id: "mockor.gotoLine",
         label: "Go to Line/Column",
         keybindings: keybinding("editor.gotoLine"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.gotoLine"),
+        run: () => triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
       }),
       editorApi.addAction({
         id: "mockor.rename",
         label: "Rename Symbol",
         keybindings: keybinding("editor.rename"),
-        run: () => triggerEditorAction(editorApi, "editor.action.rename"),
+        run: () => triggerEditorSurfaceCommand(editorApi, "editor.rename"),
       }),
       editorApi.addAction({
         id: "mockor.toggleGitBlame",
@@ -1270,22 +1312,15 @@ function EditorSurfaceComponent({
         id: "mockor.formatDocument",
         label: "Format Document",
         keybindings: keybinding("editor.formatDocument"),
-        run: () => {
-          const model = editorApi.getModel();
-
-          if (!model) {
-            return;
-          }
-
-          editorApi.trigger("keyboard", "editor.action.formatDocument", {});
-        },
+        run: () =>
+          triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
       }),
       editorApi.addAction({
         id: "mockor.formatSelection",
         label: "Format Selection",
         keybindings: keybinding("editor.formatSelection"),
         run: () =>
-          triggerEditorAction(editorApi, "editor.action.formatSelection"),
+          triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
       }),
       editorApi.addAction({
         id: "mockor.quickFix",
@@ -1294,16 +1329,7 @@ function EditorSurfaceComponent({
           ...keybinding("editor.quickFix"),
           monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.Period,
         ],
-        run: () => {
-          const model = editorApi.getModel();
-          const position = editorApi.getPosition();
-
-          if (!model || !position) {
-            return;
-          }
-
-          editorApi.trigger("keyboard", "editor.action.quickFix", {});
-        },
+        run: () => triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
       }),
       editorApi.addAction({
         id: "mockor.extendSelection",
@@ -1940,10 +1966,14 @@ function EditorSurfaceComponent({
   // to it. Gated to PHP documents (the union of the three consumers); the test
   // gutter applies its own narrower `isActiveDocumentPhpTest` gate downstream.
   const phpEditTick = useDebouncedPhpEditTick(
-    activeDocument && activeDocument.language === "php"
+    activeDocument &&
+      activeDocument.language === "php" &&
+      !isLargeSmartDocument(activeDocument)
       ? activeDocument.path
       : null,
-    activeDocument && activeDocument.language === "php"
+    activeDocument &&
+      activeDocument.language === "php" &&
+      !isLargeSmartDocument(activeDocument)
       ? activeDocument.content
       : null,
   );
@@ -2746,8 +2776,9 @@ function EditorSurfaceComponent({
   ]);
 
   // Synchronously clears the PHP syntax markers + cached diagnostics when the
-  // active document is not (or stops being) PHP. The debounced re-validation for
-  // PHP documents is driven by the shared `phpEditTick` below.
+  // active document is not (or stops being) PHP, or when it is too large for
+  // live smart features. The debounced re-validation for normal PHP documents
+  // is driven by the shared `phpEditTick` below.
   useEffect(() => {
     if (!monacoApi) {
       return;
@@ -2757,7 +2788,10 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (activeDocument.language === "php") {
+    if (
+      activeDocument.language === "php" &&
+      !isLargeSmartDocument(activeDocument)
+    ) {
       return;
     }
 
@@ -3146,6 +3180,21 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
       return "editor.action.selectAll";
     case "undo":
       return "undo";
+  }
+}
+
+function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId): string {
+  switch (commandId) {
+    case "editor.formatDocument":
+      return "editor.action.formatDocument";
+    case "editor.formatSelection":
+      return "editor.action.formatSelection";
+    case "editor.gotoLine":
+      return "editor.action.gotoLine";
+    case "editor.quickFix":
+      return "editor.action.quickFix";
+    case "editor.rename":
+      return "editor.action.rename";
   }
 }
 
@@ -3662,6 +3711,21 @@ function triggerEditorAction(
   }
 
   editor.trigger("keyboard", actionId, {});
+}
+
+function triggerEditorSurfaceCommand(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  commandId: EditorSurfaceCommandId,
+): void {
+  if (!editor.getModel()) {
+    return;
+  }
+
+  if (commandId === "editor.quickFix" && !editor.getPosition()) {
+    return;
+  }
+
+  editor.trigger("keyboard", editorActionForSurfaceCommand(commandId), {});
 }
 
 function dismissTransientEditorWidgets(

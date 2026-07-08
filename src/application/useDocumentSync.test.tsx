@@ -16,6 +16,7 @@ import {
   type LanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
+import { LARGE_SMART_DOCUMENT_CHARACTER_LIMIT } from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
@@ -421,6 +422,21 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
 
+  it("does not sync huge PHP documents to phpactor", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument({
+      content: "x".repeat(LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+
+    await api().syncOpenDocument(document);
+
+    const key = languageServerDocumentSyncKey(ROOT, document.path);
+    expect(harness.phpGateway.didOpen).not.toHaveBeenCalled();
+    expect(harness.php.syncedPaths.current.has(key)).toBe(false);
+    expect(harness.warmUp).not.toHaveBeenCalled();
+  });
+
   it("debounces rapid edits into a single didChange carrying the latest version", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);
@@ -446,6 +462,28 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       text: "abc",
       version: 3,
     });
+  });
+
+  it("does not send huge PHP edits after a normal document was synced", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const path = phpDocument().path;
+
+    await api().syncOpenDocument(phpDocument({ content: "a" }));
+    api().scheduleDocumentChange(
+      phpDocument({
+        content: "x".repeat(LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+
+    const key = languageServerDocumentSyncKey(ROOT, path);
+    expect(harness.phpGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.php.syncedContent.current[key]).toHaveLength(
+      LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1,
+    );
   });
 
   it("flushes a pending change immediately and cancels the debounce", async () => {

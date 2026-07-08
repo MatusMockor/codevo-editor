@@ -158,6 +158,44 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("routes editor surface commands through registry enablement", () => {
+    const actions = createActions();
+    const quickFix = vi.fn();
+    const rename = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.quickFix",
+      isEnabled: () => true,
+      run: quickFix,
+      title: "Context Actions",
+    });
+    registry.register({
+      category: "Editor",
+      id: "editor.rename",
+      isEnabled: () => false,
+      run: rename,
+      title: "Rename Symbol",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const quickFixEvent = dispatchKeyboardEvent({
+      altKey: true,
+      key: "Enter",
+    });
+    const renameEvent = dispatchKeyboardEvent({ key: "F2" });
+
+    expect(quickFixEvent.defaultPrevented).toBe(true);
+    expect(renameEvent.defaultPrevented).toBe(true);
+    expect(quickFix).toHaveBeenCalledTimes(1);
+    expect(rename).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("routes bookmark, git history, and PHP test shortcuts through registry enablement", () => {
     const actions = createActions();
     const registry = new CommandRegistry();

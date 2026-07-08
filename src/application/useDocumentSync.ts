@@ -12,6 +12,7 @@ import {
 } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
+import { isLargeSmartDocument } from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
@@ -270,6 +271,10 @@ export function useDocumentSync(
         return;
       }
 
+      if (isLargeSmartDocument(document)) {
+        return;
+      }
+
       const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
 
       if (syncedDocumentPathsRef.current.has(syncKey)) {
@@ -368,6 +373,10 @@ export function useDocumentSync(
       }
 
       if (!isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)) {
+        return;
+      }
+
+      if (isLargeSmartDocument(document)) {
         return;
       }
 
@@ -500,6 +509,13 @@ export function useDocumentSync(
         return;
       }
 
+      if (isLargeSmartDocument(document)) {
+        clearDocumentChangeTimer(syncKey);
+        delete pendingDocumentChangesRef.current[syncKey];
+        syncedDocumentContentRef.current[syncKey] = document.content;
+        return;
+      }
+
       if (syncedDocumentContentRef.current[syncKey] === document.content) {
         return;
       }
@@ -595,6 +611,14 @@ export function useDocumentSync(
         !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document) ||
         !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
       ) {
+        return;
+      }
+
+      if (isLargeSmartDocument(document)) {
+        clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
+        delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+        javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] =
+          document.content;
         return;
       }
 

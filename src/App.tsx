@@ -76,6 +76,7 @@ import type {
   EditorMenuCommand,
   EditorMenuCommandRunner,
 } from "./domain/editorMenuCommand";
+import type { EditorSurfaceCommandRunner } from "./domain/editorSurfaceCommand";
 import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { EditorDocument, IntelligenceMode } from "./domain/workspace";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
@@ -230,6 +231,8 @@ function App() {
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
   const [editorMenuCommandRunner, setEditorMenuCommandRunner] =
     useState<EditorMenuCommandRunner | null>(null);
+  const [editorSurfaceCommandRunner, setEditorSurfaceCommandRunner] =
+    useState<EditorSurfaceCommandRunner | null>(null);
   const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
   const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
   const [gitHistoryDiffDocumentPath, setGitHistoryDiffDocumentPath] =
@@ -261,6 +264,7 @@ function App() {
     terminalGateway,
     settingsGateway,
     workbenchPrompter,
+    { editorSurfaceCommandRunner },
   );
   const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
@@ -638,6 +642,12 @@ function App() {
   const updateEditorMenuCommandRunner = useCallback(
     (runner: EditorMenuCommandRunner | null) => {
       setEditorMenuCommandRunner(() => runner);
+    },
+    [],
+  );
+  const updateEditorSurfaceCommandRunner = useCallback(
+    (runner: EditorSurfaceCommandRunner | null) => {
+      setEditorSurfaceCommandRunner(() => runner);
     },
     [],
   );
@@ -1308,6 +1318,9 @@ function App() {
             onCloseActiveTab={closeActiveTab}
             onCursorPositionChange={workbench.updateActiveEditorPosition}
             onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
+            onEditorSurfaceCommandRunnerChange={
+              updateEditorSurfaceCommandRunner
+            }
             onCloseFloatingSurface={workbench.closeFloatingSurface}
             onGoBack={goBack}
             onGoForward={goForward}

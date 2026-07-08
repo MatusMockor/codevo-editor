@@ -13,6 +13,11 @@ import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDisp
 const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "editor.save",
   "editor.closeTab",
+  "editor.rename",
+  "editor.quickFix",
+  "editor.formatDocument",
+  "editor.formatSelection",
+  "editor.gotoLine",
   "workbench.openSettings",
   "workbench.openAppearanceSettings",
   "panel.toggle",

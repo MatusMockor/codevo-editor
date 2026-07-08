@@ -14,6 +14,7 @@ import {
   type PhpFileOutlineGateway,
   type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
+import { LARGE_SMART_DOCUMENT_CHARACTER_LIMIT } from "../domain/largeDocumentPolicy";
 import {
   emptyPhpTree,
   type PhpTree,
@@ -407,6 +408,31 @@ describe("usePhpOutline", () => {
     expect(parsePhpFileOutline).toHaveBeenCalledWith(path, "<?php class Foo {}");
     expect(getPhpFileOutline).not.toHaveBeenCalled();
     expect(harness.state().phpFileOutlinesByPath[path]).toBe(parsed);
+    expect(harness.state().loadingPhpFileOutlinePaths.has(path)).toBe(false);
+    harness.unmount();
+  });
+
+  it("skips live parsing huge active PHP files", async () => {
+    const path = `${ROOT}/vendor/nesbot/carbon/src/Carbon/CarbonInterface.php`;
+    const parsePhpFileOutline = vi.fn(async () => outline([outlineNode()]));
+    const harness = renderPhpOutline({
+      workspaceFiles: {
+        readTextFile: async () =>
+          "x".repeat(LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      },
+      phpFileOutlineGateway: createFakePhpFileOutlineGateway({
+        parsePhpFileOutline,
+      }),
+    });
+
+    await act(async () => {
+      await harness.outline().loadPhpFileOutline(path);
+    });
+
+    expect(parsePhpFileOutline).not.toHaveBeenCalled();
+    expect(harness.state().phpFileOutlinesByPath[path]).toEqual(
+      emptyPhpFileOutline(),
+    );
     expect(harness.state().loadingPhpFileOutlinePaths.has(path)).toBe(false);
     harness.unmount();
   });

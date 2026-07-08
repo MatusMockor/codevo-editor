@@ -30,10 +30,45 @@ describe("workbenchEditorSurfaceCommands", () => {
         category: "Editor",
         shortcut: "shortcut:editor.closeTab",
       },
+      {
+        id: "editor.rename",
+        title: "Rename Symbol",
+        category: "Editor",
+        shortcut: "shortcut:editor.rename",
+      },
+      {
+        id: "editor.gotoLine",
+        title: "Go to Line/Column",
+        category: "Editor",
+        shortcut: "shortcut:editor.gotoLine",
+      },
+      {
+        id: "editor.formatDocument",
+        title: "Format Document",
+        category: "Editor",
+        shortcut: "shortcut:editor.formatDocument",
+      },
+      {
+        id: "editor.formatSelection",
+        title: "Format Selection",
+        category: "Editor",
+        shortcut: "shortcut:editor.formatSelection",
+      },
+      {
+        id: "editor.quickFix",
+        title: "Context Actions",
+        category: "Editor",
+        shortcut: "shortcut:editor.quickFix",
+      },
     ]);
     expect(shortcut).toHaveBeenNthCalledWith(1, "editor.save");
     expect(shortcut).toHaveBeenNthCalledWith(2, "editor.closeTab");
-    expect(shortcut).toHaveBeenCalledTimes(2);
+    expect(shortcut).toHaveBeenNthCalledWith(3, "editor.rename");
+    expect(shortcut).toHaveBeenNthCalledWith(4, "editor.gotoLine");
+    expect(shortcut).toHaveBeenNthCalledWith(5, "editor.formatDocument");
+    expect(shortcut).toHaveBeenNthCalledWith(6, "editor.formatSelection");
+    expect(shortcut).toHaveBeenNthCalledWith(7, "editor.quickFix");
+    expect(shortcut).toHaveBeenCalledTimes(7);
   });
 
   it("enables save only for dirty active documents", () => {
@@ -67,22 +102,47 @@ describe("workbenchEditorSurfaceCommands", () => {
     ).toBe(true);
   });
 
+  it("enables editor surface runner commands only with an active document and live runner", () => {
+    const withoutRunner = commandById(
+      "editor.rename",
+      createCommands({ editorSurfaceCommandRunner: null }),
+    );
+    const withRunner = commandById(
+      "editor.rename",
+      createCommands({ editorSurfaceCommandRunner: vi.fn() }),
+    );
+
+    expect(
+      withoutRunner.isEnabled(context({ hasActiveDocument: true })),
+    ).toBe(false);
+    expect(withRunner.isEnabled(context({ hasActiveDocument: false }))).toBe(
+      false,
+    );
+    expect(withRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(
+      true,
+    );
+  });
+
   it("invokes the exact injected callbacks and returns their values directly", () => {
     const saveResult = Promise.resolve();
     const closeResult = Promise.resolve();
     const saveActiveDocument = vi.fn(() => saveResult);
     const closeActiveSurface = vi.fn(() => closeResult);
+    const editorSurfaceCommandRunner = vi.fn();
     const commands = workbenchEditorSurfaceCommands({
       shortcut: (commandId) => commandId,
       canCloseActiveSurface: true,
       saveActiveDocument,
       closeActiveSurface,
+      editorSurfaceCommandRunner,
     });
 
     expect(commands[0].run()).toBe(saveResult);
     expect(commands[1].run()).toBe(closeResult);
+    expect(commandById("editor.quickFix", commands).run()).toBeUndefined();
     expect(saveActiveDocument).toHaveBeenCalledTimes(1);
     expect(closeActiveSurface).toHaveBeenCalledTimes(1);
+    expect(editorSurfaceCommandRunner).toHaveBeenCalledWith("editor.quickFix");
   });
 });
 

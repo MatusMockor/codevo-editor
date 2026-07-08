@@ -118,6 +118,7 @@ import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
+import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
 
 export type {
   PhpCodeActionDescriptor,
@@ -374,6 +375,7 @@ export interface WorkbenchControllerOptions {
    * tests inject a deterministic scheduler so flushes can be driven explicitly.
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
+  editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
 }
 
 interface OpenWorkspacePathOptions {
@@ -6373,6 +6375,7 @@ export function useWorkbenchController(
       ),
       saveActiveDocument,
       closeActiveSurface,
+      editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
     }).forEach((command) => registry.register(command));
 
     workbenchLanguageNavigationCommands({
@@ -6524,6 +6527,7 @@ export function useWorkbenchController(
     openSettingsPanel,
     openWorkspaceSymbols,
     openSearchEverywhere,
+    options.editorSurfaceCommandRunner,
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
