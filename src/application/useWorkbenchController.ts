@@ -15,6 +15,7 @@ import {
   useGitDiffWorkspace,
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
+import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
@@ -6591,6 +6592,15 @@ export function useWorkbenchController(
     const registry = new CommandRegistry();
     const shortcut = (commandId: KeymapCommandId) =>
       shortcutForCommand(appSettings.keymap, commandId);
+    const appearanceCommands = workbenchAppearanceCommands({
+      shortcut,
+      zoomEditorFontIn,
+      zoomEditorFontOut,
+      resetEditorFontSize,
+      toggleEditorFontLigatures,
+      openSettingsPanel,
+      openAppearanceSettingsPanel,
+    });
 
     registry.register({
       id: "workspace.open",
@@ -6816,41 +6826,9 @@ export function useWorkbenchController(
       run: goToDefinition,
     });
 
-    registry.register({
-      id: "editor.fontZoomIn",
-      title: "Increase Editor Font Size",
-      category: "Editor",
-      shortcut: shortcut("editor.fontZoomIn"),
-      isEnabled: () => true,
-      run: zoomEditorFontIn,
-    });
-
-    registry.register({
-      id: "editor.fontZoomOut",
-      title: "Decrease Editor Font Size",
-      category: "Editor",
-      shortcut: shortcut("editor.fontZoomOut"),
-      isEnabled: () => true,
-      run: zoomEditorFontOut,
-    });
-
-    registry.register({
-      id: "editor.fontZoomReset",
-      title: "Reset Editor Font Size",
-      category: "Editor",
-      shortcut: shortcut("editor.fontZoomReset"),
-      isEnabled: () => true,
-      run: resetEditorFontSize,
-    });
-
-    registry.register({
-      id: "editor.toggleFontLigatures",
-      title: "Toggle Editor Font Ligatures",
-      category: "Editor",
-      shortcut: shortcut("editor.toggleFontLigatures"),
-      isEnabled: () => true,
-      run: toggleEditorFontLigatures,
-    });
+    appearanceCommands.editorCommands.forEach((command) =>
+      registry.register(command),
+    );
 
     registry.register({
       id: "editor.goToSourceDefinition",
@@ -7268,23 +7246,9 @@ export function useWorkbenchController(
       run: () => setPaletteOpen(true),
     });
 
-    registry.register({
-      id: "workbench.openSettings",
-      title: "Open Settings",
-      category: "Workbench",
-      shortcut: shortcut("workbench.openSettings"),
-      isEnabled: () => true,
-      run: openSettingsPanel,
-    });
-
-    registry.register({
-      id: "workbench.openAppearanceSettings",
-      title: "Open Appearance Settings",
-      category: "Workbench",
-      shortcut: shortcut("workbench.openAppearanceSettings"),
-      isEnabled: () => true,
-      run: openAppearanceSettingsPanel,
-    });
+    appearanceCommands.workbenchCommands.forEach((command) =>
+      registry.register(command),
+    );
 
     registry.register({
       id: "panel.showProblems",
