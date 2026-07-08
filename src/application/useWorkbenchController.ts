@@ -21,6 +21,7 @@ import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistri
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
+import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -6564,6 +6565,21 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const { goToPhpMemberPropertyDefinition } =
+    usePhpMemberPropertyDefinitionNavigation({
+      activeDocument,
+      activeEditorPositionRef,
+      currentWorkspaceRootRef,
+      openDirectPhpMethodTarget,
+      openDirectPhpPropertyTarget,
+      openPhpClassTarget,
+      openPhpLaravelModelAttributeTarget,
+      phpClassHierarchyHasProperty,
+      resolvePhpExpressionType,
+      setMessage,
+      workspaceRoot,
+    });
+
   const {
     goToPhpClassConstantDefinition,
     goToPhpLaravelRelationStringDefinition,
@@ -6689,148 +6705,6 @@ export function useWorkbenchController(
   };
   const frameworkIntelligenceProviders = useWorkbenchFrameworkProviderAdapter(
     workbenchFrameworkIntelligence,
-  );
-
-  const goToPhpMemberPropertyDefinition = useCallback(
-    async (
-      context: Extract<PhpIdentifierContext, { kind: "memberPropertyAccess" }>,
-    ): Promise<boolean> => {
-      if (!activeDocument) {
-        return false;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        !requestedRoot ||
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const position =
-        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
-      const receiverType = await resolvePhpExpressionType(
-        activeDocument.content,
-        position,
-        context.receiverExpression || `$${context.variableName}`,
-      );
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      if (!receiverType) {
-        setMessage(
-          `No typed target found for ${context.receiverExpression}->${context.propertyName}.`,
-        );
-        return false;
-      }
-
-      const propertyExists = await phpClassHierarchyHasProperty(
-        receiverType,
-        context.propertyName,
-      );
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      if (propertyExists) {
-        const methodTargetOpened = await openDirectPhpMethodTarget(
-          receiverType,
-          context.propertyName,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        if (methodTargetOpened) {
-          return true;
-        }
-      }
-
-      if (propertyExists) {
-        const attributeTargetOpened = await openPhpLaravelModelAttributeTarget(
-          receiverType,
-          context.propertyName,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        if (attributeTargetOpened) {
-          return true;
-        }
-      }
-
-      // A plainly typed property (e.g. `private PostRepository $postRepository`)
-      // navigates to its declared TYPE class, matching PhpStorm's "go to the
-      // class the property holds" behaviour, before falling back to the property
-      // declaration line. Eloquent relations and model attributes are handled by
-      // the steps above (they return early), so this only fires for ordinary
-      // class-typed properties. The property type is resolved through
-      // resolvePhpExpressionType so private/protected/promoted/docblock-typed
-      // properties all work; scalar/union-typed properties resolve to no class
-      // FQCN and fall through to the declaration target below.
-      if (propertyExists) {
-        const propertyTypeClassName = await resolvePhpExpressionType(
-          activeDocument.content,
-          position,
-          `${context.receiverExpression || `$${context.variableName}`}->${context.propertyName}`,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        if (propertyTypeClassName) {
-          const typeClassOpened = await openPhpClassTarget(
-            propertyTypeClassName,
-            shortPhpName(propertyTypeClassName),
-          );
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          if (typeClassOpened) {
-            return true;
-          }
-        }
-      }
-
-      if (propertyExists) {
-        const propertyTargetOpened = await openDirectPhpPropertyTarget(
-          receiverType,
-          context.propertyName,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        if (propertyTargetOpened) {
-          return true;
-        }
-      }
-
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      setMessage(
-        `No relation method found for ${receiverType}::${context.propertyName}().`,
-      );
-      return false;
-    },
-    [
-      activeDocument,
-      openDirectPhpPropertyTarget,
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
-      openPhpLaravelModelAttributeTarget,
-      phpClassHierarchyHasProperty,
-      resolvePhpExpressionType,
-      workspaceRoot,
-    ],
   );
 
   const goToPhpLaravelNamedRouteDefinition = useCallback(
