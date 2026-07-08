@@ -19,6 +19,7 @@ import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
+import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
@@ -284,12 +285,9 @@ import {
 import {
   isLaravelEloquentBuilderMethodName,
   phpLaravelCollectionModelTypeCandidate,
-  phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeFromExpression,
-  phpLaravelModelAccessorTargetFromSource,
-  phpLaravelModelAttributeTargetFromSource,
   phpLaravelMorphMapEntriesFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelScopeMethodName,
@@ -6677,149 +6675,18 @@ export function useWorkbenchController(
     ],
   );
 
-  const openPhpLaravelDynamicWhereTarget = useCallback(
-    async (className: string, methodName: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !isLaravelFrameworkActive ||
-        !requestedRoot ||
-        !requestedDescriptor?.php
-      ) {
-        return false;
-      }
-
-      const normalizedClassName = className.trim().replace(/^\\+/, "");
-
-      if (!normalizedClassName) {
-        return false;
-      }
-
-      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          const target = phpLaravelDynamicWhereAttributeTargetFromSource(
-            content,
-            methodName,
-          );
-
-          if (!target) {
-            continue;
-          }
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            path,
-            target.position,
-            target.attributeName,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    },
-    [
-      openNavigationTarget,
-      readNavigationFileContent,
-      resolvePhpClassSourcePaths,
-      isLaravelFrameworkActive,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
-
-  const openPhpLaravelModelAttributeTarget = useCallback(
-    async (className: string, attributeName: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !isLaravelFrameworkActive ||
-        !requestedRoot ||
-        !requestedDescriptor?.php
-      ) {
-        return false;
-      }
-
-      const normalizedClassName = className.trim().replace(/^\\+/, "");
-
-      if (!normalizedClassName) {
-        return false;
-      }
-
-      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          const target = phpLaravelModelAttributeTargetFromSource(
-            content,
-            attributeName,
-          ) ?? phpLaravelModelAccessorTargetFromSource(content, attributeName);
-
-          if (!target) {
-            continue;
-          }
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            path,
-            target.position,
-            target.attributeName,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    },
-    [
-      openNavigationTarget,
-      readNavigationFileContent,
-      resolvePhpClassSourcePaths,
-      isLaravelFrameworkActive,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
+  const {
+    openPhpLaravelDynamicWhereTarget,
+    openPhpLaravelModelAttributeTarget,
+  } = usePhpLaravelModelNavigationTargets({
+    currentWorkspaceRootRef,
+    isLaravelFrameworkActive,
+    openNavigationTarget,
+    readNavigationFileContent,
+    resolvePhpClassSourcePaths,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   const workbenchFrameworkIntelligence = useWorkbenchFrameworkIntelligence({
     activePhpFrameworkProviders,
