@@ -67,10 +67,11 @@ import {
   type TemplateLanguageMonacoProviderContext,
 } from "./templateLanguageMonacoProviders";
 import {
-  phpNettePresenterLinkCompletionSuggestions,
-  provideNettePhpPresenterLinkDefinition,
-  type NettePhpLinkMonacoProviderContext,
-} from "./nettePhpLinkMonacoProviders";
+  phpFrameworkCompletionSuggestions,
+  providePhpFrameworkDefinitionBeforeLsp,
+  phpFrameworkStringCompletionOwnsContext,
+  type PhpFrameworkMonacoProviderContext,
+} from "./phpFrameworkMonacoProviders";
 import {
   activePhpDocumentContext,
   isPhpDocumentContextActive,
@@ -254,7 +255,7 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
 
 export interface LanguageServerMonacoProviderContext
   extends TemplateLanguageMonacoProviderContext,
-    NettePhpLinkMonacoProviderContext {
+    PhpFrameworkMonacoProviderContext {
   /**
    * Persists a PHP code action's new file (e.g. "Extract interface" writes a
    * sibling `<Class>Interface.php`) to DISK and opens it in a tab. When wired,
@@ -290,39 +291,10 @@ export interface LanguageServerMonacoProviderContext
    */
   isPhpInlayHintsEnabled?(): boolean;
   limitNavigationResultsToOpenModels?: boolean;
-  isPhpFrameworkStringCompletionContext?(
-    source: string,
-    position: MonacoPosition,
-  ): boolean;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
-  /**
-   * Resolves and navigates to the target of a framework-owned PHP string
-   * literal (`config`, `view`, `__`/`trans`, `env`, etc.) located at `offset`.
-   *
-   * Because the editor hosts a single Monaco model and opens files through its
-   * own tab system (`limitNavigationResultsToOpenModels`), the callback performs
-   * the navigation itself and resolves `true` when it handled the request. The
-   * definition provider then returns `null` so Monaco does not also attempt to
-   * navigate to a — possibly not-yet-open — model. It resolves `false` when the
-   * offset is not a resolvable framework literal, leaving the regular phpactor
-   * definition flow untouched.
-   */
-  providePhpFrameworkDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  /**
-   * @deprecated Use {@link providePhpFrameworkDefinition}. Kept as a narrow
-   * compatibility alias for callers still named after the original Laravel-only
-   * callback.
-   */
-  providePhpLaravelDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -1045,14 +1017,7 @@ async function provideDefinition(
   position: MonacoPosition,
   token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
-  if (
-    context.provideNettePhpLinkDefinition &&
-    (await provideNettePhpPresenterLinkDefinition(context, model, position))
-  ) {
-    return null;
-  }
-
-  if (await providePhpFrameworkStringLiteralDefinition(context, model, position)) {
+  if (await providePhpFrameworkDefinitionBeforeLsp(context, model, position)) {
     return null;
   }
 
@@ -1066,46 +1031,6 @@ async function provideDefinition(
       context.featuresGateway.definition(rootPath, requestPosition),
     token,
   );
-}
-
-/**
- * Attempts framework-owned PHP string-literal navigation (config / view / trans
- * / env, etc.) for a PHP document. Returns `true` when the request was handled
- * (the target file was opened by the controller), so the caller stops and Monaco
- * does not navigate. Per-project isolation is enforced inside the controller
- * callback, which re-checks the active workspace after each await and drops
- * stale results.
- */
-async function providePhpFrameworkStringLiteralDefinition(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-): Promise<boolean> {
-  const provideDefinition =
-    context.providePhpFrameworkDefinition ?? context.providePhpLaravelDefinition;
-
-  if (!provideDefinition) {
-    return false;
-  }
-
-  const documentContext = activePhpDocumentContext(context, model);
-
-  if (!documentContext) {
-    return false;
-  }
-
-  const source = modelSource(model, documentContext.activeDocument.content);
-  const offset = offsetAtMonacoPosition(source, position);
-
-  try {
-    return await provideDefinition(source, offset);
-  } catch (error) {
-    if (isPhpDocumentContextActive(context, documentContext)) {
-      context.reportError(error);
-    }
-
-    return false;
-  }
 }
 
 async function provideImplementation(
@@ -3668,7 +3593,7 @@ async function provideCompletionItems(
     return { suggestions: postfixSuggestions };
   }
 
-  const nettePhpLinkSuggestions = await phpNettePresenterLinkCompletionSuggestions(
+  const frameworkSuggestions = await phpFrameworkCompletionSuggestions(
     monaco,
     context,
     model,
@@ -3678,8 +3603,8 @@ async function provideCompletionItems(
     documentContext,
   );
 
-  if (nettePhpLinkSuggestions) {
-    return { suggestions: nettePhpLinkSuggestions };
+  if (frameworkSuggestions) {
+    return { suggestions: frameworkSuggestions };
   }
 
   const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(
@@ -3693,8 +3618,10 @@ async function provideCompletionItems(
   const isMemberOrStaticAccessCompletion = Boolean(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
-  const isFrameworkStringCompletion = Boolean(
-    context.isPhpFrameworkStringCompletionContext?.(source, position),
+  const isFrameworkStringCompletion = phpFrameworkStringCompletionOwnsContext(
+    context,
+    source,
+    position,
   );
   const isScopedCompletion = Boolean(
     isMemberOrStaticAccessCompletion || isFrameworkStringCompletion,
