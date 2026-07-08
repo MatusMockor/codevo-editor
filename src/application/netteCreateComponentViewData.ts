@@ -3,14 +3,12 @@ import {
   componentClassCandidatePathsForTemplate,
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
+import { netteComponentViewOwnerNameFromType } from "../domain/netteComponentViewOwners";
 import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
-import {
-  phpTypeNamesEqual,
-  shortPhpTypeName,
-} from "../domain/phpTypes";
+import { phpTypeNamesEqual } from "../domain/phpTypes";
 
 export interface NetteCreateComponentTypeResolver {
   resolveDeclaredType(source: string, typeHint: string | null): string | null;
@@ -135,7 +133,7 @@ export function netteCreateComponentViewDataEntryFromSource(
       ? (deps.resolveDeclaredType(source, factory.controlClass) ??
         factory.controlClass)
       : null;
-    const viewOwner = componentViewOwnerNameFromType(controlClass);
+    const viewOwner = netteComponentViewOwnerNameFromType(controlClass);
 
     if (!viewOwner) {
       continue;
@@ -178,22 +176,6 @@ export function netteCreateComponentViewDataEntryFromSource(
   };
 }
 
-export function componentViewOwnerNameFromType(typeName: string | null): string | null {
-  const shortName = shortPhpTypeName(typeName);
-
-  if (!shortName) {
-    return null;
-  }
-
-  for (const suffix of ["Control", "Component", "Widget"]) {
-    if (shortName.endsWith(suffix) && shortName.length > suffix.length) {
-      return shortName.slice(0, -suffix.length);
-    }
-  }
-
-  return null;
-}
-
 function controlViewOwnerFromFactory(
   source: string,
   typeHint: string | null,
@@ -201,7 +183,7 @@ function controlViewOwnerFromFactory(
 ): string | null {
   const resolved = deps.resolveDeclaredType(source, typeHint) ?? typeHint;
 
-  return componentViewOwnerNameFromType(resolved);
+  return netteComponentViewOwnerNameFromType(resolved);
 }
 
 function componentTemplateVariablesFromFactoryBody(
