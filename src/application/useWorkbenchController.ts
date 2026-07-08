@@ -421,6 +421,9 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "editor.nextProblem",
   "editor.previousProblem",
   "workbench.searchEverywhere",
+  "commands.show",
+  "class.quickOpen",
+  "file.quickOpen",
   "git.stashChanges",
   "git.showStashes",
   "git.switchBranch",
@@ -6365,6 +6368,7 @@ export function useWorkbenchController(
         setWorkspaceSymbolsOpen(false);
         setRecentFilesSwitcherOpen(false);
         setQuickOpenOpen(true);
+        markFloatingSurfaceActivated();
       },
       openRecentFilesSwitcher,
       openRecentLocationsPanel,
@@ -6373,6 +6377,7 @@ export function useWorkbenchController(
         setWorkspaceSymbolsOpen(false);
         setRecentFilesSwitcherOpen(false);
         setClassOpenOpen(true);
+        markFloatingSurfaceActivated();
       },
       openWorkspaceSymbols,
       openSearchEverywhere,
@@ -6458,7 +6463,13 @@ export function useWorkbenchController(
 
     workbenchPanelCommands({
       shortcut,
-      openCommandsPalette: () => setPaletteOpen(true),
+      openCommandsPalette: () => {
+        setClassOpenOpen(false);
+        setWorkspaceSymbolsOpen(false);
+        setRecentFilesSwitcherOpen(false);
+        setPaletteOpen(true);
+        markFloatingSurfaceActivated();
+      },
       showBottomPanelView,
       toggleBottomPanel,
       toggleTodoPanel,
@@ -6524,6 +6535,7 @@ export function useWorkbenchController(
     runAllTestsForActiveDocument,
     goToDeclaration,
     canSearchClassOpenSymbols,
+    markFloatingSurfaceActivated,
     goToDefinition,
     goToImplementation,
     goToSourceDefinition,
@@ -6872,40 +6884,6 @@ export function useWorkbenchController(
       if (matches("navigation.forward")) {
         event.preventDefault();
         void navigateForwardInHistory();
-        return;
-      }
-
-      if (matches("commands.show")) {
-        event.preventDefault();
-        setClassOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setPaletteOpen(true);
-        markFloatingSurfaceActivated();
-        return;
-      }
-
-      if (matches("class.quickOpen")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          setQuickOpenOpen(false);
-          setWorkspaceSymbolsOpen(false);
-          setRecentFilesSwitcherOpen(false);
-          setClassOpenOpen(true);
-          markFloatingSurfaceActivated();
-        }
-        return;
-      }
-
-      if (matches("file.quickOpen")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          setClassOpenOpen(false);
-          setWorkspaceSymbolsOpen(false);
-          setRecentFilesSwitcherOpen(false);
-          setQuickOpenOpen(true);
-          markFloatingSurfaceActivated();
-        }
         return;
       }
 
