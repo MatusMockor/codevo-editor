@@ -4,20 +4,10 @@ import { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFramew
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";
-
-type BladeIntelligenceDependencies = Parameters<typeof useBladeIntelligence>[0];
-type LatteIntelligenceDependencies = Parameters<typeof useLatteIntelligence>[0];
-type NeonIntelligenceDependencies = Parameters<typeof useNeonIntelligence>[0];
-type FrameworkStringCompletionProviders = Parameters<
-  typeof phpFrameworkScopedStringCompletionContextAt
->[2];
-
-export interface WorkbenchFrameworkIntelligenceDependencies {
-  activePhpFrameworkProviders: FrameworkStringCompletionProviders;
-  blade: BladeIntelligenceDependencies;
-  latte: LatteIntelligenceDependencies;
-  neon: NeonIntelligenceDependencies;
-}
+import type {
+  WorkbenchFrameworkIntelligence,
+  WorkbenchFrameworkIntelligenceDependencies,
+} from "./workbenchFrameworkIntelligenceContracts";
 
 /**
  * Mounts framework-specific intelligence providers behind one controller-facing
@@ -27,7 +17,7 @@ export interface WorkbenchFrameworkIntelligenceDependencies {
  */
 export function useWorkbenchFrameworkIntelligence(
   dependencies: WorkbenchFrameworkIntelligenceDependencies,
-) {
+): WorkbenchFrameworkIntelligence {
   const blade = useBladeIntelligence(dependencies.blade);
   const latte = useLatteIntelligence(dependencies.latte);
   const neon = useNeonIntelligence(dependencies.neon);

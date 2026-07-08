@@ -1,9 +1,5 @@
 import { useMemo } from "react";
-import type { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
-
-type WorkbenchFrameworkIntelligence = ReturnType<
-  typeof useWorkbenchFrameworkIntelligence
->;
+import type { WorkbenchFrameworkIntelligence } from "./workbenchFrameworkIntelligenceContracts";
 
 /**
  * Adapts the framework intelligence API mounted by the workbench into the
