@@ -1610,31 +1610,34 @@ function EditorSurfaceComponent({
     const disposable = editorApi.onMouseDown((event) => {
       const targetType = event.target.type;
 
-      // Cmd+click (macOS) / Ctrl+click (Windows/Linux) on code text mirrors the
-      // Cmd+B go-to-definition command instead of Monaco's built-in gesture,
-      // which has no cross-file opener wired and skips the Laravel/PHP
-      // contextual definition cascade. We set the caret first (onMouseDown fires
-      // before the selection settles, and the controller reads the active
-      // editor position), then run the same callback as the keyboard shortcut
-      // and suppress the native gesture so navigation does not fire twice.
+      // Cmd+click (macOS) / Ctrl+click (Windows/Linux) and middle-click on code
+      // text mirror the Cmd+B go-to-definition command instead of Monaco's
+      // built-in gesture, which has no cross-file opener wired and skips the
+      // Laravel/PHP contextual definition cascade. We set the caret first
+      // (onMouseDown fires before the selection settles, and the controller
+      // reads the active editor position), then run the same callback as the
+      // keyboard shortcut and suppress the native gesture so navigation does not
+      // fire twice.
       //
-      // The gesture must be a primary (left) click only. On macOS Ctrl+click is
-      // the OS secondary/context click, so we navigate solely on Cmd (metaKey)
-      // and explicitly bail when Ctrl is held - otherwise a Mac user opening the
-      // context menu would be yanked to the definition instead.
+      // The modifier gesture must be a primary (left) click only. On macOS
+      // Ctrl+click is the OS secondary/context click, so we navigate solely on
+      // Cmd (metaKey) and explicitly bail when Ctrl is held - otherwise a Mac
+      // user opening the context menu would be yanked to the definition instead.
       const isContentText =
         targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
       const isLeftClick = event.event.leftButton === true;
+      const isMiddleClick = event.event.middleButton === true;
       const definitionModifierPressed =
         mouseDownPlatform === "mac"
           ? event.event.metaKey === true && event.event.ctrlKey !== true
           : event.event.ctrlKey === true;
+      const shouldNavigateToDefinition =
+        (isLeftClick && definitionModifierPressed) || isMiddleClick;
       const contentPosition = event.target.position;
 
       if (
         isContentText &&
-        isLeftClick &&
-        definitionModifierPressed &&
+        shouldNavigateToDefinition &&
         contentPosition
       ) {
         event.event.preventDefault();
