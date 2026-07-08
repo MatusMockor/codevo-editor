@@ -75,9 +75,7 @@ import {
 } from "./useNavigationHistory";
 import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
-import { useBladeIntelligence } from "./useBladeIntelligence";
-import { useLatteIntelligence } from "./useLatteIntelligence";
-import { useNeonIntelligence } from "./useNeonIntelligence";
+import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
@@ -316,7 +314,6 @@ import {
 import {
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsViews,
-  phpFrameworkScopedStringCompletionContextAt,
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
   resolvePhpFrameworkProfile,
@@ -5808,16 +5805,6 @@ export function useWorkbenchController(
     ],
   );
 
-  const isPhpFrameworkStringCompletionContext = useCallback(
-    (source: string, position: EditorPosition): boolean =>
-      phpFrameworkScopedStringCompletionContextAt(
-        source,
-        position,
-        activePhpFrameworkProviders,
-      ),
-    [activePhpFrameworkProviders],
-  );
-
   const { providePhpMethodSignature, providePhpParameterInlayHints } =
     usePhpSignatureHelpProvider({
       currentWorkspaceRootRef,
@@ -7303,10 +7290,6 @@ export function useWorkbenchController(
     ],
   );
 
-  // Blade navigation + completion lives entirely in `useBladeIntelligence` (a
-  // sibling strangler module): this mount only injects the collaborators; the
-  // per-root view-data / component-name caches and their invalidation live in
-  // the hook.
   const {
     provideBladeCodeActions,
     provideBladeCompletions,
@@ -7314,95 +7297,94 @@ export function useWorkbenchController(
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
     resetBladeIntelligenceCaches,
-  } = useBladeIntelligence({
-    activeDocument,
-    collectPhpLaravelConfigTargets: collectConfigTargets,
-    collectPhpLaravelNamedRouteTargets: collectNamedRouteTargets,
-    collectPhpLaravelTranslationTargets: collectTranslationTargets,
-    collectPhpLaravelViewTargets: collectViewTargets,
-    createMissingBladeViewCodeAction,
-    currentWorkspaceRootRef,
-    ensurePhpLaravelMigrationSourcesLoaded,
-    ensurePhpLaravelProviderSourcesLoaded,
-    findPhpLaravelConfigTarget: findConfigTarget,
-    findPhpLaravelTranslationTarget: findTranslationTarget,
-    findPhpLaravelViewTarget: findViewTarget,
-    frameworkIntelligence: phpFrameworkIntelligence,
-    openDirectPhpMethodTarget,
-    openDirectPhpPropertyTarget,
-    openNavigationTarget,
-    openPhpLaravelModelAttributeTarget,
-    readNavigationFileContent,
-    relativeWorkspacePath,
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpDeclaredType,
-    resolvePhpExpressionType,
-    resolvePhpReceiverMethodCompletions,
-    textSearch,
-    workspaceFiles,
-    workspaceRoot,
-  });
-
-  // Latte navigation + completion lives entirely in `useLatteIntelligence` (the
-  // first strangler-pattern module): this mount only injects the collaborators.
-  const {
     provideLatteDefinition,
     provideLatteCompletions,
     provideNettePhpLinkDefinition,
     provideNettePhpLinkCompletions,
     shouldBlockLatteDefinitionFallback,
-  } = useLatteIntelligence({
-    currentWorkspaceRootRef,
-    frameworkIntelligence: phpFrameworkIntelligence,
-    getActiveDocument: () => activeDocumentRef.current,
-    isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
-    joinPath: joinWorkspacePath,
-    listDirectory: (path) => workspaceFiles.readDirectory(path),
-    openPhpMethodTarget: openDirectPhpMethodTarget,
-    openPhpPropertyTarget: openDirectPhpPropertyTarget,
-    openTarget: openNavigationTarget,
-    readFileContent: readNavigationFileContent,
-    resolveDeclaredType: resolvePhpDeclaredType,
-    resolveExpressionType: resolvePhpExpressionType,
-    resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
-    searchText: (root, query, maxResults) =>
-      textSearch.searchText(root, query, maxResults),
-    synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
-    toRelativePath: relativeWorkspacePath,
-    workspaceRoot,
-  });
-
-  // NEON config navigation + completion lives in `useNeonIntelligence` (a sibling
-  // strangler module): this mount only injects the collaborators. Class
-  // resolution reuses `openPhpClassTarget` (the same index + PSR-4 resolver a PHP
-  // class jump uses); completion class names come from the project symbol index.
-  const { provideNeonDefinition, provideNeonCompletions } = useNeonIntelligence({
-    currentWorkspaceRootRef,
-    frameworkIntelligence: phpFrameworkIntelligence,
-    getActiveDocument: () => activeDocumentRef.current,
-    isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
-    joinPath: joinWorkspacePath,
-    listDirectory: (path) => workspaceFiles.readDirectory(path),
-    openClassTarget: (className) =>
-      openPhpClassTarget(className, className.split("\\").pop() ?? className),
-    openDirectPhpMethodTarget,
-    openTarget: openNavigationTarget,
-    readFileContent: readNavigationFileContent,
-    resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
-    searchClassNames: async (root, prefix, maxResults) => {
-      const symbols = await projectSymbolSearch.searchProjectSymbols(
-        root,
-        prefix,
-        maxResults,
-      );
-
-      return symbols
-        .filter(isTypeProjectSymbol)
-        .map((symbol) => symbol.fullyQualifiedName);
+    provideNeonDefinition,
+    provideNeonCompletions,
+    isPhpFrameworkStringCompletionContext,
+  } = useWorkbenchFrameworkIntelligence({
+    activePhpFrameworkProviders,
+    blade: {
+      activeDocument,
+      collectPhpLaravelConfigTargets: collectConfigTargets,
+      collectPhpLaravelNamedRouteTargets: collectNamedRouteTargets,
+      collectPhpLaravelTranslationTargets: collectTranslationTargets,
+      collectPhpLaravelViewTargets: collectViewTargets,
+      createMissingBladeViewCodeAction,
+      currentWorkspaceRootRef,
+      ensurePhpLaravelMigrationSourcesLoaded,
+      ensurePhpLaravelProviderSourcesLoaded,
+      findPhpLaravelConfigTarget: findConfigTarget,
+      findPhpLaravelTranslationTarget: findTranslationTarget,
+      findPhpLaravelViewTarget: findViewTarget,
+      frameworkIntelligence: phpFrameworkIntelligence,
+      openDirectPhpMethodTarget,
+      openDirectPhpPropertyTarget,
+      openNavigationTarget,
+      openPhpLaravelModelAttributeTarget,
+      readNavigationFileContent,
+      relativeWorkspacePath,
+      resolvePhpClassPropertyOrRelationType,
+      resolvePhpDeclaredType,
+      resolvePhpExpressionType,
+      resolvePhpReceiverMethodCompletions,
+      textSearch,
+      workspaceFiles,
+      workspaceRoot,
     },
-    synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
-    toRelativePath: relativeWorkspacePath,
-    workspaceRoot,
+
+    latte: {
+      currentWorkspaceRootRef,
+      frameworkIntelligence: phpFrameworkIntelligence,
+      getActiveDocument: () => activeDocumentRef.current,
+      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
+      joinPath: joinWorkspacePath,
+      listDirectory: (path) => workspaceFiles.readDirectory(path),
+      openPhpMethodTarget: openDirectPhpMethodTarget,
+      openPhpPropertyTarget: openDirectPhpPropertyTarget,
+      openTarget: openNavigationTarget,
+      readFileContent: readNavigationFileContent,
+      resolveDeclaredType: resolvePhpDeclaredType,
+      resolveExpressionType: resolvePhpExpressionType,
+      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
+      searchText: (root, query, maxResults) =>
+        textSearch.searchText(root, query, maxResults),
+      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
+      toRelativePath: relativeWorkspacePath,
+      workspaceRoot,
+    },
+
+    neon: {
+      currentWorkspaceRootRef,
+      frameworkIntelligence: phpFrameworkIntelligence,
+      getActiveDocument: () => activeDocumentRef.current,
+      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
+      joinPath: joinWorkspacePath,
+      listDirectory: (path) => workspaceFiles.readDirectory(path),
+      openClassTarget: (className) =>
+        openPhpClassTarget(className, className.split("\\").pop() ?? className),
+      openDirectPhpMethodTarget,
+      openTarget: openNavigationTarget,
+      readFileContent: readNavigationFileContent,
+      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
+      searchClassNames: async (root, prefix, maxResults) => {
+        const symbols = await projectSymbolSearch.searchProjectSymbols(
+          root,
+          prefix,
+          maxResults,
+        );
+
+        return symbols
+          .filter(isTypeProjectSymbol)
+          .map((symbol) => symbol.fullyQualifiedName);
+      },
+      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
+      toRelativePath: relativeWorkspacePath,
+      workspaceRoot,
+    },
   });
 
   const goToPhpMethodCallDefinition = useCallback(
