@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, type MutableRefObject } from "react";
 import {
   isPhpLaravelMigrationPath,
   loadPhpLaravelMigrationSources,
@@ -10,12 +10,7 @@ import {
   phpLaravelProviderSourcesSignature,
 } from "./phpLaravelProviderSources";
 import type { WorkspaceFileGateway } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-
-interface PhpLaravelSourcesCacheEntry {
-  signature: string;
-  sources: readonly string[];
-}
+import { usePhpSourceCollectionRegistry } from "./usePhpSourceCollectionRegistry";
 
 export interface PhpLaravelSourceContext {
   signature: string;
@@ -44,25 +39,44 @@ export function useLaravelSourceRegistries({
   onSourcesLoaded,
   workspaceFiles,
 }: UseLaravelSourceRegistriesDependencies): LaravelSourceRegistries {
-  const phpLaravelMigrationSourcesByRootRef = useRef<
-    Record<string, PhpLaravelSourcesCacheEntry>
-  >({});
-  const phpLaravelMigrationSourcesLoadInFlightRef = useRef<Set<string>>(
-    new Set(),
-  );
-  const phpLaravelProviderSourcesByRootRef = useRef<
-    Record<string, PhpLaravelSourcesCacheEntry>
-  >({});
-  const phpLaravelProviderSourcesLoadInFlightRef = useRef<Set<string>>(
-    new Set(),
-  );
+  const {
+    currentSourceCollectionEntry: currentMigrationSourceEntry,
+    ensureSourceCollectionLoaded: ensurePhpLaravelMigrationSourcesLoaded,
+    invalidateSourceCollectionForPath:
+      invalidatePhpLaravelMigrationSourcesForPath,
+    resetSourceCollectionRegistry: resetPhpLaravelMigrationSourceRegistry,
+  } = usePhpSourceCollectionRegistry({
+    currentWorkspaceRootRef,
+    isActive: isLaravelFrameworkActive,
+    isSourcePath: isPhpLaravelMigrationPath,
+    loadSources: loadPhpLaravelMigrationSources,
+    onSourcesLoaded,
+    sourceSignature: phpLaravelMigrationSourcesSignature,
+    workspaceFiles,
+  });
+  const {
+    currentSourceCollectionEntry: currentProviderSourceEntry,
+    ensureSourceCollectionLoaded: ensurePhpLaravelProviderSourcesLoaded,
+    invalidateSourceCollectionForPath:
+      invalidatePhpLaravelProviderSourcesForPath,
+    resetSourceCollectionRegistry: resetPhpLaravelProviderSourceRegistry,
+  } = usePhpSourceCollectionRegistry({
+    currentWorkspaceRootRef,
+    isActive: isLaravelFrameworkActive,
+    isSourcePath: isPhpLaravelProviderPath,
+    loadSources: loadPhpLaravelProviderSources,
+    onSourcesLoaded,
+    sourceSignature: phpLaravelProviderSourcesSignature,
+    workspaceFiles,
+  });
 
   const resetPhpLaravelSourceRegistries = useCallback((): void => {
-    phpLaravelMigrationSourcesByRootRef.current = {};
-    phpLaravelMigrationSourcesLoadInFlightRef.current = new Set();
-    phpLaravelProviderSourcesByRootRef.current = {};
-    phpLaravelProviderSourcesLoadInFlightRef.current = new Set();
-  }, []);
+    resetPhpLaravelMigrationSourceRegistry();
+    resetPhpLaravelProviderSourceRegistry();
+  }, [
+    resetPhpLaravelMigrationSourceRegistry,
+    resetPhpLaravelProviderSourceRegistry,
+  ]);
 
   const currentPhpLaravelSourceContext =
     useCallback((): PhpLaravelSourceContext => {
@@ -72,8 +86,8 @@ export function useLaravelSourceRegistries({
         return { signature: "", workspaceSources: [] };
       }
 
-      const migrationEntry = phpLaravelMigrationSourcesByRootRef.current[root];
-      const providerEntry = phpLaravelProviderSourcesByRootRef.current[root];
+      const migrationEntry = currentMigrationSourceEntry(root);
+      const providerEntry = currentProviderSourceEntry(root);
       const migrationSources = migrationEntry?.sources ?? [];
       const providerSources = providerEntry?.sources ?? [];
       const signature = `m:${migrationEntry?.signature ?? ""}|p:${providerEntry?.signature ?? ""}`;
@@ -90,118 +104,12 @@ export function useLaravelSourceRegistries({
         signature,
         workspaceSources: [...migrationSources, ...providerSources],
       };
-    }, [currentWorkspaceRootRef]);
-
-  const ensurePhpLaravelMigrationSourcesLoaded = useCallback(
-    async (requestedRoot: string): Promise<void> => {
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return;
-      }
-
-      if (
-        phpLaravelMigrationSourcesByRootRef.current[requestedRoot] ||
-        phpLaravelMigrationSourcesLoadInFlightRef.current.has(requestedRoot)
-      ) {
-        return;
-      }
-
-      phpLaravelMigrationSourcesLoadInFlightRef.current.add(requestedRoot);
-
-      try {
-        const sources = await loadPhpLaravelMigrationSources(
-          requestedRoot,
-          workspaceFiles,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        phpLaravelMigrationSourcesByRootRef.current[requestedRoot] = {
-          signature: phpLaravelMigrationSourcesSignature(sources),
-          sources,
-        };
-        onSourcesLoaded(requestedRoot);
-      } catch {
-        // Graceful: migrations unavailable -> keep the $fillable/$casts fallback.
-      } finally {
-        phpLaravelMigrationSourcesLoadInFlightRef.current.delete(requestedRoot);
-      }
     },
     [
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
-      onSourcesLoaded,
-      workspaceFiles,
+      currentMigrationSourceEntry,
+      currentProviderSourceEntry,
     ],
-  );
-
-  const invalidatePhpLaravelMigrationSourcesForPath = useCallback(
-    (root: string, path: string): void => {
-      if (!isPhpLaravelMigrationPath(root, path)) {
-        return;
-      }
-
-      delete phpLaravelMigrationSourcesByRootRef.current[root];
-      phpLaravelMigrationSourcesLoadInFlightRef.current.delete(root);
-    },
-    [],
-  );
-
-  const ensurePhpLaravelProviderSourcesLoaded = useCallback(
-    async (requestedRoot: string): Promise<void> => {
-      if (!isLaravelFrameworkActive || !requestedRoot) {
-        return;
-      }
-
-      if (
-        phpLaravelProviderSourcesByRootRef.current[requestedRoot] ||
-        phpLaravelProviderSourcesLoadInFlightRef.current.has(requestedRoot)
-      ) {
-        return;
-      }
-
-      phpLaravelProviderSourcesLoadInFlightRef.current.add(requestedRoot);
-
-      try {
-        const sources = await loadPhpLaravelProviderSources(
-          requestedRoot,
-          workspaceFiles,
-        );
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        phpLaravelProviderSourcesByRootRef.current[requestedRoot] = {
-          signature: phpLaravelProviderSourcesSignature(sources),
-          sources,
-        };
-        onSourcesLoaded(requestedRoot);
-      } catch {
-        // Graceful: providers unavailable -> no provider-defined macros surface.
-      } finally {
-        phpLaravelProviderSourcesLoadInFlightRef.current.delete(requestedRoot);
-      }
-    },
-    [
-      currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
-      onSourcesLoaded,
-      workspaceFiles,
-    ],
-  );
-
-  const invalidatePhpLaravelProviderSourcesForPath = useCallback(
-    (root: string, path: string): void => {
-      if (!isPhpLaravelProviderPath(root, path)) {
-        return;
-      }
-
-      delete phpLaravelProviderSourcesByRootRef.current[root];
-      phpLaravelProviderSourcesLoadInFlightRef.current.delete(root);
-    },
-    [],
   );
 
   return {
