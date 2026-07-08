@@ -1,5 +1,4 @@
 import { useCallback, useMemo, type MutableRefObject } from "react";
-import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigTargetFromSource,
@@ -7,7 +6,6 @@ import {
   phpFrameworkRouteSearchQueries,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsRoutes,
-  phpFrameworkSupportsViews,
   type PhpFrameworkProvider,
   type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
@@ -29,11 +27,7 @@ import {
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
-import {
-  phpLaravelViewNameCandidateRelativePaths,
-  phpLaravelViewNameFromRelativePath,
-  type PhpLaravelViewTarget,
-} from "../domain/phpLaravelViews";
+import type { PhpLaravelViewTarget } from "../domain/phpLaravelViews";
 import { type FileEntry, type TextSearchGateway } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
@@ -62,6 +56,10 @@ import {
 import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
 import { createPhpLaravelTranslationTargetResolver } from "./phpLaravelTranslationTargets";
 import {
+  createPhpLaravelViewTargetResolver,
+  type PhpLaravelViewNavigationTarget,
+} from "./phpLaravelViewTargets";
+import {
   createWorkspaceTargetCollector,
   type WorkspaceFileTarget,
   type WorkspaceTargetCollectorDeps,
@@ -86,14 +84,7 @@ export type {
   PhpLaravelRedisConnectionTarget,
   PhpLaravelStorageDiskTarget,
 } from "./phpLaravelConfigDerivedTargets";
-
-/**
- * A resolved view navigation target: the parsed view plus the 1:1 blade file
- * position navigation jumps to.
- */
-export interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
-  position: EditorPosition;
-}
+export type { PhpLaravelViewNavigationTarget } from "./phpLaravelViewTargets";
 
 const EMPTY_PHP_FRAMEWORK_PROVIDERS: readonly PhpFrameworkProvider[] = [];
 
@@ -339,43 +330,31 @@ function useLaravelFrameworkTargetAdapter(
     return collect({ workspaceRoot });
   }, [engineDeps, isLaravelFrameworkActive, workspaceRoot]);
 
-  const collectPhpLaravelViewTargets = useCallback((): Promise<
-    PhpLaravelViewTarget[]
-  > => {
-    const collect = createWorkspaceTargetCollector<PhpLaravelViewTarget>(
+  const viewTargetResolver = useMemo(
+    () =>
+      createPhpLaravelViewTargetResolver({
+        currentWorkspaceRootRef,
+        workspaceRoot,
+        phpFrameworkProviders: targetPhpFrameworkProviders,
+        workspaceTargetCollectorDeps: engineDeps,
+        readNavigationFileContent,
+        joinWorkspacePath,
+        readCachedViewTargets: (root) =>
+          readPhpLaravelTargetCache(root, "views"),
+        writeCachedViewTargets: (root, targets) =>
+          writePhpLaravelTargetCache(root, "views", targets),
+      }),
+    [
+      currentWorkspaceRootRef,
+      workspaceRoot,
+      targetPhpFrameworkProviders,
       engineDeps,
-      {
-        kind: "directoryScan",
-        isEnabled: () => phpFrameworkSupportsViews(targetPhpFrameworkProviders),
-        roots: ["resources/views"],
-        recursive: true,
-        parseEntry: ({ path, relativePath }) => {
-          const viewName = phpLaravelViewNameFromRelativePath(relativePath);
-
-          if (!viewName) {
-            return [];
-          }
-
-          return [{ name: viewName, path, relativePath }];
-        },
-        dedupKey: (target) => target.name.toLowerCase(),
-        compareTargets: (left, right) => left.name.localeCompare(right.name),
-        cache: {
-          read: (root) => readPhpLaravelTargetCache(root, "views"),
-          write: (root, targets) =>
-            writePhpLaravelTargetCache(root, "views", targets),
-        },
-      },
-    );
-
-    return collect({ workspaceRoot });
-  }, [
-    engineDeps,
-    targetPhpFrameworkProviders,
-    readPhpLaravelTargetCache,
-    workspaceRoot,
-    writePhpLaravelTargetCache,
-  ]);
+      readNavigationFileContent,
+      joinWorkspacePath,
+      readPhpLaravelTargetCache,
+      writePhpLaravelTargetCache,
+    ],
+  );
 
   const collectPhpLaravelConfigTargets = useCallback((): Promise<
     PhpLaravelConfigTarget[]
@@ -468,59 +447,6 @@ function useLaravelFrameworkTargetAdapter(
       joinWorkspacePath,
       readPhpLaravelTargetCache,
       writePhpLaravelTargetCache,
-    ],
-  );
-
-  const findPhpLaravelViewTarget = useCallback(
-    async (viewName: string): Promise<PhpLaravelViewNavigationTarget | null> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (
-        !phpFrameworkSupportsViews(targetPhpFrameworkProviders) ||
-        !requestedRoot
-      ) {
-        return null;
-      }
-
-      for (const relativePath of phpLaravelViewNameCandidateRelativePaths(
-        viewName,
-      )) {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
-        try {
-          await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-
-          return {
-            name: viewName,
-            path,
-            position: { column: 1, lineNumber: 1 },
-            relativePath,
-          };
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
-          }
-        }
-      }
-
-      return null;
-    },
-    [
-      targetPhpFrameworkProviders,
-      currentWorkspaceRootRef,
-      joinWorkspacePath,
-      readNavigationFileContent,
-      workspaceRoot,
     ],
   );
 
@@ -652,7 +578,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelGateAbilityTargets,
     collectPhpLaravelMiddlewareAliasTargets,
     collectPhpLaravelEnvTargets,
-    collectPhpLaravelViewTargets,
+    collectPhpLaravelViewTargets: viewTargetResolver.collect,
     collectPhpLaravelConfigTargets,
     collectPhpLaravelTranslationTargets: translationTargetResolver.collect,
     collectPhpLaravelAuthGuardTargets: authGuardTarget.collect,
@@ -665,7 +591,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelPasswordBrokerTargets: passwordBrokerTarget.collect,
     collectPhpLaravelLogChannelTargets: logChannelTarget.collect,
     collectPhpLaravelStorageDiskTargets: storageDiskTarget.collect,
-    findPhpLaravelViewTarget,
+    findPhpLaravelViewTarget: viewTargetResolver.find,
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget: translationTargetResolver.find,
     findPhpLaravelAuthGuardTarget: authGuardTarget.find,
