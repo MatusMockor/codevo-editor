@@ -21,6 +21,7 @@ import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
+import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
@@ -6419,171 +6420,32 @@ export function useWorkbenchController(
       run: closeActiveSurface,
     });
 
-    registry.register({
-      id: "editor.goToDefinition",
-      title: "Go to Definition",
-      category: "Editor",
-      shortcut: shortcut("editor.goToDefinition"),
-      isEnabled: () => Boolean(activeDocument),
-      run: goToDefinition,
-    });
+    workbenchLanguageNavigationCommands({
+      shortcut,
+      activeDocument: activeDocument
+        ? {
+            isJavaScriptTypeScriptLanguageServerDocument:
+              isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+            isLanguageServerDocument: isLanguageServerDocument(activeDocument),
+            language: activeDocument.language,
+          }
+        : null,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      workspaceRoot,
+      goToDefinition,
+      goToSourceDefinition,
+      goToDeclaration,
+      goToTypeDefinition,
+      goToImplementation,
+      goToSuperMethod,
+    }).forEach((command) => registry.register(command));
 
     appearanceCommands.editorCommands.forEach((command) =>
       registry.register(command),
     );
-
-    registry.register({
-      id: "editor.goToSourceDefinition",
-      title: "Go to Source Definition",
-      category: "Editor",
-      shortcut: shortcut("editor.goToSourceDefinition"),
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        Boolean(
-          activeDocument &&
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-        ) &&
-        isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "sourceDefinition",
-        ),
-      run: goToSourceDefinition,
-    });
-
-    registry.register({
-      id: "editor.goToDeclaration",
-      title: "Go to Declaration",
-      category: "Editor",
-      shortcut: shortcut("editor.goToDeclaration"),
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "declaration",
-            )
-          );
-        }
-
-        return (
-          isLanguageServerDocument(activeDocument) &&
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "declaration",
-          )
-        );
-      },
-      run: goToDeclaration,
-    });
-
-    registry.register({
-      id: "editor.goToTypeDefinition",
-      title: "Go to Type Definition",
-      category: "Editor",
-      shortcut: shortcut("editor.goToTypeDefinition"),
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "typeDefinition",
-            )
-          );
-        }
-
-        return (
-          isLanguageServerDocument(activeDocument) &&
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "typeDefinition",
-          )
-        );
-      },
-      run: goToTypeDefinition,
-    });
-
-    registry.register({
-      id: "editor.goToImplementation",
-      title: "Go to Implementation",
-      category: "Editor",
-      shortcut: shortcut("editor.goToImplementation"),
-      isEnabled: () => {
-        if (!activeDocument) {
-          return false;
-        }
-
-        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-          return (
-            isRunningLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
-            ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "implementation",
-            )
-          );
-        }
-
-        return (
-          isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-          canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            "implementation",
-          )
-        );
-      },
-      run: goToImplementation,
-    });
-
-    registry.register({
-      id: "editor.goToSuperMethod",
-      title: "Go to Super Method",
-      category: "Editor",
-      shortcut: shortcut("editor.goToSuperMethod"),
-      isEnabled: () => activeDocument?.language === "php",
-      run: async () => {
-        await goToSuperMethod();
-      },
-    });
 
     registry.register({
       id: "editor.fileStructure",
