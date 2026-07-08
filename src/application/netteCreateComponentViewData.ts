@@ -7,6 +7,10 @@ import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
+import {
+  phpTypeNamesEqual,
+  shortPhpTypeName,
+} from "../domain/phpTypes";
 
 export interface NetteCreateComponentTypeResolver {
   resolveDeclaredType(source: string, typeHint: string | null): string | null;
@@ -175,7 +179,7 @@ export function netteCreateComponentViewDataEntryFromSource(
 }
 
 export function componentViewOwnerNameFromType(typeName: string | null): string | null {
-  const shortName = shortTypeName(typeName);
+  const shortName = shortPhpTypeName(typeName);
 
   if (!shortName) {
     return null;
@@ -188,10 +192,6 @@ export function componentViewOwnerNameFromType(typeName: string | null): string 
   }
 
   return null;
-}
-
-export function phpTypeNamesEqual(left: string, right: string): boolean {
-  return normalizePhpTypeName(left) === normalizePhpTypeName(right);
 }
 
 function controlViewOwnerFromFactory(
@@ -543,19 +543,4 @@ function matchingPhpBracketOffset(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function normalizePhpTypeName(typeName: string): string {
-  return typeName.trim().replace(/^\\+/, "").toLowerCase();
-}
-
-function shortTypeName(typeName: string | null): string | null {
-  if (!typeName) {
-    return null;
-  }
-
-  const normalized = typeName.replace(/^\?/, "").replace(/^\\+/, "");
-  const parts = normalized.split("\\").filter(Boolean);
-
-  return parts[parts.length - 1] ?? normalized;
 }

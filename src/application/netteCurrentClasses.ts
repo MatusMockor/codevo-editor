@@ -5,7 +5,7 @@ import {
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
-import { phpTypeNamesEqual } from "./netteCreateComponentViewData";
+import { phpTypeNamesEqual } from "../domain/phpTypes";
 import { hasNetteFrameworkProvider } from "./netteViewDataEntries";
 
 export interface NetteCurrentClassDependencies {
