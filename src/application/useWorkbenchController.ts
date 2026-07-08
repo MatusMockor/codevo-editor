@@ -16,6 +16,8 @@ import {
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
+import { workbenchIndexCommands } from "./workbenchIndexCommands";
+import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
@@ -168,7 +170,6 @@ import {
   type IndexProgressState,
   type MetadataScanCompletionEvent,
   type UnsubscribeFn as IndexProgressUnsubscribeFn,
-  type WorkspaceReindexMode,
 } from "../domain/indexProgress";
 import {
   languageServerDiagnosticNoticeGroup,
@@ -6169,86 +6170,23 @@ export function useWorkbenchController(
     ],
   );
 
-  const startReindex = useCallback(async (
-    mode: WorkspaceReindexMode,
-    language?: string,
-  ) => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    if (!shouldIndexWorkspace(intelligenceMode)) {
-      setMessage("Enable Smart Index or IDE Mode to index this workspace.");
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    pendingIndexScanRef.current = true;
-    pendingIndexRootRef.current = requestedRoot;
-
-    try {
-      const started = await indexProgressGateway.startReindex(
-        requestedRoot,
-        mode,
-        language,
-      );
-
-      if (
-        !pendingIndexScanRef.current ||
-        !workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)
-      ) {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(started.rootPath, requestedRoot)) {
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-        return;
-      }
-
-      activeIndexRootRef.current = started.rootPath;
-      setIndexProgress(startIndexProgress(started));
-      const message = reindexStartMessage(mode);
-      setIndexHealthLogs((current) =>
-        prependIndexHealthLog(
-          current,
-          createIndexHealthLogEntry("info", requestedRoot, message),
-        ),
-      );
-      setMessage(message);
-    } catch (error) {
-      if (!workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      pendingIndexScanRef.current = false;
-      pendingIndexRootRef.current = null;
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      reportError("Index", error);
-    }
-  }, [indexProgressGateway, intelligenceMode, reportError, workspaceRoot]);
-
-  const startIndexScan = useCallback(async () => {
-    await startReindex("soft");
-  }, [startReindex]);
-
-  const startPhpReindex = useCallback(async () => {
-    await startReindex("language", "php");
-  }, [startReindex]);
-
-  const startHardReindex = useCallback(async () => {
-    await startReindex("hard");
-  }, [startReindex]);
+  const {
+    startHardReindex,
+    startIndexScan,
+    startPhpReindex,
+  } = useWorkbenchIndexCommands({
+    activeIndexRootRef,
+    currentWorkspaceRootRef,
+    indexProgressGateway,
+    intelligenceMode,
+    pendingIndexRootRef,
+    pendingIndexScanRef,
+    reportError,
+    setIndexHealthLogs,
+    setIndexProgress,
+    setMessage,
+    workspaceRoot,
+  });
 
   const {
     openSettingsPanel,
@@ -7107,38 +7045,13 @@ export function useWorkbenchController(
       run: toggleSmartMode,
     });
 
-    registry.register({
-      id: "index.reindexSoft",
-      title: "Soft Reindex Workspace",
-      category: "Index",
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        shouldIndexWorkspace(intelligenceMode) &&
-        indexProgress.status !== "scanning",
-      run: startIndexScan,
-    });
-
-    registry.register({
-      id: "index.reindexPhp",
-      title: "Reindex PHP Symbols",
-      category: "Index",
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        shouldIndexWorkspace(intelligenceMode) &&
-        indexProgress.status !== "scanning",
-      run: startPhpReindex,
-    });
-
-    registry.register({
-      id: "index.reindexHard",
-      title: "Hard Rebuild Index",
-      category: "Index",
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        shouldIndexWorkspace(intelligenceMode) &&
-        indexProgress.status !== "scanning",
-      run: startHardReindex,
-    });
+    workbenchIndexCommands({
+      indexProgress,
+      intelligenceMode,
+      startHardReindex,
+      startIndexScan,
+      startPhpReindex,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "phpTree.show",
@@ -8959,18 +8872,6 @@ function isBlockedByManuallyCollapsedDirectory(
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
-}
-
-function reindexStartMessage(mode: WorkspaceReindexMode): string {
-  if (mode === "hard") {
-    return "Hard index rebuild started.";
-  }
-
-  if (mode === "language") {
-    return "PHP symbol reindex started.";
-  }
-
-  return "Index scan started.";
 }
 
 function isJavaScriptTypeScriptDocumentSyncableForRoot(
