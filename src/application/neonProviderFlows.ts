@@ -1,8 +1,8 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   provideNeonCompletions as provideNeonCompletionsFromProvider,
-  type NeonCompletionItem,
 } from "./neonCompletionProvider";
+import type { NeonCompletionItem } from "./neonCompletionItems";
 import {
   provideNeonDefinition as provideNeonDefinitionFromProvider,
 } from "./neonDefinitionProvider";

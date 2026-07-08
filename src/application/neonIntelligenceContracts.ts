@@ -1,6 +1,6 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import type { NeonCompletionItem } from "./neonCompletionProvider";
+import type { NeonCompletionItem } from "./neonCompletionItems";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */

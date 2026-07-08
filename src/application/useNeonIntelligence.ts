@@ -38,7 +38,7 @@ import {
 
 export type { NeonConfigCache } from "./neonProjectConfigDiscovery";
 
-export type { NeonCompletionItem, NeonCompletionItemKind } from "./neonCompletionProvider";
+export type { NeonCompletionItem, NeonCompletionItemKind } from "./neonCompletionItems";
 export type {
   NeonDirectoryEntry,
   NeonIntelligence,

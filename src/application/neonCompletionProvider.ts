@@ -12,6 +12,7 @@ import {
 } from "../domain/netteDiContainer";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
+import type { NeonCompletionItem } from "./neonCompletionItems";
 import {
   loadNeonProjectConfig,
   neonResolvableServiceType,
@@ -23,30 +24,6 @@ import {
 } from "./neonIntelligenceRuntime";
 
 const NEON_MAX_COMPLETIONS = 100;
-
-/**
- * The Monaco icon bucket a NEON completion maps to: a `services:` class name, a
- * `%param%` parameter reference, or an `@service` reference.
- */
-export type NeonCompletionItemKind =
-  | "class"
-  | "method"
-  | "parameter"
-  | "service";
-
-/**
- * A NEON completion the hook hands to the Monaco "neon" provider. Structurally
- * compatible with the provider's `NeonCompletion`; kept local so the application
- * layer does not depend on the components layer (mirrors `LatteCompletionItem`).
- */
-export interface NeonCompletionItem {
-  detail?: string;
-  insertText: string;
-  kind: NeonCompletionItemKind;
-  label: string;
-  replaceStart?: number;
-  replaceEnd?: number;
-}
 
 export interface NeonCompletionDependencies extends NeonRuntimeDependencies {
   resolvePhpReceiverCompletions(
