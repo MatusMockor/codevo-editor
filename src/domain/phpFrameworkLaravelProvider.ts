@@ -1,6 +1,12 @@
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
 import {
+  resolveLaravelConfigTarget,
+  resolveLaravelEnvTarget,
+  resolveLaravelTransTarget,
+  resolveLaravelViewTarget,
+} from "./laravelPathResolution";
+import {
   isLaravelApiResourceMemberMethod,
   isLaravelApiResourceStaticMethod,
   isLaravelEloquentBuilderMacroFromSource,
@@ -183,6 +189,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   config: {
     referenceAt: ({ position, source }) =>
       phpLaravelConfigReferenceContextAt(source, position),
+    resolveLiteralTarget: ({ literal }) => resolveLaravelConfigTarget(literal),
     keysFromSource: ({ fileName, source }) =>
       phpLaravelConfigKeysFromSource(source, fileName),
     targetFromSource: ({ fileName, key, source }) =>
@@ -191,6 +198,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   env: {
     referenceAt: ({ position, source }) =>
       phpLaravelEnvReferenceContextAt(source, position),
+    resolveLiteralTarget: ({ literal }) => resolveLaravelEnvTarget(literal),
     entriesFromSource: ({ source }) => phpLaravelEnvEntriesFromSource(source),
     targetFromSource: ({ name, source }) =>
       phpLaravelEnvTargetFromSource(source, name),
@@ -198,6 +206,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   translations: {
     referenceAt: ({ position, source }) =>
       phpLaravelTranslationReferenceContextAt(source, position),
+    resolveLiteralTarget: ({ literal }) => resolveLaravelTransTarget(literal),
     keysFromSource: ({ fileName, source }) =>
       phpLaravelTranslationKeysFromSource(source, fileName),
     targetFromSource: ({ fileName, key, source }) =>
@@ -210,6 +219,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   templating: {
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
+    resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),
   },
   viewData: {
     entryFromSource: ({ source }) => bladeViewDataEntryFromSource(source),

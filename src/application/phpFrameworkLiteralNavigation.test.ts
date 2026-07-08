@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
 
@@ -93,6 +96,43 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           offset: source.indexOf("../secrets.value") + 1,
           position,
           providers: [phpLaravelFrameworkProvider],
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.findConfigTarget).not.toHaveBeenCalled();
+  });
+
+  it("requires the active provider to admit config helper literals", async () => {
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: {
+        helperAt: () => ({
+          helper: "config",
+          literal: "app.name",
+          literalEnd: 24,
+          literalStart: 16,
+        }),
+      },
+    };
+    const deps = dependencies({
+      findConfigTarget: vi.fn(async () => ({
+        key: "app.name",
+        path: "/workspace/config/app.php",
+        position: targetPosition,
+      })),
+    });
+    const source = "<?php\nreturn config('app.name');";
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: null,
+          offset: source.indexOf("app.name") + 1,
+          position,
+          providers: [provider],
           source,
         },
         deps,

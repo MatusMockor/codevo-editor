@@ -6,6 +6,7 @@ import {
   isNettePhpProject,
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
+  phpFrameworkConfigLiteralTarget,
   phpFrameworkMethodCallReturnTypeFromSource,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderRegistry,
@@ -17,6 +18,7 @@ import {
   phpFrameworkConfigReferenceAt,
   phpFrameworkConfigTargetFromSource,
   phpFrameworkEnvEntriesFromSource,
+  phpFrameworkEnvLiteralTarget,
   phpFrameworkEnvReferenceAt,
   phpFrameworkEnvTargetFromSource,
   phpFrameworkPhpPresenterLinkAt,
@@ -42,6 +44,7 @@ import {
   phpFrameworkSupportsViewData,
   phpFrameworkSupportsViews,
   phpFrameworkTargetSearchQueries,
+  phpFrameworkTranslationLiteralTarget,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
@@ -49,6 +52,7 @@ import {
   phpFrameworkValidationRuleReferenceAt,
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
+  phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
@@ -86,6 +90,12 @@ import {
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
+import {
+  resolveLaravelConfigTarget,
+  resolveLaravelEnvTarget,
+  resolveLaravelTransTarget,
+  resolveLaravelViewTarget,
+} from "./laravelPathResolution";
 import { phpLaravelScopedStringCompletionContextAt } from "./phpLaravelScopedCompletions";
 import {
   detectPhpPresenterLinkAt,
@@ -2140,6 +2150,40 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toEqual(direct);
     });
 
+    it("dispatches Laravel literal target admissibility 1:1 through the provider", () => {
+      const providers = [phpLaravelFrameworkProvider];
+
+      expect(phpFrameworkConfigLiteralTarget("app.name", providers)).toEqual(
+        resolveLaravelConfigTarget("app.name"),
+      );
+      expect(phpFrameworkViewLiteralTarget("admin/dashboard", providers)).toEqual(
+        resolveLaravelViewTarget("admin/dashboard"),
+      );
+      expect(
+        phpFrameworkTranslationLiteralTarget(
+          "messages.welcome",
+          providers,
+        ),
+      ).toEqual(resolveLaravelTransTarget("messages.welcome"));
+      expect(phpFrameworkEnvLiteralTarget("APP_ENV", providers)).toEqual(
+        resolveLaravelEnvTarget("APP_ENV"),
+      );
+
+      expect(
+        phpFrameworkConfigLiteralTarget("../secrets.value", providers),
+      ).toBeNull();
+      expect(
+        phpFrameworkViewLiteralTarget("package::admin.dashboard", providers),
+      ).toBeNull();
+      expect(
+        phpFrameworkTranslationLiteralTarget(
+          "package::messages.welcome",
+          providers,
+        ),
+      ).toBeNull();
+      expect(phpFrameworkEnvLiteralTarget("APP ENV", providers)).toBeNull();
+    });
+
     it("reports string-literal support only for providers shipping the capability", () => {
       expect(
         phpFrameworkSupportsStringLiterals([phpLaravelFrameworkProvider]),
@@ -2159,6 +2203,22 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
         phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, []),
+      ).toBeNull();
+      expect(
+        phpFrameworkConfigLiteralTarget("app.name", [phpNetteFrameworkProvider]),
+      ).toBeNull();
+      expect(
+        phpFrameworkViewLiteralTarget("admin.dashboard", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkTranslationLiteralTarget("messages.welcome", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkEnvLiteralTarget("APP_ENV", [phpNetteFrameworkProvider]),
       ).toBeNull();
     });
   });

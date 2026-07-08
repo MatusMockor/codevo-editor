@@ -332,6 +332,12 @@ export interface PhpFrameworkStringLiteralContext {
   source: string;
 }
 
+export interface PhpFrameworkLiteralTargetContext {
+  literal: string;
+}
+
+export type PhpFrameworkResolvedLiteralTarget = object;
+
 export interface PhpFrameworkPhpStringCompletionContext {
   position: EditorPosition;
   source: string;
@@ -420,6 +426,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkConfigReferenceContext,
     ) => PhpFrameworkConfigReference | null;
+    resolveLiteralTarget?: (
+      context: PhpFrameworkLiteralTargetContext,
+    ) => PhpFrameworkResolvedLiteralTarget | null;
     keysFromSource?: (
       context: PhpFrameworkConfigKeysContext,
     ) => PhpFrameworkConfigKey[];
@@ -431,6 +440,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkEnvReferenceContext,
     ) => PhpFrameworkEnvReference | null;
+    resolveLiteralTarget?: (
+      context: PhpFrameworkLiteralTargetContext,
+    ) => PhpFrameworkResolvedLiteralTarget | null;
     entriesFromSource?: (
       context: PhpFrameworkEnvEntriesContext,
     ) => PhpFrameworkEnvEntry[];
@@ -442,6 +454,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkTranslationReferenceContext,
     ) => PhpFrameworkTranslationReference | null;
+    resolveLiteralTarget?: (
+      context: PhpFrameworkLiteralTargetContext,
+    ) => PhpFrameworkResolvedLiteralTarget | null;
     keysFromSource?: (
       context: PhpFrameworkTranslationKeysContext,
     ) => PhpFrameworkTranslationKey[];
@@ -459,6 +474,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkViewReferenceContext,
     ) => PhpFrameworkViewReference | null;
+    resolveLiteralTarget?: (
+      context: PhpFrameworkLiteralTargetContext,
+    ) => PhpFrameworkResolvedLiteralTarget | null;
   };
   viewData?: {
     /**
@@ -885,6 +903,21 @@ export function phpFrameworkConfigTargetFromSource(
   return null;
 }
 
+export function phpFrameworkConfigLiteralTarget(
+  literal: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedLiteralTarget | null {
+  for (const provider of providers) {
+    const target = provider.config?.resolveLiteralTarget?.({ literal });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
 export function phpFrameworkEnvReferenceAt(
   source: string,
   position: EditorPosition,
@@ -917,6 +950,21 @@ export function phpFrameworkEnvTargetFromSource(
 ): PhpFrameworkEnvEntry | null {
   for (const provider of providers) {
     const target = provider.env?.targetFromSource?.({ name, source });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkEnvLiteralTarget(
+  literal: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedLiteralTarget | null {
+  for (const provider of providers) {
+    const target = provider.env?.resolveLiteralTarget?.({ literal });
 
     if (target) {
       return target;
@@ -1005,6 +1053,21 @@ export function phpFrameworkTranslationTargetFromSource(
   return null;
 }
 
+export function phpFrameworkTranslationLiteralTarget(
+  literal: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedLiteralTarget | null {
+  for (const provider of providers) {
+    const target = provider.translations?.resolveLiteralTarget?.({ literal });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Translation keys declared in a single JSON lang source, aggregated across the
  * active providers. Providers without a translations capability contribute
@@ -1069,6 +1132,21 @@ export function phpFrameworkViewReferenceAt(
 
     if (reference) {
       return reference;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkViewLiteralTarget(
+  literal: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedLiteralTarget | null {
+  for (const provider of providers) {
+    const target = provider.templating?.resolveLiteralTarget?.({ literal });
+
+    if (target) {
+      return target;
     }
   }
 

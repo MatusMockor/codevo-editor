@@ -1,13 +1,11 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
-  resolveLaravelConfigTarget,
-  resolveLaravelEnvTarget,
-  resolveLaravelTransTarget,
-  resolveLaravelViewTarget,
-} from "../domain/laravelPathResolution";
-import {
+  phpFrameworkConfigLiteralTarget,
+  phpFrameworkEnvLiteralTarget,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsStringLiterals,
+  phpFrameworkTranslationLiteralTarget,
+  phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
@@ -89,7 +87,7 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
   }
 
   if (match.helper === "config") {
-    if (!resolveLaravelConfigTarget(match.literal)) {
+    if (!phpFrameworkConfigLiteralTarget(match.literal, providers)) {
       return null;
     }
 
@@ -106,7 +104,7 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
   }
 
   if (match.helper === "view") {
-    if (!resolveLaravelViewTarget(match.literal)) {
+    if (!phpFrameworkViewLiteralTarget(match.literal, providers)) {
       return null;
     }
 
@@ -123,7 +121,7 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
   }
 
   if (match.helper === "trans") {
-    if (!resolveLaravelTransTarget(match.literal)) {
+    if (!phpFrameworkTranslationLiteralTarget(match.literal, providers)) {
       return null;
     }
 
@@ -140,7 +138,7 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
   }
 
   if (match.helper === "env") {
-    if (!resolveLaravelEnvTarget(match.literal)) {
+    if (!phpFrameworkEnvLiteralTarget(match.literal, providers)) {
       return null;
     }
 
