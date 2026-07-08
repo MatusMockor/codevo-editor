@@ -46,6 +46,7 @@ import {
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
+import { useWorkbenchNavigationState } from "./useWorkbenchNavigationState";
 import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
@@ -89,7 +90,6 @@ import {
   useNavigationHistory,
   useRecentNavigation,
 } from "./useNavigationHistory";
-import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
@@ -202,7 +202,6 @@ import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
   type EditorPosition,
-  type EditorRevealTarget,
   type LanguageServerConfigurationSettings,
   type LanguageServerFeaturesGateway,
   type LanguageServerTextEdit,
@@ -596,10 +595,6 @@ export function useWorkbenchController(
   ] = useState<Set<string>>(new Set());
   const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] =
     useState<Set<string>>(new Set());
-  const [editorRevealTarget, setEditorRevealTarget] =
-    useState<EditorRevealTarget | null>(null);
-  const { navigationHistory, resetHistory, restoreHistory, setNavigationHistory } =
-    useNavigationHistoryLifecycle();
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -616,28 +611,9 @@ export function useWorkbenchController(
   );
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
-  // Reactive mirror of the active editor's caret for the status bar's "Ln X,
-  // Col Y" item. The ref above is read synchronously by navigation/definition
-  // flows; this state drives the rendered indicator. The EditorSurface refires
-  // `onCursorPositionChange` on every model swap (tab switch), so this always
-  // reflects the ACTIVE tab's caret, and it is cleared when the active document
-  // or workspace goes away so a stale tab's position can never linger.
-  const [activeEditorPosition, setActiveEditorPosition] =
-    useState<EditorPosition | null>(null);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Per-workspace MRU buffer (newest first). Cached/restored alongside the rest
-  // of the per-tab workbench state so one project's recent files can never leak
-  // into another project's switcher.
-  const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
-  const [recentFilesSwitcherOpen, setRecentFilesSwitcherOpen] = useState(false);
-  // Recent EDIT / navigation LOCATIONS (file + line + line snippet), newest
-  // first. Like recentFiles this is part of the per-tab workbench state so one
-  // project's visited positions can never leak into another project's panel.
-  const [recentLocations, setRecentLocations] = useState<RecentLocation[]>([]);
-  const [recentLocationsPanelOpen, setRecentLocationsPanelOpen] =
-    useState(false);
   // Per-workspace bookmarks (PhpStorm parity). Cached/restored alongside the
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
@@ -853,7 +829,6 @@ export function useWorkbenchController(
   >([]);
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
-  const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<
     (rootPath: string) => void
@@ -932,6 +907,26 @@ export function useWorkbenchController(
   );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
+  const {
+    activeEditorPosition,
+    activeEditorPositionRef,
+    editorRevealTarget,
+    navigationHistory,
+    recentFiles,
+    recentFilesSwitcherOpen,
+    recentLocations,
+    recentLocationsPanelOpen,
+    resetActiveEditorPosition,
+    resetHistory,
+    restoreHistory,
+    setEditorRevealTarget,
+    setNavigationHistory,
+    setRecentFiles,
+    setRecentFilesSwitcherOpen,
+    setRecentLocations,
+    setRecentLocationsPanelOpen,
+    updateActiveEditorPosition,
+  } = useWorkbenchNavigationState({ activeDocument });
   // Whether the active document is a PHP test file (under the tests root or a
   // `*Test` class). Drives the "run test from gutter" glyph in EditorSurface.
   // Computed here so the PSR-4 mapping stays in the domain/controller layer and
@@ -2331,8 +2326,7 @@ export function useWorkbenchController(
     openWorkspaceRequestTokenRef.current += 1;
     openWorkspaceRequestPathRef.current = null;
     openFileRequestTokenRef.current += 1;
-    activeEditorPositionRef.current = null;
-    setActiveEditorPosition(null);
+    resetActiveEditorPosition();
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -2417,6 +2411,7 @@ export function useWorkbenchController(
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
+    resetActiveEditorPosition,
     resetFilePrefetchState,
     resetHistory,
     resetGitDiffWorkspaceState,
@@ -2672,8 +2667,7 @@ export function useWorkbenchController(
       workspaceSessionRestoredRef.current = false;
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
-      activeEditorPositionRef.current = null;
-      setActiveEditorPosition(null);
+      resetActiveEditorPosition();
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       clearPhpLocalDiagnostics();
@@ -3024,6 +3018,7 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
+      resetActiveEditorPosition,
       resetFilePrefetchState,
       resetGitDiffWorkspaceState,
       resetJavaScriptTypeScriptFileStructure,
@@ -4657,30 +4652,6 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
   });
   openSymbolPanelNavigationTargetRef.current = openNavigationTarget;
-
-  const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
-    activeEditorPositionRef.current = position;
-    setActiveEditorPosition((current) =>
-      current &&
-      current.lineNumber === position.lineNumber &&
-      current.column === position.column
-        ? current
-        : position,
-    );
-  }, []);
-
-  // Drop the rendered caret indicator when no document is active (last tab
-  // closed). A new/switched tab repopulates it: the EditorSurface refires
-  // `onCursorPositionChange` on mount and on each model swap, so this only ever
-  // clears the empty-editor case and never races the active tab's own caret.
-  useEffect(() => {
-    if (activeDocument) {
-      return;
-    }
-
-    activeEditorPositionRef.current = null;
-    setActiveEditorPosition(null);
-  }, [activeDocument]);
 
   const {
     hideBottomPanel,
