@@ -3,16 +3,17 @@ import {
   neonServiceClassCompletionContextAt,
 } from "../domain/neonConfig";
 import {
-  neonGeneratedServiceNamesFromServices,
   neonParameterCompletionContextAt,
-  neonParametersFromSource,
   neonServiceReferenceCompletionContextAt,
   neonServiceSetupMethodCompletionContextAt,
-  neonServicesFromSource,
 } from "../domain/netteDiContainer";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import type { NeonCompletionItem } from "./neonCompletionItems";
+import {
+  neonParameterNamesFromSource,
+  neonServiceNamesFromSource,
+} from "./netteNeonConfigFacts";
 import {
   loadNeonProjectConfig,
   neonResolvableServiceType,
@@ -238,8 +239,8 @@ async function collectNeonParameterNames(
 ): Promise<string[]> {
   const names = new Set<string>();
 
-  for (const parameter of neonParametersFromSource(source)) {
-    names.add(parameter.name);
+  for (const name of neonParameterNamesFromSource(source)) {
+    names.add(name);
   }
 
   const config = await loadNeonProjectConfig(context);
@@ -261,22 +262,9 @@ async function collectNeonServiceNames(
   source: string,
 ): Promise<string[]> {
   const names = new Set<string>();
-  const services = neonServicesFromSource(source);
 
-  for (const service of services) {
-    if (service.serviceName) {
-      names.add(service.serviceName);
-    }
-
-    const serviceType = neonResolvableServiceType(service);
-
-    if (serviceType) {
-      names.add(serviceType);
-    }
-  }
-
-  for (const generated of neonGeneratedServiceNamesFromServices(services)) {
-    names.add(generated.name);
+  for (const name of neonServiceNamesFromSource(source)) {
+    names.add(name);
   }
 
   const config = await loadNeonProjectConfig(context);
