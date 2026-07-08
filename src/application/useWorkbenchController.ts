@@ -420,6 +420,8 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "editor.toggleFontLigatures",
   "editor.nextProblem",
   "editor.previousProblem",
+  "navigation.back",
+  "navigation.forward",
   "workbench.searchEverywhere",
   "commands.show",
   "class.quickOpen",
@@ -6874,18 +6876,6 @@ export function useWorkbenchController(
       if (matches("editor.findFileReferences")) {
         event.preventDefault();
         void openFileReferencesPanel();
-        return;
-      }
-
-      if (matches("navigation.back")) {
-        event.preventDefault();
-        void navigateBackward();
-        return;
-      }
-
-      if (matches("navigation.forward")) {
-        event.preventDefault();
-        void navigateForwardInHistory();
         return;
       }
 
