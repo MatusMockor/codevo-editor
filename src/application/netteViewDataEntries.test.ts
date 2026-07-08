@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  hasNetteFrameworkProvider,
   loadNetteViewDataEntries,
+  supportsNetteComponentFactoryViewData,
   type NetteViewDataCache,
   type NetteViewDataDependencies,
   type NetteViewDataFrameworkCapabilities,
@@ -15,7 +15,10 @@ import type {
 
 const ROOT = "/ws";
 const PHP_FILE = `${ROOT}/app/UI/Home/HomePresenter.php`;
-const NETTE_PROVIDER = { id: "nette" } as PhpFrameworkProvider;
+const NETTE_PROVIDER = {
+  id: "nette",
+  viewData: { supportsComponentFactoryVariables: true },
+} as PhpFrameworkProvider;
 const CUSTOM_PROVIDER = { id: "custom" } as PhpFrameworkProvider;
 
 function makeEntry(source: string, variableName = "$invoice"): PhpFrameworkViewDataEntry {
@@ -244,10 +247,18 @@ class HomePresenter
   });
 });
 
-describe("hasNetteFrameworkProvider", () => {
-  it("detects Nette by provider id only", () => {
-    expect(hasNetteFrameworkProvider([CUSTOM_PROVIDER])).toBe(false);
-    expect(hasNetteFrameworkProvider([CUSTOM_PROVIDER, NETTE_PROVIDER])).toBe(true);
+describe("supportsNetteComponentFactoryViewData", () => {
+  it("detects component factory view data by provider capability", () => {
+    expect(supportsNetteComponentFactoryViewData([CUSTOM_PROVIDER])).toBe(false);
+    expect(
+      supportsNetteComponentFactoryViewData([
+        CUSTOM_PROVIDER,
+        { id: "nette" } as PhpFrameworkProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      supportsNetteComponentFactoryViewData([CUSTOM_PROVIDER, NETTE_PROVIDER]),
+    ).toBe(true);
   });
 });
 

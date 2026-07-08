@@ -4,6 +4,7 @@ import {
 } from "./latteLinkNavigation";
 import {
   isNetteComponentAccess,
+  isNetteSmartObjectMagicProperty,
   isNetteTemplateMagicMember,
 } from "./netteMagicDiagnostics";
 import {
@@ -90,6 +91,11 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       receiverExpression,
       source,
     }) =>
+      isNetteSmartObjectMagicProperty(source, {
+        memberName: propertyName,
+        receiverClassName,
+        receiverExpression,
+      }) ||
       isNetteTemplateMagicMember(source, {
         memberName: propertyName,
         receiverClassName,
@@ -100,6 +106,7 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   viewData: {
     entryFromSource: ({ source }) => netteViewDataEntryFromSource(source),
     searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
+    supportsComponentFactoryVariables: true,
   },
   neon: {
     supportsConfigIntelligence: true,

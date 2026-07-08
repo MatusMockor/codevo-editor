@@ -3,6 +3,7 @@ import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
+import { phpFrameworkSupportsViewDataComponentFactories } from "../domain/phpFrameworkProviders";
 import { scanNetteCreateComponentViewDataEntries } from "./netteCreateComponentViewDataScanner";
 
 export interface NetteViewDataSearchResult {
@@ -62,8 +63,6 @@ export interface NetteViewDataLoadContext {
   ttlMs: number;
 }
 
-const NETTE_PROVIDER_ID = "nette";
-
 /**
  * Loads (and per-root caches) presenter/control view-data entries. Concurrent
  * callers for the same root share one in-flight scan, matching Monaco's
@@ -96,10 +95,10 @@ export async function loadNetteViewDataEntries(
   return load;
 }
 
-export function hasNetteFrameworkProvider(
+export function supportsNetteComponentFactoryViewData(
   providers: readonly PhpFrameworkProvider[],
 ): boolean {
-  return providers.some((provider) => provider.id === NETTE_PROVIDER_ID);
+  return phpFrameworkSupportsViewDataComponentFactories(providers);
 }
 
 export function netteViewDataVariablesForViews(
@@ -143,7 +142,8 @@ async function scanNetteViewDataEntries(
     ttlMs,
   } = context;
   const searchQueries = frameworkCapabilities.viewDataSearchQueries(providers);
-  const shouldScanCreateComponentContexts = hasNetteFrameworkProvider(providers);
+  const shouldScanCreateComponentContexts =
+    supportsNetteComponentFactoryViewData(providers);
 
   if (searchQueries.length === 0 && !shouldScanCreateComponentContexts) {
     cache[requestedRoot] = {

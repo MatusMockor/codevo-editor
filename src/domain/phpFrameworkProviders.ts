@@ -494,6 +494,13 @@ export interface PhpFrameworkProvider {
      * framework-agnostic; a future provider ships its own anchors.
      */
     searchQueries?: readonly string[];
+    /**
+     * Provider-owned opt-in for variables assigned through component/control
+     * factory-created template instances (Nette `createComponent*` today).
+     * The application layer owns file discovery and caching, but this gate
+     * keeps the framework-specific scan behind the provider contract.
+     */
+    supportsComponentFactoryVariables?: true;
   };
   validation?: {
     ruleReferenceAt?: (
@@ -1203,6 +1210,15 @@ export function phpFrameworkSupportsViewData(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return providers.some((provider) => provider.viewData !== undefined);
+}
+
+export function phpFrameworkSupportsViewDataComponentFactories(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.viewData?.supportsComponentFactoryVariables === true,
+  );
 }
 
 /**

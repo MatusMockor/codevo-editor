@@ -11,7 +11,10 @@ import {
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 
 const ROOT = "/ws";
-const NETTE_PROVIDER = { id: "nette" } as PhpFrameworkProvider;
+const NETTE_PROVIDER = {
+  id: "nette",
+  viewData: { supportsComponentFactoryVariables: true },
+} as PhpFrameworkProvider;
 
 const PRESENTATION_PRESENTER = `<?php
 namespace App\\Presentation\\Invoice;
@@ -159,7 +162,7 @@ describe("currentNettePresenterClassName", () => {
     );
   });
 
-  it("does not scan factory presenters without the Nette provider", async () => {
+  it("does not scan factory presenters without component factory support", async () => {
     const searchText = vi.fn(async () => [
       { path: `${ROOT}/app/UI/Invoice/InvoicePresenter.php` },
     ]);

@@ -5,8 +5,8 @@ import {
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { phpFrameworkSupportsViewDataComponentFactories } from "../domain/phpFrameworkProviders";
 import { phpTypeNamesEqual } from "../domain/phpTypes";
-import { hasNetteFrameworkProvider } from "./netteViewDataEntries";
 
 export interface NetteCurrentClassDependencies {
   joinPath(rootPath: string, relativePath: string): string;
@@ -179,7 +179,7 @@ async function currentNetteFactoryPresenterClassName(
     requestedRoot,
   } = context;
 
-  if (!hasNetteFrameworkProvider(providers)) {
+  if (!phpFrameworkSupportsViewDataComponentFactories(providers)) {
     return null;
   }
 

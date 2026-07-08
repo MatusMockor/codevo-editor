@@ -8,6 +8,7 @@ import {
   phpFrameworkContainerExpressionClassName,
   phpFrameworkConfigLiteralTarget,
   phpFrameworkMethodCallReturnTypeFromSource,
+  phpFrameworkMemberPropertyMagicDiagnostic,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderRegistry,
   phpFrameworkProviderSignature,
@@ -42,6 +43,7 @@ import {
   phpFrameworkSupportsTranslations,
   phpFrameworkSupportsValidation,
   phpFrameworkSupportsViewData,
+  phpFrameworkSupportsViewDataComponentFactories,
   phpFrameworkSupportsViews,
   phpFrameworkTargetSearchQueries,
   phpFrameworkTranslationLiteralTarget,
@@ -1460,6 +1462,37 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toBe(false);
     });
 
+    it("downgrades SmartObject @property access through the Nette provider", () => {
+      const smartObjectSource = `<?php
+use Nette\\SmartObject;
+
+/**
+ * @property-read string $label
+ */
+class ProductPresenter extends Nette\\Application\\UI\\Presenter
+{
+    use SmartObject;
+}
+`;
+
+      expect(
+        phpFrameworkMemberPropertyMagicDiagnostic(
+          smartObjectSource,
+          "$this",
+          "label",
+          providers,
+        ),
+      ).toEqual({ source: NETTE_MAGIC_DIAGNOSTIC_SOURCE });
+      expect(
+        phpFrameworkMemberPropertyMagicDiagnostic(
+          smartObjectSource,
+          "$this",
+          "missing",
+          providers,
+        ),
+      ).toBeNull();
+    });
+
     it("leaves Laravel dispatch untouched (exclusive resolution, no blend)", () => {
       const laravelOnly = [phpLaravelFrameworkProvider];
 
@@ -2050,6 +2083,25 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toBe(true);
       expect(phpFrameworkSupportsViewData([capabilitylessProvider])).toBe(false);
       expect(phpFrameworkSupportsViewData([])).toBe(false);
+    });
+
+    it("reports component-factory view-data support by capability", () => {
+      const capabilitylessProvider: PhpFrameworkProvider = {
+        id: "nette",
+        viewData: {},
+      };
+
+      expect(
+        phpFrameworkSupportsViewDataComponentFactories([
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsViewDataComponentFactories([
+          capabilitylessProvider,
+        ]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsViewDataComponentFactories([])).toBe(false);
     });
 
     it("stays a safe no-op for providers without the viewData capability", () => {
