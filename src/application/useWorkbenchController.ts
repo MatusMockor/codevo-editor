@@ -21,6 +21,7 @@ import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
+import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -255,7 +256,6 @@ import {
   workspaceDisplayName,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
-import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import type { NavigationHistory } from "../domain/navigation";
 import {
   type PhpFileOutline,
@@ -6947,13 +6947,22 @@ export function useWorkbenchController(
       toggleBookmarksPanel,
     }).forEach((command) => registry.register(command));
 
-    registry.register({
-      id: "smart.toggle",
-      title: "Toggle IDE Mode",
-      category: "Intelligence",
-      isEnabled: (context) => context.hasWorkspace,
-      run: toggleSmartMode,
-    });
+    workbenchSmartCommands({
+      intelligenceMode,
+      languageServerPlan,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      workspaceDescriptor,
+      workspaceRoot,
+      phpTools,
+      installingManagedPhpactor,
+      isLanguageServerActiveForWorkspace,
+      toggleSmartMode,
+      showPhpactorSetup: () => setLanguageServerSetupOpen(true),
+      installManagedPhpactor,
+      startLanguageServer,
+      stopLanguageServer,
+    }).forEach((command) => registry.register(command));
 
     workbenchIndexCommands({
       indexProgress,
@@ -6973,56 +6982,6 @@ export function useWorkbenchController(
       showGitSidebar: () => setSidebarView("git"),
       refreshGitStatus,
     }).forEach((command) => registry.register(command));
-
-    registry.register({
-      id: "smart.phpactorSetup",
-      title: "Show PHPactor Setup",
-      category: "Intelligence",
-      isEnabled: () => Boolean(createPhpactorSetupGuide(languageServerPlan)),
-      run: () => setLanguageServerSetupOpen(true),
-    });
-
-    registry.register({
-      id: "smart.installManagedPhpactor",
-      title: "Install Managed PHP IDE Engine",
-      category: "Intelligence",
-      isEnabled: () =>
-        Boolean(
-          workspaceRoot &&
-            workspaceDescriptor?.php &&
-            !phpTools?.phpactor &&
-            !installingManagedPhpactor,
-        ),
-      run: installManagedPhpactor,
-    });
-
-    registry.register({
-      id: "smart.startLanguageServer",
-      title: "Start PHP Language Server",
-      category: "Intelligence",
-      isEnabled: () =>
-        shouldStartLanguageServer(intelligenceMode) &&
-        languageServerPlan?.status === "ready" &&
-        !isLanguageServerActiveForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ),
-      run: startLanguageServer,
-    });
-
-    registry.register({
-      id: "smart.stopLanguageServer",
-      title: "Stop PHP Language Server",
-      category: "Intelligence",
-      isEnabled: () =>
-        isLanguageServerActiveForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ),
-      run: stopLanguageServer,
-    });
 
     return registry;
   }, [
