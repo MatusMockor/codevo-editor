@@ -17,6 +17,7 @@ import {
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
+import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
@@ -6979,21 +6980,10 @@ export function useWorkbenchController(
       run: refreshPhpTree,
     });
 
-    registry.register({
-      id: "git.show",
-      title: "Show Git Changes",
-      category: "Git",
-      isEnabled: (context) => context.hasWorkspace,
-      run: () => setSidebarView("git"),
-    });
-
-    registry.register({
-      id: "git.refresh",
-      title: "Refresh Git Changes",
-      category: "Git",
-      isEnabled: (context) => context.hasWorkspace,
-      run: refreshGitStatus,
-    });
+    workbenchGitSidebarCommands({
+      showGitSidebar: () => setSidebarView("git"),
+      refreshGitStatus,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "smart.phpactorSetup",
