@@ -17,6 +17,7 @@ import {
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
+import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
@@ -6702,39 +6703,12 @@ export function useWorkbenchController(
       run: openFileStructure,
     });
 
-    registry.register({
-      id: "editor.toggleGitBlame",
-      title: "Annotate with Git Blame",
-      category: "Editor",
-      shortcut: shortcut("editor.toggleGitBlame"),
-      isEnabled: (context) =>
-        context.hasWorkspace && context.hasActiveDocument,
-      run: toggleGitBlame,
-    });
-
-    registry.register({
-      id: "editor.showFileHistory",
-      title: "Show File History",
-      category: "Editor",
-      shortcut: shortcut("editor.showFileHistory"),
-      isEnabled: (context) =>
-        context.hasWorkspace && context.hasActiveDocument,
-      run: () => {
-        void openFileHistory();
-      },
-    });
-
-    registry.register({
-      id: "editor.showLocalHistory",
-      title: "Local History: Show History",
-      category: "Editor",
-      shortcut: shortcut("editor.showLocalHistory"),
-      isEnabled: (context) =>
-        context.hasWorkspace && context.hasActiveDocument,
-      run: () => {
-        void openLocalHistory();
-      },
-    });
+    workbenchEditorHistoryCommands({
+      shortcut,
+      toggleGitBlame,
+      openFileHistory,
+      openLocalHistory,
+    }).forEach((command) => registry.register(command));
 
     workbenchGitWorkflowCommands({
       shortcut,
