@@ -1,10 +1,8 @@
 import type { MutableRefObject } from "react";
 import type { FileEntry, TextSearchGateway } from "../domain/workspace";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import {
-  phpLaravelFrameworkTargetCollectorAdapter,
-  type LaravelTargets,
-} from "./useLaravelTargets";
+import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
+import type { LaravelTargets } from "./useLaravelTargets";
 
 export interface PhpFrameworkTargetsDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;

@@ -76,11 +76,6 @@ import {
   type WorkspaceFileTarget,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
-import type {
-  PhpFrameworkTargetCollectorAdapter,
-  PhpFrameworkTargets,
-  PhpFrameworkTargetsDependencies,
-} from "./usePhpFrameworkTargets";
 
 export type PhpLaravelNamedRouteTarget =
   WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
@@ -1092,77 +1087,6 @@ function useLaravelFrameworkTargetAdapter(
     invalidatePhpLaravelTargetCache,
   };
 }
-
-function phpFrameworkTargetsFromLaravelTargets(
-  laravelTargets: LaravelTargets,
-): PhpFrameworkTargets {
-  return {
-    collectNamedRouteTargets: laravelTargets.collectPhpLaravelNamedRouteTargets,
-    collectAuthorizationAbilityTargets:
-      laravelTargets.collectPhpLaravelGateAbilityTargets,
-    collectMiddlewareAliasTargets:
-      laravelTargets.collectPhpLaravelMiddlewareAliasTargets,
-    collectEnvironmentTargets: laravelTargets.collectPhpLaravelEnvTargets,
-    collectViewTargets: laravelTargets.collectPhpLaravelViewTargets,
-    collectConfigTargets: laravelTargets.collectPhpLaravelConfigTargets,
-    collectTranslationTargets:
-      laravelTargets.collectPhpLaravelTranslationTargets,
-    collectAuthGuardTargets: laravelTargets.collectPhpLaravelAuthGuardTargets,
-    collectCacheStoreTargets: laravelTargets.collectPhpLaravelCacheStoreTargets,
-    collectDatabaseConnectionTargets:
-      laravelTargets.collectPhpLaravelDatabaseConnectionTargets,
-    collectBroadcastConnectionTargets:
-      laravelTargets.collectPhpLaravelBroadcastConnectionTargets,
-    collectQueueConnectionTargets:
-      laravelTargets.collectPhpLaravelQueueConnectionTargets,
-    collectRedisConnectionTargets:
-      laravelTargets.collectPhpLaravelRedisConnectionTargets,
-    collectMailMailerTargets: laravelTargets.collectPhpLaravelMailMailerTargets,
-    collectPasswordBrokerTargets:
-      laravelTargets.collectPhpLaravelPasswordBrokerTargets,
-    collectLogChannelTargets: laravelTargets.collectPhpLaravelLogChannelTargets,
-    collectStorageDiskTargets:
-      laravelTargets.collectPhpLaravelStorageDiskTargets,
-    findViewTarget: laravelTargets.findPhpLaravelViewTarget,
-    findConfigTarget: laravelTargets.findPhpLaravelConfigTarget,
-    findTranslationTarget: laravelTargets.findPhpLaravelTranslationTarget,
-    findAuthGuardTarget: laravelTargets.findPhpLaravelAuthGuardTarget,
-    findCacheStoreTarget: laravelTargets.findPhpLaravelCacheStoreTarget,
-    findDatabaseConnectionTarget:
-      laravelTargets.findPhpLaravelDatabaseConnectionTarget,
-    findBroadcastConnectionTarget:
-      laravelTargets.findPhpLaravelBroadcastConnectionTarget,
-    findQueueConnectionTarget:
-      laravelTargets.findPhpLaravelQueueConnectionTarget,
-    findRedisConnectionTarget:
-      laravelTargets.findPhpLaravelRedisConnectionTarget,
-    findMailMailerTarget: laravelTargets.findPhpLaravelMailMailerTarget,
-    findPasswordBrokerTarget:
-      laravelTargets.findPhpLaravelPasswordBrokerTarget,
-    findLogChannelTarget: laravelTargets.findPhpLaravelLogChannelTarget,
-    findStorageDiskTarget: laravelTargets.findPhpLaravelStorageDiskTarget,
-    invalidateTargetCache: laravelTargets.invalidatePhpLaravelTargetCache,
-  };
-}
-
-function usePhpLaravelFrameworkTargetAdapter(
-  dependencies: PhpFrameworkTargetsDependencies,
-): PhpFrameworkTargets {
-  const { frameworkIntelligence, ...shellDependencies } = dependencies;
-  const laravelTargets = useLaravelFrameworkTargetAdapter({
-    ...shellDependencies,
-    activePhpFrameworkProviders: frameworkIntelligence.providers,
-    isLaravelFrameworkActive: frameworkIntelligence.hasProvider("laravel"),
-  });
-
-  return phpFrameworkTargetsFromLaravelTargets(laravelTargets);
-}
-
-export const phpLaravelFrameworkTargetCollectorAdapter: PhpFrameworkTargetCollectorAdapter =
-  {
-    providerId: "laravel",
-    useTargets: usePhpLaravelFrameworkTargetAdapter,
-  };
 
 export function useLaravelTargets(
   dependencies: LaravelTargetsDependencies,
