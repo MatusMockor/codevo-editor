@@ -30,6 +30,7 @@ import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
+import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
@@ -117,6 +118,7 @@ import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
+
 export type {
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
@@ -405,6 +407,31 @@ const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
 const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
 const OPEN_APPEARANCE_SETTINGS_EVENT = "mockor-open-appearance-settings";
 const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
+const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
+  "workbench.openSettings",
+  "workbench.openAppearanceSettings",
+  "panel.toggle",
+  "panel.toggleTodo",
+  "terminal.show",
+  "runtime.show",
+  "editor.fontZoomIn",
+  "editor.fontZoomOut",
+  "editor.fontZoomReset",
+  "editor.toggleFontLigatures",
+  "editor.nextProblem",
+  "editor.previousProblem",
+  "workbench.searchEverywhere",
+  "git.stashChanges",
+  "git.showStashes",
+  "git.switchBranch",
+  "git.newBranch",
+  "git.commit",
+  "bookmark.showPanel",
+  "bookmark.next",
+  "bookmark.previous",
+  "editor.goToSymbol",
+  "search.text",
+];
 
 function languageServerDiagnosticsEqual(
   left: readonly LanguageServerDiagnostic[],
@@ -6565,13 +6592,16 @@ export function useWorkbenchController(
     workspaceTrust,
   ]);
 
-  const commandContext = {
-    hasWorkspace: Boolean(workspaceRoot),
-    hasActiveDocument: Boolean(activeDocument),
-    activeDocumentDirty: Boolean(
-      activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
-    ),
-  };
+  const commandContext = useMemo(
+    () => ({
+      hasWorkspace: Boolean(workspaceRoot),
+      hasActiveDocument: Boolean(activeDocument),
+      activeDocumentDirty: Boolean(
+        activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
+      ),
+    }),
+    [activeDocument, workspaceRoot],
+  );
 
   const searchEverywhereModel = searchEverywhereModelFor(
     commandRegistry.list(),
@@ -6713,15 +6743,15 @@ export function useWorkbenchController(
       const matches = (commandId: KeymapCommandId) =>
         matchesShortcut(event, shortcutForCommand(keymap, commandId));
 
-      if (matches("workbench.openSettings")) {
-        event.preventDefault();
-        openSettingsPanel();
-        return;
-      }
-
-      if (matches("workbench.openAppearanceSettings")) {
-        event.preventDefault();
-        openAppearanceSettingsPanel();
+      if (
+        dispatchWorkbenchShortcutCommand({
+          commandContext,
+          commandIds: REGISTRY_SHORTCUT_COMMAND_IDS,
+          commandRegistry,
+          event,
+          keymap,
+        })
+      ) {
         return;
       }
 
@@ -6740,20 +6770,6 @@ export function useWorkbenchController(
       if (matches("editor.fileStructure")) {
         event.preventDefault();
         openFileStructure();
-        return;
-      }
-
-      if (matches("panel.toggle")) {
-        event.preventDefault();
-        toggleBottomPanel();
-        return;
-      }
-
-      if (matches("panel.toggleTodo")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          toggleTodoPanel();
-        }
         return;
       }
 
@@ -6787,97 +6803,9 @@ export function useWorkbenchController(
         return;
       }
 
-      if (matches("git.stashChanges")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void openGitStashPanel();
-        }
-        return;
-      }
-
-      if (matches("git.showStashes")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void openGitStashPanel();
-        }
-        return;
-      }
-
-      if (matches("git.switchBranch")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void openGitBranchPanel();
-        }
-        return;
-      }
-
-      if (matches("git.newBranch")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void createGitBranch();
-        }
-        return;
-      }
-
-      if (matches("git.commit")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void commitGitChanges();
-        }
-        return;
-      }
-
-      if (matches("bookmark.showPanel")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          toggleBookmarksPanel();
-        }
-        return;
-      }
-
-      if (matches("bookmark.next")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void goToNextBookmark();
-        }
-        return;
-      }
-
-      if (matches("bookmark.previous")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          void goToPreviousBookmark();
-        }
-        return;
-      }
-
       if (matches("editor.goToDefinition")) {
         event.preventDefault();
         void goToDefinition();
-        return;
-      }
-
-      if (matches("editor.fontZoomIn")) {
-        event.preventDefault();
-        zoomEditorFontIn();
-        return;
-      }
-
-      if (matches("editor.fontZoomOut")) {
-        event.preventDefault();
-        zoomEditorFontOut();
-        return;
-      }
-
-      if (matches("editor.fontZoomReset")) {
-        event.preventDefault();
-        resetEditorFontSize();
-        return;
-      }
-
-      if (matches("editor.toggleFontLigatures")) {
-        event.preventDefault();
-        toggleEditorFontLigatures();
         return;
       }
 
@@ -6935,18 +6863,6 @@ export function useWorkbenchController(
         return;
       }
 
-      if (matches("editor.nextProblem")) {
-        event.preventDefault();
-        void goToNextProblem();
-        return;
-      }
-
-      if (matches("editor.previousProblem")) {
-        event.preventDefault();
-        void goToPreviousProblem();
-        return;
-      }
-
       if (matches("navigation.back")) {
         event.preventDefault();
         void navigateBackward();
@@ -6956,12 +6872,6 @@ export function useWorkbenchController(
       if (matches("navigation.forward")) {
         event.preventDefault();
         void navigateForwardInHistory();
-        return;
-      }
-
-      if (matches("workbench.searchEverywhere")) {
-        event.preventDefault();
-        openSearchEverywhere();
         return;
       }
 
@@ -6983,14 +6893,6 @@ export function useWorkbenchController(
           setRecentFilesSwitcherOpen(false);
           setClassOpenOpen(true);
           markFloatingSurfaceActivated();
-        }
-        return;
-      }
-
-      if (matches("editor.goToSymbol")) {
-        event.preventDefault();
-        if (workspaceRoot && canSearchClassOpenSymbols) {
-          openWorkspaceSymbols();
         }
         return;
       }
@@ -7019,24 +6921,6 @@ export function useWorkbenchController(
         return;
       }
 
-      if (matches("search.text")) {
-        event.preventDefault();
-        if (workspaceRoot) {
-          setTextSearchOpen(true);
-        }
-        return;
-      }
-
-      if (matches("terminal.show")) {
-        event.preventDefault();
-        showBottomPanelView("terminal");
-        return;
-      }
-
-      if (matches("runtime.show")) {
-        event.preventDefault();
-        showBottomPanelView("runtime");
-      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -7045,6 +6929,8 @@ export function useWorkbenchController(
     canSearchClassOpenSymbols,
     closeActiveSurface,
     closeFloatingSurface,
+    commandContext,
+    commandRegistry,
     goToDeclaration,
     goToDefinition,
     goToImplementation,
