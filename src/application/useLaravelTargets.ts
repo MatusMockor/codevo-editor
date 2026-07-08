@@ -6,17 +6,7 @@ import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslatio
 import type { PhpLaravelViewTarget } from "../domain/phpLaravelViews";
 import { type FileEntry, type TextSearchGateway } from "../domain/workspace";
 import {
-  phpLaravelAuthGuardTargetDefinition,
-  phpLaravelBroadcastConnectionTargetDefinition,
-  phpLaravelCacheStoreTargetDefinition,
-  phpLaravelDatabaseConnectionTargetDefinition,
-  phpLaravelLogChannelTargetDefinition,
-  phpLaravelMailMailerTargetDefinition,
-  phpLaravelPasswordBrokerTargetDefinition,
-  phpLaravelQueueConnectionTargetDefinition,
-  phpLaravelRedisConnectionTargetDefinition,
-  phpLaravelStorageDiskTargetDefinition,
-  useConfigDerivedLaravelTarget,
+  usePhpLaravelConfigDerivedTargetBundle,
   type PhpLaravelAuthGuardTarget,
   type PhpLaravelBroadcastConnectionTarget,
   type PhpLaravelCacheStoreTarget,
@@ -27,7 +17,7 @@ import {
   type PhpLaravelQueueConnectionTarget,
   type PhpLaravelRedisConnectionTarget,
   type PhpLaravelStorageDiskTarget,
-} from "./phpLaravelConfigDerivedTargets";
+} from "./phpLaravelConfigDerivedTargetBundle";
 import { createPhpLaravelConfigTargetResolver } from "./phpLaravelConfigTargets";
 import { createPhpLaravelEnvTargetResolver } from "./phpLaravelEnvTargets";
 import { usePhpLaravelTargetCache } from "./phpLaravelTargetCache";
@@ -53,7 +43,6 @@ export type {
   PhpLaravelAuthGuardTarget,
   PhpLaravelBroadcastConnectionTarget,
   PhpLaravelCacheStoreTarget,
-  PhpLaravelConfigDerivedTarget,
   PhpLaravelDatabaseConnectionTarget,
   PhpLaravelLogChannelTarget,
   PhpLaravelMailMailerTarget,
@@ -61,7 +50,8 @@ export type {
   PhpLaravelQueueConnectionTarget,
   PhpLaravelRedisConnectionTarget,
   PhpLaravelStorageDiskTarget,
-} from "./phpLaravelConfigDerivedTargets";
+} from "./phpLaravelConfigDerivedTargetBundle";
+export type { PhpLaravelConfigDerivedTarget } from "./phpLaravelConfigDerivedTargets";
 export type { PhpLaravelViewNavigationTarget } from "./phpLaravelViewTargets";
 
 const EMPTY_PHP_FRAMEWORK_PROVIDERS: readonly PhpFrameworkProvider[] = [];
@@ -329,61 +319,8 @@ function useLaravelFrameworkTargetAdapter(
     ],
   );
 
-  // The ten config-derived collectors below (auth guards, cache stores,
-  // database/broadcast/queue/redis connections, mail mailers, password
-  // brokers, log channels, storage disks) are all thin, declarative wrappers
-  // over collectPhpLaravelConfigTargets/findPhpLaravelConfigTarget - see
-  // useConfigDerivedLaravelTarget for the shared collect/find skeleton.
-  const authGuardTarget = useConfigDerivedLaravelTarget(
-    phpLaravelAuthGuardTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const cacheStoreTarget = useConfigDerivedLaravelTarget(
-    phpLaravelCacheStoreTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const databaseConnectionTarget = useConfigDerivedLaravelTarget(
-    phpLaravelDatabaseConnectionTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const broadcastConnectionTarget = useConfigDerivedLaravelTarget(
-    phpLaravelBroadcastConnectionTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const queueConnectionTarget = useConfigDerivedLaravelTarget(
-    phpLaravelQueueConnectionTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const redisConnectionTarget = useConfigDerivedLaravelTarget(
-    phpLaravelRedisConnectionTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const mailMailerTarget = useConfigDerivedLaravelTarget(
-    phpLaravelMailMailerTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const passwordBrokerTarget = useConfigDerivedLaravelTarget(
-    phpLaravelPasswordBrokerTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const logChannelTarget = useConfigDerivedLaravelTarget(
-    phpLaravelLogChannelTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
-  const storageDiskTarget = useConfigDerivedLaravelTarget(
-    phpLaravelStorageDiskTargetDefinition,
-    configTargetResolver.collect,
-    configTargetResolver.find,
-  );
+  const configDerivedTargetBundle =
+    usePhpLaravelConfigDerivedTargetBundle(configTargetResolver);
 
   return {
     collectPhpLaravelNamedRouteTargets:
@@ -396,29 +333,10 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelViewTargets: viewTargetResolver.collect,
     collectPhpLaravelConfigTargets: configTargetResolver.collect,
     collectPhpLaravelTranslationTargets: translationTargetResolver.collect,
-    collectPhpLaravelAuthGuardTargets: authGuardTarget.collect,
-    collectPhpLaravelCacheStoreTargets: cacheStoreTarget.collect,
-    collectPhpLaravelDatabaseConnectionTargets: databaseConnectionTarget.collect,
-    collectPhpLaravelBroadcastConnectionTargets: broadcastConnectionTarget.collect,
-    collectPhpLaravelQueueConnectionTargets: queueConnectionTarget.collect,
-    collectPhpLaravelRedisConnectionTargets: redisConnectionTarget.collect,
-    collectPhpLaravelMailMailerTargets: mailMailerTarget.collect,
-    collectPhpLaravelPasswordBrokerTargets: passwordBrokerTarget.collect,
-    collectPhpLaravelLogChannelTargets: logChannelTarget.collect,
-    collectPhpLaravelStorageDiskTargets: storageDiskTarget.collect,
     findPhpLaravelViewTarget: viewTargetResolver.find,
     findPhpLaravelConfigTarget: configTargetResolver.find,
     findPhpLaravelTranslationTarget: translationTargetResolver.find,
-    findPhpLaravelAuthGuardTarget: authGuardTarget.find,
-    findPhpLaravelCacheStoreTarget: cacheStoreTarget.find,
-    findPhpLaravelDatabaseConnectionTarget: databaseConnectionTarget.find,
-    findPhpLaravelBroadcastConnectionTarget: broadcastConnectionTarget.find,
-    findPhpLaravelQueueConnectionTarget: queueConnectionTarget.find,
-    findPhpLaravelRedisConnectionTarget: redisConnectionTarget.find,
-    findPhpLaravelMailMailerTarget: mailMailerTarget.find,
-    findPhpLaravelPasswordBrokerTarget: passwordBrokerTarget.find,
-    findPhpLaravelLogChannelTarget: logChannelTarget.find,
-    findPhpLaravelStorageDiskTarget: storageDiskTarget.find,
+    ...configDerivedTargetBundle,
     invalidatePhpLaravelTargetCache,
   };
 }
