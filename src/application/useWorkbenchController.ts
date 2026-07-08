@@ -22,6 +22,7 @@ import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
+import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
@@ -6327,50 +6328,15 @@ export function useWorkbenchController(
       run: createFile,
     });
 
-    registry.register({
-      id: "php.generateTest",
-      title: "Generate Test",
-      category: "PHP",
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        context.hasActiveDocument &&
-        activeDocument?.language === "php",
-      run: generateTestForActiveDocument,
-    });
-
-    registry.register({
-      id: "php.goToTest",
-      title: "Go to Test / Test Subject",
-      category: "PHP",
-      shortcut: shortcut("php.goToTest"),
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        context.hasActiveDocument &&
-        activeDocument?.language === "php",
-      run: goToTestForActiveDocument,
-    });
-
-    registry.register({
-      id: "php.runTest",
-      title: "Run Test Under Cursor",
-      category: "PHP",
-      shortcut: shortcut("php.runTest"),
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        context.hasActiveDocument &&
-        activeDocument?.language === "php",
-      run: runTestForActiveDocument,
-    });
-
-    registry.register({
-      id: "php.runTestFile",
-      title: "Run All Tests in File",
-      category: "PHP",
-      shortcut: shortcut("php.runTestFile"),
-      isEnabled: (context) =>
-        context.hasWorkspace && isActiveDocumentPhpTest,
-      run: runAllTestsForActiveDocument,
-    });
+    workbenchPhpTestCommands({
+      shortcut,
+      isActiveDocumentPhp: activeDocument?.language === "php",
+      isActiveDocumentPhpTest,
+      generateTestForActiveDocument,
+      goToTestForActiveDocument,
+      runTestForActiveDocument,
+      runAllTestsForActiveDocument,
+    }).forEach((command) => registry.register(command));
 
     registry.register({
       id: "file.quickOpen",
