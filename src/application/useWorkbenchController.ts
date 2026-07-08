@@ -525,6 +525,7 @@ export function useWorkbenchController(
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
+  const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
   // One detection pass per workspace: the active provider set and the exclusive
   // profile ("laravel" | "nette" | "generic") are derived from the same result,
   // so they can never disagree (no second source of truth).
@@ -1780,13 +1781,7 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
       pendingIndexRootRef.current = null;
       activeIndexRootRef.current = event.rootPath;
-      phpClassSourcePathCacheRef.current = {};
-      resetPhpClassMemberCacheRef.current();
-      phpFrameworkBindingCacheRef.current = {};
-      phpLaravelMorphMapModelTypeCacheRef.current = {};
-      invalidateFrameworkTargetCache();
-      resetPhpLaravelSourceRegistries();
-      resetBladeIntelligenceCaches();
+      resetPhpFrameworkCachesRef.current();
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -1804,7 +1799,7 @@ export function useWorkbenchController(
         ),
       );
     },
-    [indexProgressGateway, reportError, resetPhpLaravelSourceRegistries],
+    [indexProgressGateway, reportError],
   );
 
   const handleIndexProgress = useCallback((event: IndexProgressEvent) => {
@@ -1901,13 +1896,7 @@ export function useWorkbenchController(
     pendingIndexRootRef.current = null;
     activeIndexRootRef.current = null;
     lastPhpFileOutlineRefreshKeyRef.current = null;
-    phpClassSourcePathCacheRef.current = {};
-    resetPhpClassMemberCacheRef.current();
-    phpFrameworkBindingCacheRef.current = {};
-    phpLaravelMorphMapModelTypeCacheRef.current = {};
-    invalidateFrameworkTargetCache();
-    resetPhpLaravelSourceRegistries();
-    resetBladeIntelligenceCaches();
+    resetPhpFrameworkCachesRef.current();
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -1923,7 +1912,7 @@ export function useWorkbenchController(
     setNotices((current) =>
       current.filter((notice) => !notice.groupKey?.startsWith("index-progress:")),
     );
-  }, [resetPhpLaravelSourceRegistries]);
+  }, []);
 
   const clearWorkspaceIndex = useCallback(
     async (rootPath: string, message?: string) => {
@@ -2849,13 +2838,7 @@ export function useWorkbenchController(
       setNotices([]);
       lastPhpFileOutlineRefreshKeyRef.current = null;
       lastPhpIdeReadinessSignatureRef.current = null;
-      phpClassSourcePathCacheRef.current = {};
-      resetPhpClassMemberCacheRef.current();
-      phpFrameworkBindingCacheRef.current = {};
-      phpLaravelMorphMapModelTypeCacheRef.current = {};
-      invalidateFrameworkTargetCache();
-      resetPhpLaravelSourceRegistries();
-      resetBladeIntelligenceCaches();
+      resetPhpFrameworkCachesRef.current();
       setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = cachedWorkspaceState?.indexProgress.rootPath ?? null;
       pendingIndexScanRef.current = false;
@@ -7380,6 +7363,15 @@ export function useWorkbenchController(
     provideLatteDefinition,
     shouldBlockLatteDefinitionFallback,
   } = workbenchFrameworkIntelligence;
+  resetPhpFrameworkCachesRef.current = () => {
+    phpClassSourcePathCacheRef.current = {};
+    resetPhpClassMemberCacheRef.current();
+    phpFrameworkBindingCacheRef.current = {};
+    phpLaravelMorphMapModelTypeCacheRef.current = {};
+    invalidateFrameworkTargetCache();
+    resetPhpLaravelSourceRegistries();
+    resetBladeIntelligenceCaches();
+  };
   const frameworkIntelligenceProviders = useWorkbenchFrameworkProviderAdapter(
     workbenchFrameworkIntelligence,
   );
