@@ -115,14 +115,15 @@ import {
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
   registerLanguageServerMonacoProviders,
-  type BladeCompletion,
-  type LatteCompletion,
-  type NeonCompletion,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import {
+  useEditorSurfaceFrameworkProviderRefs,
+  type EditorSurfaceFrameworkIntelligenceProviders,
+} from "./useEditorSurfaceFrameworkProviderRefs";
 import {
   applyImmediateFallbackTheme,
   configureShikiLanguageFeatures,
@@ -292,40 +293,6 @@ interface EditorSurfaceProps {
   ): Promise<PhpParameterNameInlayHint[]>;
 }
 
-interface EditorSurfaceFrameworkIntelligenceProviders {
-  provideBladeCodeActions?(
-    source: string,
-    range: PhpCodeActionRange,
-  ): Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<BladeCompletion[]>;
-  provideBladeDefinition?(source: string, offset: number): Promise<boolean>;
-  provideLatteCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<LatteCompletion[]>;
-  provideLatteDefinition?(source: string, offset: number): Promise<boolean>;
-  provideNeonCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletion[]>;
-  provideNeonDefinition?(source: string, offset: number): Promise<boolean>;
-  provideNettePhpLinkDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  provideNettePhpLinkCompletions?(
-    source: string,
-    offset: number,
-  ): Promise<LatteCompletion[] | null>;
-  isPhpFrameworkStringCompletionContext?(
-    source: string,
-    position: EditorPosition,
-  ): boolean;
-}
-
 function EditorSurfaceComponent({
   activeDocument,
   editorConfig,
@@ -399,40 +366,23 @@ function EditorSurfaceComponent({
   providePhpMethodSignature,
   providePhpParameterInlayHints = async () => [],
 }: EditorSurfaceProps) {
-  const resolvedProvidePhpFrameworkDefinition =
-    providePhpFrameworkDefinition ??
-    providePhpLaravelDefinition ??
-    noopPhpFrameworkDefinition;
-  const resolvedProvideBladeCodeActions =
-    frameworkIntelligenceProviders?.provideBladeCodeActions ??
-    noopPhpCodeActions;
-  const resolvedProvideBladeCompletions =
-    frameworkIntelligenceProviders?.provideBladeCompletions ??
-    noopBladeCompletions;
-  const resolvedProvideBladeDefinition =
-    frameworkIntelligenceProviders?.provideBladeDefinition ??
-    noopPhpFrameworkDefinition;
-  const resolvedProvideLatteCompletions =
-    frameworkIntelligenceProviders?.provideLatteCompletions ??
-    noopLatteCompletions;
-  const resolvedProvideLatteDefinition =
-    frameworkIntelligenceProviders?.provideLatteDefinition ??
-    noopPhpFrameworkDefinition;
-  const resolvedProvideNeonCompletions =
-    frameworkIntelligenceProviders?.provideNeonCompletions ??
-    noopNeonCompletions;
-  const resolvedProvideNeonDefinition =
-    frameworkIntelligenceProviders?.provideNeonDefinition ??
-    noopPhpFrameworkDefinition;
-  const resolvedProvideNettePhpLinkDefinition =
-    frameworkIntelligenceProviders?.provideNettePhpLinkDefinition ??
-    noopPhpFrameworkDefinition;
-  const resolvedProvideNettePhpLinkCompletions =
-    frameworkIntelligenceProviders?.provideNettePhpLinkCompletions ??
-    noopNettePhpLinkCompletions;
-  const resolvedIsPhpFrameworkStringCompletionContext =
-    frameworkIntelligenceProviders?.isPhpFrameworkStringCompletionContext ??
-    noopPhpFrameworkStringCompletionContext;
+  const {
+    bladeCodeActionsRef,
+    bladeCompletionsRef,
+    bladeDefinitionRef,
+    latteCompletionsRef,
+    latteDefinitionRef,
+    neonCompletionsRef,
+    neonDefinitionRef,
+    nettePhpLinkCompletionsRef,
+    nettePhpLinkDefinitionRef,
+    phpFrameworkDefinitionRef,
+    phpFrameworkStringCompletionContextRef,
+  } = useEditorSurfaceFrameworkProviderRefs({
+    frameworkIntelligenceProviders,
+    providePhpFrameworkDefinition,
+    providePhpLaravelDefinition,
+  });
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -555,31 +505,12 @@ function EditorSurfaceComponent({
     path: string;
   } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
-  const bladeCodeActionsRef = useRef(resolvedProvideBladeCodeActions);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
   const clearLanguageServerDiagnosticsForPathRef = useRef(
     clearLanguageServerDiagnosticsForPath,
   );
   const lastLocalPhpValidationKeyRef = useRef<string | null>(null);
   const pendingLocalPhpValidationKeyRef = useRef<string | null>(null);
-  const bladeCompletionsRef = useRef(resolvedProvideBladeCompletions);
-  const bladeDefinitionRef = useRef(resolvedProvideBladeDefinition);
-  const latteCompletionsRef = useRef(resolvedProvideLatteCompletions);
-  const latteDefinitionRef = useRef(resolvedProvideLatteDefinition);
-  const neonCompletionsRef = useRef(resolvedProvideNeonCompletions);
-  const neonDefinitionRef = useRef(resolvedProvideNeonDefinition);
-  const nettePhpLinkDefinitionRef = useRef(
-    resolvedProvideNettePhpLinkDefinition,
-  );
-  const nettePhpLinkCompletionsRef = useRef(
-    resolvedProvideNettePhpLinkCompletions,
-  );
-  const phpFrameworkStringCompletionContextRef = useRef(
-    resolvedIsPhpFrameworkStringCompletionContext,
-  );
-  const phpFrameworkDefinitionRef = useRef(
-    resolvedProvidePhpFrameworkDefinition,
-  );
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
@@ -752,10 +683,6 @@ function EditorSurfaceComponent({
   }, [providePhpCodeActions]);
 
   useEffect(() => {
-    bladeCodeActionsRef.current = resolvedProvideBladeCodeActions;
-  }, [resolvedProvideBladeCodeActions]);
-
-  useEffect(() => {
     applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
   }, [applyPhpCodeActionNewFile]);
 
@@ -768,47 +695,6 @@ function EditorSurfaceComponent({
     lastLocalPhpValidationKeyRef.current = null;
     pendingLocalPhpValidationKeyRef.current = null;
   }, [activeDocument?.path]);
-
-  useEffect(() => {
-    bladeCompletionsRef.current = resolvedProvideBladeCompletions;
-  }, [resolvedProvideBladeCompletions]);
-
-  useEffect(() => {
-    bladeDefinitionRef.current = resolvedProvideBladeDefinition;
-  }, [resolvedProvideBladeDefinition]);
-
-  useEffect(() => {
-    latteCompletionsRef.current = resolvedProvideLatteCompletions;
-  }, [resolvedProvideLatteCompletions]);
-
-  useEffect(() => {
-    latteDefinitionRef.current = resolvedProvideLatteDefinition;
-  }, [resolvedProvideLatteDefinition]);
-
-  useEffect(() => {
-    neonCompletionsRef.current = resolvedProvideNeonCompletions;
-  }, [resolvedProvideNeonCompletions]);
-
-  useEffect(() => {
-    neonDefinitionRef.current = resolvedProvideNeonDefinition;
-  }, [resolvedProvideNeonDefinition]);
-
-  useEffect(() => {
-    nettePhpLinkDefinitionRef.current = resolvedProvideNettePhpLinkDefinition;
-  }, [resolvedProvideNettePhpLinkDefinition]);
-
-  useEffect(() => {
-    nettePhpLinkCompletionsRef.current = resolvedProvideNettePhpLinkCompletions;
-  }, [resolvedProvideNettePhpLinkCompletions]);
-
-  useEffect(() => {
-    phpFrameworkStringCompletionContextRef.current =
-      resolvedIsPhpFrameworkStringCompletionContext;
-  }, [resolvedIsPhpFrameworkStringCompletionContext]);
-
-  useEffect(() => {
-    phpFrameworkDefinitionRef.current = resolvedProvidePhpFrameworkDefinition;
-  }, [resolvedProvidePhpFrameworkDefinition]);
 
   useEffect(() => {
     phpMethodCompletionsRef.current = providePhpMethodCompletions;
@@ -3906,15 +3792,6 @@ const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
 const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 const noopLocalPhpDiagnosticsChange = () => undefined;
-const noopPhpFrameworkDefinition = async () => false;
-const noopPhpFrameworkStringCompletionContext = () => false;
-const noopPhpCodeActions = async (): Promise<PhpCodeActionDescriptor[]> => [];
-const noopBladeCompletions = async (): Promise<BladeCompletion[]> => [];
-const noopLatteCompletions = async (): Promise<LatteCompletion[]> => [];
-const noopNeonCompletions = async (): Promise<NeonCompletion[]> => [];
-const noopNettePhpLinkCompletions = async (): Promise<
-  LatteCompletion[] | null
-> => null;
 // Stable empty identities so an absent breadcrumb symbol set / path does not
 // produce a fresh array each render and break the breadcrumb path memo.
 const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];
