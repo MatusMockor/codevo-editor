@@ -16,7 +16,7 @@ import {
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
-import { usePhpFrameworkTargets } from "./useLaravelTargets";
+import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
