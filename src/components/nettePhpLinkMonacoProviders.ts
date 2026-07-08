@@ -2,7 +2,12 @@ import type * as Monaco from "monaco-editor";
 import { nettePresenterLinkCompletionContextAt } from "../domain/latteLinkNavigation";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  activePhpDocumentContext,
+  isPhpDocumentContextActive,
+  modelSource,
+  offsetAtMonacoPosition,
+} from "./phpMonacoDocumentContext";
 import {
   toMonacoLatteCompletion,
   type LatteCompletion,
@@ -118,122 +123,4 @@ export async function phpNettePresenterLinkCompletionSuggestions(
 
     return [];
   }
-}
-
-function activePhpDocumentContext(
-  context: NettePhpLinkMonacoProviderContext,
-  model: MonacoModel,
-) {
-  const activeDocument = context.getActiveDocument();
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!activeDocument || !rootPath) {
-    return null;
-  }
-
-  if (activeDocument.language !== "php") {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (path !== activeDocument.path) {
-    return null;
-  }
-
-  return {
-    activeDocument,
-    path,
-    rootPath,
-    sessionId: runningRuntimeSessionIdForRoot(context, rootPath),
-  };
-}
-
-function modelSource(model: MonacoModel, fallbackSource: string): string {
-  try {
-    return model.getValue();
-  } catch {
-    return fallbackSource;
-  }
-}
-
-function offsetAtMonacoPosition(source: string, position: MonacoPosition): number {
-  const lines = source.split("\n");
-  const targetLine = Math.max(0, position.lineNumber - 1);
-  let offset = 0;
-
-  for (let index = 0; index < Math.min(targetLine, lines.length); index += 1) {
-    offset += lines[index].length + 1;
-  }
-
-  if (targetLine >= lines.length) {
-    return source.length;
-  }
-
-  return Math.min(offset + Math.max(0, position.column - 1), source.length);
-}
-
-function isPhpDocumentContextActive(
-  context: NettePhpLinkMonacoProviderContext,
-  request: { rootPath: string; sessionId: number | null },
-): boolean {
-  return request.sessionId == null
-    ? isStoredWorkspaceRootActive(context, request.rootPath)
-    : isStoredLanguageServerPayloadActive(
-        context,
-        request.rootPath,
-        request.sessionId,
-      );
-}
-
-function isStoredLanguageServerPayloadActive(
-  context: NettePhpLinkMonacoProviderContext,
-  rootPath: string,
-  sessionId: number,
-): boolean {
-  if (!isStoredWorkspaceRootActive(context, rootPath)) {
-    return false;
-  }
-
-  return runningRuntimeSessionIdForRoot(context, rootPath) === sessionId;
-}
-
-function isStoredWorkspaceRootActive(
-  context: NettePhpLinkMonacoProviderContext,
-  rootPath: string,
-): boolean {
-  const activeRootPath = context.getWorkspaceRoot?.() ?? null;
-
-  return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
-}
-
-function runningRuntimeSessionIdForRoot(
-  context: NettePhpLinkMonacoProviderContext,
-  rootPath: string,
-): number | null {
-  const status = context.getRuntimeStatus();
-
-  if (
-    status?.kind === "running" &&
-    Boolean(status.rootPath) &&
-    workspaceRootKeysEqual(status.rootPath, rootPath)
-  ) {
-    return status.sessionId;
-  }
-
-  return null;
-}
-
-function modelPath(model: MonacoModel): string | null {
-  const uri = model.uri;
-
-  if (uri.fsPath) {
-    return uri.fsPath;
-  }
-
-  if (uri.path) {
-    return decodeURIComponent(uri.path);
-  }
-
-  return null;
 }

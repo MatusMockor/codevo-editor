@@ -71,6 +71,15 @@ import {
   provideNettePhpPresenterLinkDefinition,
   type NettePhpLinkMonacoProviderContext,
 } from "./nettePhpLinkMonacoProviders";
+import {
+  activePhpDocumentContext,
+  isPhpDocumentContextActive,
+  isStoredLanguageServerPayloadActive,
+  modelPath,
+  modelSource,
+  offsetAtMonacoPosition,
+  runningRuntimeSessionIdForRoot,
+} from "./phpMonacoDocumentContext";
 
 export type {
   BladeCompletion,
@@ -1097,29 +1106,6 @@ async function providePhpFrameworkStringLiteralDefinition(
 
     return false;
   }
-}
-
-/**
- * Converts a 1-based Monaco position into a 0-based character offset into
- * `source`. Lines beyond the source resolve to its end; columns beyond a line
- * clamp to that line's end.
- */
-function offsetAtMonacoPosition(source: string, position: MonacoPosition): number {
-  const lines = source.split("\n");
-  const targetLine = Math.max(0, position.lineNumber - 1);
-  let offset = 0;
-
-  for (let line = 0; line < targetLine && line < lines.length; line += 1) {
-    offset += (lines[line]?.length ?? 0) + 1;
-  }
-
-  if (targetLine >= lines.length) {
-    return source.length;
-  }
-
-  const column = Math.max(0, position.column - 1);
-
-  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
 
 async function provideImplementation(
@@ -4781,43 +4767,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function activePhpDocumentContext(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-) {
-  const activeDocument = context.getActiveDocument();
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!activeDocument || !rootPath) {
-    return null;
-  }
-
-  if (activeDocument.language !== "php") {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (path !== activeDocument.path) {
-    return null;
-  }
-
-  return {
-    activeDocument,
-    path,
-    rootPath,
-    sessionId: runningRuntimeSessionIdForRoot(context, rootPath),
-  };
-}
-
-function modelSource(model: MonacoModel, fallbackSource: string): string {
-  try {
-    return model.getValue();
-  } catch {
-    return fallbackSource;
-  }
-}
-
 function completionRange(
   model: MonacoModel,
   position: MonacoPosition,
@@ -5062,13 +5011,6 @@ async function flushPendingDocumentChangeForActiveRequest(
   return isFeatureRequestActive(context, request);
 }
 
-function runningRuntimeSessionIdForRoot(
-  context: LanguageServerMonacoProviderContext,
-  rootPath: string,
-): number | null {
-  return runningRuntimeStatusForRoot(context, rootPath)?.sessionId ?? null;
-}
-
 function runningRuntimeStatusForRoot(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
@@ -5123,31 +5065,6 @@ function isFeatureRequestActive(
   );
 }
 
-function isPhpDocumentContextActive(
-  context: LanguageServerMonacoProviderContext,
-  request: { rootPath: string; sessionId: number | null },
-): boolean {
-  return request.sessionId == null
-    ? isStoredWorkspaceRootActive(context, request.rootPath)
-    : isStoredLanguageServerPayloadActive(
-        context,
-        request.rootPath,
-        request.sessionId,
-      );
-}
-
-function isStoredLanguageServerPayloadActive(
-  context: LanguageServerMonacoProviderContext,
-  rootPath: string,
-  sessionId: number,
-): boolean {
-  if (!isStoredWorkspaceRootActive(context, rootPath)) {
-    return false;
-  }
-
-  return runningRuntimeSessionIdForRoot(context, rootPath) === sessionId;
-}
-
 function reportErrorForActiveRequest(
   context: LanguageServerMonacoProviderContext,
   request: { rootPath: string; sessionId: number },
@@ -5170,15 +5087,6 @@ function reportErrorForActiveWorkspaceEditEvent(
   }
 
   context.reportError(error);
-}
-
-function isStoredWorkspaceRootActive(
-  context: LanguageServerMonacoProviderContext,
-  rootPath: string,
-): boolean {
-  const activeRootPath = context.getWorkspaceRoot?.() ?? null;
-
-  return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
 }
 
 function isWorkspaceEditEventActive(
@@ -5210,18 +5118,4 @@ function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
 
 function normalizedWorkspacePath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
-}
-
-function modelPath(model: MonacoModel): string | null {
-  const uri = model.uri;
-
-  if (uri.fsPath) {
-    return uri.fsPath;
-  }
-
-  if (uri.path) {
-    return decodeURIComponent(uri.path);
-  }
-
-  return null;
 }
