@@ -55,7 +55,6 @@ import {
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
 import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
-import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   PhpCodeActionDescriptor,
@@ -65,13 +64,12 @@ import type {
 } from "../application/phpCodeActionTypes";
 import {
   registerTemplateLanguageMonacoProviders,
-  type BladeCompletion,
-  type LatteCompletion,
-  type NeonCompletion,
+  type TemplateLanguageMonacoProviderContext,
 } from "./templateLanguageMonacoProviders";
 import {
   phpNettePresenterLinkCompletionSuggestions,
   provideNettePhpPresenterLinkDefinition,
+  type NettePhpLinkMonacoProviderContext,
 } from "./nettePhpLinkMonacoProviders";
 
 export type {
@@ -245,7 +243,9 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
   ],
 } satisfies Monaco.languages.SemanticTokensLegend;
 
-export interface LanguageServerMonacoProviderContext {
+export interface LanguageServerMonacoProviderContext
+  extends TemplateLanguageMonacoProviderContext,
+    NettePhpLinkMonacoProviderContext {
   /**
    * Persists a PHP code action's new file (e.g. "Extract interface" writes a
    * sibling `<Class>Interface.php`) to DISK and opens it in a tab. When wired,
@@ -264,15 +264,6 @@ export interface LanguageServerMonacoProviderContext {
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
-  getActiveDocument(): EditorDocument | null;
-  getRuntimeStatus(): LanguageServerRuntimeStatus | null;
-  /**
-   * Returns the GLOBAL (app-level) user-authored live templates so they can be
-   * merged with the built-in snippet registry at completion time. Omitted when
-   * the host wires no user snippets; the provider then offers built-ins only.
-   */
-  getUserSnippets?(): readonly UserSnippet[];
-  getWorkspaceRoot?(): string | null;
   /**
    * Reports whether `path` has already been opened on the language server (its
    * `didOpen` was sent) for `rootPath`. Used to gate the `documentSymbol`
@@ -290,94 +281,6 @@ export interface LanguageServerMonacoProviderContext {
    */
   isPhpInlayHintsEnabled?(): boolean;
   limitNavigationResultsToOpenModels?: boolean;
-  /**
-   * Resolves and navigates to the Blade target (a view referenced by
-   * `@include`/`@extends`/…, or an `<x-...>` component) at `offset` inside a
-   * `.blade.php` document. Like {@link providePhpFrameworkDefinition}, the
-   * controller performs the navigation itself and resolves `true` when it
-   * handled the request (so the Monaco provider returns `null`); it resolves
-   * `false` when the offset is not a resolvable Blade reference. Per-project
-   * isolation lives in the controller (requested-root capture + re-check after
-   * each file read), so a tab switch mid-resolution drops the result.
-   */
-  provideBladeDefinition?(source: string, offset: number): Promise<boolean>;
-  /**
-   * Produces Blade completions for the cursor at `position` inside a
-   * `.blade.php` document: `@directive` names, view names for
-   * `@include`/`@extends`/… literals, and `<x-...>` component names. Re-checks
-   * the active workspace after directory scans (per-project isolation).
-   */
-  provideBladeCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<BladeCompletion[]>;
-  provideBladeCodeActions?(
-    source: string,
-    range: PhpCodeActionRange,
-  ): Promise<PhpCodeActionDescriptor[]>;
-  /**
-   * Resolves and navigates to the Latte target (a template referenced by
-   * `{include}`/`{layout}`/`{extends}`/… or the `@layout.latte` auto-lookup) at
-   * `offset` inside a `.latte` document. Like {@link provideBladeDefinition}, the
-   * controller performs the navigation itself and resolves `true` when it handled
-   * the request (so the Monaco provider returns `null`); it resolves `false` when
-   * the offset is not a resolvable Latte reference. Per-project isolation lives in
-   * the controller (requested-root capture + re-check after each file read).
-   */
-  provideLatteDefinition?(source: string, offset: number): Promise<boolean>;
-  /**
-   * Produces Latte completions for the cursor at `position` inside a `.latte`
-   * document: Latte tag names after `{`, and workspace template names inside an
-   * `{include '...'}` literal. Re-checks the active workspace after directory
-   * scans (per-project isolation).
-   */
-  provideLatteCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<LatteCompletion[]>;
-  /**
-   * Resolves and navigates to a NEON construct at `offset` inside a `.neon`
-   * document: a service-class reference (to its PHP file) or an `includes:`
-   * entry (to the referenced `.neon` file). Like {@link provideLatteDefinition},
-   * the controller performs the navigation itself and resolves `true` when it
-   * handled the request (so the Monaco provider returns `null`); `false`
-   * otherwise. Per-project isolation lives in the controller.
-   */
-  provideNeonDefinition?(source: string, offset: number): Promise<boolean>;
-  /**
-   * Produces NEON completions for the cursor at `position` inside a `.neon`
-   * document: workspace class names in a `services:` value position.
-   */
-  provideNeonCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<NeonCompletion[]>;
-  /**
-   * Resolves and navigates to the Nette presenter action behind a PHP presenter
-   * link (`$this->link('Presenter:action')`, `->redirect(...)`, ...) at `offset`
-   * inside a `.php` document. Like {@link provideLatteDefinition}, the controller
-   * performs the navigation itself and resolves `true` when it handled the
-   * request (so the Monaco definition provider returns `null` and does not also
-   * consult phpactor); `false` otherwise. Inert outside a Nette semantic project.
-   */
-  provideNettePhpLinkDefinition?(
-    source: string,
-    offset: number,
-  ): Promise<boolean>;
-  /**
-   * Produces `Presenter:action` completions for the cursor at `offset` inside a
-   * `.php` document's presenter-link string argument (`$this->link('...')`,
-   * `->redirect(...)`, `->forward(...)`, ...). Like
-   * {@link provideNettePhpLinkDefinition}, this is a dedicated callback (not
-   * folded into {@link providePhpMethodCompletions}) so the Laravel-heavy
-   * method-completion collector stays untouched. Returns `null` when the active
-   * workspace is not a Nette semantic project so the regular PHP pipeline can
-   * continue; returns an array (possibly empty) only when Nette owns the context.
-   */
-  provideNettePhpLinkCompletions?(
-    source: string,
-    offset: number,
-  ): Promise<LatteCompletion[] | null>;
   isPhpFrameworkStringCompletionContext?(
     source: string,
     position: MonacoPosition,
@@ -441,7 +344,6 @@ export interface LanguageServerMonacoProviderContext {
    */
   recordCompletionLatency?(durationMs: number, rootPath?: string): void;
   refreshGateway?: LanguageServerRefreshGateway;
-  reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
 }
 
