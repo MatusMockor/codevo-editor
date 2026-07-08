@@ -3195,6 +3195,40 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     expect(listDirectory).not.toHaveBeenCalled();
   });
 
+  it("exposes a sync PHP presenter-link completion context guard", () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({ listDirectory, readFileContent });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('P');";
+
+    expect(
+      latte.isPhpPresenterLinkCompletionContext(source, source.indexOf("P'")),
+    ).toBe(true);
+    expect(
+      latte.isPhpPresenterLinkCompletionContext(
+        "$this->products->get(1);",
+        "$this->products->get(1);".indexOf("get"),
+      ),
+    ).toBe(false);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
+  it("does not claim PHP presenter-link completion context outside Nette", () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
+    const deps = makeDeps({
+      frameworkIntelligence: GENERIC_FRAMEWORK,
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->link('P');";
+
+    expect(
+      latte.isPhpPresenterLinkCompletionContext(source, source.indexOf("P'")),
+    ).toBe(false);
+    expect(listDirectory).not.toHaveBeenCalled();
+  });
+
   it("reuses the same per-root presenter-target cache as the Latte-side completion", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({ listDirectory, readFileContent });

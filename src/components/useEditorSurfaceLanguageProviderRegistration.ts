@@ -93,6 +93,9 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
   phpPresenterLinkCompletionsRef: CallbackRef<
     OffsetProvider<LatteCompletion[] | null>
   >;
+  phpPresenterLinkCompletionContextRef: CallbackRef<
+    (source: string, offset: number) => boolean
+  >;
   phpPresenterLinkDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
   recordCompletionLatencyRef: MutableRefObject<
     ((durationMs: number, rootPath?: string) => void) | undefined
@@ -138,6 +141,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     phpMethodSignatureRef,
     phpParameterInlayHintsRef,
     phpPresenterLinkCompletionsRef,
+    phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
     runtimeStatusRef,
@@ -185,6 +189,8 @@ export function useEditorSurfaceLanguageProviderRegistration({
         phpPresenterLinkDefinitionRef.current(source, offset),
       providePhpPresenterLinkCompletions: (source, offset) =>
         phpPresenterLinkCompletionsRef.current(source, offset),
+      isPhpPresenterLinkCompletionContext: (source, offset) =>
+        phpPresenterLinkCompletionContextRef.current(source, offset),
       isPhpFrameworkStringCompletionContext: (source, position) =>
         phpFrameworkStringCompletionContextRef.current(source, position),
       providePhpCodeActions: (source, range) =>
@@ -230,6 +236,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     phpMethodSignatureRef,
     phpParameterInlayHintsRef,
     phpPresenterLinkCompletionsRef,
+    phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
     refreshGateway,

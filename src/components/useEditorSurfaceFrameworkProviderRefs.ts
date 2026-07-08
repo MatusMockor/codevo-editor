@@ -36,6 +36,7 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     source: string,
     offset: number,
   ): Promise<LatteCompletion[] | null>;
+  isPhpPresenterLinkCompletionContext?(source: string, offset: number): boolean;
   /**
    * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
    * temporary compatibility alias while Nette-specific callers migrate.
@@ -106,6 +107,9 @@ export function useEditorSurfaceFrameworkProviderRefs({
     frameworkIntelligenceProviders?.providePhpPresenterLinkCompletions ??
     frameworkIntelligenceProviders?.provideNettePhpLinkCompletions ??
     noopPhpPresenterLinkCompletions;
+  const resolvedIsPhpPresenterLinkCompletionContext =
+    frameworkIntelligenceProviders?.isPhpPresenterLinkCompletionContext ??
+    noopPhpPresenterLinkCompletionContext;
   const resolvedIsPhpFrameworkStringCompletionContext =
     frameworkIntelligenceProviders?.isPhpFrameworkStringCompletionContext ??
     noopPhpFrameworkStringCompletionContext;
@@ -122,6 +126,9 @@ export function useEditorSurfaceFrameworkProviderRefs({
   );
   const phpPresenterLinkCompletionsRef = useRef(
     resolvedProvidePhpPresenterLinkCompletions,
+  );
+  const phpPresenterLinkCompletionContextRef = useRef(
+    resolvedIsPhpPresenterLinkCompletionContext,
   );
   const phpFrameworkStringCompletionContextRef = useRef(
     resolvedIsPhpFrameworkStringCompletionContext,
@@ -169,6 +176,11 @@ export function useEditorSurfaceFrameworkProviderRefs({
   }, [resolvedProvidePhpPresenterLinkCompletions]);
 
   useEffect(() => {
+    phpPresenterLinkCompletionContextRef.current =
+      resolvedIsPhpPresenterLinkCompletionContext;
+  }, [resolvedIsPhpPresenterLinkCompletionContext]);
+
+  useEffect(() => {
     phpFrameworkStringCompletionContextRef.current =
       resolvedIsPhpFrameworkStringCompletionContext;
   }, [resolvedIsPhpFrameworkStringCompletionContext]);
@@ -186,6 +198,7 @@ export function useEditorSurfaceFrameworkProviderRefs({
     neonCompletionsRef,
     neonDefinitionRef,
     phpPresenterLinkCompletionsRef,
+    phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,
     nettePhpLinkCompletionsRef: phpPresenterLinkCompletionsRef,
     nettePhpLinkDefinitionRef: phpPresenterLinkDefinitionRef,
@@ -196,6 +209,7 @@ export function useEditorSurfaceFrameworkProviderRefs({
 
 const noopPhpFrameworkDefinition = async () => false;
 const noopPhpFrameworkStringCompletionContext = () => false;
+const noopPhpPresenterLinkCompletionContext = () => false;
 const noopPhpCodeActions = async (): Promise<PhpCodeActionDescriptor[]> => [];
 const noopBladeCompletions = async (): Promise<BladeCompletion[]> => [];
 const noopLatteCompletions = async (): Promise<LatteCompletion[]> => [];

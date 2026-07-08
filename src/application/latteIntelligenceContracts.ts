@@ -83,6 +83,7 @@ export interface LatteIntelligence {
     source: string,
     offset: number,
   ): Promise<LatteCompletionItem[] | null>;
+  isPhpPresenterLinkCompletionContext(source: string, offset: number): boolean;
   /**
    * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
    * temporary compatibility alias while Nette-specific callers migrate.

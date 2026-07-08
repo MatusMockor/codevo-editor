@@ -21,6 +21,8 @@ export function useWorkbenchFrameworkProviderAdapter(
       provideNeonDefinition: intelligence.provideNeonDefinition,
       providePhpPresenterLinkCompletions:
         intelligence.providePhpPresenterLinkCompletions,
+      isPhpPresenterLinkCompletionContext:
+        intelligence.isPhpPresenterLinkCompletionContext,
       providePhpPresenterLinkDefinition:
         intelligence.providePhpPresenterLinkDefinition,
       provideNettePhpLinkCompletions:
@@ -32,6 +34,7 @@ export function useWorkbenchFrameworkProviderAdapter(
     }),
     [
       intelligence.isPhpFrameworkStringCompletionContext,
+      intelligence.isPhpPresenterLinkCompletionContext,
       intelligence.provideBladeCodeActions,
       intelligence.provideBladeCompletions,
       intelligence.provideBladeDefinition,

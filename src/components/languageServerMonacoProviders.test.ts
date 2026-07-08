@@ -11262,6 +11262,7 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     const registered = createRegisteredProviders();
     const source = "<?php\n$this->link('Pro');\n";
     const offset = source.indexOf("Pro") + 2;
+    const isPhpPresenterLinkCompletionContext = vi.fn(() => true);
     const providePhpPresenterLinkCompletions = vi.fn(async () => [
       {
         detail: "Nette presenter action",
@@ -11276,6 +11277,7 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     const context = providerContext({
       activeDocument: document(),
       featuresGateway: gateway,
+      isPhpPresenterLinkCompletionContext,
       providePhpPresenterLinkCompletions,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
@@ -11286,6 +11288,10 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
     );
 
     expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
+      source,
+      offset,
+    );
+    expect(isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(
       source,
       offset,
     );
@@ -11302,12 +11308,14 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
   it("does not call the controller when the cursor is not on a link-call string argument", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
+    const isPhpPresenterLinkCompletionContext = vi.fn(() => false);
     const provideNettePhpLinkCompletions = vi.fn(async () => []);
     const gateway = featuresGateway({
       completion: { isIncomplete: false, items: [] },
     });
     const context = providerContext({
       featuresGateway: gateway,
+      isPhpPresenterLinkCompletionContext,
       provideNettePhpLinkCompletions,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
@@ -11317,6 +11325,7 @@ describe("registerLanguageServerMonacoProviders nette php link completion", () =
       position(),
     );
 
+    expect(isPhpPresenterLinkCompletionContext).toHaveBeenCalled();
     expect(provideNettePhpLinkCompletions).not.toHaveBeenCalled();
     expect(gateway.completion).toHaveBeenCalled();
   });
@@ -12040,6 +12049,9 @@ function providerContext(
     provideNettePhpLinkDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNettePhpLinkDefinition"]
     >;
+    isPhpPresenterLinkCompletionContext: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["isPhpPresenterLinkCompletionContext"]
+    >;
     isPhpFrameworkStringCompletionContext: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["isPhpFrameworkStringCompletionContext"]
     >;
@@ -12099,6 +12111,8 @@ function providerContext(
       overrides.providePhpPresenterLinkDefinition,
     provideNettePhpLinkCompletions: overrides.provideNettePhpLinkCompletions,
     provideNettePhpLinkDefinition: overrides.provideNettePhpLinkDefinition,
+    isPhpPresenterLinkCompletionContext:
+      overrides.isPhpPresenterLinkCompletionContext,
     isPhpFrameworkStringCompletionContext:
       overrides.isPhpFrameworkStringCompletionContext ??
       ((source, position) =>

@@ -1,5 +1,4 @@
 import type * as Monaco from "monaco-editor";
-import { nettePresenterLinkCompletionContextAt } from "../domain/latteLinkNavigation";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import {
@@ -21,6 +20,7 @@ export interface PhpPresenterLinkMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  isPhpPresenterLinkCompletionContext?(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition?(
     source: string,
     offset: number,
@@ -109,12 +109,12 @@ export async function provideNettePhpPresenterLinkDefinition(
 }
 
 /**
- * `$this->link('...')` / `->redirect(...)` / `->forward(...)` / ... presenter
- * link completion for a PHP document (Nette). The domain's pure
- * `nettePresenterLinkCompletionContextAt` check runs first (a single bounded
- * regex scan), so non-link PHP keystrokes never reach the controller. Returns
- * `null` when the cursor is not on a link target or the active framework is not
- * Nette; returns an array (possibly empty) when Nette owns the context.
+ * Presenter-link completion for a PHP document. A neutral framework-owned
+ * preflight may cheaply reject non-link PHP keystrokes; when it is omitted, the
+ * provider callback remains authoritative and can return `null` for inactive
+ * contexts. Returns `null` when the cursor is not on a link target or the active
+ * framework does not own presenter links; returns an array (possibly empty)
+ * when the framework owns the context.
  */
 export async function phpPresenterLinkCompletionSuggestions(
   monaco: MonacoApi,
@@ -126,16 +126,13 @@ export async function phpPresenterLinkCompletionSuggestions(
   request: { rootPath: string; sessionId: number | null },
 ): Promise<Monaco.languages.CompletionItem[] | null> {
   const offset = offsetAtMonacoPosition(source, position);
-  const linkCompletionContext = nettePresenterLinkCompletionContextAt(
-    source,
-    offset,
-    "php",
-  );
+  const ownsCompletionContext =
+    context.isPhpPresenterLinkCompletionContext?.(source, offset);
   const provideCompletions =
     context.providePhpPresenterLinkCompletions ??
     context.provideNettePhpLinkCompletions;
 
-  if (!linkCompletionContext || !provideCompletions) {
+  if (ownsCompletionContext === false || !provideCompletions) {
     return null;
   }
 

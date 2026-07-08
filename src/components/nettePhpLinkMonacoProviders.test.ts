@@ -31,6 +31,7 @@ describe("nette PHP link Monaco providers", () => {
     const replaceStart = source.indexOf("Pro");
     const replaceEnd = replaceStart + "Pro".length;
     const context = providerContext({
+      isPhpPresenterLinkCompletionContext: vi.fn(() => true),
       providePhpPresenterLinkCompletions: vi.fn(async () => [
         {
           detail: "App\\Presentation\\ProductPresenter::renderShow",
@@ -57,6 +58,10 @@ describe("nette PHP link Monaco providers", () => {
       source,
       replaceEnd,
     );
+    expect(context.isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(
+      source,
+      replaceEnd,
+    );
     expect(suggestions).toEqual([
       expect.objectContaining({
         detail: "App\\Presentation\\ProductPresenter::renderShow",
@@ -74,9 +79,10 @@ describe("nette PHP link Monaco providers", () => {
     ]);
   });
 
-  it("falls through without calling Nette completion outside presenter-link strings", async () => {
+  it("falls through without calling the provider when framework preflight rejects the context", async () => {
     const source = "<?php\n$label = 'Product:show';";
     const context = providerContext({
+      isPhpPresenterLinkCompletionContext: vi.fn(() => false),
       providePhpPresenterLinkCompletions: vi.fn(async () => []),
     });
 
@@ -91,7 +97,34 @@ describe("nette PHP link Monaco providers", () => {
     );
 
     expect(suggestions).toBeNull();
+    expect(context.isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(
+      source,
+      source.indexOf("Product"),
+    );
     expect(context.providePhpPresenterLinkCompletions).not.toHaveBeenCalled();
+  });
+
+  it("lets the provider own context detection when no preflight is wired", async () => {
+    const source = "<?php\n$label = 'Product:show';";
+    const context = providerContext({
+      providePhpPresenterLinkCompletions: vi.fn(async () => null),
+    });
+
+    const suggestions = await phpPresenterLinkCompletionSuggestions(
+      monaco(),
+      context,
+      model(source),
+      source,
+      positionAt(source, source.indexOf("Product")),
+      fallbackRange(),
+      { rootPath: "/workspace", sessionId: 7 },
+    );
+
+    expect(suggestions).toBeNull();
+    expect(context.providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
+      source,
+      source.indexOf("Product"),
+    );
   });
 
   it("keeps the temporary Nette callback aliases working", async () => {
@@ -127,6 +160,7 @@ describe("nette PHP link Monaco providers", () => {
       }) as ReturnType<
         PhpPresenterLinkMonacoProviderContext["getRuntimeStatus"]
       >,
+      isPhpPresenterLinkCompletionContext: vi.fn(() => true),
       providePhpPresenterLinkCompletions: vi.fn(async () => completion.promise),
     });
 

@@ -2,6 +2,7 @@ import { detectNetteCreateComponentAt } from "../domain/netteComponents";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import {
   isLattePresenterLinkIntelligenceActive,
+  isLatteSemanticActive,
 } from "./latteIntelligenceRuntime";
 import { resolveNetteCreateComponentReverse } from "./netteControlComponents";
 import {
@@ -60,6 +61,30 @@ export async function providePhpPresenterLinkDefinition(
     detectNetteCreateComponentAt(source, offset),
     source,
     currentTemplateRelativePath,
+  );
+}
+
+export function isPhpPresenterLinkCompletionContext(
+  options: LatteProviderFlowFactoryOptions,
+  source: string,
+  offset: number,
+): boolean {
+  const deps = options.getDependencies();
+
+  if (!isLatteSemanticActive(deps, options.frameworkCapabilities)) {
+    return false;
+  }
+
+  if (!isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
+    return false;
+  }
+
+  return Boolean(
+    options.frameworkCapabilities.presenterLinkCompletionContextAt(
+      source,
+      offset,
+      "php",
+    ),
   );
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  phpFrameworkCompletionSuggestions,
   phpFrameworkStringCompletionOwnsContext,
   providePhpFrameworkDefinitionBeforeLsp,
   type PhpFrameworkMonacoProviderContext,
@@ -63,6 +64,32 @@ describe("php framework Monaco providers", () => {
       position,
     );
   });
+
+  it("keeps presenter-link completion ownership behind the framework callback", async () => {
+    const source = "<?php\n$label = 'Product:show';";
+    const offset = source.indexOf("Product");
+    const context = providerContext({
+      isPhpPresenterLinkCompletionContext: vi.fn(() => false),
+      providePhpPresenterLinkCompletions: vi.fn(async () => []),
+    });
+
+    await expect(
+      phpFrameworkCompletionSuggestions(
+        monaco(),
+        context,
+        model(source),
+        source,
+        positionAt(source, offset),
+        fallbackRange(),
+        { rootPath: "/workspace", sessionId: 7 },
+      ),
+    ).resolves.toBeNull();
+    expect(context.isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(
+      source,
+      offset,
+    );
+    expect(context.providePhpPresenterLinkCompletions).not.toHaveBeenCalled();
+  });
 });
 
 function providerContext(
@@ -103,4 +130,21 @@ function positionAt(source: string, offset: number) {
     column: lines[lines.length - 1].length + 1,
     lineNumber: lines.length,
   } as never;
+}
+
+function monaco() {
+  return {
+    languages: {
+      CompletionItemKind: {},
+    },
+  } as never;
+}
+
+function fallbackRange() {
+  return {
+    endColumn: 1,
+    endLineNumber: 1,
+    startColumn: 1,
+    startLineNumber: 1,
+  };
 }

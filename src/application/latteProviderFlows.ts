@@ -22,6 +22,7 @@ import {
   provideLatteCompletions as provideLatteCompletionsFlow,
 } from "./latteCompletionProvider";
 import {
+  isPhpPresenterLinkCompletionContext as isPhpPresenterLinkCompletionContextFlow,
   providePhpPresenterLinkCompletions as providePhpPresenterLinkCompletionsFlow,
   providePhpPresenterLinkDefinition as providePhpPresenterLinkDefinitionFlow,
 } from "./nettePhpLinkProvider";
@@ -36,6 +37,7 @@ export interface LatteProviderFlows {
     source: string,
     offset: number,
   ): Promise<LatteCompletionItem[] | null>;
+  isPhpPresenterLinkCompletionContext(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,
@@ -101,6 +103,8 @@ export function createLatteProviderFlows(
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset) =>
       provideLatteDefinitionFlow(options, source, offset),
+    isPhpPresenterLinkCompletionContext: (source, offset) =>
+      isPhpPresenterLinkCompletionContextFlow(options, source, offset),
     providePhpPresenterLinkCompletions,
     providePhpPresenterLinkDefinition,
     provideNettePhpLinkCompletions: providePhpPresenterLinkCompletions,
