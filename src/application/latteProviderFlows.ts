@@ -22,10 +22,8 @@ import {
   provideLatteCompletions as provideLatteCompletionsFlow,
 } from "./latteCompletionProvider";
 import {
-  isPhpPresenterLinkCompletionContext as isPhpPresenterLinkCompletionContextFlow,
-  providePhpPresenterLinkCompletions as providePhpPresenterLinkCompletionsFlow,
-  providePhpPresenterLinkDefinition as providePhpPresenterLinkDefinitionFlow,
-} from "./nettePhpLinkProvider";
+  createLattePhpPresenterLinkFlow,
+} from "./lattePhpPresenterLinkFlow";
 
 export interface LatteProviderFlows {
   provideLatteCompletions(
@@ -93,21 +91,13 @@ export function createLatteIntelligence(
 export function createLatteProviderFlows(
   options: LatteProviderFlowFactoryOptions,
 ): LatteProviderFlows {
-  const providePhpPresenterLinkCompletions = (source: string, offset: number) =>
-    providePhpPresenterLinkCompletionsFlow(options, source, offset);
-  const providePhpPresenterLinkDefinition = (source: string, offset: number) =>
-    providePhpPresenterLinkDefinitionFlow(options, source, offset);
+  const phpPresenterLinks = createLattePhpPresenterLinkFlow(options);
 
   return {
     provideLatteCompletions: (source, position) =>
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset) =>
       provideLatteDefinitionFlow(options, source, offset),
-    isPhpPresenterLinkCompletionContext: (source, offset) =>
-      isPhpPresenterLinkCompletionContextFlow(options, source, offset),
-    providePhpPresenterLinkCompletions,
-    providePhpPresenterLinkDefinition,
-    provideNettePhpLinkCompletions: providePhpPresenterLinkCompletions,
-    provideNettePhpLinkDefinition: providePhpPresenterLinkDefinition,
+    ...phpPresenterLinks,
   };
 }

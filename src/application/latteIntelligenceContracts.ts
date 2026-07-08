@@ -4,12 +4,6 @@ import type {
   PhpFrameworkViewDataEntry,
 } from "../domain/phpFrameworkProviders";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import type {
-  detectLatteLinkAt,
-  detectPhpPresenterLinkAt,
-  NetteLinkTarget,
-  nettePresenterLinkCompletionContextAt,
-} from "../domain/latteLinkNavigation";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -102,27 +96,47 @@ export interface LatteIntelligence {
   ): Promise<LatteCompletionItem[] | null>;
 }
 
+export interface LattePresenterLinkDetection {
+  target: string;
+  targetEnd: number;
+  targetStart: number;
+}
+
+export interface LattePresenterLinkCompletionContext {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+export interface LattePresenterLinkTarget {
+  absolute: boolean;
+  action: string;
+  isSignal: boolean;
+  module: string | null;
+  presenter: string | null;
+}
+
 export interface LatteFrameworkCapabilities {
   detectLattePresenterLinkAt(
     source: string,
     offset: number,
-  ): ReturnType<typeof detectLatteLinkAt>;
+  ): LattePresenterLinkDetection | null;
   detectPhpPresenterLinkAt(
     source: string,
     offset: number,
-  ): ReturnType<typeof detectPhpPresenterLinkAt>;
+  ): LattePresenterLinkDetection | null;
   presenterLinkCompletionContextAt(
     source: string,
     offset: number,
     language: "latte" | "php",
-  ): ReturnType<typeof nettePresenterLinkCompletionContextAt>;
-  parsePresenterLinkTarget(target: string): NetteLinkTarget | null;
+  ): LattePresenterLinkCompletionContext | null;
+  parsePresenterLinkTarget(target: string): LattePresenterLinkTarget | null;
   presenterActionMethodCandidates(
     action: string,
     isSignal: boolean,
   ): string[];
   presenterClassCandidatePathsForLink(
-    target: NetteLinkTarget,
+    target: LattePresenterLinkTarget,
     currentRelativePath: string,
   ): string[];
   presenterLinkTargetsFromSource(path: string, source: string): string[];
