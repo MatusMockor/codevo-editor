@@ -1,6 +1,8 @@
 import {
+  createPhpFrameworkProviderCapabilityRegistry,
   phpFrameworkProviderSignature,
   type FrameworkProfile,
+  type PhpFrameworkProviderCapabilityRegistry,
   type PhpFrameworkProvider,
   type PhpFrameworkResolution,
 } from "../domain/phpFrameworkProviders";
@@ -16,6 +18,7 @@ export interface PhpFrameworkIntelligence {
   readonly providerIds: readonly string[];
   readonly providerSignature: string;
   readonly providers: readonly PhpFrameworkProvider[];
+  readonly capabilities: PhpFrameworkProviderCapabilityRegistry;
   readonly isLaravel: boolean;
   readonly isNette: boolean;
   hasProvider(providerId: string): boolean;
@@ -32,6 +35,9 @@ export function createPhpFrameworkIntelligence(
     providerIds,
     providerSignature: phpFrameworkProviderSignature(resolution.providers),
     providers: resolution.providers,
+    capabilities: createPhpFrameworkProviderCapabilityRegistry(
+      resolution.providers,
+    ),
     isLaravel: resolution.profile === "laravel",
     isNette: resolution.profile === "nette",
     hasProvider: (providerId) => providerIds.includes(providerId),

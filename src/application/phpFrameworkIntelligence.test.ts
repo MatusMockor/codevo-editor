@@ -17,6 +17,9 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.providers).toBe(providers);
     expect(intelligence.providerIds).toEqual(["laravel"]);
     expect(intelligence.providerSignature).toBe("laravel");
+    expect(intelligence.capabilities.providerSignature).toBe("laravel");
+    expect(intelligence.capabilities.supports("routes")).toBe(true);
+    expect(intelligence.capabilities.supports("views")).toBe(true);
     expect(intelligence.hasProvider("laravel")).toBe(true);
     expect(intelligence.hasProvider("nette")).toBe(false);
     expect(intelligence.isLaravel).toBe(true);
@@ -34,6 +37,11 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.providers).toBe(providers);
     expect(intelligence.providerIds).toEqual(["nette"]);
     expect(intelligence.providerSignature).toBe("nette");
+    expect(intelligence.capabilities.providerSignature).toBe("nette");
+    expect(intelligence.capabilities.supports("routes")).toBe(false);
+    expect(intelligence.capabilities.supports("latteTemplateIntelligence")).toBe(
+      true,
+    );
     expect(intelligence.hasProvider("laravel")).toBe(false);
     expect(intelligence.hasProvider("nette")).toBe(true);
     expect(intelligence.isLaravel).toBe(false);
@@ -50,6 +58,8 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.providers).toEqual([]);
     expect(intelligence.providerIds).toEqual([]);
     expect(intelligence.providerSignature).toBe("");
+    expect(intelligence.capabilities.providerSignature).toBe("");
+    expect(intelligence.capabilities.supports("routes")).toBe(false);
     expect(intelligence.hasProvider("laravel")).toBe(false);
     expect(intelligence.hasProvider("nette")).toBe(false);
     expect(intelligence.isLaravel).toBe(false);

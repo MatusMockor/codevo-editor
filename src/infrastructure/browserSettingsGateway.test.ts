@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BrowserSettingsGateway, type KeyValueStorage } from "./browserSettingsGateway";
 import { defaultKeymapSettings } from "../domain/keymap";
+import {
+  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  LARGE_SMART_DOCUMENT_LINE_LIMIT,
+} from "../domain/largeDocumentPolicy";
 
 describe("BrowserSettingsGateway", () => {
   it("returns defaults when settings are missing", async () => {
@@ -47,6 +51,10 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      largeFileMode: {
+        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
+      },
       optimizeImportsOnSave: false,
       phpBackend: "auto",
       phpInlayHints: true,
@@ -130,6 +138,10 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      largeFileMode: {
+        characterLimit: 512_000,
+        lineLimit: 10_000,
+      },
       optimizeImportsOnSave: true,
       phpBackend: "phpactor",
       phpInlayHints: true,
@@ -208,6 +220,10 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      largeFileMode: {
+        characterLimit: 512_000,
+        lineLimit: 10_000,
+      },
       optimizeImportsOnSave: true,
       phpBackend: "phpactor",
       phpInlayHints: true,
@@ -284,6 +300,10 @@ describe("BrowserSettingsGateway", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      largeFileMode: {
+        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
+      },
       optimizeImportsOnSave: false,
       phpBackend: "auto",
       phpInlayHints: true,

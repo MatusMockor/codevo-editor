@@ -64,7 +64,11 @@ import {
   type WorkspaceDescriptor,
   type WorkspaceFileGateway,
 } from "../domain/workspace";
-import { isLargeSmartDocumentContent } from "../domain/largeDocumentPolicy";
+import {
+  defaultLargeSmartDocumentPolicy,
+  isLargeSmartDocumentContent,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
@@ -74,6 +78,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
  * expensive engines stay owned by the controller.
  */
 export interface PhpOutlineDependencies {
+  largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
   workspaceRoot: string | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -117,6 +122,7 @@ export interface PhpOutline {
 
 export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
   const {
+    largeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
     workspaceRoot,
     workspaceDescriptor,
     currentWorkspaceRootRef,
@@ -258,7 +264,7 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
           return emptyPhpFileOutline();
         }
 
-        if (isLargeSmartDocumentContent(source)) {
+        if (isLargeSmartDocumentContent(source, largeSmartDocumentPolicy)) {
           return emptyPhpFileOutline();
         }
 
@@ -267,7 +273,12 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
 
       return phpFileOutlineGateway.getPhpFileOutline(requestedRoot, path);
     },
-    [currentWorkspaceRootRef, phpFileOutlineGateway, readPhpFileOutlineSource],
+    [
+      currentWorkspaceRootRef,
+      largeSmartDocumentPolicy,
+      phpFileOutlineGateway,
+      readPhpFileOutlineSource,
+    ],
   );
 
   const loadPhpFileOutline = useCallback(
@@ -352,7 +363,7 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
           return;
         }
 
-        if (isLargeSmartDocumentContent(source)) {
+        if (isLargeSmartDocumentContent(source, largeSmartDocumentPolicy)) {
           setPhpInheritedFileOutlinesByPath((current) => ({
             ...current,
             [path]: emptyPhpFileOutline(),
@@ -393,7 +404,9 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
               return;
             }
 
-            if (isLargeSmartDocumentContent(parentSource)) {
+            if (
+              isLargeSmartDocumentContent(parentSource, largeSmartDocumentPolicy)
+            ) {
               continue;
             }
 
@@ -453,6 +466,7 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
     },
     [
       currentWorkspaceRootRef,
+      largeSmartDocumentPolicy,
       phpFileOutlineGateway,
       readPhpFileOutlineSource,
       reportError,

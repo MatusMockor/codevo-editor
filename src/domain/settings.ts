@@ -10,6 +10,11 @@ import {
   gitDirectoryMappingPaths,
   normalizeGitDirectoryMappings,
 } from "./gitRepositoryMapping";
+import {
+  defaultLargeSmartDocumentPolicy,
+  normalizeLargeSmartDocumentPolicy,
+  type LargeSmartDocumentPolicy,
+} from "./largeDocumentPolicy";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -173,6 +178,7 @@ export interface WorkspaceSettings {
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
+  largeFileMode: LargeSmartDocumentPolicy;
   /**
    * Reorganizes PHP `use` imports (drops unused, sorts) right before a PHP file
    * is written on save. Off by default, mirroring PhpStorm's opt-in "Optimize
@@ -320,6 +326,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
+    largeFileMode: { ...defaultLargeSmartDocumentPolicy },
     optimizeImportsOnSave: false,
     phpBackend: "auto",
     phpInlayHints: true,
@@ -524,6 +531,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     )
       ? value.javaScriptTypeScriptVersion
       : defaults.javaScriptTypeScriptVersion,
+    largeFileMode: normalizeLargeSmartDocumentPolicy(
+      value.largeFileMode,
+      defaults.largeFileMode,
+    ),
     optimizeImportsOnSave: normalizeBoolean(
       value.optimizeImportsOnSave,
       defaults.optimizeImportsOnSave,

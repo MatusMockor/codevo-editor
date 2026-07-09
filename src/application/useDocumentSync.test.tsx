@@ -16,7 +16,10 @@ import {
   type LanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
-import { LARGE_SMART_DOCUMENT_CHARACTER_LIMIT } from "../domain/largeDocumentPolicy";
+import {
+  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+} from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
@@ -434,6 +437,25 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const key = languageServerDocumentSyncKey(ROOT, document.path);
     expect(harness.phpGateway.didOpen).not.toHaveBeenCalled();
     expect(harness.php.syncedPaths.current.has(key)).toBe(false);
+    expect(harness.warmUp).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured large document policy before syncing PHP documents", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync({
+      ...harness.deps,
+      largeSmartDocumentPolicy: {
+        characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: 5_000,
+      },
+    });
+    const document = phpDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+
+    await api().syncOpenDocument(document);
+
+    expect(harness.phpGateway.didOpen).not.toHaveBeenCalled();
     expect(harness.warmUp).not.toHaveBeenCalled();
   });
 

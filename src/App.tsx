@@ -306,8 +306,15 @@ function App() {
     [workbench.activeDocument],
   );
   const activeLargeDocumentStatus = useMemo(
-    () => largeSmartDocumentStatus(workbench.activeDocument),
-    [workbench.activeDocument?.content],
+    () =>
+      largeSmartDocumentStatus(
+        workbench.activeDocument,
+        workbench.workspaceSettings.largeFileMode,
+      ),
+    [
+      workbench.activeDocument?.content,
+      workbench.workspaceSettings.largeFileMode,
+    ],
   );
   // Stable list of open document paths for EditorSurface's model-dispose effect.
   // openDocuments is replaced on every keystroke (fresh document objects), so we
@@ -1311,6 +1318,7 @@ function App() {
               workbench.languageServerDiagnosticsByPath
             }
             languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+            largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
             keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
             navigationHistoryPaths={navigationHistoryPaths}

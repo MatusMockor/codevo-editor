@@ -389,6 +389,64 @@ describe("SettingsDialog", () => {
     ).toBe(true);
   });
 
+  it("persists large file limits from the Index section", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="index"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Large file character limit"), "524288");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        largeFileMode: {
+          ...defaultWorkspaceSettings().largeFileMode,
+          characterLimit: 524_288,
+        },
+      },
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Large file line limit"), "8000");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        largeFileMode: {
+          characterLimit: 524_288,
+          lineLimit: 8_000,
+        },
+      },
+    });
+  });
+
   it("persists disabling automatic repository detection", async () => {
     const onSave = vi.fn(async () => undefined);
 

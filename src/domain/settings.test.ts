@@ -19,6 +19,13 @@ import {
   terminalThemeForAppTheme,
 } from "./settings";
 import { defaultKeymapSettings } from "./keymap";
+import {
+  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  LARGE_SMART_DOCUMENT_LINE_LIMIT,
+  MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
+  normalizeLargeSmartDocumentPolicy,
+} from "./largeDocumentPolicy";
 
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
@@ -63,6 +70,10 @@ describe("settings defaults", () => {
       javaScriptTypeScriptService: "auto",
       javaScriptTypeScriptValidation: true,
       javaScriptTypeScriptVersion: "bundled",
+      largeFileMode: {
+        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
+      },
       optimizeImportsOnSave: false,
       phpBackend: "auto",
       phpInlayHints: true,
@@ -330,6 +341,10 @@ describe("normalizeWorkspaceSettings", () => {
         javaScriptTypeScriptService: "off",
         javaScriptTypeScriptValidation: false,
         javaScriptTypeScriptVersion: "workspace",
+        largeFileMode: {
+          characterLimit: 512_000,
+          lineLimit: 10_000,
+        },
         optimizeImportsOnSave: true,
         phpBackend: "phpactor",
         phpInlayHints: false,
@@ -391,6 +406,10 @@ describe("normalizeWorkspaceSettings", () => {
       javaScriptTypeScriptService: "off",
       javaScriptTypeScriptValidation: false,
       javaScriptTypeScriptVersion: "workspace",
+      largeFileMode: {
+        characterLimit: 512_000,
+        lineLimit: 10_000,
+      },
       optimizeImportsOnSave: true,
       phpBackend: "phpactor",
       phpInlayHints: false,
@@ -660,6 +679,36 @@ describe("normalizeWorkspaceSettings", () => {
       extraIgnorePatterns: ["var/cache"],
     });
     expect(normalizeWorkspaceSettings(null)).toEqual(defaultWorkspaceSettings());
+  });
+});
+
+describe("normalizeLargeSmartDocumentPolicy", () => {
+  it("accepts positive numeric thresholds", () => {
+    expect(
+      normalizeLargeSmartDocumentPolicy({
+        characterLimit: 512_000.9,
+        lineLimit: 10_000.4,
+      }),
+    ).toEqual({
+      characterLimit: 512_000,
+      lineLimit: 10_000,
+    });
+  });
+
+  it("clamps small numeric thresholds and falls back for non-numeric thresholds", () => {
+    expect(
+      normalizeLargeSmartDocumentPolicy({
+        characterLimit: 0,
+        lineLimit: "lots",
+      }),
+    ).toEqual({
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
+    });
+    expect(normalizeLargeSmartDocumentPolicy({ lineLimit: 1 })).toEqual({
+      characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
+    });
   });
 });
 

@@ -285,8 +285,6 @@ import {
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
 import {
-  phpFrameworkSupportsRoutes,
-  phpFrameworkSupportsViews,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -2162,6 +2160,7 @@ export function useWorkbenchController(
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
   } = useDocumentSync({
+    largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
@@ -3592,6 +3591,7 @@ export function useWorkbenchController(
     togglePhpFileOutlineNode,
     openPhpFileOutlineNode,
   } = usePhpOutline({
+    largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
     workspaceRoot,
     workspaceDescriptor,
     currentWorkspaceRootRef,
@@ -5408,8 +5408,8 @@ export function useWorkbenchController(
     isLaravelFrameworkActive,
     openNavigationTarget,
     setMessage,
-    supportsRoutes: phpFrameworkSupportsRoutes(activePhpFrameworkProviders),
-    supportsViews: phpFrameworkSupportsViews(activePhpFrameworkProviders),
+    supportsRoutes: phpFrameworkIntelligence.capabilities.supports("routes"),
+    supportsViews: phpFrameworkIntelligence.capabilities.supports("views"),
     workspaceRoot,
   });
 

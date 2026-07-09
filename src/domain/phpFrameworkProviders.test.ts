@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createPhpFrameworkProviderCapabilityRegistry,
   frameworkProfileForProject,
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
@@ -1657,6 +1658,22 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
         false,
       );
       expect(phpFrameworkSupportsRoutes([])).toBe(false);
+    });
+
+    it("summarizes route capabilities through the provider capability registry", () => {
+      const laravelRegistry = createPhpFrameworkProviderCapabilityRegistry([
+        phpLaravelFrameworkProvider,
+      ]);
+      const netteRegistry = createPhpFrameworkProviderCapabilityRegistry([
+        phpNetteFrameworkProvider,
+      ]);
+
+      expect(laravelRegistry.providerSignature).toBe("laravel");
+      expect(laravelRegistry.supports("routes")).toBe(true);
+      expect(laravelRegistry.supportsTargetCollection("routes")).toBe(true);
+      expect(netteRegistry.providerSignature).toBe("nette");
+      expect(netteRegistry.supports("routes")).toBe(false);
+      expect(netteRegistry.supportsTargetCollection("routes")).toBe(false);
     });
 
     it("stays a safe no-op for providers without the routes capability", () => {

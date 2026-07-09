@@ -12,7 +12,11 @@ import {
 } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
-import { isLargeSmartDocument } from "../domain/largeDocumentPolicy";
+import {
+  defaultLargeSmartDocumentPolicy,
+  isLargeSmartDocument,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
@@ -27,6 +31,8 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
  * LSP restart), so they stay in the shell and are injected too.
  */
 export interface DocumentSyncDependencies {
+  largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
+
   // Shared workspace + document state (shell-owned).
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
@@ -198,6 +204,7 @@ export function useDocumentSync(
   dependencies: DocumentSyncDependencies,
 ): DocumentSync {
   const {
+    largeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
@@ -271,7 +278,7 @@ export function useDocumentSync(
         return;
       }
 
-      if (isLargeSmartDocument(document)) {
+      if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
         return;
       }
 
@@ -348,6 +355,7 @@ export function useDocumentSync(
     [
       enqueueDocumentSync,
       isLanguageServerSessionCurrentForRoot,
+      largeSmartDocumentPolicy,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
@@ -376,7 +384,7 @@ export function useDocumentSync(
         return;
       }
 
-      if (isLargeSmartDocument(document)) {
+      if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
         return;
       }
 
@@ -479,6 +487,7 @@ export function useDocumentSync(
     [
       enqueueJavaScriptTypeScriptDocumentSync,
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+      largeSmartDocumentPolicy,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -509,7 +518,7 @@ export function useDocumentSync(
         return;
       }
 
-      if (isLargeSmartDocument(document)) {
+      if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
         clearDocumentChangeTimer(syncKey);
         delete pendingDocumentChangesRef.current[syncKey];
         syncedDocumentContentRef.current[syncKey] = document.content;
@@ -578,6 +587,7 @@ export function useDocumentSync(
       clearDocumentChangeTimer,
       enqueueDocumentSync,
       isLanguageServerSessionCurrentForRoot,
+      largeSmartDocumentPolicy,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
@@ -614,7 +624,7 @@ export function useDocumentSync(
         return;
       }
 
-      if (isLargeSmartDocument(document)) {
+      if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
         clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
         delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
         javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] =
@@ -715,6 +725,7 @@ export function useDocumentSync(
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+      largeSmartDocumentPolicy,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,

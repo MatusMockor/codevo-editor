@@ -57,7 +57,11 @@ import {
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
 } from "../domain/languageServerDocumentSync";
-import { isLargeSmartDocument } from "../domain/largeDocumentPolicy";
+import {
+  defaultLargeSmartDocumentPolicy,
+  isLargeSmartDocument,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { SurroundWithPicker } from "./SurroundWithPicker";
 import {
@@ -217,6 +221,7 @@ interface EditorSurfaceProps {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRefreshGateway?: LanguageServerRefreshGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
+  largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
@@ -325,6 +330,7 @@ function EditorSurfaceComponent({
   languageServerFeaturesGateway,
   languageServerRefreshGateway,
   languageServerRuntimeStatus,
+  largeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
   javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRefreshGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
@@ -1002,7 +1008,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (isLargeSmartDocument(activeDocument)) {
+    if (isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)) {
       tokenizer.stop();
       return;
     }
@@ -1020,7 +1026,7 @@ function EditorSurfaceComponent({
     tokenizer.start(model as unknown as BackgroundTokenizableModel);
 
     return () => tokenizer.stop();
-  }, [activeDocument, editorApi]);
+  }, [activeDocument, editorApi, largeSmartDocumentPolicy]);
 
   // Permanent teardown so a disposed surface leaves no pending idle slice.
   useEffect(() => {
@@ -1968,12 +1974,12 @@ function EditorSurfaceComponent({
   const phpEditTick = useDebouncedPhpEditTick(
     activeDocument &&
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument)
+      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
       ? activeDocument.path
       : null,
     activeDocument &&
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument)
+      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
       ? activeDocument.content
       : null,
   );
@@ -2790,7 +2796,7 @@ function EditorSurfaceComponent({
 
     if (
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument)
+      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
     ) {
       return;
     }
@@ -2821,7 +2827,7 @@ function EditorSurfaceComponent({
       delete next[activeDocument.path];
       return next;
     });
-  }, [activeDocument, monacoApi]);
+  }, [activeDocument, largeSmartDocumentPolicy, monacoApi]);
 
   // The debounced PHP syntax validation, driven by the shared `phpEditTick` (one
   // 160ms timer per edit for all PHP gutter/diagnostics consumers). The `active`

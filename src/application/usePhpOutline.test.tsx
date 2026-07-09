@@ -14,7 +14,10 @@ import {
   type PhpFileOutlineGateway,
   type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
-import { LARGE_SMART_DOCUMENT_CHARACTER_LIMIT } from "../domain/largeDocumentPolicy";
+import {
+  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+  MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+} from "../domain/largeDocumentPolicy";
 import {
   emptyPhpTree,
   type PhpTree,
@@ -113,6 +116,7 @@ interface CapturedState {
 type HarnessOverrides = Partial<
   Pick<
     PhpOutlineDependencies,
+    | "largeSmartDocumentPolicy"
     | "workspaceRoot"
     | "workspaceDescriptor"
     | "documents"
@@ -434,6 +438,34 @@ describe("usePhpOutline", () => {
       emptyPhpFileOutline(),
     );
     expect(harness.state().loadingPhpFileOutlinePaths.has(path)).toBe(false);
+    harness.unmount();
+  });
+
+  it("uses the configured large document policy before live parsing PHP files", async () => {
+    const path = `${ROOT}/app/Foo.php`;
+    const parsePhpFileOutline = vi.fn(async () => outline([outlineNode()]));
+    const harness = renderPhpOutline({
+      largeSmartDocumentPolicy: {
+        characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: 5_000,
+      },
+      workspaceFiles: {
+        readTextFile: async () =>
+          "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      },
+      phpFileOutlineGateway: createFakePhpFileOutlineGateway({
+        parsePhpFileOutline,
+      }),
+    });
+
+    await act(async () => {
+      await harness.outline().loadPhpFileOutline(path);
+    });
+
+    expect(parsePhpFileOutline).not.toHaveBeenCalled();
+    expect(harness.state().phpFileOutlinesByPath[path]).toEqual(
+      emptyPhpFileOutline(),
+    );
     harness.unmount();
   });
 

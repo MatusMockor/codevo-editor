@@ -596,6 +596,39 @@ export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
   phpNetteFrameworkProvider,
 ];
 
+export type PhpFrameworkProviderCapability =
+  | "config"
+  | "env"
+  | "lattePresenterLinkIntelligence"
+  | "latteTemplateIntelligence"
+  | "neonConfigIntelligence"
+  | "phpPresenterLinks"
+  | "routes"
+  | "stringLiterals"
+  | "translations"
+  | "validation"
+  | "viewData"
+  | "viewDataComponentFactories"
+  | "views";
+
+export interface PhpFrameworkProviderCapabilityRegistry {
+  readonly providerSignature: string;
+  supports(capability: PhpFrameworkProviderCapability): boolean;
+  supportsTargetCollection(kind: PhpFrameworkTargetCollectionKind): boolean;
+}
+
+export function createPhpFrameworkProviderCapabilityRegistry(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkProviderCapabilityRegistry {
+  return {
+    providerSignature: phpFrameworkProviderSignature(providers),
+    supports: (capability) =>
+      phpFrameworkProvidersSupportCapability(providers, capability),
+    supportsTargetCollection: (kind) =>
+      phpFrameworkProvidersSupportTargetCollection(providers, kind),
+  };
+}
+
 /**
  * Active provider set for a project: exclusive by construction (exactly zero or
  * one provider). It shares the single detection pass with the framework profile
@@ -802,7 +835,7 @@ export function phpFrameworkRouteSearchQueries(
 export function phpFrameworkSupportsRoutes(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.routes !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "routes");
 }
 
 export function phpFrameworkTargetSearchQueries(
@@ -826,6 +859,13 @@ export function phpFrameworkTargetSearchQueries(
 export function phpFrameworkSupportsTargetCollection(
   kind: PhpFrameworkTargetCollectionKind,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportTargetCollection(providers, kind);
+}
+
+function phpFrameworkProvidersSupportTargetCollection(
+  providers: readonly PhpFrameworkProvider[],
+  kind: PhpFrameworkTargetCollectionKind,
 ): boolean {
   return providers.some((provider) => {
     const collections = provider.targetCollections?.filter(
@@ -984,7 +1024,7 @@ export function phpFrameworkEnvLiteralTarget(
 export function phpFrameworkSupportsEnv(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.env !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "env");
 }
 
 /**
@@ -994,7 +1034,7 @@ export function phpFrameworkSupportsEnv(
 export function phpFrameworkSupportsConfig(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.config !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "config");
 }
 
 /**
@@ -1121,7 +1161,7 @@ export function phpFrameworkJsonTranslationTargetFromSource(
 export function phpFrameworkSupportsTranslations(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.translations !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "translations");
 }
 
 /**
@@ -1168,7 +1208,7 @@ export function phpFrameworkViewLiteralTarget(
 export function phpFrameworkSupportsViews(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.templating !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "views");
 }
 
 /**
@@ -1209,15 +1249,15 @@ export function phpFrameworkViewDataSearchQueries(
 export function phpFrameworkSupportsViewData(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.viewData !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "viewData");
 }
 
 export function phpFrameworkSupportsViewDataComponentFactories(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some(
-    (provider) =>
-      provider.viewData?.supportsComponentFactoryVariables === true,
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "viewDataComponentFactories",
   );
 }
 
@@ -1266,7 +1306,7 @@ export function phpFrameworkValidationRuleCompletions(
 export function phpFrameworkSupportsValidation(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.validation !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "validation");
 }
 
 /**
@@ -1341,11 +1381,7 @@ export function phpFrameworkPhpPresenterLinkCompletionAt(
 export function phpFrameworkSupportsPhpPresenterLinks(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some(
-    (provider) =>
-      provider.php?.presenterLinkAt !== undefined ||
-      provider.php?.presenterLinkCompletionAt !== undefined,
-  );
+  return phpFrameworkProvidersSupportCapability(providers, "phpPresenterLinks");
 }
 
 /**
@@ -1356,7 +1392,7 @@ export function phpFrameworkSupportsPhpPresenterLinks(
 export function phpFrameworkSupportsStringLiterals(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some((provider) => provider.stringLiterals !== undefined);
+  return phpFrameworkProvidersSupportCapability(providers, "stringLiterals");
 }
 
 /**
@@ -1366,8 +1402,9 @@ export function phpFrameworkSupportsStringLiterals(
 export function phpFrameworkSupportsNeonConfigIntelligence(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some(
-    (provider) => provider.neon?.supportsConfigIntelligence === true,
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "neonConfigIntelligence",
   );
 }
 
@@ -1379,8 +1416,9 @@ export function phpFrameworkSupportsNeonConfigIntelligence(
 export function phpFrameworkSupportsLatteTemplateIntelligence(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some(
-    (provider) => provider.latte?.supportsTemplateIntelligence === true,
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "latteTemplateIntelligence",
   );
 }
 
@@ -1393,10 +1431,60 @@ export function phpFrameworkSupportsLatteTemplateIntelligence(
 export function phpFrameworkSupportsLattePresenterLinkIntelligence(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
-  return providers.some(
-    (provider) =>
-      provider.latte?.supportsPresenterLinkIntelligence === true,
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "lattePresenterLinkIntelligence",
   );
+}
+
+function phpFrameworkProvidersSupportCapability(
+  providers: readonly PhpFrameworkProvider[],
+  capability: PhpFrameworkProviderCapability,
+): boolean {
+  switch (capability) {
+    case "config":
+      return providers.some((provider) => provider.config !== undefined);
+    case "env":
+      return providers.some((provider) => provider.env !== undefined);
+    case "lattePresenterLinkIntelligence":
+      return providers.some(
+        (provider) =>
+          provider.latte?.supportsPresenterLinkIntelligence === true,
+      );
+    case "latteTemplateIntelligence":
+      return providers.some(
+        (provider) => provider.latte?.supportsTemplateIntelligence === true,
+      );
+    case "neonConfigIntelligence":
+      return providers.some(
+        (provider) => provider.neon?.supportsConfigIntelligence === true,
+      );
+    case "phpPresenterLinks":
+      return providers.some(
+        (provider) =>
+          provider.php?.presenterLinkAt !== undefined ||
+          provider.php?.presenterLinkCompletionAt !== undefined,
+      );
+    case "routes":
+      return providers.some((provider) => provider.routes !== undefined);
+    case "stringLiterals":
+      return providers.some(
+        (provider) => provider.stringLiterals !== undefined,
+      );
+    case "translations":
+      return providers.some((provider) => provider.translations !== undefined);
+    case "validation":
+      return providers.some((provider) => provider.validation !== undefined);
+    case "viewData":
+      return providers.some((provider) => provider.viewData !== undefined);
+    case "viewDataComponentFactories":
+      return providers.some(
+        (provider) =>
+          provider.viewData?.supportsComponentFactoryVariables === true,
+      );
+    case "views":
+      return providers.some((provider) => provider.templating !== undefined);
+  }
 }
 
 export function phpFrameworkPropertyTypeFromSource(
