@@ -46,31 +46,13 @@ function makeDeps(
     },
     activeEditorPositionRef: { current: { column: 18, lineNumber: 1 } },
     currentWorkspaceRootRef: { current: ROOT },
+    goToPhpFrameworkIdentifierDefinition: vi.fn(async () => false),
     goToPhpClassConstantDefinition: falseHandler,
     goToPhpClassIdentifierDefinition: vi.fn(async () => false),
-    goToPhpLaravelAuthGuardDefinition: falseHandler,
-    goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
-    goToPhpLaravelCacheStoreDefinition: falseHandler,
-    goToPhpLaravelConfigDefinition: falseHandler,
-    goToPhpLaravelDatabaseConnectionDefinition: falseHandler,
-    goToPhpLaravelEnvDefinition: falseHandler,
-    goToPhpLaravelGateAbilityDefinition: falseHandler,
-    goToPhpLaravelLogChannelDefinition: falseHandler,
-    goToPhpLaravelMailMailerDefinition: falseHandler,
-    goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
-    goToPhpLaravelNamedRouteDefinition: falseHandler,
-    goToPhpLaravelPasswordBrokerDefinition: falseHandler,
-    goToPhpLaravelQueueConnectionDefinition: falseHandler,
-    goToPhpLaravelRedisConnectionDefinition: falseHandler,
-    goToPhpLaravelRelationStringDefinition: falseHandler,
-    goToPhpLaravelStorageDiskDefinition: falseHandler,
-    goToPhpLaravelTranslationDefinition: falseHandler,
-    goToPhpLaravelViewDefinition: falseHandler,
     goToPhpMethodCallDefinition: falseHandler,
     goToPhpStaticMethodCallDefinition: falseHandler,
     identifierAtEditorPosition: vi.fn(() => "ReportService"),
     intelligenceMode: "fullSmart",
-    openDirectPhpMethodTarget: vi.fn(async () => false),
     openNavigationTarget: vi.fn(async () => true),
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => [symbol()]),
@@ -178,6 +160,35 @@ new ReportService();`,
     expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith(
       "ReportService",
     );
+    expect(deps.projectSymbolSearch.searchProjectSymbols).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("delegates PHP framework identifier contexts to the framework handler", async () => {
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: `<?php
+route('dashboard');`,
+        language: "php",
+        name: "web.php",
+        path: `${ROOT}/routes/web.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: { current: { column: 10, lineNumber: 2 } },
+      goToPhpFrameworkIdentifierDefinition,
+      identifierAtEditorPosition: vi.fn(() => "dashboard"),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToIndexedSymbolDefinition();
+
+    expect(handled).toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      kind: "laravelNamedRouteString",
+      routeName: "dashboard",
+    });
     expect(deps.projectSymbolSearch.searchProjectSymbols).not.toHaveBeenCalled();
 
     harness.unmount();

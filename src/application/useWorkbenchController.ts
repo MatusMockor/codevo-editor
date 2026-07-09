@@ -112,6 +112,9 @@ import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntell
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
+  goToPhpFrameworkIdentifierDefinition as goToPhpFrameworkIdentifierDefinitionForContext,
+} from "./phpFrameworkIdentifierDefinitionNavigation";
 import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
@@ -290,6 +293,7 @@ import {
 } from "../domain/phpFrameworkProviders";
 import {
   resolvePhpClassName,
+  type PhpIdentifierContext,
 } from "../domain/phpNavigation";
 import {
   phpTestClassPlan,
@@ -5491,6 +5495,54 @@ export function useWorkbenchController(
     [activeDocument, openPhpClassTarget],
   );
 
+  const goToPhpFrameworkIdentifierDefinition = useCallback(
+    async (context: PhpIdentifierContext): Promise<boolean> =>
+      goToPhpFrameworkIdentifierDefinitionForContext(context, {
+        activeDocument,
+        goToPhpLaravelAuthGuardDefinition,
+        goToPhpLaravelBroadcastConnectionDefinition,
+        goToPhpLaravelCacheStoreDefinition,
+        goToPhpLaravelConfigDefinition,
+        goToPhpLaravelDatabaseConnectionDefinition,
+        goToPhpLaravelEnvDefinition,
+        goToPhpLaravelGateAbilityDefinition,
+        goToPhpLaravelLogChannelDefinition,
+        goToPhpLaravelMailMailerDefinition,
+        goToPhpLaravelMiddlewareAliasDefinition,
+        goToPhpLaravelNamedRouteDefinition,
+        goToPhpLaravelPasswordBrokerDefinition,
+        goToPhpLaravelQueueConnectionDefinition,
+        goToPhpLaravelRedisConnectionDefinition,
+        goToPhpLaravelRelationStringDefinition,
+        goToPhpLaravelStorageDiskDefinition,
+        goToPhpLaravelTranslationDefinition,
+        goToPhpLaravelViewDefinition,
+        openDirectPhpMethodTarget,
+      }),
+    [
+      activeDocument,
+      goToPhpLaravelAuthGuardDefinition,
+      goToPhpLaravelBroadcastConnectionDefinition,
+      goToPhpLaravelCacheStoreDefinition,
+      goToPhpLaravelConfigDefinition,
+      goToPhpLaravelDatabaseConnectionDefinition,
+      goToPhpLaravelEnvDefinition,
+      goToPhpLaravelGateAbilityDefinition,
+      goToPhpLaravelLogChannelDefinition,
+      goToPhpLaravelMailMailerDefinition,
+      goToPhpLaravelMiddlewareAliasDefinition,
+      goToPhpLaravelNamedRouteDefinition,
+      goToPhpLaravelPasswordBrokerDefinition,
+      goToPhpLaravelQueueConnectionDefinition,
+      goToPhpLaravelRedisConnectionDefinition,
+      goToPhpLaravelRelationStringDefinition,
+      goToPhpLaravelStorageDiskDefinition,
+      goToPhpLaravelTranslationDefinition,
+      goToPhpLaravelViewDefinition,
+      openDirectPhpMethodTarget,
+    ],
+  );
+
   const { goToContextualPhpDefinition } = usePhpContextualDefinitionNavigation({
     activeDocument,
     activeEditorPositionRef,
@@ -5540,29 +5592,11 @@ export function useWorkbenchController(
     currentWorkspaceRootRef,
     goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
-    goToPhpLaravelAuthGuardDefinition,
-    goToPhpLaravelBroadcastConnectionDefinition,
-    goToPhpLaravelCacheStoreDefinition,
-    goToPhpLaravelConfigDefinition,
-    goToPhpLaravelDatabaseConnectionDefinition,
-    goToPhpLaravelEnvDefinition,
-    goToPhpLaravelGateAbilityDefinition,
-    goToPhpLaravelLogChannelDefinition,
-    goToPhpLaravelMailMailerDefinition,
-    goToPhpLaravelMiddlewareAliasDefinition,
-    goToPhpLaravelNamedRouteDefinition,
-    goToPhpLaravelPasswordBrokerDefinition,
-    goToPhpLaravelQueueConnectionDefinition,
-    goToPhpLaravelRedisConnectionDefinition,
-    goToPhpLaravelRelationStringDefinition,
-    goToPhpLaravelStorageDiskDefinition,
-    goToPhpLaravelTranslationDefinition,
-    goToPhpLaravelViewDefinition,
+    goToPhpFrameworkIdentifierDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
     identifierAtEditorPosition,
     intelligenceMode,
-    openDirectPhpMethodTarget,
     openNavigationTarget,
     projectSymbolSearch,
     reportErrorForActiveWorkspaceRoot,
