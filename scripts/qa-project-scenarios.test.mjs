@@ -92,6 +92,98 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(snippet).toContain("Open the matching workspace/project tab before running this scenario.");
   });
 
+  it("runs generated snippets through root, file, and provider bridge calls", async () => {
+    const selected = [
+      {
+        action: "completion",
+        activeFile: "/project-a/src/A.php",
+        cursor: { after: "$foo->" },
+        expectLabels: ["alpha"],
+        id: "project-a-completion",
+        minItems: 1,
+        projectRoot: "/project-a",
+      },
+      {
+        action: "definition",
+        activeFile: "/project-b/src/B.php",
+        cursor: { after: "view('target" },
+        expectActiveFile: "/project-b/routes.php",
+        id: "project-b-definition",
+        projectRoot: "/project-b",
+      },
+    ];
+    const files = {
+      "/project-a/src/A.php": "<?php\n$foo->\n",
+      "/project-b/src/B.php": "<?php\nview('target');\n",
+    };
+    const calls = [];
+    let activeFile = "";
+    let workspaceRoot = "";
+    const bridge = {
+      getActiveFile: () => activeFile,
+      getCompletionItems: async () => {
+        calls.push(["completion", workspaceRoot, activeFile]);
+
+        return [{ label: "alpha" }];
+      },
+      getValue: () => files[activeFile] ?? "",
+      getWorkspaceRoot: () => workspaceRoot,
+      openWorkspaceFile: async (path) => {
+        calls.push(["file", path]);
+
+        if (!path.startsWith(`${workspaceRoot}/`)) {
+          return false;
+        }
+
+        activeFile = path;
+        return true;
+      },
+      openWorkspaceRoot: async (path) => {
+        calls.push(["root", path]);
+        workspaceRoot = path;
+        return true;
+      },
+      setCursor: (position) => {
+        calls.push(["cursor", activeFile, position.lineNumber, position.column]);
+        return true;
+      },
+      triggerDefinition: async () => {
+        calls.push(["definition", workspaceRoot, activeFile]);
+        activeFile = "/project-b/routes.php";
+        return true;
+      },
+    };
+    const previousWindow = globalThis.window;
+    const table = vi.spyOn(console, "table").mockImplementation(() => {});
+
+    try {
+      globalThis.window = { __codevoQa: bridge };
+      // Execute the exact DevTools snippet shape so CDP, manual paste, and tests
+      // keep using the same in-page runner.
+      const results = await new Function(
+        `return (async () => { ${snippetFor(selected, 100).replace(/^await /, "return await ")} })()`,
+      )();
+
+      expect(results.map((result) => [result.id, result.ok])).toEqual([
+        ["project-a-completion", true],
+        ["project-b-definition", true],
+      ]);
+      expect(calls).toEqual([
+        ["root", "/project-a"],
+        ["file", "/project-a/src/A.php"],
+        ["cursor", "/project-a/src/A.php", 2, 7],
+        ["completion", "/project-a", "/project-a/src/A.php"],
+        ["root", "/project-b"],
+        ["file", "/project-b/src/B.php"],
+        ["cursor", "/project-b/src/B.php", 2, 13],
+        ["definition", "/project-b", "/project-b/src/B.php"],
+      ]);
+      expect(table).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.window = previousWindow;
+    }
+  });
+
   it("prints snippet guidance for a missing QA bridge", () => {
     const selected = selectScenarios(parseArgs(["--scenario", scenarios[0].id]));
     const snippet = snippetFor(selected);
