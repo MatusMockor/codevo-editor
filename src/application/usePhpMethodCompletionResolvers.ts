@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpMethodCompletionsFromSource,
@@ -62,6 +62,39 @@ export interface PhpMethodCompletionResolvers {
   ): Promise<PhpMethodCompletion[]>;
 }
 
+interface LaravelMethodCompletionSemantics {
+  facadeTargetClassName(className: string): string | null;
+  receiverCompletionGroups(
+    context: ReceiverCompletionSemanticsContext,
+  ): Promise<MethodCompletionGroups>;
+  staticCompletionGroups(
+    context: StaticCompletionSemanticsContext,
+  ): Promise<MethodCompletionGroups>;
+}
+
+interface ReceiverCompletionSemanticsContext {
+  collectPhpMethodsForClass(
+    className: string,
+  ): Promise<PhpMethodCompletion[]>;
+  position: EditorPosition;
+  receiverExpression: string;
+  receiverMethods: PhpMethodCompletion[];
+  resolvedReceiverType: string | null;
+  source: string;
+}
+
+interface StaticCompletionSemanticsContext {
+  className: string;
+  methods: PhpMethodCompletion[];
+  source: string;
+}
+
+interface MethodCompletionGroups {
+  baseMethods: PhpMethodCompletion[];
+  dynamicWhereMethods: PhpMethodCompletion[];
+  localScopeMethods: PhpMethodCompletion[];
+}
+
 export function usePhpMethodCompletionResolvers(
   dependencies: PhpMethodCompletionResolverDependencies,
 ): PhpMethodCompletionResolvers {
@@ -81,6 +114,19 @@ export function usePhpMethodCompletionResolvers(
     frameworkRuntime?.providers ?? activePhpFrameworkProviders;
   const isLaravelFrameworkActive =
     frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const frameworkSemantics = useMemo(
+    () =>
+      createLaravelMethodCompletionSemantics({
+        collectPhpLaravelDynamicWhereMethodsForClass,
+        isLaravelFrameworkActive,
+        resolvePhpEloquentBuilderModelType,
+      }),
+    [
+      collectPhpLaravelDynamicWhereMethodsForClass,
+      isLaravelFrameworkActive,
+      resolvePhpEloquentBuilderModelType,
+    ],
+  );
 
   const resolvePhpReceiverMethodCompletions = useCallback(
     async (
@@ -127,56 +173,27 @@ export function usePhpMethodCompletionResolvers(
       const receiverMethods = resolvedReceiverType
         ? await collectPhpMethodsForClass(resolvedReceiverType)
         : [];
-      const builderModelType = isLaravelFrameworkActive
-        ? await resolvePhpEloquentBuilderModelType(
-            source,
-            position,
-            receiverExpression,
-          )
-        : null;
-      const receiverModelType =
-        !builderModelType && isLaravelFrameworkActive && resolvedReceiverType
-          ? phpLaravelResolvedModelTypeCandidate(source, resolvedReceiverType)
-          : null;
-      const localScopeModelType = isLaravelFrameworkActive
-        ? builderModelType ?? receiverModelType
-        : null;
-      const localScopeSourceMethods =
-        localScopeModelType && localScopeModelType === resolvedReceiverType
-          ? receiverMethods
-          : localScopeModelType
-            ? await collectPhpMethodsForClass(localScopeModelType)
-            : [];
-      const localScopeMethods = localScopeModelType
-        ? phpLaravelLocalScopeCompletionsFromMethods(
-            localScopeSourceMethods,
-          )
-        : [];
-      const dynamicWhereMethods = isLaravelFrameworkActive && builderModelType
-        ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
-        : [];
-
-      const receiverMethodsForMerge =
-        localScopeModelType && localScopeModelType === resolvedReceiverType
-          ? receiverMethods.filter(
-              (method) => !isPhpLaravelLocalScopeSourceMethod(method),
-            )
-          : receiverMethods.filter((method) => method.kind !== "scope");
+      const completionGroups = await frameworkSemantics.receiverCompletionGroups({
+        collectPhpMethodsForClass,
+        position,
+        receiverExpression,
+        receiverMethods,
+        resolvedReceiverType,
+        source,
+      });
 
       return mergePhpMethodCompletions(
-        receiverMethodsForMerge,
-        localScopeMethods,
-        dynamicWhereMethods,
+        completionGroups.baseMethods,
+        completionGroups.localScopeMethods,
+        completionGroups.dynamicWhereMethods,
       );
     },
     [
-      collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
       currentPhpFrameworkSourceContext,
+      frameworkSemantics,
       frameworkProviders,
-      isLaravelFrameworkActive,
       phpNormalizedReceiverExpressionIsThis,
-      resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
     ],
   );
@@ -192,41 +209,31 @@ export function usePhpMethodCompletionResolvers(
         return [];
       }
 
-      const facadeTargetClassName = isLaravelFrameworkActive
-        ? laravelFacadeTargetClassName(resolvedClassName)
-        : null;
+      const facadeTargetClassName =
+        frameworkSemantics.facadeTargetClassName(resolvedClassName);
       const methods = await collectPhpMethodsForClass(
         facadeTargetClassName ?? resolvedClassName,
       );
 
-      if (isLaravelFrameworkActive && facadeTargetClassName) {
+      if (facadeTargetClassName) {
         return methods;
       }
 
-      const dynamicWhereMethods = isLaravelFrameworkActive
-        ? await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
-            isStatic: true,
-          })
-        : [];
-      const isLaravelModelStaticAccess =
-        isLaravelFrameworkActive &&
-        phpLaravelResolvedModelTypeCandidate(source, resolvedClassName);
-      const baseMethods = isLaravelModelStaticAccess
-        ? phpLaravelStaticModelMemberCompletionsFromMethods(methods)
-        : methods.filter((method) => method.isStatic);
+      const completionGroups = await frameworkSemantics.staticCompletionGroups({
+        className: resolvedClassName,
+        methods,
+        source,
+      });
 
       return mergePhpMethodCompletions(
-        baseMethods,
-        isLaravelFrameworkActive
-          ? phpLaravelStaticLocalScopeCompletionsFromMethods(methods)
-          : [],
-        dynamicWhereMethods,
+        completionGroups.baseMethods,
+        completionGroups.localScopeMethods,
+        completionGroups.dynamicWhereMethods,
       );
     },
     [
-      collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
-      isLaravelFrameworkActive,
+      frameworkSemantics,
       resolvePhpClassReference,
     ],
   );
@@ -235,6 +242,130 @@ export function usePhpMethodCompletionResolvers(
     resolvePhpReceiverMethodCompletions,
     resolvePhpStaticMethodCompletions,
   };
+}
+
+function createLaravelMethodCompletionSemantics({
+  collectPhpLaravelDynamicWhereMethodsForClass,
+  isLaravelFrameworkActive,
+  resolvePhpEloquentBuilderModelType,
+}: Pick<
+  PhpMethodCompletionResolverDependencies,
+  | "collectPhpLaravelDynamicWhereMethodsForClass"
+  | "resolvePhpEloquentBuilderModelType"
+> & {
+  isLaravelFrameworkActive: boolean;
+}): LaravelMethodCompletionSemantics {
+  if (!isLaravelFrameworkActive) {
+    return genericMethodCompletionSemantics;
+  }
+
+  return {
+    facadeTargetClassName: laravelFacadeTargetClassName,
+    async receiverCompletionGroups(context) {
+      const builderModelType = await resolvePhpEloquentBuilderModelType(
+        context.source,
+        context.position,
+        context.receiverExpression,
+      );
+      const localScopeModelType =
+        builderModelType ??
+        (context.resolvedReceiverType
+          ? phpLaravelResolvedModelTypeCandidate(
+              context.source,
+              context.resolvedReceiverType,
+            )
+          : null);
+      const localScopeSourceMethods =
+        await collectReceiverLocalScopeSourceMethods(
+          localScopeModelType,
+          context.resolvedReceiverType,
+          context.receiverMethods,
+          context.collectPhpMethodsForClass,
+        );
+      const dynamicWhereMethods = builderModelType
+        ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
+        : [];
+
+      return {
+        baseMethods: receiverBaseMethods(
+          context.receiverMethods,
+          localScopeModelType,
+          context.resolvedReceiverType,
+        ),
+        dynamicWhereMethods,
+        localScopeMethods: localScopeModelType
+          ? phpLaravelLocalScopeCompletionsFromMethods(localScopeSourceMethods)
+          : [],
+      };
+    },
+    async staticCompletionGroups({ className, methods, source }) {
+      return {
+        baseMethods: phpLaravelResolvedModelTypeCandidate(source, className)
+          ? phpLaravelStaticModelMemberCompletionsFromMethods(methods)
+          : methods.filter((method) => method.isStatic),
+        dynamicWhereMethods:
+          await collectPhpLaravelDynamicWhereMethodsForClass(className, {
+            isStatic: true,
+          }),
+        localScopeMethods: phpLaravelStaticLocalScopeCompletionsFromMethods(
+          methods,
+        ),
+      };
+    },
+  };
+}
+
+const genericMethodCompletionSemantics: LaravelMethodCompletionSemantics = {
+  facadeTargetClassName() {
+    return null;
+  },
+  async receiverCompletionGroups({ receiverMethods }) {
+    return {
+      baseMethods: receiverMethods.filter((method) => method.kind !== "scope"),
+      dynamicWhereMethods: [],
+      localScopeMethods: [],
+    };
+  },
+  async staticCompletionGroups({ methods }) {
+    return {
+      baseMethods: methods.filter((method) => method.isStatic),
+      dynamicWhereMethods: [],
+      localScopeMethods: [],
+    };
+  },
+};
+
+async function collectReceiverLocalScopeSourceMethods(
+  localScopeModelType: string | null,
+  resolvedReceiverType: string | null,
+  receiverMethods: PhpMethodCompletion[],
+  collectPhpMethodsForClass: (
+    className: string,
+  ) => Promise<PhpMethodCompletion[]>,
+): Promise<PhpMethodCompletion[]> {
+  if (!localScopeModelType) {
+    return [];
+  }
+
+  if (localScopeModelType === resolvedReceiverType) {
+    return receiverMethods;
+  }
+
+  return collectPhpMethodsForClass(localScopeModelType);
+}
+
+function receiverBaseMethods(
+  receiverMethods: PhpMethodCompletion[],
+  localScopeModelType: string | null,
+  resolvedReceiverType: string | null,
+): PhpMethodCompletion[] {
+  if (localScopeModelType && localScopeModelType === resolvedReceiverType) {
+    return receiverMethods.filter(
+      (method) => !isPhpLaravelLocalScopeSourceMethod(method),
+    );
+  }
+
+  return receiverMethods.filter((method) => method.kind !== "scope");
 }
 
 function laravelFacadeTargetClassName(className: string): string | null {
