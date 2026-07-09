@@ -20,6 +20,8 @@
     "smoke:extended": "node ./scripts/qa-smoke.mjs extended",
     "smoke:full": "node ./scripts/qa-smoke.mjs full",
     "smoke:desktop": "node ./scripts/qa-smoke.mjs desktop",
+    "smoke:projects": "node ./scripts/qa-smoke.mjs projects",
+    "qa:projects": "node ./scripts/qa-project-scenarios.mjs --all",
     "test": "vitest run"
   },
   "dependencies": {

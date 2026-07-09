@@ -44,6 +44,21 @@ node ./scripts/qa-project-scenarios.mjs \
   --all
 ```
 
+The same CDP batch is available through the central smoke runner:
+
+```sh
+npm run smoke:projects
+```
+
+`smoke:projects` expects the app to already be running with `npm run debug:qa`
+and a reachable CDP endpoint. Override the defaults when needed:
+
+```sh
+MOCKOR_EDITOR_QA_CDP_URL=http://127.0.0.1:9222 \
+MOCKOR_EDITOR_QA_TARGET_URL=localhost:1420 \
+npm run smoke:projects
+```
+
 `--all` runs every built-in scenario in order. To run a smaller deterministic
 set, repeat `--scenario <id>`:
 

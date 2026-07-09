@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 const activeChildren = new Set();
+const defaultProjectQaCdpUrl = "http://127.0.0.1:9222";
+const defaultProjectQaTargetUrl = "localhost:1420";
 
 export const qaSmokeProfiles = {
   vitestFast: {
@@ -201,6 +203,16 @@ const modeSteps = {
       timeoutMs: minutes(20),
     }),
   ],
+  projects: [
+    commandStep(
+      "Real project provider smoke",
+      "node",
+      projectQaScenarioArgs(),
+      {
+        timeoutMs: minutes(10),
+      },
+    ),
+  ],
 };
 
 const modeNames = Object.keys(modeSteps);
@@ -274,6 +286,12 @@ Modes:
   extended  Slower Vitest regression files for editor/workbench races.
   full      TypeScript check, full Vitest, backend smoke, and build.
   desktop   Debug Tauri build, short desktop boot, and process cleanup smoke.
+  projects  Real-project provider scenarios through the dev QA bridge.
+
+Project smoke expects an already running app started with npm run debug:qa and
+a reachable CDP endpoint. Configure with:
+  MOCKOR_EDITOR_QA_CDP_URL     Default: ${defaultProjectQaCdpUrl}
+  MOCKOR_EDITOR_QA_TARGET_URL  Default: ${defaultProjectQaTargetUrl}
 `);
 }
 
@@ -303,6 +321,17 @@ function rustBackendSteps(profile) {
       timeoutMs: minutes(5),
     }),
   );
+}
+
+function projectQaScenarioArgs() {
+  return [
+    "./scripts/qa-project-scenarios.mjs",
+    "--all",
+    "--cdp-url",
+    process.env.MOCKOR_EDITOR_QA_CDP_URL || defaultProjectQaCdpUrl,
+    "--target-url",
+    process.env.MOCKOR_EDITOR_QA_TARGET_URL || defaultProjectQaTargetUrl,
+  ];
 }
 
 function commandStep(name, command, args, options = {}) {
