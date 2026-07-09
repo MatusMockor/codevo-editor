@@ -472,6 +472,12 @@ export interface PhpFrameworkProvider {
      * is framework-agnostic.
      */
     searchQueries?: readonly string[];
+    /**
+     * Text-search anchors that surface explicit route model-binding
+     * declarations outside the active document. Owned by the provider so route
+     * model navigation stays framework-agnostic.
+     */
+    explicitModelBindingSearchQueries?: readonly string[];
   };
   dispatch?: {
     eventListenerMapFromSource?: (
@@ -915,6 +921,14 @@ export function phpFrameworkExplicitRouteModelBindingClassName(
   }
 
   return null;
+}
+
+export function phpFrameworkExplicitRouteModelBindingSearchQueries(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap(
+    (provider) => provider.routes?.explicitModelBindingSearchQueries ?? [],
+  );
 }
 
 export function phpFrameworkModelNamespacePrefixes(

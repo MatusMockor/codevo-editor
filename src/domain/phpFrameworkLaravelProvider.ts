@@ -83,6 +83,11 @@ const laravelRouteSearchQueries: readonly string[] = [
   "Route::softDeletableResources",
 ];
 
+const laravelExplicitRouteModelBindingSearchQueries: readonly string[] = [
+  "Route::model",
+  "Route::bind",
+];
+
 /**
  * Text-search anchors for the sources feeding data into Blade views. Kept beside
  * the provider (not the controller) so view-data knowledge stays
@@ -190,6 +195,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     referenceAt: ({ position, source }) =>
       phpLaravelNamedRouteReferenceContextAt(source, position),
     searchQueries: laravelRouteSearchQueries,
+    explicitModelBindingSearchQueries:
+      laravelExplicitRouteModelBindingSearchQueries,
   },
   dispatch: {
     eventListenerMapFromSource: ({ source }) => phpLaravelEventListenerMap(source),

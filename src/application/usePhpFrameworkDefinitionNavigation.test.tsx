@@ -4,7 +4,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type {
   EditorDocument,
   TextSearchGateway,
@@ -39,10 +42,56 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const ROUTE_CAPABLE_PROVIDER: PhpFrameworkProvider = {
+  id: "route-capable",
+  routes: {
+    explicitModelBindingClassNameFromSource: ({ parameterName, source }) => {
+      const pattern = new RegExp(
+        `bindModel\\(['"]${parameterName}['"],\\s*([A-Za-z_][A-Za-z0-9_]*)::class\\)`,
+      );
+
+      return pattern.exec(source)?.[1] ?? null;
+    },
+    explicitModelBindingSearchQueries: ["bindModel("],
+    modelBindingAt: ({ offset, source }) => {
+      const parameterStart = source.indexOf("{account}");
+
+      if (parameterStart < 0) {
+        return null;
+      }
+
+      const parameterEnd = parameterStart + "{account}".length;
+
+      if (offset < parameterStart || offset > parameterEnd) {
+        return null;
+      }
+
+      return {
+        explicitModelClassName: null,
+        modelShortName: "Account",
+        parameterEnd,
+        parameterName: "account",
+        parameterStart,
+      };
+    },
+    modelNamespacePrefixes: () => ["App\\Models\\"],
+  },
+};
+const ROUTE_CAPABLE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["route-capable"],
+    profile: "generic",
+    providers: [ROUTE_CAPABLE_PROVIDER],
+  }),
+);
 const LARAVEL_RUNTIME_WITHOUT_ROUTES: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   supports: (capability) => capability !== "routes",
   supportsTargetCollection: (kind) => kind !== "routes",
+};
+const LARAVEL_RUNTIME_WITHOUT_DISPATCH: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  supports: (capability) => capability !== "dispatch",
 };
 
 function makeDescriptor(): WorkspaceDescriptor {
@@ -62,7 +111,7 @@ function makeDescriptor(): WorkspaceDescriptor {
 }
 
 function makeTextSearch(
-  searchText = vi.fn(async () => []),
+  searchText: TextSearchGateway["searchText"] = vi.fn(async () => []),
 ): TextSearchGateway {
   return {
     replaceInPath: vi.fn(async () => ({
@@ -233,17 +282,50 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("requires the runtime routes capability for Laravel dispatch handler navigation", async () => {
+  it("does not require the runtime routes capability for Laravel dispatch handler navigation", async () => {
+    const jobPath = `${ROOT}/app/Jobs/SyncOrder.php`;
+    const openNavigationTarget = vi.fn(async () => true);
+    const openPhpClassTarget = vi.fn(async () => false);
+    const readNavigationFileContent = vi.fn(
+      async () => "<?php class SyncOrder { public function handle() {} }",
+    );
+    const resolvePhpClassSourcePaths = vi.fn(async () => [jobPath]);
+    const deps = makeDeps({
+      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_ROUTES,
+      openNavigationTarget,
+      openPhpClassTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nuse App\\Jobs\\SyncOrder;\ndispatch(new SyncOrder());`;
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("SyncOrder());"));
+
+    expect(handled).toBe(true);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      jobPath,
+      position(1, 41),
+      "SyncOrder",
+    );
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("requires the runtime dispatch capability for Laravel dispatch handler navigation", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const openPhpClassTarget = vi.fn(async () => false);
     const readNavigationFileContent = vi.fn(async () => {
-      throw new Error("runtime without routes should not read Laravel handlers");
+      throw new Error("runtime without dispatch should not read handlers");
     });
     const resolvePhpClassSourcePaths = vi.fn(async () => [
       `${ROOT}/app/Jobs/SyncOrder.php`,
     ]);
     const deps = makeDeps({
-      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_ROUTES,
+      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_DISPATCH,
       openNavigationTarget,
       openPhpClassTarget,
       readNavigationFileContent,
@@ -260,6 +342,74 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
     expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
     expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("opens route model bindings for a route-capable non-Laravel provider", async () => {
+    const openPhpClassTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
+      isLaravelFrameworkActive: false,
+      openPhpClassTarget,
+      providers: [ROUTE_CAPABLE_PROVIDER],
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nframeworkRoute('/accounts/{account}');`;
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("{account}") + 2);
+
+    expect(handled).toBe(true);
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "App\\Models\\Account",
+      "Account",
+    );
+
+    harness.unmount();
+  });
+
+  it("uses provider-supplied explicit route model-binding search queries", async () => {
+    const bindingPath = `${ROOT}/routes/bindings.php`;
+    const openPhpClassTarget = vi.fn(async () => true);
+    const searchText = vi.fn(async () => [
+      {
+        column: 1,
+        lineNumber: 1,
+        lineText: "bindModel(",
+        path: bindingPath,
+        preview: "bindModel(",
+        relativePath: "routes/bindings.php",
+      },
+    ]);
+    const deps = makeDeps({
+      frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
+      isLaravelFrameworkActive: false,
+      openPhpClassTarget,
+      providers: [ROUTE_CAPABLE_PROVIDER],
+      readNavigationFileContent: vi.fn(
+        async () =>
+          "<?php\nuse App\\Models\\ExternalAccount;\nbindModel('account', ExternalAccount::class);",
+      ),
+      textSearch: makeTextSearch(searchText),
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nframeworkRoute('/accounts/{account}');`;
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("{account}") + 2);
+
+    expect(handled).toBe(true);
+    expect(searchText).toHaveBeenCalledTimes(1);
+    expect(searchText).toHaveBeenCalledWith(ROOT, "bindModel(", 100);
+    expect(searchText).not.toHaveBeenCalledWith(ROOT, "Route::model", 100);
+    expect(searchText).not.toHaveBeenCalledWith(ROOT, "Route::bind", 100);
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "App\\Models\\ExternalAccount",
+      "ExternalAccount",
+    );
 
     harness.unmount();
   });

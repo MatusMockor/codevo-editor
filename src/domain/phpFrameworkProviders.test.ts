@@ -30,6 +30,7 @@ import {
   phpFrameworkEnvTargetFromSource,
   phpFrameworkPhpPresenterLinkAt,
   phpFrameworkPhpPresenterLinkCompletionAt,
+  phpFrameworkExplicitRouteModelBindingSearchQueries,
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
@@ -1698,6 +1699,20 @@ Route::model('user', AdminUser::class);
         phpFrameworkModelNamespacePrefixes(php, [phpLaravelFrameworkProvider]),
       ).toEqual(["Domain\\Models\\", "Domain\\", "App\\Models\\", "App\\"]);
       expect(phpFrameworkModelNamespacePrefixes(php, [])).toEqual([]);
+    });
+
+    it("exposes explicit route model-binding search anchors through the provider", () => {
+      expect(
+        phpFrameworkExplicitRouteModelBindingSearchQueries([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(["Route::model", "Route::bind"]);
+      expect(
+        phpFrameworkExplicitRouteModelBindingSearchQueries([
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(phpFrameworkExplicitRouteModelBindingSearchQueries([])).toEqual([]);
     });
 
     it("exposes the Laravel route search anchors through the provider", () => {

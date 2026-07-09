@@ -4,6 +4,7 @@ import {
   phpFrameworkEventListenerMapFromSource,
   phpFrameworkEventServiceProviderClassNames,
   phpFrameworkExplicitRouteModelBindingClassName,
+  phpFrameworkExplicitRouteModelBindingSearchQueries,
   phpFrameworkModelNamespacePrefixes,
   phpFrameworkRouteModelBindingAt,
   type PhpFrameworkDispatchTarget,
@@ -87,9 +88,8 @@ export function usePhpFrameworkDefinitionNavigation({
   });
   const activePhpFrameworkProviders = phpFrameworkRuntime.providers;
   const supportsFrameworkRouteDefinitionNavigation =
-    phpFrameworkRuntime.isLaravel && phpFrameworkRuntime.supports("routes");
+    phpFrameworkRuntime.supports("routes");
   const supportsFrameworkDispatchDefinitionNavigation =
-    supportsFrameworkRouteDefinitionNavigation &&
     phpFrameworkRuntime.supports("dispatch");
 
   const openPhpFrameworkHandlerTarget = useCallback(
@@ -327,7 +327,7 @@ export function usePhpFrameworkDefinitionNavigation({
     [goToPhpFrameworkEventListenerDefinition, openPhpFrameworkHandlerTarget],
   );
 
-  const resolvePhpLaravelExplicitRouteModelBindingClassName = useCallback(
+  const resolvePhpFrameworkExplicitRouteModelBindingClassName = useCallback(
     async (
       currentSource: string,
       currentPath: string | null,
@@ -351,8 +351,16 @@ export function usePhpFrameworkDefinitionNavigation({
         return null;
       }
 
+      const searchQueries = phpFrameworkExplicitRouteModelBindingSearchQueries(
+        activePhpFrameworkProviders,
+      );
+
+      if (searchQueries.length === 0) {
+        return null;
+      }
+
       const searchResults = await Promise.all(
-        ["Route::model", "Route::bind"].map((query) =>
+        searchQueries.map((query) =>
           textSearch.searchText(requestedRoot, query, 100),
         ),
       );
@@ -437,7 +445,7 @@ export function usePhpFrameworkDefinitionNavigation({
 
       if (routeBinding) {
         const resolvedExplicitClassName =
-          await resolvePhpLaravelExplicitRouteModelBindingClassName(
+          await resolvePhpFrameworkExplicitRouteModelBindingClassName(
             source,
             activeDocument?.path ?? null,
             routeBinding.parameterName,
@@ -585,7 +593,7 @@ export function usePhpFrameworkDefinitionNavigation({
       openNavigationTarget,
       openPhpClassTarget,
       activePhpFrameworkProviders,
-      resolvePhpLaravelExplicitRouteModelBindingClassName,
+      resolvePhpFrameworkExplicitRouteModelBindingClassName,
       supportsFrameworkDispatchDefinitionNavigation,
       supportsFrameworkRouteDefinitionNavigation,
       workspaceDescriptor,
