@@ -11,7 +11,7 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
-import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 /**
  * A Blade completion item the controller hands to the Monaco "blade" completion
@@ -35,7 +35,7 @@ export interface BladeCompletionItem {
 export interface BladeIntelligenceDependencies {
   activeDocument: { content: string; path: string } | null;
   currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkIntelligence: PhpFrameworkIntelligence;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   workspaceRoot: string | null;
   textSearch: Pick<TextSearchGateway, "searchText">;
   workspaceFiles: { readDirectory: (path: string) => Promise<FileEntry[]> };

@@ -16,6 +16,7 @@ import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
 import { editorPositionAtOffset } from "./bladePhpCompletionContext";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface BladeDefinitionProviderDependencies {
   activeDocument: BladeIntelligenceDependencies["activeDocument"];
@@ -24,7 +25,7 @@ export interface BladeDefinitionProviderDependencies {
   findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
   findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
   findPhpLaravelViewTarget: BladeIntelligenceDependencies["findPhpLaravelViewTarget"];
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
   openDirectPhpPropertyTarget: BladeIntelligenceDependencies["openDirectPhpPropertyTarget"];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
@@ -50,7 +51,7 @@ export async function provideBladeDefinition(
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
     findPhpLaravelViewTarget,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
@@ -72,7 +73,7 @@ export async function provideBladeDefinition(
     return false;
   }
 
-  if (isLaravelFrameworkActive) {
+  if (frameworkRuntime.supports("stringLiterals")) {
     const openedLaravelHelper = await openLaravelHelperDefinition(source, offset, {
       activeDocument,
       collectPhpLaravelNamedRouteTargets,
@@ -86,7 +87,9 @@ export async function provideBladeDefinition(
     if (openedLaravelHelper) {
       return true;
     }
+  }
 
+  if (frameworkRuntime.supports("viewData")) {
     const openedMember = await openBladeViewDataMemberDefinition(source, offset, {
       activeDocument,
       isRequestedRootActive,

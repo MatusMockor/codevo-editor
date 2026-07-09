@@ -65,7 +65,7 @@ export function useBladeIntelligence(
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
     findPhpLaravelViewTarget,
-    frameworkIntelligence,
+    frameworkRuntime,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
@@ -80,8 +80,7 @@ export function useBladeIntelligence(
     workspaceFiles,
     workspaceRoot,
   } = deps;
-  const activePhpFrameworkProviders = frameworkIntelligence.providers;
-  const isLaravelFrameworkActive = frameworkIntelligence.isLaravel;
+  const activePhpFrameworkProviders = frameworkRuntime.providers;
 
   const {
     collectBladeComponentNames,
@@ -123,7 +122,7 @@ export function useBladeIntelligence(
         collectPhpLaravelViewTargets,
         currentWorkspaceRootRef,
         ensurePhpFrameworkSourceCollectionsLoaded,
-        isLaravelFrameworkActive,
+        frameworkRuntime,
         relativeWorkspacePath,
         resolveBladeForeachElementTypeForVariable,
         resolveBladeViewVariableTypeForView,
@@ -142,7 +141,7 @@ export function useBladeIntelligence(
       collectPhpLaravelViewTargets,
       currentWorkspaceRootRef,
       ensurePhpFrameworkSourceCollectionsLoaded,
-      isLaravelFrameworkActive,
+      frameworkRuntime,
       relativeWorkspacePath,
       resolveBladeForeachElementTypeForVariable,
       resolveBladeViewVariableTypeForView,
@@ -174,7 +173,7 @@ export function useBladeIntelligence(
         findPhpLaravelConfigTarget,
         findPhpLaravelTranslationTarget,
         findPhpLaravelViewTarget,
-        isLaravelFrameworkActive,
+        frameworkRuntime,
         openDirectPhpMethodTarget,
         openDirectPhpPropertyTarget,
         openNavigationTarget,
@@ -192,7 +191,7 @@ export function useBladeIntelligence(
       findPhpLaravelConfigTarget,
       findPhpLaravelTranslationTarget,
       findPhpLaravelViewTarget,
-      isLaravelFrameworkActive,
+      frameworkRuntime,
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openNavigationTarget,

@@ -4,10 +4,11 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpLaravelEnvTargetResolverDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
   readNavigationFileContent: (path: string) => Promise<string>;
   workspaceRoot: string | null;
@@ -19,7 +20,7 @@ export type PhpLaravelEnvTargetResolver = (
 
 export function usePhpLaravelEnvTargetResolver({
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
   joinWorkspacePath,
   readNavigationFileContent,
   workspaceRoot,
@@ -30,7 +31,7 @@ export function usePhpLaravelEnvTargetResolver({
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (!frameworkRuntime.isLaravel || !requestedRoot) {
         return null;
       }
 
@@ -70,7 +71,7 @@ export function usePhpLaravelEnvTargetResolver({
     },
     [
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      frameworkRuntime,
       joinWorkspacePath,
       readNavigationFileContent,
       workspaceRoot,

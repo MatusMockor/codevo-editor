@@ -1,11 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   provideBladeDefinition,
   type BladeDefinitionProviderDependencies,
 } from "./bladeDefinitionProvider";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const BLADE_PATH = `${ROOT}/resources/views/comments/show.blade.php`;
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function position(lineNumber = 1, column = 1) {
   return { column, lineNumber };
@@ -21,7 +38,7 @@ function makeDeps(
     findPhpLaravelConfigTarget: vi.fn(async () => null),
     findPhpLaravelTranslationTarget: vi.fn(async () => null),
     findPhpLaravelViewTarget: vi.fn(async () => null),
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     openDirectPhpPropertyTarget: vi.fn(async () => false),
     openNavigationTarget: vi.fn(async () => true),
@@ -175,7 +192,7 @@ describe("provideBladeDefinition", () => {
         offsetOf(source, "dashboard"),
         makeDeps({
           collectPhpLaravelNamedRouteTargets,
-          isLaravelFrameworkActive: false,
+          frameworkRuntime: GENERIC_RUNTIME,
         }),
       ),
     ).resolves.toBe(false);

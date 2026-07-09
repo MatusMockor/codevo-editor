@@ -4,6 +4,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpLaravelLiteralDefinitionNavigation,
   type PhpLaravelLiteralDefinitionNavigation,
@@ -15,6 +18,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
 const POSITION: EditorPosition = { column: 1, lineNumber: 1 };
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
 
 function target<Name extends string>(
   key: Name,
@@ -64,11 +74,9 @@ function makeDeps(
     findStorageDiskTarget: vi.fn(async () => null),
     findTranslationTarget: vi.fn(async () => null),
     findViewTarget: vi.fn(async () => null),
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     openNavigationTarget: vi.fn(async () => true),
     setMessage: vi.fn(),
-    supportsRoutes: true,
-    supportsViews: true,
     workspaceRoot: ROOT,
     ...overrides,
   };

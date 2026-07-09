@@ -4,6 +4,7 @@ import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 interface OpenNavigationOptions {
@@ -106,7 +107,7 @@ export interface PhpLaravelLiteralDefinitionNavigationDependencies {
   findStorageDiskTarget: PhpFrameworkTargets["findStorageDiskTarget"];
   findTranslationTarget: PhpFrameworkTargets["findTranslationTarget"];
   findViewTarget: PhpFrameworkTargets["findViewTarget"];
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -114,8 +115,6 @@ export interface PhpLaravelLiteralDefinitionNavigationDependencies {
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
   setMessage(message: string | null): void;
-  supportsRoutes: boolean;
-  supportsViews: boolean;
   workspaceRoot: string | null;
 }
 
@@ -187,16 +186,17 @@ export function usePhpLaravelLiteralDefinitionNavigation({
   findStorageDiskTarget,
   findTranslationTarget,
   findViewTarget,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
   openNavigationTarget,
   setMessage,
-  supportsRoutes,
-  supportsViews,
   workspaceRoot,
 }: PhpLaravelLiteralDefinitionNavigationDependencies): PhpLaravelLiteralDefinitionNavigation {
+  const supportsLaravelOnlyTargets = frameworkRuntime.isLaravel;
+  const supportsRoutes = frameworkRuntime.supports("routes");
+  const supportsViews = frameworkRuntime.supports("views");
   const openResolvedTarget = useCallback(
     async <Target extends NamedNavigationTarget>({
-      gate = isLaravelFrameworkActive,
+      gate = supportsLaravelOnlyTargets,
       label,
       missingMessage,
       resolve,
@@ -230,9 +230,9 @@ export function usePhpLaravelLiteralDefinitionNavigation({
     [
       activeDocument,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       setMessage,
+      supportsLaravelOnlyTargets,
       workspaceRoot,
     ],
   );

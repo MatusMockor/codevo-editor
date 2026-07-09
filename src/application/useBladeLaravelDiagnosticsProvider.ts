@@ -12,6 +12,7 @@ import {
 } from "../domain/laravelDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 export interface BladeLaravelDiagnosticsProviderDependencies {
@@ -19,7 +20,7 @@ export interface BladeLaravelDiagnosticsProviderDependencies {
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   setLaravelDiagnosticsByPath: Dispatch<
     SetStateAction<Record<string, LanguageServerDiagnostic[]>>
   >;
@@ -35,7 +36,7 @@ export function useBladeLaravelDiagnosticsProvider({
   activeDocumentRef,
   collectViewTargets,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
   setLaravelDiagnosticsByPath,
   workspaceRoot,
 }: BladeLaravelDiagnosticsProviderDependencies): BladeLaravelDiagnosticsProvider {
@@ -55,7 +56,7 @@ export function useBladeLaravelDiagnosticsProvider({
     if (
       !requestedRoot ||
       !document ||
-      !isLaravelFrameworkActive ||
+      !frameworkRuntime.isLaravel ||
       document.language !== "blade"
     ) {
       if (document?.path) {
@@ -103,7 +104,7 @@ export function useBladeLaravelDiagnosticsProvider({
     activeDocumentRef,
     collectViewTargets,
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
     setLaravelDiagnosticsByPath,
     workspaceRoot,
   ]);

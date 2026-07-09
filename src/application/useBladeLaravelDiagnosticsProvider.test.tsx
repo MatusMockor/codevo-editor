@@ -4,7 +4,13 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import {
   useBladeLaravelDiagnosticsProvider,
   type BladeLaravelDiagnosticsProviderDependencies,
@@ -15,6 +21,18 @@ import {
 
 const ROOT = "/workspace";
 const BLADE_PATH = `${ROOT}/resources/views/comments/show.blade.php`;
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const VIEW_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  isLaravel: false,
+  profile: "generic",
+};
 
 type MutableRef<T> = { current: T };
 
@@ -108,7 +126,7 @@ function renderProvider(
     activeDocumentRef,
     collectViewTargets: vi.fn(async () => [viewTarget("dashboard")]),
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     setLaravelDiagnosticsByPath: laravelDiagnostics.set,
     workspaceRoot: ROOT,
     ...overrides,
@@ -181,6 +199,24 @@ describe("useBladeLaravelDiagnosticsProvider", () => {
       activeDocument: phpDocument,
       activeDocumentRef: ref<EditorDocument | null>(phpDocument),
       collectViewTargets,
+    });
+    harness.diagnostics.value = {
+      [BLADE_PATH]: [diagnostic()],
+    };
+
+    await harness.rerender();
+
+    expect(harness.diagnostics.value).toEqual({});
+    expect(collectViewTargets).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("clears stale diagnostics when Laravel is inactive even if view support is available", async () => {
+    const collectViewTargets = vi.fn(async () => [viewTarget("dashboard")]);
+    const harness = renderProvider({
+      collectViewTargets,
+      frameworkRuntime: VIEW_CAPABLE_NON_LARAVEL_RUNTIME,
     });
     harness.diagnostics.value = {
       [BLADE_PATH]: [diagnostic()],

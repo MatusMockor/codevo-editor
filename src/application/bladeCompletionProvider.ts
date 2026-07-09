@@ -13,6 +13,7 @@ import type {
   BladeCompletionItem,
   BladeIntelligenceDependencies,
 } from "./bladeIntelligenceContracts";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   provideBladeLaravelHelperCompletionItems,
   bladeLaravelHelperNameCompletions,
@@ -51,7 +52,7 @@ export interface BladeCompletionProviderDependencies {
   collectPhpLaravelViewTargets: BladeIntelligenceDependencies["collectPhpLaravelViewTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
   ensurePhpFrameworkSourceCollectionsLoaded: BladeIntelligenceDependencies["ensurePhpFrameworkSourceCollectionsLoaded"];
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
   resolveBladeForeachElementTypeForVariable: (
     viewName: string,
@@ -83,13 +84,16 @@ export async function provideBladeCompletions(
     collectPhpLaravelViewTargets,
     currentWorkspaceRootRef,
     ensurePhpFrameworkSourceCollectionsLoaded,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
     relativeWorkspacePath,
     resolveBladeForeachElementTypeForVariable,
     resolveBladeViewVariableTypeForView,
     resolvePhpReceiverMethodCompletions,
     workspaceRoot,
   } = dependencies;
+  const supportsStringLiterals = frameworkRuntime.supports("stringLiterals");
+  const supportsViews = frameworkRuntime.supports("views");
+  const supportsViewData = frameworkRuntime.supports("viewData");
   const requestedRoot = workspaceRoot;
   const isRequestedRootActive = () =>
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -121,7 +125,7 @@ export async function provideBladeCompletions(
       return [];
     }
 
-    if (isLaravelFrameworkActive) {
+    if (supportsViewData) {
       void ensurePhpFrameworkSourceCollectionsLoaded(requestedRoot);
     }
 
@@ -211,13 +215,17 @@ export async function provideBladeCompletions(
   }
 
   if (phpLikeCompletion?.kind === "helper") {
+    if (!supportsStringLiterals) {
+      return [];
+    }
+
     return bladeLaravelHelperNameCompletions(phpLikeCompletion.prefix, {
       replaceEnd: phpLikeCompletion.end,
       replaceStart: phpLikeCompletion.start,
     });
   }
 
-  if (isLaravelFrameworkActive) {
+  if (supportsStringLiterals) {
     const helperCompletion = bladeLaravelHelperCompletionContextAt(
       source,
       position,
@@ -238,6 +246,10 @@ export async function provideBladeCompletions(
   const reference = detectBladeReferenceAt(source, offset);
 
   if (reference?.kind === "view") {
+    if (!supportsViews) {
+      return [];
+    }
+
     const targets = await collectPhpLaravelViewTargets();
 
     if (!isRequestedRootActive()) {

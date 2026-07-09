@@ -3,6 +3,12 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import {
   usePhpLaravelEnvTargetResolver,
   type PhpLaravelEnvTargetResolver,
@@ -13,6 +19,24 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
+const ENV_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...GENERIC_RUNTIME,
+  supports: (capability) => capability === "env",
+};
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -40,7 +64,7 @@ function makeDeps(
 ): PhpLaravelEnvTargetResolverDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     joinWorkspacePath,
     readNavigationFileContent: vi.fn(async () => ""),
     workspaceRoot: ROOT,
@@ -91,7 +115,7 @@ describe("usePhpLaravelEnvTargetResolver", () => {
     const inactiveRead = vi.fn(async () => "APP_URL=https://local.test");
     const inactive = renderHook(
       makeDeps({
-        isLaravelFrameworkActive: false,
+        frameworkRuntime: GENERIC_RUNTIME,
         readNavigationFileContent: inactiveRead,
       }),
     );
@@ -111,6 +135,23 @@ describe("usePhpLaravelEnvTargetResolver", () => {
     await expect(noRoot.resolver()("APP_URL")).resolves.toBeNull();
     expect(noRootRead).not.toHaveBeenCalled();
     noRoot.unmount();
+  });
+
+  it("keeps env-file navigation Laravel-only even when another runtime advertises env support", async () => {
+    const readNavigationFileContent = vi.fn(
+      async () => "APP_URL=https://local.test",
+    );
+    const harness = renderHook(
+      makeDeps({
+        frameworkRuntime: ENV_CAPABLE_NON_LARAVEL_RUNTIME,
+        readNavigationFileContent,
+      }),
+    );
+
+    await expect(harness.resolver()("APP_URL")).resolves.toBeNull();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
   });
 
   it("prefers .env over .env.example when both contain the target", async () => {

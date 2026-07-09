@@ -111,6 +111,7 @@ import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
@@ -482,6 +483,10 @@ export function useWorkbenchController(
   const phpFrameworkIntelligence = useMemo(
     () => createPhpFrameworkIntelligence(phpFrameworkResolution),
     [phpFrameworkResolution],
+  );
+  const phpFrameworkRuntimeContext = useMemo(
+    () => createPhpFrameworkRuntimeContext(phpFrameworkIntelligence),
+    [phpFrameworkIntelligence],
   );
   const activePhpFrameworkProviders = phpFrameworkIntelligence.providers;
   const activePhpFrameworkProviderSignature =
@@ -4861,7 +4866,7 @@ export function useWorkbenchController(
 
   const findPhpLaravelEnvTarget = usePhpLaravelEnvTargetResolver({
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive,
+    frameworkRuntime: phpFrameworkRuntimeContext,
     joinWorkspacePath,
     readNavigationFileContent,
     workspaceRoot,
@@ -5168,7 +5173,7 @@ export function useWorkbenchController(
     activeDocumentRef,
     collectViewTargets,
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive,
+    frameworkRuntime: phpFrameworkRuntimeContext,
     setLaravelDiagnosticsByPath,
     workspaceRoot,
   });
@@ -5280,7 +5285,7 @@ export function useWorkbenchController(
       findPhpLaravelConfigTarget: findConfigTarget,
       findPhpLaravelTranslationTarget: findTranslationTarget,
       findPhpLaravelViewTarget: findViewTarget,
-      frameworkIntelligence: phpFrameworkIntelligence,
+      frameworkRuntime: phpFrameworkRuntimeContext,
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openNavigationTarget,
@@ -5405,11 +5410,9 @@ export function useWorkbenchController(
     findStorageDiskTarget,
     findTranslationTarget,
     findViewTarget,
-    isLaravelFrameworkActive,
+    frameworkRuntime: phpFrameworkRuntimeContext,
     openNavigationTarget,
     setMessage,
-    supportsRoutes: phpFrameworkIntelligence.capabilities.supports("routes"),
-    supportsViews: phpFrameworkIntelligence.capabilities.supports("views"),
     workspaceRoot,
   });
 

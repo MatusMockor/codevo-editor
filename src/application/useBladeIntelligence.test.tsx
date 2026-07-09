@@ -13,6 +13,7 @@ import {
   type BladeIntelligenceDependencies,
 } from "./useBladeIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -28,6 +29,8 @@ const GENERIC_FRAMEWORK = createPhpFrameworkIntelligence({
   profile: "generic",
   providers: [],
 });
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(LARAVEL_FRAMEWORK);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(GENERIC_FRAMEWORK);
 const VIEW_PATH = `${ROOT}/resources/views/invoices/show.blade.php`;
 const INVOICE_CONTROLLER_PATH = `${ROOT}/app/Http/Controllers/InvoiceController.php`;
 
@@ -77,7 +80,7 @@ function makeDeps(
   return {
     activeDocument: { content: "", path: VIEW_PATH },
     currentWorkspaceRootRef: { current: ROOT },
-    frameworkIntelligence: LARAVEL_FRAMEWORK,
+    frameworkRuntime: LARAVEL_RUNTIME,
     workspaceRoot: ROOT,
     textSearch: { searchText: vi.fn(async () => [] as TextSearchResult[]) },
     workspaceFiles: {
@@ -485,7 +488,7 @@ describe("useBladeIntelligence definition", () => {
     const collectPhpLaravelNamedRouteTargets = vi.fn(async () => []);
     const harness = renderHook(
       makeDeps({
-        frameworkIntelligence: GENERIC_FRAMEWORK,
+        frameworkRuntime: GENERIC_RUNTIME,
         collectPhpLaravelNamedRouteTargets,
       }),
     );
