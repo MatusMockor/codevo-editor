@@ -38,6 +38,7 @@ export interface EditorQaBridge {
   getPosition(): EditorPosition | null;
   getValue(): string | null;
   openWorkspaceFile(path: string): Promise<boolean>;
+  openWorkspaceRoot(path: string): Promise<boolean>;
   setCursor(position: EditorPosition): boolean;
   triggerCompletion(): boolean;
   triggerDefinition(): Promise<boolean>;
@@ -61,6 +62,7 @@ interface EditorQaBridgeDependencies {
     path: string,
     request: EditorQaOpenWorkspaceFileRequest,
   ): Promise<boolean>;
+  openWorkspaceRoot?(path: string): Promise<boolean>;
   provideBladeDefinition(
     source: string,
     offset: number,
@@ -161,6 +163,7 @@ function createEditorQaBridge(
     getValue: () => currentModel(dependencies)?.getValue() ?? null,
     getWorkspaceRoot: () => dependencies.getWorkspaceRoot(),
     openWorkspaceFile: (path) => openWorkspaceFile(dependencies, path),
+    openWorkspaceRoot: (path) => openWorkspaceRoot(dependencies, path),
     setCursor: (position) => setCursor(dependencies, position),
     triggerCompletion: () =>
       triggerEditorAction(dependencies, "codevo.qa", "editor.action.triggerSuggest"),
@@ -214,6 +217,21 @@ async function openWorkspaceFile(
   }
 
   return currentPath(dependencies) === requestedPath;
+}
+
+async function openWorkspaceRoot(
+  dependencies: EditorQaBridgeDependencies,
+  path: string,
+): Promise<boolean> {
+  const requestedPath = normalizeWorkspacePath(path);
+
+  if (!requestedPath || !dependencies.openWorkspaceRoot) {
+    return false;
+  }
+
+  await dependencies.openWorkspaceRoot(requestedPath);
+
+  return workspaceRootKeysStillEqual(dependencies, requestedPath);
 }
 
 async function providerCompletionItems(

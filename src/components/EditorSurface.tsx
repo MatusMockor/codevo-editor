@@ -270,6 +270,7 @@ interface EditorSurfaceProps {
     path: string,
     request: EditorQaOpenWorkspaceFileRequest,
   ): Promise<boolean>;
+  onOpenWorkspaceRoot?(path: string): Promise<boolean>;
   onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
@@ -398,6 +399,7 @@ function EditorSurfaceComponent({
   onOpenClass,
   onOpenFile,
   onOpenWorkspaceFile,
+  onOpenWorkspaceRoot,
   onOpenFileStructure,
   onChange,
   onLanguageServerError,
@@ -472,6 +474,7 @@ function EditorSurfaceComponent({
   // handler (see handleEditorChange) without the closure ever going stale.
   const onChangeRef = useRef(onChange);
   const openWorkspaceFileRef = useRef(onOpenWorkspaceFile);
+  const openWorkspaceRootRef = useRef(onOpenWorkspaceRoot);
   const isLanguageServerDocumentSyncedRef = useRef(
     isLanguageServerDocumentSynced,
   );
@@ -737,6 +740,10 @@ function EditorSurfaceComponent({
   }, [onOpenWorkspaceFile]);
 
   useEffect(() => {
+    openWorkspaceRootRef.current = onOpenWorkspaceRoot;
+  }, [onOpenWorkspaceRoot]);
+
+  useEffect(() => {
     isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
   }, [isLanguageServerDocumentSynced]);
 
@@ -981,6 +988,8 @@ function EditorSurfaceComponent({
       openWorkspaceFile: (path, request) =>
         openWorkspaceFileRef.current?.(path, request) ??
         Promise.resolve(false),
+      openWorkspaceRoot: (path) =>
+        openWorkspaceRootRef.current?.(path) ?? Promise.resolve(false),
       provideBladeDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
           bladeDefinitionRef.current,

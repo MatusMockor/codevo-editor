@@ -885,6 +885,7 @@ describe("EditorSurface", () => {
     expect(bridge?.getWorkspaceRoot()).toBe("/workspace");
     expect(bridge?.getValue()).toBe(activeDocument.content);
     expect(bridge?.getDiagnostics()).toEqual([diagnostic]);
+    expect(bridge?.openWorkspaceRoot).toEqual(expect.any(Function));
     expect(bridge?.setCursor({ column: 11, lineNumber: 2 })).toBe(true);
     expect(bridge?.getPosition()).toEqual({ column: 11, lineNumber: 2 });
 
@@ -1086,6 +1087,182 @@ describe("EditorSurface", () => {
       expect.objectContaining({ canOpen: expect.any(Function) }),
     );
     expect(window.__codevoQa?.getActiveFile()).toBe(targetDocument.path);
+  });
+
+  it("opens a workspace root through the dev QA bridge", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const activeDocument: EditorDocument = {
+      content: "<?php\n// active\n",
+      language: "php",
+      name: "Active.php",
+      path: "/workspace/app/Active.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const renderWith = async (
+      workspaceRoot: string,
+      onOpenWorkspaceRoot?: (path: string) => Promise<boolean>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            javaScriptTypeScriptValidationEnabled={true}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenWorkspaceRoot={onOpenWorkspaceRoot}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot={workspaceRoot}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+    const onOpenWorkspaceRoot = vi.fn(async (path: string) => {
+      await renderWith(path, onOpenWorkspaceRoot);
+      return true;
+    });
+
+    await renderWith("/workspace", onOpenWorkspaceRoot);
+
+    await expect(window.__codevoQa?.openWorkspaceRoot("   ")).resolves.toBe(
+      false,
+    );
+    await expect(
+      window.__codevoQa?.openWorkspaceRoot("/invalid\0workspace"),
+    ).resolves.toBe(false);
+    expect(onOpenWorkspaceRoot).not.toHaveBeenCalled();
+
+    await expect(
+      window.__codevoQa?.openWorkspaceRoot("/next-workspace/"),
+    ).resolves.toBe(true);
+
+    expect(onOpenWorkspaceRoot).toHaveBeenCalledWith("/next-workspace");
+    expect(window.__codevoQa?.getWorkspaceRoot()).toBe("/next-workspace");
+  });
+
+  it("returns false when a QA bridge workspace root open loses a root race", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const activeDocument: EditorDocument = {
+      content: "<?php\n// active\n",
+      language: "php",
+      name: "Active.php",
+      path: "/workspace/app/Active.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const openGate = deferred<void>();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const renderWith = async (
+      workspaceRoot: string,
+      onOpenWorkspaceRoot?: (path: string) => Promise<boolean>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            javaScriptTypeScriptValidationEnabled={true}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenWorkspaceRoot={onOpenWorkspaceRoot}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot={workspaceRoot}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+    const onOpenWorkspaceRoot = vi.fn(async () => {
+      await openGate.promise;
+      return true;
+    });
+
+    await renderWith("/workspace", onOpenWorkspaceRoot);
+
+    const opened = window.__codevoQa?.openWorkspaceRoot("/target-workspace");
+    await renderWith("/other-workspace", onOpenWorkspaceRoot);
+    openGate.resolve();
+
+    await expect(opened).resolves.toBe(false);
+    expect(onOpenWorkspaceRoot).toHaveBeenCalledWith("/target-workspace");
+    expect(window.__codevoQa?.getWorkspaceRoot()).toBe("/other-workspace");
   });
 
   it("rejects QA bridge openWorkspaceFile paths outside the active workspace root", async () => {

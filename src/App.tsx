@@ -1349,6 +1349,7 @@ function App() {
             onOpenClass={openClass}
             onOpenFile={openFile}
             onOpenWorkspaceFile={workbench.openWorkspaceFile}
+            onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
             onOpenFileStructure={workbench.openFileStructure}
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}

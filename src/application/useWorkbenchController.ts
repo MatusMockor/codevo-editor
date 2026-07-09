@@ -3061,6 +3061,15 @@ export function useWorkbenchController(
     await openWorkspacePath(selected);
   }, [openWorkspacePath]);
 
+  const openWorkspaceRoot = useCallback(
+    async (path: string): Promise<boolean> => {
+      await openWorkspacePath(path);
+
+      return workspaceRootKeysEqual(currentWorkspaceRootRef.current, path);
+    },
+    [openWorkspacePath],
+  );
+
   const activateWorkspaceTab = useCallback(
     async (path: string) => {
       if (workspaceRootKeysEqual(path, workspaceRoot)) {
@@ -7528,6 +7537,7 @@ export function useWorkbenchController(
     providePhpParameterInlayHints,
     openSettingsPanel,
     openWorkspace,
+    openWorkspaceRoot,
     paletteOpen,
     phpFileOutlineExpandedNodeIds,
     phpFileOutlinesByPath,
