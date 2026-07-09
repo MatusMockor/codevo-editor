@@ -457,6 +457,7 @@ function EditorSurfaceComponent({
     );
   }
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
+  const largeSmartDocumentPolicyRef = useRef(largeSmartDocumentPolicy);
   const javaScriptTypeScriptRuntimeStatusRef = useRef(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
   );
@@ -639,6 +640,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     runtimeStatusRef.current = languageServerRuntimeStatus;
   }, [languageServerRuntimeStatus]);
+
+  useEffect(() => {
+    largeSmartDocumentPolicyRef.current = largeSmartDocumentPolicy;
+  }, [largeSmartDocumentPolicy]);
 
   useEffect(() => {
     javaScriptTypeScriptRuntimeStatusRef.current =
@@ -919,6 +924,7 @@ function EditorSurfaceComponent({
       errorReporterRef,
       flushPendingRef,
       isLanguageServerDocumentSyncedRef,
+      largeSmartDocumentPolicyRef,
       latteCompletionsRef,
       latteDefinitionRef,
       neonCompletionsRef,
@@ -2530,7 +2536,12 @@ function EditorSurfaceComponent({
   }, [activeDocument, editorApi]);
 
   useEffect(() => {
-    if (!activeDocument || activeDocument.language !== "php" || !editorApi) {
+    if (
+      !activeDocument ||
+      activeDocument.language !== "php" ||
+      isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy) ||
+      !editorApi
+    ) {
       return;
     }
 
@@ -2577,6 +2588,7 @@ function EditorSurfaceComponent({
     activeDocument?.path,
     applyLocalPhpDiagnostics,
     editorApi,
+    largeSmartDocumentPolicy,
   ]);
 
   useEffect(() => {

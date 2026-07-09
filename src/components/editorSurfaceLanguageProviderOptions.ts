@@ -8,6 +8,7 @@ import type {
 } from "../domain/languageServerFeatures";
 import type { NavigationRequest } from "../application/navigationRequest";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type {
   PhpMethodCompletion,
@@ -70,6 +71,7 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
   isLanguageServerDocumentSyncedRef: MutableRefObject<
     ((path: string) => boolean) | undefined
   >;
+  largeSmartDocumentPolicyRef: MutableRefObject<LargeSmartDocumentPolicy>;
   latteCompletionsRef: CallbackRef<PositionProvider<LatteCompletion[]>>;
   latteDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
   neonCompletionsRef: CallbackRef<PositionProvider<NeonCompletion[]>>;
@@ -131,6 +133,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     errorReporterRef,
     flushPendingRef,
     isLanguageServerDocumentSyncedRef,
+    largeSmartDocumentPolicyRef,
     latteCompletionsRef,
     latteDefinitionRef,
     neonCompletionsRef,
@@ -160,6 +163,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     featuresGateway,
     flushPendingDocumentChange: (path) => flushPendingRef.current(path),
     getActiveDocument: () => activeDocumentRef.current,
+    getLargeSmartDocumentPolicy: () => largeSmartDocumentPolicyRef.current,
     getRuntimeStatus: () => runtimeStatusRef.current,
     getUserSnippets: () => userSnippetsRef.current,
     getWorkspaceRoot: () => workspaceRoot,

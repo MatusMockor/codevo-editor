@@ -5181,6 +5181,79 @@ class Foo
     );
   });
 
+  it("skips open-time local PHP syntax diagnostics for large PHP documents", async () => {
+    const content = `<?php\n${"a".repeat(17 * 1024)}`;
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "CarbonInterface.php",
+      path: "/workspace/vendor/CarbonInterface.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const validate = vi.fn(async () => []);
+    const onLocalPhpDiagnosticsChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          largeSmartDocumentPolicy={{ characterLimit: 16 * 1024, lineLimit: 500 }}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onLocalPhpDiagnosticsChange={onLocalPhpDiagnosticsChange}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.resolve();
+    });
+
+    expect(validate).not.toHaveBeenCalled();
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenCalledWith(
+      activeDocument.path,
+      [],
+    );
+    expect(
+      monaco.editor.setModelMarkers.mock.calls.filter(
+        ([, owner]) => owner === "php-syntax",
+      ),
+    ).toEqual([[model, "php-syntax", []]]);
+  });
+
   it("retries open-time local PHP diagnostics when the first parser run fails", async () => {
     vi.useFakeTimers();
     try {

@@ -1,4 +1,9 @@
 import type * as Monaco from "monaco-editor";
+import {
+  defaultLargeSmartDocumentPolicy,
+  isLargeSmartDocument,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -54,6 +59,19 @@ export function modelSource(model: MonacoModel, fallbackSource: string): string 
   } catch {
     return fallbackSource;
   }
+}
+
+export function isLargeActivePhpDocument(
+  context: PhpMonacoDocumentContextProvider,
+  model: MonacoModel,
+  policy: LargeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
+): boolean {
+  const documentContext = activePhpDocumentContext(context, model);
+
+  return Boolean(
+    documentContext &&
+      isLargeSmartDocument(documentContext.activeDocument, policy),
+  );
 }
 
 /**

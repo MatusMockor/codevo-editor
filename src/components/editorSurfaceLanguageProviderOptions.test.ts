@@ -8,6 +8,7 @@ import type {
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type {
   PhpMethodCompletion,
@@ -36,11 +37,13 @@ describe("editor surface language provider options", () => {
     const runtimeStatus = {
       rootPath: "/workspace",
     } as LanguageServerRuntimeStatus;
+    const largeSmartDocumentPolicy = { characterLimit: 1024, lineLimit: 100 };
     const userSnippets: UserSnippet[] = [];
     const refreshGateway = refreshGatewayStub();
     const workspaceEditGateway = workspaceEditGatewayStub();
     const refs = registrationRefs({
       activeDocument,
+      largeSmartDocumentPolicy,
       runtimeStatus,
       userSnippets,
     });
@@ -66,6 +69,7 @@ describe("editor surface language provider options", () => {
     expect(options.refreshGateway).toBe(refreshGateway);
     expect(options.workspaceEditGateway).toBe(workspaceEditGateway);
     expect(options.getActiveDocument()).toBe(activeDocument);
+    expect(options.getLargeSmartDocumentPolicy?.()).toBe(largeSmartDocumentPolicy);
     expect(options.getRuntimeStatus()).toBe(runtimeStatus);
     expect(options.getUserSnippets?.()).toBe(userSnippets);
     expect(options.getWorkspaceRoot?.()).toBe("/workspace");
@@ -294,10 +298,12 @@ function dependencies({
 
 function registrationRefs({
   activeDocument = editorDocument(),
+  largeSmartDocumentPolicy = { characterLimit: 1024, lineLimit: 100 },
   runtimeStatus = null,
   userSnippets = [],
 }: {
   activeDocument?: EditorDocument | null;
+  largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
   runtimeStatus?: LanguageServerRuntimeStatus | null;
   userSnippets?: readonly UserSnippet[];
 } = {}): EditorSurfaceLanguageProviderRegistrationRefs {
@@ -319,6 +325,7 @@ function registrationRefs({
     errorReporterRef: ref(vi.fn()),
     flushPendingRef: ref(vi.fn(async () => undefined)),
     isLanguageServerDocumentSyncedRef: ref(undefined),
+    largeSmartDocumentPolicyRef: ref(largeSmartDocumentPolicy),
     latteCompletionsRef: ref(vi.fn(async () => latteCompletions)),
     latteDefinitionRef: ref(vi.fn(async () => true)),
     neonCompletionsRef: ref(vi.fn(async () => neonCompletions)),

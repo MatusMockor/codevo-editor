@@ -37,6 +37,10 @@ import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import {
+  isLargeSmartDocument,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
+import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
 } from "../domain/phpPostfixCompletions";
@@ -74,6 +78,7 @@ import {
 } from "./phpFrameworkMonacoProviders";
 import {
   activePhpDocumentContext,
+  isLargeActivePhpDocument,
   isPhpDocumentContextActive,
   isStoredLanguageServerPayloadActive,
   modelPath,
@@ -290,6 +295,7 @@ export interface LanguageServerMonacoProviderContext
    * do not wire the toggle keep the prior behaviour.
    */
   isPhpInlayHintsEnabled?(): boolean;
+  getLargeSmartDocumentPolicy?(): LargeSmartDocumentPolicy;
   limitNavigationResultsToOpenModels?: boolean;
   providePhpCodeActions?(
     source: string,
@@ -1017,6 +1023,10 @@ async function provideDefinition(
   position: MonacoPosition,
   token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> {
+  if (shouldSkipLargePhpSmartProviders(context, model)) {
+    return null;
+  }
+
   if (await providePhpFrameworkDefinitionBeforeLsp(context, model, position)) {
     return null;
   }
@@ -1704,6 +1714,10 @@ async function providePhpParameterNameInlayHints(
     return [];
   }
 
+  if (isLargePhpDocumentContext(context, documentContext)) {
+    return [];
+  }
+
   try {
     const hints = await context.providePhpParameterInlayHints(
       modelSource(model, documentContext.activeDocument.content),
@@ -2010,6 +2024,10 @@ async function providePhpSourceCodeActions(
   }
 
   if (!documentContext) {
+    return [];
+  }
+
+  if (isLargePhpDocumentContext(context, documentContext)) {
     return [];
   }
 
@@ -3579,6 +3597,10 @@ async function provideCompletionItems(
     return { suggestions: [] };
   }
 
+  if (isLargePhpDocumentContext(context, documentContext)) {
+    return { suggestions: [] };
+  }
+
   const word = model.getWordUntilPosition(position);
   const range = completionRange(model, position, word);
   const source = modelSource(model, documentContext.activeDocument.content);
@@ -4070,6 +4092,10 @@ async function provideSignatureHelp(
   const documentContext = activePhpDocumentContext(context, model);
 
   if (!documentContext || !context.providePhpMethodSignature) {
+    return null;
+  }
+
+  if (isLargePhpDocumentContext(context, documentContext)) {
     return null;
   }
 
@@ -4899,6 +4925,13 @@ function featureDocumentRequestContext(
     return null;
   }
 
+  if (
+    largePhpSmartProviderGuardedFeature(feature) &&
+    shouldSkipLargePhpSmartProviders(context, model)
+  ) {
+    return null;
+  }
+
   const status = runningRuntimeStatusForRoot(context, rootPath);
 
   if (!status || !canUseLanguageServerFeature(status.capabilities, feature)) {
@@ -4906,6 +4939,47 @@ function featureDocumentRequestContext(
   }
 
   return { path, rootPath, sessionId: status.sessionId };
+}
+
+function shouldSkipLargePhpSmartProviders(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): boolean {
+  return isLargeActivePhpDocument(
+    context,
+    model,
+    context.getLargeSmartDocumentPolicy?.(),
+  );
+}
+
+function isLargePhpDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  documentContext: NonNullable<ReturnType<typeof activePhpDocumentContext>>,
+): boolean {
+  return isLargeSmartDocument(
+    documentContext.activeDocument,
+    context.getLargeSmartDocumentPolicy?.(),
+  );
+}
+
+function largePhpSmartProviderGuardedFeature(feature: string): boolean {
+  switch (feature) {
+    case "codeLens":
+    case "completion":
+    case "declaration":
+    case "definition":
+    case "documentLink":
+    case "foldingRange":
+    case "hover":
+    case "implementation":
+    case "inlayHint":
+    case "references":
+    case "semanticTokens":
+    case "typeDefinition":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function workspaceSymbolRequestContext(

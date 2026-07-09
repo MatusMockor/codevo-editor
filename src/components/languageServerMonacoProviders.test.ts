@@ -251,6 +251,106 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.hover).not.toHaveBeenCalled();
   });
 
+  it("skips expensive PHP smart providers for large active PHP documents without syncing", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const providePhpMethodSignature = vi.fn(async () => null);
+    const providePhpParameterInlayHints = vi.fn(async () => []);
+    const largeDocument = {
+      ...document(),
+      content: `<?php\n${"a".repeat(17 * 1024)}`,
+      path: "/project/vendor/CarbonInterface.php",
+    };
+    const context = providerContext({
+      activeDocument: largeDocument,
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      getLargeSmartDocumentPolicy: () => ({
+        characterLimit: 16 * 1024,
+        lineLimit: 500,
+      }),
+      providePhpMethodCompletions,
+      providePhpMethodSignature,
+      providePhpParameterInlayHints,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+    const largeModel = model({ path: largeDocument.path });
+
+    await expect(
+      registered.hoverProvider.provideHover(largeModel, position()),
+    ).resolves.toBeNull();
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        largeModel,
+        position(),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+    await expect(
+      registered.definitionProvider.provideDefinition(largeModel, position()),
+    ).resolves.toBeNull();
+    await expect(
+      registered.referenceProvider.provideReferences(largeModel, position(), {}),
+    ).resolves.toBeNull();
+    await expect(
+      registered.implementationProvider.provideImplementation(
+        largeModel,
+        position(),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      registered.typeDefinitionProvider.provideTypeDefinition(
+        largeModel,
+        position(),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      registered.documentLinkProvider.provideLinks(largeModel),
+    ).resolves.toEqual({ dispose: expect.any(Function), links: [] });
+    await expect(
+      registered.codeLensProvider.provideCodeLenses(largeModel),
+    ).resolves.toEqual({ dispose: expect.any(Function), lenses: [] });
+    await expect(
+      registered.inlayHintsProvider.provideInlayHints(
+        largeModel,
+        new registered.monaco.Range(1, 1, 1, 5),
+      ),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    await expect(
+      registered.foldingRangeProvider.provideFoldingRanges(largeModel),
+    ).resolves.toBeNull();
+    await expect(
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        largeModel,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        largeModel,
+        new registered.monaco.Range(1, 1, 1, 5),
+      ),
+    ).resolves.toBeNull();
+
+    expect(largeModel.getValue).not.toHaveBeenCalled();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(providePhpMethodCompletions).not.toHaveBeenCalled();
+    expect(providePhpMethodSignature).not.toHaveBeenCalled();
+    expect(providePhpParameterInlayHints).not.toHaveBeenCalled();
+    expect(gateway.hover).not.toHaveBeenCalled();
+    expect(gateway.completion).not.toHaveBeenCalled();
+    expect(gateway.definition).not.toHaveBeenCalled();
+    expect(gateway.references).not.toHaveBeenCalled();
+    expect(gateway.implementation).not.toHaveBeenCalled();
+    expect(gateway.typeDefinition).not.toHaveBeenCalled();
+    expect(gateway.documentLinks).not.toHaveBeenCalled();
+    expect(gateway.codeLenses).not.toHaveBeenCalled();
+    expect(gateway.inlayHints).not.toHaveBeenCalled();
+    expect(gateway.foldingRanges).not.toHaveBeenCalled();
+    expect(gateway.semanticTokens).not.toHaveBeenCalled();
+    expect(gateway.rangeSemanticTokens).not.toHaveBeenCalled();
+  });
+
   it("does not request hover when the PHP runtime status has no explicit workspace root", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -12034,6 +12134,7 @@ function providerContext(
     >;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
+    getLargeSmartDocumentPolicy(): { characterLimit: number; lineLimit: number };
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     getUserSnippets(): UserSnippet[];
@@ -12115,6 +12216,7 @@ function providerContext(
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
+    getLargeSmartDocumentPolicy: overrides.getLargeSmartDocumentPolicy,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
