@@ -41,18 +41,45 @@ If the app is available through a Chrome DevTools Protocol endpoint, run:
 node ./scripts/qa-project-scenarios.mjs \
   --cdp-url http://127.0.0.1:9222 \
   --target-url localhost:1420 \
-  --scenario invoices-php-request-completion
+  --all
+```
+
+`--all` runs every built-in scenario in order. To run a smaller deterministic
+set, repeat `--scenario <id>`:
+
+```sh
+node ./scripts/qa-project-scenarios.mjs \
+  --cdp-url http://127.0.0.1:9222 \
+  --target-url localhost:1420 \
+  --scenario invoices-php-request-completion \
+  --scenario invoices-blade-route-definition
 ```
 
 For Tauri WebView DevTools, print an in-page snippet and run it in the console:
 
 ```sh
 node ./scripts/qa-project-scenarios.mjs \
-  --scenario ebox-crm-latte-link-completion \
+  --all \
   --print-snippet
 ```
+
+`--print-snippet` also accepts repeated `--scenario` flags for a subset. The
+CLI intentionally requires either `--all` or at least one `--scenario` so real
+project smoke checks are explicit.
 
 Each scenario opens the expected file when `openWorkspaceFile(path)` is
 available, guards the workspace/project context and active file, sets the cursor
 from an anchor, then calls either `getCompletionItems()` or
 `triggerDefinition()` through the bridge.
+
+The CDP runner prints one block per scenario with:
+
+- `PASS` or `FAIL`
+- scenario action
+- source active file
+- expected labels or definition target
+- actual labels or active file
+- error detail when a scenario fails
+
+The final summary reports passed and failed counts. Any failed scenario sets a
+non-zero process exit code.

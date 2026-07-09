@@ -186,8 +186,17 @@ async function openWorkspaceFile(
     return false;
   }
 
+  let requestStale = false;
   const request = {
-    canOpen: () => isOpenWorkspaceSnapshotCurrent(dependencies, snapshot),
+    canOpen: () => {
+      const current = isOpenWorkspaceSnapshotCurrent(dependencies, snapshot);
+
+      if (!current) {
+        requestStale = true;
+      }
+
+      return current;
+    },
   };
 
   if (!request.canOpen()) {
@@ -196,7 +205,11 @@ async function openWorkspaceFile(
 
   const opened = await dependencies.openWorkspaceFile(requestedPath, request);
 
-  if (!opened || !workspaceRootKeysStillEqual(dependencies, root)) {
+  if (
+    !opened ||
+    requestStale ||
+    !workspaceRootKeysStillEqual(dependencies, root)
+  ) {
     return false;
   }
 
@@ -288,8 +301,17 @@ async function triggerDefinition(
 
   const source = model.getValue();
   const offset = offsetAtPosition(model, source, position);
+  let requestStale = false;
   const request = {
-    canNavigate: () => isSnapshotCurrent(dependencies, snapshot),
+    canNavigate: () => {
+      const current = isSnapshotCurrent(dependencies, snapshot);
+
+      if (!current) {
+        requestStale = true;
+      }
+
+      return current;
+    },
   };
 
   if (document.language === "php") {
@@ -300,7 +322,7 @@ async function triggerDefinition(
         request,
       );
 
-    if (!isSnapshotCurrent(dependencies, snapshot)) {
+    if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
     }
 
@@ -314,7 +336,7 @@ async function triggerDefinition(
       request,
     );
 
-    if (!isSnapshotCurrent(dependencies, snapshot)) {
+    if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
     }
 
@@ -330,7 +352,7 @@ async function triggerDefinition(
       request,
     );
 
-    if (!isSnapshotCurrent(dependencies, snapshot)) {
+    if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
     }
 
@@ -346,7 +368,7 @@ async function triggerDefinition(
       request,
     );
 
-    if (!isSnapshotCurrent(dependencies, snapshot)) {
+    if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
     }
 
@@ -362,7 +384,7 @@ async function triggerDefinition(
       request,
     );
 
-    if (!isSnapshotCurrent(dependencies, snapshot)) {
+    if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
     }
 
@@ -371,7 +393,7 @@ async function triggerDefinition(
     }
   }
 
-  if (!isSnapshotCurrent(dependencies, snapshot)) {
+  if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
     return false;
   }
 

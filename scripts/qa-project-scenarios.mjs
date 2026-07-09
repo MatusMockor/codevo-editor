@@ -46,10 +46,12 @@ const scenarios = [
 
 const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
 
-main().catch((error) => {
-  console.error(`qa-project-scenarios failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (isMainModule()) {
+  main().catch((error) => {
+    console.error(`qa-project-scenarios failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
@@ -64,15 +66,15 @@ async function main() {
     return;
   }
 
-  if (options.scenarioIds.length === 0) {
+  if (!options.all && options.scenarioIds.length === 0) {
     printHelp();
-    throw new Error("Pass at least one --scenario.");
+    throw new Error("Pass --all or at least one --scenario.");
   }
 
-  const selectedScenarios = selectScenarios(options.scenarioIds);
+  const selectedScenarios = selectScenarios(options);
 
   if (options.printSnippet) {
-    console.log(snippetFor(selectedScenarios));
+    console.log(snippetFor(selectedScenarios, options.timeoutMs));
     return;
   }
 
@@ -91,6 +93,7 @@ async function main() {
 
 function parseArgs(args) {
   const options = {
+    all: false,
     cdpUrl: "",
     help: false,
     list: false,
@@ -105,6 +108,11 @@ function parseArgs(args) {
 
     if (arg === "--help" || arg === "-h") {
       options.help = true;
+      continue;
+    }
+
+    if (arg === "--all") {
+      options.all = true;
       continue;
     }
 
@@ -145,6 +153,10 @@ function parseArgs(args) {
     throw new Error(`Unknown option "${arg}".`);
   }
 
+  if (options.all && options.scenarioIds.length > 0) {
+    throw new Error("Use --all or --scenario, not both.");
+  }
+
   return options;
 }
 
@@ -168,8 +180,12 @@ function positiveInteger(value, flag) {
   return parsed;
 }
 
-function selectScenarios(ids) {
-  for (const id of ids) {
+function selectScenarios(options) {
+  if (options.all) {
+    return scenarios;
+  }
+
+  for (const id of options.scenarioIds) {
     if (scenarioIds.has(id)) {
       continue;
     }
@@ -177,7 +193,7 @@ function selectScenarios(ids) {
     throw new Error(`Unknown scenario "${id}". Run --list to see available scenarios.`);
   }
 
-  return scenarios.filter((scenario) => ids.includes(scenario.id));
+  return scenarios.filter((scenario) => options.scenarioIds.includes(scenario.id));
 }
 
 function printHelp() {
@@ -185,6 +201,7 @@ function printHelp() {
 
 Options:
   --list                  List built-in real-project scenarios.
+  --all                   Run all built-in scenarios.
   --scenario <id>         Run only one scenario. Can be repeated.
   --cdp-url <url>         Chrome DevTools HTTP endpoint, for example http://127.0.0.1:9222.
   --target-url <text>     Select the CDP page whose URL contains this text.
@@ -208,10 +225,10 @@ function printScenarioList() {
   }
 }
 
-function snippetFor(selectedScenarios) {
+function snippetFor(selectedScenarios, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return `await (${inPageRunnerSource()})(${JSON.stringify({
     scenarios: selectedScenarios,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    timeoutMs,
   })});`;
 }
 
@@ -310,17 +327,87 @@ function printRunResult(result) {
     throw new Error("Scenario runner did not return an array.");
   }
 
+  let passed = 0;
+
   for (const item of result) {
     console.log(`${item.ok ? "PASS" : "FAIL"} ${item.id}`);
-    console.log(`  ${item.message}`);
+    console.log(`  action:   ${displayValue(item.action)}`);
+    console.log(`  file:     ${displayValue(item.activeFile)}`);
+    console.log(`  expected: ${formatExpected(item)}`);
+    console.log(`  actual:   ${formatActual(item)}`);
+
+    if (item.message) {
+      console.log(`  detail:   ${item.message}`);
+    }
+
+    if (item.errorDetail) {
+      console.log(`  error:    ${item.errorDetail}`);
+    }
+
+    if (item.ok) {
+      passed += 1;
+    }
   }
 
-  if (result.every((item) => item.ok)) {
+  const failed = result.length - passed;
+  console.log(`Summary: ${passed}/${result.length} passed, ${failed} failed.`);
+
+  if (failed === 0) {
     return;
   }
 
   process.exitCode = 1;
 }
+
+function formatExpected(item) {
+  if (item.action === "completion") {
+    const labels = item.expectedLabels ?? [];
+    const minItems = item.minItems ? `, minItems ${item.minItems}` : "";
+    return `labels [${labels.join(", ")}]${minItems}`;
+  }
+
+  if (item.action === "definition") {
+    return displayValue(item.expectedTarget);
+  }
+
+  return "n/a";
+}
+
+function formatActual(item) {
+  if (item.action === "completion") {
+    const labels = item.actualLabels ?? [];
+    const count = typeof item.itemCount === "number" ? `${item.itemCount} item(s), ` : "";
+    return `${count}labels [${labels.join(", ")}]`;
+  }
+
+  if (item.action === "definition") {
+    return displayValue(item.actualActiveFile ?? item.targetFile);
+  }
+
+  return displayValue(item.actualActiveFile);
+}
+
+function displayValue(value) {
+  if (value === undefined || value === null || value === "") {
+    return "n/a";
+  }
+
+  return String(value);
+}
+
+function isMainModule() {
+  return import.meta.url === new URL(process.argv[1], "file:").href;
+}
+
+export {
+  formatActual,
+  formatExpected,
+  parseArgs,
+  printRunResult,
+  scenarios,
+  selectScenarios,
+  snippetFor,
+};
 
 class CdpClient {
   constructor(socket) {
@@ -408,6 +495,7 @@ function inPageRunnerSource() {
   console.table(results.map((result) => ({
     id: result.id,
     ok: result.ok,
+    action: result.action,
     message: result.message,
   })));
 
@@ -417,9 +505,19 @@ function inPageRunnerSource() {
     try {
       return await executeScenario(qa, scenario, waitMs, intervalMs);
     } catch (error) {
+      const actualActiveFile = safeActiveFile(qa);
+
       return {
+        action: scenario.action,
+        activeFile: scenario.activeFile,
+        actualActiveFile,
+        errorDetail: error && error.stack ? error.stack : "",
+        expectedLabels: scenario.expectLabels ?? [],
+        expectedTarget: expectedTargetFor(scenario),
         id: scenario.id,
+        itemCount: null,
         message: error instanceof Error ? error.message : String(error),
+        minItems: scenario.minItems ?? null,
         ok: false,
       };
     }
@@ -453,7 +551,7 @@ function inPageRunnerSource() {
     }
 
     if (scenario.action === "completion") {
-      return await completionScenario(qa, scenario);
+      return await completionScenario(qa, scenario, activeFile);
     }
 
     if (scenario.action === "definition") {
@@ -533,25 +631,43 @@ function inPageRunnerSource() {
     }
   }
 
-  async function completionScenario(qa, scenario) {
+  async function completionScenario(qa, scenario, activeFile) {
     const items = await qa.getCompletionItems();
     const labels = items.map((item) => item.label);
     const missing = (scenario.expectLabels ?? []).filter((label) => !labels.includes(label));
 
     if (missing.length > 0) {
-      throw new Error("Missing completion labels: " + missing.join(", ") + ". Saw: " + labels.slice(0, 20).join(", "));
+      return completionResult(qa, scenario, activeFile, items, labels, false, "Missing completion labels: " + missing.join(", ") + ".");
     }
 
     if (scenario.minItems && items.length < scenario.minItems) {
-      throw new Error("Expected at least " + scenario.minItems + " completion item(s), got " + items.length + ".");
+      return completionResult(
+        qa,
+        scenario,
+        activeFile,
+        items,
+        labels,
+        false,
+        "Expected at least " + scenario.minItems + " completion item(s), got " + items.length + ".",
+      );
     }
 
+    return completionResult(qa, scenario, activeFile, items, labels, true, "completion returned " + items.length + " item(s)");
+  }
+
+  function completionResult(qa, scenario, activeFile, items, labels, ok, message) {
     return {
+      action: scenario.action,
+      activeFile,
+      actualActiveFile: qa.getActiveFile(),
+      actualLabels: labels.slice(0, 20),
+      expectedLabels: scenario.expectLabels ?? [],
+      expectedTarget: expectedTargetFor(scenario),
       id: scenario.id,
       itemCount: items.length,
-      labels: labels.slice(0, 20),
-      message: "completion returned " + items.length + " item(s)",
-      ok: true,
+      message,
+      minItems: scenario.minItems ?? null,
+      ok,
     };
   }
 
@@ -563,11 +679,37 @@ function inPageRunnerSource() {
     const nextFile = await waitForDefinitionTarget(qa, scenario, previousFile, waitMs, intervalMs);
 
     return {
+      action: scenario.action,
+      activeFile: previousFile,
+      actualActiveFile: nextFile,
+      actualLabels: [],
+      expectedLabels: scenario.expectLabels ?? [],
+      expectedTarget: expectedTargetFor(scenario),
       id: scenario.id,
       message: "definition navigated to " + nextFile,
       ok: true,
       targetFile: nextFile,
     };
+  }
+
+  function expectedTargetFor(scenario) {
+    if (scenario.expectActiveFile) {
+      return scenario.expectActiveFile;
+    }
+
+    if (scenario.expectActiveFileContains) {
+      return "active file containing " + scenario.expectActiveFileContains;
+    }
+
+    return scenario.action === "definition" ? "any file different from source" : "";
+  }
+
+  function safeActiveFile(qa) {
+    try {
+      return qa.getActiveFile ? qa.getActiveFile() : "";
+    } catch {
+      return "";
+    }
   }
 
   async function waitForBridge(waitMs, intervalMs) {
