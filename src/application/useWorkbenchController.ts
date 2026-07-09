@@ -491,7 +491,6 @@ export function useWorkbenchController(
   const activePhpFrameworkProviders = phpFrameworkIntelligence.providers;
   const activePhpFrameworkProviderSignature =
     phpFrameworkIntelligence.providerSignature;
-  const isLaravelFrameworkActive = phpFrameworkIntelligence.isLaravel;
   const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
   // Exclusive, per-workspace framework profile - the single discriminator the
   // status-bar chip and future gating key off.
@@ -846,7 +845,6 @@ export function useWorkbenchController(
   } = usePhpFrameworkSourceRegistries({
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
-    isLaravelFrameworkActive,
     onSourcesLoaded: onPhpLaravelSourcesLoaded,
     workspaceFiles,
   });

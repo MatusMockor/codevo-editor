@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -19,6 +20,13 @@ const MIGRATION_PATH = `${ROOT}/database/migrations/2026_07_05_000000_create_pos
 const PROVIDER_PATH = `${ROOT}/app/Providers/AppServiceProvider.php`;
 const MIGRATION_SOURCE = "<?php Schema::create('posts', fn () => null);";
 const PROVIDER_SOURCE = "<?php Builder::macro('published', fn () => $this);";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -66,7 +74,7 @@ function makeDeps(
 ): UsePhpFrameworkSourceRegistriesDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     onSourcesLoaded: vi.fn(),
     workspaceFiles: makeWorkspaceFiles(),
     ...overrides,
@@ -101,6 +109,11 @@ function renderHook(deps: UsePhpFrameworkSourceRegistriesDependencies) {
 
   return {
     api,
+    rerender: (nextDeps: UsePhpFrameworkSourceRegistriesDependencies) => {
+      act(() => {
+        root.render(<Harness dependencies={nextDeps} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -110,7 +123,7 @@ function renderHook(deps: UsePhpFrameworkSourceRegistriesDependencies) {
 }
 
 describe("usePhpFrameworkSourceRegistries", () => {
-  it("loads all framework source collections through the neutral API", async () => {
+  it("loads all framework source collections through the runtime-selected provider", async () => {
     const deps = makeDeps();
     const harness = renderHook(deps);
 
@@ -147,7 +160,32 @@ describe("usePhpFrameworkSourceRegistries", () => {
     harness.unmount();
   });
 
-  it("lets the runtime context supersede the legacy Laravel activity flag", async () => {
+  it("invalidates inactive provider caches so framework switches cannot restore stale sources", async () => {
+    const workspaceFiles = makeWorkspaceFiles();
+    const laravelDeps = makeDeps({ workspaceFiles });
+    const harness = renderHook(laravelDeps);
+
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+    expect(workspaceFiles.readDirectory).toHaveBeenCalledTimes(2);
+
+    harness.rerender(
+      makeDeps({
+        frameworkRuntime: GENERIC_RUNTIME,
+        workspaceFiles,
+      }),
+    );
+    harness.api().invalidatePhpFrameworkSourcePath(ROOT, MIGRATION_PATH);
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+    expect(workspaceFiles.readDirectory).toHaveBeenCalledTimes(2);
+
+    harness.rerender(laravelDeps);
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+    expect(workspaceFiles.readDirectory).toHaveBeenCalledTimes(3);
+
+    harness.unmount();
+  });
+
+  it("keeps generic runtime inert without a Laravel source signature", async () => {
     const workspaceFiles = makeWorkspaceFiles();
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
@@ -158,7 +196,7 @@ describe("usePhpFrameworkSourceRegistries", () => {
     await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
 
     expect(harness.api().currentPhpFrameworkSourceContext()).toEqual({
-      signature: "m:|p:",
+      signature: "",
       workspaceSources: [],
     });
     expect(workspaceFiles.readDirectory).not.toHaveBeenCalled();

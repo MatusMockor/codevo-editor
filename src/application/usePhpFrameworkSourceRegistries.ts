@@ -11,10 +11,12 @@ export interface PhpFrameworkSourceRegistryContext {
   workspaceSources: readonly string[];
 }
 
-export type UsePhpFrameworkSourceRegistriesDependencies =
-  UseLaravelSourceRegistriesDependencies & {
-    frameworkRuntime?: PhpFrameworkRuntimeContext;
-  };
+export type UsePhpFrameworkSourceRegistriesDependencies = Omit<
+  UseLaravelSourceRegistriesDependencies,
+  "isLaravelFrameworkActive"
+> & {
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+};
 
 export interface PhpFrameworkSourceRegistryProvider {
   currentPhpFrameworkSourceContextForRoot(
@@ -32,29 +34,41 @@ export interface PhpFrameworkSourceRegistries {
   resetPhpFrameworkSourceRegistries(): void;
 }
 
+function usePhpLaravelFrameworkSourceRegistryAdapter(
+  dependencies: UsePhpFrameworkSourceRegistriesDependencies,
+): PhpFrameworkSourceRegistryProvider {
+  const frameworkRuntime =
+    phpFrameworkRuntimeContextFromDependencies(dependencies);
+  const laravelSources = useLaravelSourceRegistries({
+    ...dependencies,
+    isLaravelFrameworkActive: frameworkRuntime.hasProvider("laravel"),
+  });
+
+  return phpLaravelFrameworkSourceRegistryProvider(laravelSources);
+}
+
 export function usePhpFrameworkSourceRegistries(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): PhpFrameworkSourceRegistries {
   const { currentWorkspaceRootRef } = dependencies;
   const frameworkRuntime =
     phpFrameworkRuntimeContextFromDependencies(dependencies);
-  const laravelSources = useLaravelSourceRegistries({
-    ...dependencies,
-    isLaravelFrameworkActive: frameworkRuntime.isLaravel,
-  });
-  const sourceRegistryProviders = [
-    phpLaravelFrameworkSourceRegistryProvider(laravelSources),
-  ];
+  const laravelSourceRegistryProvider =
+    usePhpLaravelFrameworkSourceRegistryAdapter(dependencies);
+  const sourceRegistryProviders = [laravelSourceRegistryProvider];
+  const activeSourceRegistryProviders = frameworkRuntime.hasProvider("laravel")
+    ? [laravelSourceRegistryProvider]
+    : [];
 
   return {
     currentPhpFrameworkSourceContext: () =>
       currentPhpFrameworkSourceContextForRoot(
         currentWorkspaceRootRef.current,
-        sourceRegistryProviders,
+        activeSourceRegistryProviders,
       ),
     ensurePhpFrameworkSourceCollectionsLoaded: async (rootPath: string) => {
       await Promise.all(
-        sourceRegistryProviders.map((sourceRegistryProvider) =>
+        activeSourceRegistryProviders.map((sourceRegistryProvider) =>
           sourceRegistryProvider.ensurePhpFrameworkSourceCollectionsLoaded(
             rootPath,
           ),
