@@ -66,6 +66,7 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(snippet).toContain(scenarios[0].id);
     expect(snippet).toContain(scenarios[1].id);
     expect(snippet).not.toContain(scenarios[2].id);
+    expect(snippet).toContain('"occurrence":1');
     expect(snippet).toContain('"timeoutMs":1234');
   });
 
@@ -178,6 +179,28 @@ describe("qa-project-scenarios CLI helpers", () => {
 
     expect(result.ok).toBe(true);
     expect(result.warnings.join("\n")).toContain("cursor anchor matches 2 time(s)");
+  });
+
+  it("passes preflight without warning when an ambiguous cursor occurrence is explicit", () => {
+    const root = makeTempProject();
+    const activeFile = join(root, "app.php");
+    writeFileSync(activeFile, "<?php\n$request->input();\n$request->query();\n");
+
+    const result = validateScenarioPreflight({
+      action: "completion",
+      activeFile,
+      cursor: { after: "$request->", occurrence: 2 },
+      id: "explicit-ambiguous-anchor",
+      projectRoot: root,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.checks.find((check) => check.label === "cursor")).toMatchObject({
+      count: 2,
+      occurrence: 2,
+      status: "PASS",
+    });
   });
 
   it("sets a failing exit code when any preflight scenario fails", () => {

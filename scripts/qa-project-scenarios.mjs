@@ -25,7 +25,7 @@ const scenarios = [
     action: "completion",
     activeFile:
       "/Users/matusmockor/Developer/invoices/app/Http/Controllers/Auth/AuthenticatedSessionController.php",
-    cursor: { after: "$request->" },
+    cursor: { after: "$request->", occurrence: 1 },
     expectLabels: ["authenticate", "session"],
     id: "invoices-php-request-completion",
     minItems: 1,
@@ -114,7 +114,7 @@ const scenarios = [
     action: "completion",
     activeFile:
       "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/paymentsModule/templates/PaymentGatewaysAdmin/default.latte",
-    cursor: { after: "{link PaymentGatewaysAdmin:" },
+    cursor: { after: "{link PaymentGatewaysAdmin:", occurrence: 1 },
     expectLabels: ["show", "edit", "editPermission", "default"],
     id: "ebox-crm-latte-link-payment-gateways-completion",
     minItems: 1,
@@ -441,6 +441,7 @@ function checkPath(path, label, expectedType, fs) {
 
 function checkCursorAnchor(scenario, source) {
   const anchor = scenario.cursor?.after ?? scenario.cursor?.before;
+  const occurrence = cursorOccurrence(scenario.cursor);
 
   if (!anchor) {
     return failedCheck("cursor", "cursor must define a non-empty after or before anchor.");
@@ -454,17 +455,31 @@ function checkCursorAnchor(scenario, source) {
   }
 
   const count = countOccurrences(source, anchor);
-  const detail = `cursor anchor matches ${count} time(s): ${anchor}`;
+  const detail = `cursor anchor matches ${count} time(s), using occurrence ${occurrence}: ${anchor}`;
 
   if (count === 0) {
-    return failedCheck("cursor", detail, { count });
+    return failedCheck("cursor", detail, { count, occurrence });
   }
 
-  if (count > 1) {
-    return warnedCheck("cursor", detail, { count });
+  if (occurrence > count) {
+    return failedCheck("cursor", detail, { count, occurrence });
   }
 
-  return passedCheck("cursor", detail, { count });
+  if (count > 1 && !scenario.cursor?.occurrence) {
+    return warnedCheck("cursor", detail, { count, occurrence });
+  }
+
+  return passedCheck("cursor", detail, { count, occurrence });
+}
+
+function cursorOccurrence(cursor) {
+  const occurrence = cursor?.occurrence ?? 1;
+
+  if (!Number.isInteger(occurrence) || occurrence < 1) {
+    return 1;
+  }
+
+  return occurrence;
 }
 
 function countOccurrences(source, needle) {
@@ -1059,14 +1074,17 @@ function inPageRunnerSource() {
 
   function positionFromCursor(source, cursor) {
     const anchor = cursor.after ?? cursor.before;
-    const index = source.indexOf(anchor);
+    const occurrence = cursorOccurrence(cursor);
+    const index = indexOfOccurrence(source, anchor, occurrence);
 
     if (!anchor) {
       throw new Error("Scenario cursor must define after or before.");
     }
 
     if (index < 0) {
-      throw new Error("Cursor anchor not found: " + anchor);
+      throw new Error(
+        "Cursor anchor occurrence " + occurrence + " not found: " + anchor,
+      );
     }
 
     const offset = cursor.after ? index + anchor.length : index;
@@ -1077,6 +1095,33 @@ function inPageRunnerSource() {
     }
 
     return offsetToPosition(source, adjustedOffset);
+  }
+
+  function cursorOccurrence(cursor) {
+    const occurrence = cursor.occurrence ?? 1;
+
+    if (!Number.isInteger(occurrence) || occurrence < 1) {
+      return 1;
+    }
+
+    return occurrence;
+  }
+
+  function indexOfOccurrence(source, needle, occurrence) {
+    let index = -1;
+    let fromIndex = 0;
+
+    for (let count = 0; count < occurrence; count += 1) {
+      index = source.indexOf(needle, fromIndex);
+
+      if (index < 0) {
+        return -1;
+      }
+
+      fromIndex = index + needle.length;
+    }
+
+    return index;
   }
 
   function offsetToPosition(source, offset) {
