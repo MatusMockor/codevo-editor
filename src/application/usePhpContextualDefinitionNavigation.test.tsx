@@ -44,26 +44,22 @@ function makeDeps(
       savedContent: "",
     },
     activeEditorPositionRef: { current: { column: 18, lineNumber: 1 } },
+    goToPhpFrameworkLiteralDefinition: vi.fn(async () => false),
     goToPhpClassConstantDefinition: falseHandler,
     goToPhpClassIdentifierDefinition: vi.fn(async () => false),
     goToPhpLaravelAuthGuardDefinition: falseHandler,
     goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
     goToPhpLaravelCacheStoreDefinition: falseHandler,
-    goToPhpLaravelConfigDefinition: falseHandler,
     goToPhpLaravelDatabaseConnectionDefinition: falseHandler,
-    goToPhpLaravelEnvDefinition: falseHandler,
     goToPhpLaravelGateAbilityDefinition: falseHandler,
     goToPhpLaravelLogChannelDefinition: falseHandler,
     goToPhpLaravelMailMailerDefinition: falseHandler,
     goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
-    goToPhpLaravelNamedRouteDefinition: falseHandler,
     goToPhpLaravelPasswordBrokerDefinition: falseHandler,
     goToPhpLaravelQueueConnectionDefinition: falseHandler,
     goToPhpLaravelRedisConnectionDefinition: falseHandler,
     goToPhpLaravelRelationStringDefinition: falseHandler,
     goToPhpLaravelStorageDiskDefinition: falseHandler,
-    goToPhpLaravelTranslationDefinition: falseHandler,
-    goToPhpLaravelViewDefinition: falseHandler,
     goToPhpMemberPropertyDefinition: falseHandler,
     goToPhpMethodCallDefinition: falseHandler,
     goToPhpStaticMethodCallDefinition: falseHandler,
@@ -193,6 +189,99 @@ Route::get('/reports', [ReportController::class, 'store']);`;
     );
 
     harness.unmount();
+  });
+
+  it("delegates provider-backed Laravel literal contexts to the framework literal strategy", async () => {
+    const cases = [
+      {
+        expected: { kind: "laravelNamedRouteString", routeName: "dashboard" },
+        needle: "dash",
+        source: "<?php route('dashboard');",
+      },
+      {
+        expected: { kind: "laravelNamedRouteString", routeName: "dashboard" },
+        needle: "dash",
+        source: "<?php to_route('dashboard');",
+      },
+      {
+        expected: { configKey: "app.name", kind: "laravelConfigString" },
+        needle: "app",
+        source: "<?php config('app.name');",
+      },
+      {
+        expected: { configKey: "app.name", kind: "laravelConfigString" },
+        needle: "app",
+        source: "<?php Config::string('app.name');",
+      },
+      {
+        expected: { configKey: "app.name", kind: "laravelConfigString" },
+        needle: "app",
+        source: "<?php config()->get('app.name');",
+      },
+      {
+        expected: { envName: "APP_URL", kind: "laravelEnvString" },
+        needle: "APP",
+        source: "<?php env('APP_URL');",
+      },
+      {
+        expected: {
+          kind: "laravelTranslationString",
+          translationKey: "messages.welcome",
+        },
+        needle: "messages",
+        source: "<?php __('messages.welcome');",
+      },
+      {
+        expected: {
+          kind: "laravelTranslationString",
+          translationKey: "messages.welcome",
+        },
+        needle: "messages",
+        source: "<?php Lang::get('messages.welcome');",
+      },
+      {
+        expected: { kind: "laravelViewString", viewName: "dashboard.index" },
+        needle: "dashboard",
+        source: "<?php view('dashboard.index');",
+      },
+      {
+        expected: { kind: "laravelViewString", viewName: "dashboard.index" },
+        needle: "dashboard",
+        source: "<?php View::make('dashboard.index');",
+      },
+      {
+        expected: { kind: "laravelViewString", viewName: "dashboard.index" },
+        needle: "dashboard.index",
+        source: "<?php Route::view('/dashboard', 'dashboard.index');",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const goToPhpFrameworkLiteralDefinition = vi.fn(async () => true);
+      const deps = makeDeps({
+        activeDocument: {
+          content: testCase.source,
+          language: "php",
+          name: "Controller.php",
+          path: `${ROOT}/app/Controller.php`,
+          savedContent: "",
+        },
+        activeEditorPositionRef: {
+          current: positionAfter(testCase.source, testCase.needle),
+        },
+        goToPhpFrameworkLiteralDefinition,
+      });
+      const harness = renderHook(deps);
+
+      const handled = await harness.api().goToContextualPhpDefinition();
+
+      expect(handled, testCase.source).toBe(true);
+      expect(goToPhpFrameworkLiteralDefinition).toHaveBeenCalledWith(
+        testCase.expected,
+      );
+
+      harness.unmount();
+    }
   });
 
   it("ignores non-PHP documents", async () => {

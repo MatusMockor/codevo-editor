@@ -43,6 +43,7 @@ import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigat
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
+import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
@@ -5478,6 +5479,18 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const { goToPhpFrameworkLiteralDefinition } =
+    usePhpContextualFrameworkLiteralDefinitionNavigation({
+      activeDocument,
+      currentWorkspaceRootRef,
+      frameworkLiteralNavigationDependencies:
+        phpFrameworkLiteralNavigationDependencies,
+      openNavigationTarget,
+      providers: activePhpFrameworkProviders,
+      setMessage,
+      workspaceRoot,
+    });
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -5546,26 +5559,22 @@ export function useWorkbenchController(
   const { goToContextualPhpDefinition } = usePhpContextualDefinitionNavigation({
     activeDocument,
     activeEditorPositionRef,
+    goToPhpFrameworkLiteralDefinition,
     goToPhpClassConstantDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelAuthGuardDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelCacheStoreDefinition,
-    goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
-    goToPhpLaravelEnvDefinition,
     goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
-    goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRedisConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
-    goToPhpLaravelTranslationDefinition,
-    goToPhpLaravelViewDefinition,
     goToPhpMemberPropertyDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
