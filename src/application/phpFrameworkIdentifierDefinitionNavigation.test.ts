@@ -144,6 +144,7 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
 
   it("opens Laravel route action methods through the direct PHP method target", async () => {
     const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const openPhpClassTarget = vi.fn(async () => true);
     const context: PhpIdentifierContext = {
       className: "DashboardController",
       kind: "laravelRouteActionMethod",
@@ -152,13 +153,59 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
 
     const handled = await goToPhpFrameworkIdentifierDefinition(
       context,
-      makeDeps({ openDirectPhpMethodTarget }),
+      makeDeps({ openDirectPhpMethodTarget, openPhpClassTarget }),
     );
 
     expect(handled).toBe(true);
     expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
       "App\\Http\\Controllers\\DashboardController",
       "index",
+    );
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the route action class when a class target opener is provided", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => false);
+    const openPhpClassTarget = vi.fn(async () => true);
+    const context: PhpIdentifierContext = {
+      className: "DashboardController",
+      kind: "laravelRouteActionMethod",
+      methodName: "missing",
+    };
+
+    const handled = await goToPhpFrameworkIdentifierDefinition(
+      context,
+      makeDeps({ openDirectPhpMethodTarget, openPhpClassTarget }),
+    );
+
+    expect(handled).toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\DashboardController",
+      "missing",
+    );
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\DashboardController",
+      "DashboardController",
+    );
+  });
+
+  it("keeps route action methods direct-only without a class target opener", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => false);
+    const context: PhpIdentifierContext = {
+      className: "DashboardController",
+      kind: "laravelRouteActionMethod",
+      methodName: "missing",
+    };
+
+    const handled = await goToPhpFrameworkIdentifierDefinition(
+      context,
+      makeDeps({ openDirectPhpMethodTarget }),
+    );
+
+    expect(handled).toBe(false);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\DashboardController",
+      "missing",
     );
   });
 

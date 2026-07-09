@@ -4,6 +4,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { EditorDocument } from "../domain/workspace";
+import {
+  goToPhpFrameworkIdentifierDefinition,
+  type PhpFrameworkIdentifierDefinitionNavigationDependencies,
+} from "./phpFrameworkIdentifierDefinitionNavigation";
 import {
   usePhpContextualDefinitionNavigation,
   type PhpContextualDefinitionNavigation,
@@ -44,27 +49,43 @@ function makeDeps(
       savedContent: "",
     },
     activeEditorPositionRef: { current: { column: 18, lineNumber: 1 } },
-    goToPhpFrameworkLiteralDefinition: vi.fn(async () => false),
+    goToPhpFrameworkIdentifierDefinition: vi.fn(async () => false),
     goToPhpClassConstantDefinition: falseHandler,
     goToPhpClassIdentifierDefinition: vi.fn(async () => false),
+    goToPhpMemberPropertyDefinition: falseHandler,
+    goToPhpMethodCallDefinition: falseHandler,
+    goToPhpStaticMethodCallDefinition: falseHandler,
+    ...overrides,
+  };
+}
+
+function makeFrameworkIdentifierDeps(
+  activeDocument: EditorDocument,
+  overrides: Partial<PhpFrameworkIdentifierDefinitionNavigationDependencies> = {},
+): PhpFrameworkIdentifierDefinitionNavigationDependencies {
+  const falseHandler = vi.fn(async () => false);
+
+  return {
+    activeDocument,
     goToPhpLaravelAuthGuardDefinition: falseHandler,
     goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
     goToPhpLaravelCacheStoreDefinition: falseHandler,
+    goToPhpLaravelConfigDefinition: falseHandler,
     goToPhpLaravelDatabaseConnectionDefinition: falseHandler,
+    goToPhpLaravelEnvDefinition: falseHandler,
     goToPhpLaravelGateAbilityDefinition: falseHandler,
     goToPhpLaravelLogChannelDefinition: falseHandler,
     goToPhpLaravelMailMailerDefinition: falseHandler,
     goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
+    goToPhpLaravelNamedRouteDefinition: falseHandler,
     goToPhpLaravelPasswordBrokerDefinition: falseHandler,
     goToPhpLaravelQueueConnectionDefinition: falseHandler,
     goToPhpLaravelRedisConnectionDefinition: falseHandler,
     goToPhpLaravelRelationStringDefinition: falseHandler,
     goToPhpLaravelStorageDiskDefinition: falseHandler,
-    goToPhpMemberPropertyDefinition: falseHandler,
-    goToPhpMethodCallDefinition: falseHandler,
-    goToPhpStaticMethodCallDefinition: falseHandler,
+    goToPhpLaravelTranslationDefinition: falseHandler,
+    goToPhpLaravelViewDefinition: falseHandler,
     openDirectPhpMethodTarget: vi.fn(async () => false),
-    openPhpClassTarget: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -160,25 +181,40 @@ new ReportService();`;
 use App\\Http\\Controllers\\ReportController;
 
 Route::get('/reports', [ReportController::class, 'store']);`;
+    const activeDocument: EditorDocument = {
+      content: source,
+      language: "php",
+      name: "web.php",
+      path: `${ROOT}/routes/web.php`,
+      savedContent: "",
+    };
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const openPhpClassTarget = vi.fn(async () => true);
+    const goToPhpFrameworkIdentifierDefinitionHandler = vi.fn((context) =>
+      goToPhpFrameworkIdentifierDefinition(
+        context,
+        makeFrameworkIdentifierDeps(activeDocument, {
+          openDirectPhpMethodTarget,
+          openPhpClassTarget,
+        }),
+      ),
+    );
     const deps = makeDeps({
-      activeDocument: {
-        content: source,
-        language: "php",
-        name: "web.php",
-        path: `${ROOT}/routes/web.php`,
-        savedContent: "",
-      },
+      activeDocument,
       activeEditorPositionRef: { current: positionAfter(source, "sto") },
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
+      goToPhpFrameworkIdentifierDefinition:
+        goToPhpFrameworkIdentifierDefinitionHandler,
     });
     const harness = renderHook(deps);
 
     const handled = await harness.api().goToContextualPhpDefinition();
 
     expect(handled).toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinitionHandler).toHaveBeenCalledWith({
+      className: "ReportController",
+      kind: "laravelRouteActionMethod",
+      methodName: "store",
+    });
     expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
       "App\\Http\\Controllers\\ReportController",
       "store",
@@ -191,7 +227,35 @@ Route::get('/reports', [ReportController::class, 'store']);`;
     harness.unmount();
   });
 
-  it("delegates provider-backed Laravel literal contexts to the framework literal strategy", async () => {
+  it("delegates non-literal Laravel contexts to the framework identifier strategy", async () => {
+    const source = "<?php Cache::store('redis')->get('reports');";
+    const goToPhpFrameworkIdentifierDefinitionHandler = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "Controller.php",
+        path: `${ROOT}/app/Controller.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: { current: positionAfter(source, "red") },
+      goToPhpFrameworkIdentifierDefinition:
+        goToPhpFrameworkIdentifierDefinitionHandler,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToContextualPhpDefinition();
+
+    expect(handled).toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinitionHandler).toHaveBeenCalledWith({
+      kind: "laravelCacheStoreString",
+      storeName: "redis",
+    });
+
+    harness.unmount();
+  });
+
+  it("delegates provider-backed Laravel literal contexts to the framework identifier strategy", async () => {
     const cases = [
       {
         expected: { kind: "laravelNamedRouteString", routeName: "dashboard" },
@@ -257,7 +321,9 @@ Route::get('/reports', [ReportController::class, 'store']);`;
     ] as const;
 
     for (const testCase of cases) {
-      const goToPhpFrameworkLiteralDefinition = vi.fn(async () => true);
+      const goToPhpFrameworkIdentifierDefinitionHandler = vi.fn(
+        async () => true,
+      );
       const deps = makeDeps({
         activeDocument: {
           content: testCase.source,
@@ -269,14 +335,15 @@ Route::get('/reports', [ReportController::class, 'store']);`;
         activeEditorPositionRef: {
           current: positionAfter(testCase.source, testCase.needle),
         },
-        goToPhpFrameworkLiteralDefinition,
+        goToPhpFrameworkIdentifierDefinition:
+          goToPhpFrameworkIdentifierDefinitionHandler,
       });
       const harness = renderHook(deps);
 
       const handled = await harness.api().goToContextualPhpDefinition();
 
       expect(handled, testCase.source).toBe(true);
-      expect(goToPhpFrameworkLiteralDefinition).toHaveBeenCalledWith(
+      expect(goToPhpFrameworkIdentifierDefinitionHandler).toHaveBeenCalledWith(
         testCase.expected,
       );
 

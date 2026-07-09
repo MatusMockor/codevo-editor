@@ -44,6 +44,7 @@ export interface PhpFrameworkIdentifierDefinitionNavigationDependencies
     className: string,
     methodName: string,
   ): Promise<boolean>;
+  openPhpClassTarget?(className: string, label: string): Promise<boolean>;
 }
 
 export function isPhpFrameworkIdentifierContext(
@@ -98,6 +99,7 @@ export async function goToPhpFrameworkIdentifierDefinition(
     goToPhpLaravelTranslationDefinition,
     goToPhpLaravelViewDefinition,
     openDirectPhpMethodTarget,
+    openPhpClassTarget,
   }: PhpFrameworkIdentifierDefinitionNavigationDependencies,
 ): Promise<boolean> {
   if (context.kind === "laravelRelationString") {
@@ -186,7 +188,16 @@ export async function goToPhpFrameworkIdentifierDefinition(
       return false;
     }
 
-    return openDirectPhpMethodTarget(className, context.methodName);
+    const openedMethodTarget = await openDirectPhpMethodTarget(
+      className,
+      context.methodName,
+    );
+
+    if (openedMethodTarget) {
+      return true;
+    }
+
+    return openPhpClassTarget?.(className, context.className) ?? false;
   }
 
   return false;
