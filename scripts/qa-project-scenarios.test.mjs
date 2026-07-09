@@ -7,10 +7,12 @@ import {
   cdpEndpointGuidance,
   formatActual,
   formatExpected,
+  manualGuideFor,
   parseArgs,
   printPreflightResult,
   printRunResult,
   scenarios,
+  scenariosByProjectRoot,
   selectScenarios,
   snippetFor,
   validateScenarioPreflight,
@@ -58,6 +60,13 @@ describe("qa-project-scenarios CLI helpers", () => {
     ]);
   });
 
+  it("parses manual mode without requiring a CDP URL", () => {
+    const options = parseArgs(["--all", "--manual"]);
+
+    expect(options.manual).toBe(true);
+    expect(options.cdpUrl).toBe("");
+  });
+
   it("prints snippets for multiple selected scenarios", () => {
     const selected = selectScenarios(
       parseArgs(["--scenario", scenarios[0].id, "--scenario", scenarios[1].id]),
@@ -78,6 +87,53 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(snippet).toContain("window.__codevoQa is not installed");
     expect(snippet).toContain("npm run debug:qa");
     expect(snippet).toContain("localStorage.setItem('codevo.qaBridge', '1')");
+  });
+
+  it("groups manual snippets by project root", () => {
+    const selected = [scenarios[0], scenarios[7]];
+    const groups = scenariosByProjectRoot(selected);
+    const guide = manualGuideFor(
+      selected,
+      selected.map((scenario) => ({
+        activeFile: scenario.activeFile,
+        action: scenario.action,
+        checks: [],
+        failures: [],
+        id: scenario.id,
+        ok: true,
+        projectRoot: scenario.projectRoot,
+        warnings: [],
+      })),
+      4321,
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(guide).toContain("npm run debug:qa");
+    expect(guide).toContain("Tauri WebView DevTools");
+    expect(guide).toContain(`Project root: ${scenarios[0].projectRoot}`);
+    expect(guide).toContain(`Project root: ${scenarios[7].projectRoot}`);
+    expect(guide).toContain(scenarios[0].id);
+    expect(guide).toContain(scenarios[7].id);
+    expect(guide).toContain('"timeoutMs":4321');
+  });
+
+  it("keeps manual guide bounded when preflight failed", () => {
+    const selected = [scenarios[0]];
+    const guide = manualGuideFor(selected, [
+      {
+        activeFile: scenarios[0].activeFile,
+        action: scenarios[0].action,
+        checks: [],
+        failures: ["activeFile does not exist"],
+        id: scenarios[0].id,
+        ok: false,
+        projectRoot: scenarios[0].projectRoot,
+        warnings: [],
+      },
+    ]);
+
+    expect(guide).toContain("Preflight failed.");
+    expect(guide).toContain("before trusting a manual run");
   });
 
   it("formats CDP endpoint recovery guidance", () => {

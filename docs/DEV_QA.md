@@ -47,6 +47,38 @@ matches warn because the live runner currently uses the first match.
 
 ## Running
 
+### Manual macOS/Tauri flow
+
+Use this lane when Tauri WebView DevTools are available but Chromium CDP is not:
+
+```sh
+npm run qa:projects:manual
+```
+
+The manual command runs the same preflight first, then prints bounded
+copy-paste snippets grouped by project root. For each group:
+
+1. Start the QA app:
+
+   ```sh
+   npm run debug:qa
+   ```
+
+2. Open the matching project workspace in the Tauri app.
+3. Open Tauri WebView DevTools for the app window.
+4. Paste the snippet for that project root into the DevTools Console.
+
+The grouped snippets use the same `window.__codevoQa` bridge as the CDP runner.
+If `window.__codevoQa` is missing, restart with `npm run debug:qa`; for an
+already running dev app, set the DEV-only fallback in the console:
+
+```js
+localStorage.setItem("codevo.qaBridge", "1");
+location.reload();
+```
+
+### CDP automation
+
 Start the app with the bridge enabled:
 
 ```sh
@@ -102,7 +134,8 @@ node ./scripts/qa-project-scenarios.mjs \
   --scenario invoices-blade-route-definition
 ```
 
-For Tauri WebView DevTools, print an in-page snippet and run it in the console:
+For a raw Tauri WebView DevTools snippet without the grouped manual guide, print
+an in-page snippet and run it in the console:
 
 ```sh
 node ./scripts/qa-project-scenarios.mjs \

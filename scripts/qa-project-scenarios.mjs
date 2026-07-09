@@ -198,6 +198,11 @@ async function main() {
     return;
   }
 
+  if (options.manual) {
+    printManualGuide(selectedScenarios, options.timeoutMs);
+    return;
+  }
+
   if (options.printSnippet) {
     console.log(snippetFor(selectedScenarios, options.timeoutMs));
     return;
@@ -222,6 +227,7 @@ function parseArgs(args) {
     cdpUrl: "",
     help: false,
     list: false,
+    manual: false,
     preflight: false,
     printSnippet: false,
     scenarioIds: [],
@@ -249,6 +255,11 @@ function parseArgs(args) {
 
     if (arg === "--print-snippet") {
       options.printSnippet = true;
+      continue;
+    }
+
+    if (arg === "--manual") {
+      options.manual = true;
       continue;
     }
 
@@ -337,6 +348,7 @@ Options:
   --cdp-url <url>         Chrome DevTools HTTP endpoint, for example http://127.0.0.1:9222.
   --target-url <text>     Select the CDP page whose URL contains this text.
   --preflight             Validate selected scenario files and cursor anchors only.
+  --manual                Run preflight, then print grouped DevTools snippets.
   --print-snippet         Print an in-page snippet for Tauri WebView DevTools.
   --timeout-ms <ms>       Per-wait timeout. Default: ${DEFAULT_TIMEOUT_MS}.
 
@@ -363,6 +375,68 @@ function snippetFor(selectedScenarios, timeoutMs = DEFAULT_TIMEOUT_MS) {
     scenarios: selectedScenarios,
     timeoutMs,
   })});`;
+}
+
+function printManualGuide(selectedScenarios, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const preflightResult = validatePreflightScenarios(selectedScenarios);
+
+  console.log("Manual project QA");
+  console.log("");
+  console.log("Preflight");
+  printPreflightResult(preflightResult);
+  console.log("");
+  console.log(manualGuideFor(selectedScenarios, preflightResult, timeoutMs));
+}
+
+function manualGuideFor(
+  selectedScenarios,
+  preflightResult = validatePreflightScenarios(selectedScenarios),
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) {
+  const lines = [
+    "Next steps",
+    "1. Start the QA app:",
+    "   npm run debug:qa",
+    "2. Open the project workspace in the Tauri app for the matching project root.",
+    "3. Open Tauri WebView DevTools for the app window, then paste the matching project snippet into the Console.",
+    "4. Repeat once per project root. Each snippet runs only the scenarios listed above it.",
+  ];
+
+  if (preflightResult.some((item) => !item.ok)) {
+    lines.push(
+      "",
+      "Preflight failed. Fix the missing files or cursor anchors before trusting a manual run.",
+    );
+  }
+
+  for (const [projectRoot, projectScenarios] of scenariosByProjectRoot(selectedScenarios)) {
+    lines.push(
+      "",
+      `Project root: ${projectRoot}`,
+      "Scenario ids:",
+      ...projectScenarios.map((scenario) => `  - ${scenario.id}`),
+      "Console snippet:",
+      "```js",
+      snippetFor(projectScenarios, timeoutMs),
+      "```",
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function scenariosByProjectRoot(selectedScenarios) {
+  const grouped = new Map();
+
+  for (const scenario of selectedScenarios) {
+    if (!grouped.has(scenario.projectRoot)) {
+      grouped.set(scenario.projectRoot, []);
+    }
+
+    grouped.get(scenario.projectRoot).push(scenario);
+  }
+
+  return [...grouped.entries()];
 }
 
 function validatePreflightScenarios(selectedScenarios) {
@@ -778,10 +852,13 @@ export {
   formatActual,
   cdpEndpointGuidance,
   formatExpected,
+  manualGuideFor,
   parseArgs,
+  printManualGuide,
   printPreflightResult,
   printRunResult,
   scenarios,
+  scenariosByProjectRoot,
   selectScenarios,
   snippetFor,
   validatePreflightScenarios,

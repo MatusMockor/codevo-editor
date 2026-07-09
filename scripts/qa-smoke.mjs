@@ -300,6 +300,9 @@ Project smoke expects an already running app started with npm run debug:qa and
 a reachable CDP endpoint. Configure with:
   MOCKOR_EDITOR_QA_CDP_URL     Default: ${defaultProjectQaCdpUrl}
   MOCKOR_EDITOR_QA_TARGET_URL  Default: ${defaultProjectQaTargetUrl}
+
+For macOS Tauri WebView manual QA without CDP, use:
+  npm run qa:projects:manual
 `);
 }
 
