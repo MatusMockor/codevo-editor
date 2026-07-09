@@ -10,6 +10,11 @@ import type {
   TextSearchGateway,
   WorkspaceDescriptor,
 } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import {
   usePhpFrameworkDefinitionNavigation,
   type PhpFrameworkDefinitionNavigation,
@@ -20,6 +25,25 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
+const LARAVEL_RUNTIME_WITHOUT_ROUTES: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  supports: (capability) => capability !== "routes",
+  supportsTargetCollection: (kind) => kind !== "routes",
+};
 
 function makeDescriptor(): WorkspaceDescriptor {
   return {
@@ -68,6 +92,7 @@ function makeDeps(
       findTranslationTarget: vi.fn(async () => null),
       findViewTarget: vi.fn(async () => null),
     },
+    frameworkRuntime: LARAVEL_RUNTIME,
     isLaravelFrameworkActive: true,
     openNavigationTarget: vi.fn(async () => true),
     openPhpClassTarget: vi.fn(async () => true),
@@ -179,6 +204,102 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
       "App\\Models\\AdminUser",
       "AdminUser",
     );
+
+    harness.unmount();
+  });
+
+  it("requires the runtime routes capability for Laravel route model binding", async () => {
+    const openPhpClassTarget = vi.fn(async () => false);
+    const searchText = vi.fn(async () => []);
+    const deps = makeDeps({
+      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_ROUTES,
+      openPhpClassTarget,
+      textSearch: makeTextSearch(searchText),
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nuse Illuminate\\Support\\Facades\\Route;\nuse App\\Models\\AdminUser;\nRoute::model('user', AdminUser::class);\nRoute::get('/users/{user}', fn () => null);`;
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("{user}") + 2);
+
+    expect(handled).toBe(false);
+    expect(openPhpClassTarget).not.toHaveBeenCalledWith(
+      "App\\Models\\AdminUser",
+      "AdminUser",
+    );
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("requires the runtime routes capability for Laravel dispatch handler navigation", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const openPhpClassTarget = vi.fn(async () => false);
+    const readNavigationFileContent = vi.fn(async () => {
+      throw new Error("runtime without routes should not read Laravel handlers");
+    });
+    const resolvePhpClassSourcePaths = vi.fn(async () => [
+      `${ROOT}/app/Jobs/SyncOrder.php`,
+    ]);
+    const deps = makeDeps({
+      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_ROUTES,
+      openNavigationTarget,
+      openPhpClassTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nuse App\\Jobs\\SyncOrder;\ndispatch(new SyncOrder());`;
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("dispatch") + 2);
+
+    expect(handled).toBe(false);
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("uses runtime providers for literal navigation when runtime overrides legacy Laravel providers", async () => {
+    const findViewTarget = vi.fn(async () => ({
+      name: "orders.show",
+      path: `${ROOT}/resources/views/orders/show.blade.php`,
+      position: position(1, 1),
+    }));
+    const openNavigationTarget = vi.fn(async () => true);
+    const activeDocument: EditorDocument = {
+      content: "",
+      language: "php",
+      name: "Controller.php",
+      path: `${ROOT}/app/Http/Controllers/Controller.php`,
+      savedContent: "",
+    };
+    const deps = makeDeps({
+      activeDocument,
+      frameworkRuntime: GENERIC_RUNTIME,
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget,
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+    const source = "<?php view('orders.show');";
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("orders.show") + 2);
+
+    expect(handled).toBe(false);
+    expect(findViewTarget).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
 
     harness.unmount();
   });

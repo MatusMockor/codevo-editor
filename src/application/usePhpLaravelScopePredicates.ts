@@ -1,22 +1,32 @@
 import { useCallback } from "react";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { phpLaravelLocalScopeCompletionsFromMethods } from "../domain/phpFrameworkLaravel";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface UsePhpLaravelScopePredicatesOptions {
   collectPhpLaravelDynamicWhereMethodsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
 }
 
 export function usePhpLaravelScopePredicates({
   collectPhpLaravelDynamicWhereMethodsForClass,
   collectPhpMethodsForClass,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
 }: UsePhpLaravelScopePredicatesOptions) {
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
+      if (!isLaravelFrameworkActive) {
+        return false;
+      }
+
       const methodLookup = methodName.toLowerCase();
       const dynamicWhereCompletions =
         await collectPhpLaravelDynamicWhereMethodsForClass(className);
@@ -25,7 +35,7 @@ export function usePhpLaravelScopePredicates({
         (method) => method.name.toLowerCase() === methodLookup,
       );
     },
-    [collectPhpLaravelDynamicWhereMethodsForClass],
+    [collectPhpLaravelDynamicWhereMethodsForClass, isLaravelFrameworkActive],
   );
 
   const phpClassHasLaravelLocalScope = useCallback(

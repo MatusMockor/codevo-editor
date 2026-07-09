@@ -3,13 +3,31 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 type HookOptions = Parameters<typeof usePhpLaravelScopePredicates>[0];
 type HookApi = ReturnType<typeof usePhpLaravelScopePredicates>;
+
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function methodCompletion(
   name: string,
@@ -140,6 +158,72 @@ describe("usePhpLaravelScopePredicates", () => {
     ).resolves.toBe(false);
 
     expect(options.collectPhpMethodsForClass).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not expose Laravel dynamic where or local scopes for a generic runtime", async () => {
+    const options = makeOptions({
+      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+        methodCompletion("whereEmailAddress"),
+      ]),
+      collectPhpMethodsForClass: vi.fn(async () => [
+        methodCompletion("scopePublished"),
+      ]),
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelDynamicWhere("App\\Models\\User", "whereEmailAddress"),
+    ).resolves.toBe(false);
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelLocalScope("App\\Models\\Post", "published"),
+    ).resolves.toBe(false);
+
+    expect(
+      options.collectPhpLaravelDynamicWhereMethodsForClass,
+    ).not.toHaveBeenCalled();
+    expect(options.collectPhpMethodsForClass).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("exposes Laravel dynamic where and local scopes for a Laravel runtime", async () => {
+    const options = makeOptions({
+      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+        methodCompletion("whereEmailAddress"),
+      ]),
+      collectPhpMethodsForClass: vi.fn(async () => [
+        methodCompletion("scopePublished"),
+      ]),
+      frameworkRuntime: LARAVEL_RUNTIME,
+      isLaravelFrameworkActive: false,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelDynamicWhere("App\\Models\\User", "whereEmailAddress"),
+    ).resolves.toBe(true);
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelLocalScope("App\\Models\\Post", "published"),
+    ).resolves.toBe(true);
+
+    expect(
+      options.collectPhpLaravelDynamicWhereMethodsForClass,
+    ).toHaveBeenCalledWith("App\\Models\\User");
+    expect(options.collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+    );
 
     harness.unmount();
   });

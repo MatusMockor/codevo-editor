@@ -4893,7 +4893,7 @@ export function useWorkbenchController(
   } = usePhpLaravelScopePredicates({
     collectPhpLaravelDynamicWhereMethodsForClass,
     collectPhpMethodsForClass,
-    isLaravelFrameworkActive,
+    frameworkRuntime: phpFrameworkRuntimeContext,
   });
 
   const { resolvePhpMethodReturnType } = usePhpMethodReturnTypeResolver({
@@ -5115,8 +5115,8 @@ export function useWorkbenchController(
       activeDocumentPath: activeDocument?.path ?? null,
       collectPhpLaravelViewTargets: collectViewTargets,
       currentWorkspaceRootRef,
+      frameworkRuntime: phpFrameworkRuntimeContext,
       intelligenceMode,
-      isLaravelFrameworkActive,
       projectSymbolSearch,
       readNavigationFileContent,
       readTestFileIfExists,
@@ -5156,9 +5156,9 @@ export function useWorkbenchController(
   const { providePhpFrameworkDefinition } = usePhpFrameworkDefinitionNavigation({
     activeDocument,
     currentWorkspaceRootRef,
+    frameworkRuntime: phpFrameworkRuntimeContext,
     frameworkLiteralNavigationDependencies:
       phpFrameworkLiteralNavigationDependencies,
-    isLaravelFrameworkActive,
     openNavigationTarget,
     openPhpClassTarget,
     providers: activePhpFrameworkProviders,

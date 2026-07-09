@@ -26,6 +26,8 @@ import {
   resolvePhpFrameworkLiteralNavigationTarget,
   type PhpFrameworkLiteralNavigationDependencies,
 } from "./phpFrameworkLiteralNavigation";
+import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -34,8 +36,9 @@ interface OpenNavigationOptions {
 export interface PhpFrameworkDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
   frameworkLiteralNavigationDependencies: PhpFrameworkLiteralNavigationDependencies;
-  isLaravelFrameworkActive: boolean;
+  isLaravelFrameworkActive?: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -58,8 +61,9 @@ export interface PhpFrameworkDefinitionNavigation {
 export function usePhpFrameworkDefinitionNavigation({
   activeDocument,
   currentWorkspaceRootRef,
+  frameworkRuntime,
   frameworkLiteralNavigationDependencies,
-  isLaravelFrameworkActive,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openNavigationTarget,
   openPhpClassTarget,
   providers,
@@ -69,6 +73,17 @@ export function usePhpFrameworkDefinitionNavigation({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpFrameworkDefinitionNavigationDependencies): PhpFrameworkDefinitionNavigation {
+  const phpFrameworkRuntime = phpFrameworkRuntimeContextFromDependencies({
+    activePhpFrameworkProviders: providers,
+    frameworkRuntime,
+    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
+  });
+  const activePhpFrameworkProviders = phpFrameworkRuntime.providers;
+  const supportsLaravelRouteDefinitionNavigation =
+    phpFrameworkRuntime.isLaravel && phpFrameworkRuntime.supports("routes");
+  const supportsLaravelDispatchDefinitionNavigation =
+    supportsLaravelRouteDefinitionNavigation;
+
   const openPhpLaravelHandlerTarget = useCallback(
     async (className: string, shortName: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
@@ -351,7 +366,7 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      const routeBinding = isLaravelFrameworkActive
+      const routeBinding = supportsLaravelRouteDefinitionNavigation
         ? detectLaravelRouteModelBindingAt(source, offset)
         : null;
 
@@ -400,7 +415,7 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      const dispatchTarget = isLaravelFrameworkActive
+      const dispatchTarget = supportsLaravelDispatchDefinitionNavigation
         ? phpLaravelDispatchTargetAt(source, offset)
         : null;
 
@@ -439,7 +454,7 @@ export function usePhpFrameworkDefinitionNavigation({
             : null,
           offset,
           position: editorPositionAtOffset(source, offset),
-          providers,
+          providers: activePhpFrameworkProviders,
           source,
         },
         frameworkLiteralNavigationDependencies,
@@ -462,11 +477,12 @@ export function usePhpFrameworkDefinitionNavigation({
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies,
       goToPhpLaravelDispatchDefinition,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       openPhpClassTarget,
-      providers,
+      activePhpFrameworkProviders,
       resolvePhpLaravelExplicitRouteModelBindingClassName,
+      supportsLaravelDispatchDefinitionNavigation,
+      supportsLaravelRouteDefinitionNavigation,
       workspaceDescriptor,
       workspaceRoot,
     ],
