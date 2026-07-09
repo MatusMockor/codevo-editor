@@ -19,12 +19,14 @@ import type {
   NeonRequestContext,
   NeonRuntimeDependencies,
 } from "./neonIntelligenceRuntime";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface NeonDefinitionDependencies extends NeonRuntimeDependencies {
   openClassTarget(className: string): Promise<boolean>;
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   openTarget(
     path: string,
@@ -38,8 +40,10 @@ export async function provideNeonDefinition(
   context: NeonRequestContext<NeonDefinitionDependencies>,
   source: string,
   offset: number,
+  request?: NavigationRequest,
 ): Promise<boolean> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
+  const guardedContext = guardedNeonRequestContext(context, request);
+  const { deps, isRequestedRootActive, requestedRoot } = guardedContext;
   const classReference = detectNeonClassReferenceAt(source, offset);
 
   if (classReference) {
@@ -50,7 +54,7 @@ export async function provideNeonDefinition(
 
   if (parameterReference) {
     return resolveNeonParameterDefinition(
-      context,
+      guardedContext,
       source,
       parameterReference.name,
     );
@@ -59,14 +63,18 @@ export async function provideNeonDefinition(
   const serviceReference = detectNeonServiceReferenceAt(source, offset);
 
   if (serviceReference) {
-    return resolveNeonServiceDefinition(context, source, serviceReference.name);
+    return resolveNeonServiceDefinition(
+      guardedContext,
+      source,
+      serviceReference.name,
+    );
   }
 
   const serviceMethod = detectNeonServiceMethodReferenceAt(source, offset);
 
   if (serviceMethod) {
     return resolveNeonServiceMethodDefinition(
-      context,
+      guardedContext,
       source,
       serviceMethod.serviceName,
       serviceMethod.methodName,
@@ -76,7 +84,7 @@ export async function provideNeonDefinition(
   const setupMethod = detectNeonServiceSetupMethodAt(source, offset);
 
   if (setupMethod) {
-    return resolveNeonSetupMethodDefinition(context, setupMethod);
+    return resolveNeonSetupMethodDefinition(guardedContext, setupMethod);
   }
 
   const include = detectNeonIncludeAt(source, offset);
@@ -91,4 +99,43 @@ export async function provideNeonDefinition(
   }
 
   return false;
+}
+
+function guardedNeonRequestContext(
+  context: NeonRequestContext<NeonDefinitionDependencies>,
+  request?: NavigationRequest,
+): NeonRequestContext<NeonDefinitionDependencies> {
+  const canOpen = () =>
+    context.isRequestedRootActive() && canNavigate(request);
+
+  return {
+    ...context,
+    deps: {
+      ...context.deps,
+      openClassTarget: (className) => {
+        if (!canOpen()) {
+          return Promise.resolve(false);
+        }
+
+        return context.deps.openClassTarget(className);
+      },
+      openDirectPhpMethodTarget: (className, methodName) => {
+        if (!canOpen()) {
+          return Promise.resolve(false);
+        }
+
+        return request
+          ? context.deps.openDirectPhpMethodTarget(className, methodName, request)
+          : context.deps.openDirectPhpMethodTarget(className, methodName);
+      },
+      openTarget: (path, position, label) => {
+        if (!canOpen()) {
+          return Promise.resolve(false);
+        }
+
+        return context.deps.openTarget(path, position, label);
+      },
+    },
+    isRequestedRootActive: canOpen,
+  };
 }

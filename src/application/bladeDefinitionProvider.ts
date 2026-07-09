@@ -16,6 +16,7 @@ import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
 import { editorPositionAtOffset } from "./bladePhpCompletionContext";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface BladeDefinitionProviderDependencies {
@@ -43,6 +44,7 @@ export async function provideBladeDefinition(
   source: string,
   offset: number,
   dependencies: BladeDefinitionProviderDependencies,
+  request?: NavigationRequest,
 ): Promise<boolean> {
   const {
     activeDocument,
@@ -63,7 +65,8 @@ export async function provideBladeDefinition(
   } = dependencies;
   const requestedRoot = workspaceRoot;
   const isRequestedRootActive = () =>
-    workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+    workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+    canNavigate(request);
 
   if (!requestedRoot) {
     return false;
@@ -81,7 +84,10 @@ export async function provideBladeDefinition(
       findPhpLaravelTranslationTarget,
       findPhpLaravelViewTarget,
       isRequestedRootActive,
-      openNavigationTarget,
+      openNavigationTarget: guardedOpenNavigationTarget(
+        openNavigationTarget,
+        isRequestedRootActive,
+      ),
     });
 
     if (openedLaravelHelper) {
@@ -93,9 +99,19 @@ export async function provideBladeDefinition(
     const openedMember = await openBladeViewDataMemberDefinition(source, offset, {
       activeDocument,
       isRequestedRootActive,
-      openDirectPhpMethodTarget,
-      openDirectPhpPropertyTarget,
-      openPhpLaravelModelAttributeTarget,
+      openDirectPhpMethodTarget: guardedClassMemberNavigation(
+        openDirectPhpMethodTarget,
+        isRequestedRootActive,
+        request,
+      ),
+      openDirectPhpPropertyTarget: guardedClassMemberNavigation(
+        openDirectPhpPropertyTarget,
+        isRequestedRootActive,
+      ),
+      openPhpLaravelModelAttributeTarget: guardedClassMemberNavigation(
+        openPhpLaravelModelAttributeTarget,
+        isRequestedRootActive,
+      ),
       relativeWorkspacePath,
       requestedRoot,
       resolveBladeViewVariableTypeForView,
@@ -108,10 +124,50 @@ export async function provideBladeDefinition(
 
   return openBladeReferenceDefinition(source, offset, {
     isRequestedRootActive,
-    openNavigationTarget,
+    openNavigationTarget: guardedOpenNavigationTarget(
+      openNavigationTarget,
+      isRequestedRootActive,
+    ),
     readNavigationFileContent,
     requestedRoot,
   });
+}
+
+function guardedOpenNavigationTarget(
+  openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"],
+  canOpen: () => boolean,
+): BladeIntelligenceDependencies["openNavigationTarget"] {
+  return (path, position, label) => {
+    if (!canOpen()) {
+      return Promise.resolve(false);
+    }
+
+    return openNavigationTarget(path, position, label);
+  };
+}
+
+function guardedClassMemberNavigation<
+  T extends (className: string, memberName: string) => Promise<boolean>,
+>(
+  openTarget: T,
+  canOpen: () => boolean,
+  request?: NavigationRequest,
+): T {
+  return ((className: string, memberName: string) => {
+    if (!canOpen()) {
+      return Promise.resolve(false);
+    }
+
+    const openTargetWithRequest = openTarget as (
+      className: string,
+      memberName: string,
+      request?: NavigationRequest,
+    ) => Promise<boolean>;
+
+    return request
+      ? openTargetWithRequest(className, memberName, request)
+      : openTarget(className, memberName);
+  }) as T;
 }
 
 interface RequestedRootState {

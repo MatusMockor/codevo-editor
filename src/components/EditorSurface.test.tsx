@@ -15,9 +15,15 @@ import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
 import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorSurface } from "./EditorSurface";
+import {
+  type EditorQaDefinitionRequest,
+  type EditorQaOpenWorkspaceFileRequest,
+  editorQaBridgeEnabled,
+} from "./editorQaBridge";
 
 interface FakeModel {
   dispose?: ReturnType<typeof vi.fn>;
@@ -30,6 +36,8 @@ interface FakeModel {
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
+  getOffsetAt?: ReturnType<typeof vi.fn>;
+  getVersionId?: ReturnType<typeof vi.fn>;
   setValue?: ReturnType<typeof vi.fn>;
   isDisposed?: ReturnType<typeof vi.fn>;
   tokenization?: {
@@ -242,6 +250,8 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.renderCount = 0;
     editorSurfaceMocks.props = null;
     editorSurfaceMocks.registeredContext = null;
+    delete window.__codevoQa;
+    window.localStorage?.clear?.();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -705,6 +715,838 @@ describe("EditorSurface", () => {
       lineNumber: 1,
     });
   });
+
+  it("does not install the editor QA bridge without the explicit QA flag", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$invoice->\n",
+      language: "php",
+      name: "InvoiceController.php",
+      path: "/workspace/app/InvoiceController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(window.__codevoQa).toBeUndefined();
+  });
+
+  it("keeps the localStorage QA bridge override DEV-only", () => {
+    const localStorage = memoryLocalStorage();
+    localStorage.setItem("codevo.qaBridge", "1");
+
+    expect(
+      editorQaBridgeEnabled(
+        { DEV: false, VITE_CODEVO_QA_BRIDGE: "1" },
+        localStorage,
+      ),
+    ).toBe(false);
+    expect(editorQaBridgeEnabled({ DEV: true }, localStorage)).toBe(true);
+  });
+
+  it("installs a dev-only editor QA bridge for deterministic cursor, diagnostic, completion, and definition probes", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$invoice->\n",
+      language: "php",
+      name: "InvoiceController.php",
+      path: "/workspace/app/InvoiceController.php",
+      savedContent: "",
+    };
+    const diagnostic: LanguageServerDiagnostic = {
+      character: 1,
+      endCharacter: 10,
+      endLine: 2,
+      line: 2,
+      message: "Example diagnostic",
+      severity: "error",
+      source: "phpactor",
+    };
+    const model: FakeModel = {
+      getOffsetAt: vi.fn(() => 16),
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => 1),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const providePhpFrameworkDefinition = vi.fn(async () => true);
+    const providePhpPresenterLinkDefinition = vi.fn(async () => false);
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Invoice",
+        insertText: "customer()",
+        kind: "relation" as const,
+        name: "customer",
+        parameters: "",
+        returnType: "App\\Models\\Customer",
+      },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{
+            [activeDocument.path]: [diagnostic],
+          }}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          frameworkIntelligenceProviders={{
+            providePhpPresenterLinkDefinition,
+          }}
+          providePhpFrameworkDefinition={providePhpFrameworkDefinition}
+          providePhpMethodCompletions={providePhpMethodCompletions}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const bridge = window.__codevoQa;
+
+    expect(bridge).toBeDefined();
+    expect(bridge?.getActiveFile()).toBe(activeDocument.path);
+    expect(bridge?.getWorkspaceRoot()).toBe("/workspace");
+    expect(bridge?.getValue()).toBe(activeDocument.content);
+    expect(bridge?.getDiagnostics()).toEqual([diagnostic]);
+    expect(bridge?.setCursor({ column: 11, lineNumber: 2 })).toBe(true);
+    expect(bridge?.getPosition()).toEqual({ column: 11, lineNumber: 2 });
+
+    await expect(bridge?.getProviderCompletionItems()).resolves.toEqual([
+      {
+        detail: "App\\Models\\Customer",
+        insertText: "customer()",
+        kind: "relation",
+        label: "customer",
+      },
+    ]);
+    await expect(bridge?.getCompletionItems()).resolves.toEqual([
+      {
+        detail: "App\\Models\\Customer",
+        insertText: "customer()",
+        kind: "relation",
+        label: "customer",
+      },
+    ]);
+    await expect(bridge?.triggerDefinition()).resolves.toBe(true);
+
+    expect(providePhpMethodCompletions).toHaveBeenCalledWith(
+      activeDocument.content,
+      { column: 11, lineNumber: 2 },
+    );
+    expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
+      activeDocument.content,
+      16,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
+      activeDocument.content,
+      16,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+
+    const updatedDiagnostic: LanguageServerDiagnostic = {
+      character: 2,
+      line: 3,
+      message: "Updated diagnostic",
+      severity: "warning",
+      source: "phpactor",
+    };
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{
+            [activeDocument.path]: [updatedDiagnostic],
+          }}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          frameworkIntelligenceProviders={{
+            providePhpPresenterLinkDefinition,
+          }}
+          providePhpFrameworkDefinition={providePhpFrameworkDefinition}
+          providePhpMethodCompletions={providePhpMethodCompletions}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(window.__codevoQa).toBe(bridge);
+    expect(window.__codevoQa?.getDiagnostics()).toEqual([updatedDiagnostic]);
+
+    act(() => root.unmount());
+
+    expect(window.__codevoQa).toBeUndefined();
+  });
+
+  it("opens a workspace file through the dev QA bridge", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const initialDocument: EditorDocument = {
+      content: "<?php\n// initial\n",
+      language: "php",
+      name: "Initial.php",
+      path: "/workspace/app/Initial.php",
+      savedContent: "",
+    };
+    const targetDocument: EditorDocument = {
+      content: "<?php\n// target\n",
+      language: "php",
+      name: "Target.php",
+      path: "/workspace/app/Target.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => targetDocument.content),
+      uri: {
+        fsPath: initialDocument.path,
+        path: initialDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const renderWith = async (
+      activeDocument: EditorDocument,
+      onOpenWorkspaceFile?: (
+        path: string,
+        request: EditorQaOpenWorkspaceFileRequest,
+      ) => Promise<boolean>,
+    ) => {
+      model.uri.fsPath = activeDocument.path;
+      model.uri.path = activeDocument.path;
+
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            javaScriptTypeScriptValidationEnabled={true}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot="/workspace"
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+    const onOpenWorkspaceFile = vi.fn(
+      async (
+        _path: string,
+        request: EditorQaOpenWorkspaceFileRequest,
+      ): Promise<boolean> => {
+        if (!request.canOpen()) {
+          return false;
+        }
+
+        await renderWith(targetDocument, onOpenWorkspaceFile);
+        return true;
+      },
+    );
+
+    await renderWith(initialDocument, onOpenWorkspaceFile);
+
+    await expect(
+      window.__codevoQa?.openWorkspaceFile("/workspace/app/Target.php"),
+    ).resolves.toBe(true);
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      targetDocument.path,
+      expect.objectContaining({ canOpen: expect.any(Function) }),
+    );
+    expect(window.__codevoQa?.getActiveFile()).toBe(targetDocument.path);
+  });
+
+  it("rejects QA bridge openWorkspaceFile paths outside the active workspace root", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const activeDocument: EditorDocument = {
+      content: "<?php\n// active\n",
+      language: "php",
+      name: "Active.php",
+      path: "/workspace/app/Active.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const onOpenWorkspaceFile = vi.fn(async () => true);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await expect(
+      window.__codevoQa?.openWorkspaceFile("/workspace-other/app/Target.php"),
+    ).resolves.toBe(false);
+    await expect(
+      window.__codevoQa?.openWorkspaceFile("/workspace/../etc/passwd"),
+    ).resolves.toBe(false);
+
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+    expect(window.__codevoQa?.getActiveFile()).toBe(activeDocument.path);
+  });
+
+  it("does not commit a QA bridge workspace open when the active document changes while awaiting", async () => {
+    const localStorage = memoryLocalStorage();
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const initialDocument: EditorDocument = {
+      content: "<?php\n// initial\n",
+      language: "php",
+      name: "Initial.php",
+      path: "/workspace/app/Initial.php",
+      savedContent: "",
+    };
+    const staleDocument: EditorDocument = {
+      content: "<?php\n// stale\n",
+      language: "php",
+      name: "Stale.php",
+      path: "/workspace/app/Stale.php",
+      savedContent: "",
+    };
+    const targetDocument: EditorDocument = {
+      content: "<?php\n// target\n",
+      language: "php",
+      name: "Target.php",
+      path: "/workspace/app/Target.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: initialDocument.path,
+        path: initialDocument.path,
+      },
+    };
+    const openGate = deferred<void>();
+    const commitOpen = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const renderWith = async (
+      activeDocument: EditorDocument,
+      onOpenWorkspaceFile?: (
+        path: string,
+        request: EditorQaOpenWorkspaceFileRequest,
+      ) => Promise<boolean>,
+    ) => {
+      model.uri.fsPath = activeDocument.path;
+      model.uri.path = activeDocument.path;
+
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            javaScriptTypeScriptValidationEnabled={true}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot="/workspace"
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+    const onOpenWorkspaceFile = vi.fn(
+      async (
+        _path: string,
+        request: EditorQaOpenWorkspaceFileRequest,
+      ): Promise<boolean> => {
+        await openGate.promise;
+
+        if (!request.canOpen()) {
+          return false;
+        }
+
+        commitOpen();
+        await renderWith(targetDocument, onOpenWorkspaceFile);
+        return true;
+      },
+    );
+
+    await renderWith(initialDocument, onOpenWorkspaceFile);
+
+    const opened = window.__codevoQa?.openWorkspaceFile(targetDocument.path);
+    await renderWith(staleDocument, onOpenWorkspaceFile);
+    openGate.resolve();
+
+    await expect(opened).resolves.toBe(false);
+    expect(commitOpen).not.toHaveBeenCalled();
+    expect(window.__codevoQa?.getActiveFile()).toBe(staleDocument.path);
+  });
+
+  it("drops stale QA provider completion results when the active model version changes while awaiting", async () => {
+    const localStorage = memoryLocalStorage();
+    let modelVersion = 1;
+    vi.stubGlobal("localStorage", localStorage);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: localStorage,
+    });
+    window.localStorage.setItem("codevo.qaBridge", "1");
+
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$invoice->\n",
+      language: "php",
+      name: "InvoiceController.php",
+      path: "/workspace/app/InvoiceController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => modelVersion),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const completion = deferred<PhpMethodCompletion[]>();
+    const providePhpMethodCompletions = vi.fn(() => completion.promise);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={providePhpMethodCompletions}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const completionItems = window.__codevoQa?.getProviderCompletionItems();
+    modelVersion = 2;
+    completion.resolve([
+      {
+        declaringClassName: "App\\Models\\Invoice",
+        name: "customer",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+
+    await expect(completionItems).resolves.toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "active model version changes",
+      stale: async ({
+        setModelVersion,
+      }: {
+        renderWith: (options: {
+          activeDocument: EditorDocument;
+          workspaceRoot: string;
+        }) => Promise<void>;
+        setModelVersion: (version: number) => void;
+      }) => {
+        setModelVersion(2);
+      },
+    },
+    {
+      name: "active file changes",
+      stale: async ({
+        renderWith,
+      }: {
+        renderWith: (options: {
+          activeDocument: EditorDocument;
+          workspaceRoot: string;
+        }) => Promise<void>;
+        setModelVersion: (version: number) => void;
+      }) => {
+        await renderWith({
+          activeDocument: {
+            content: "<?php\nroute('customers.show');\n",
+            language: "php",
+            name: "CustomerController.php",
+            path: "/workspace/app/CustomerController.php",
+            savedContent: "",
+          },
+          workspaceRoot: "/workspace",
+        });
+      },
+    },
+    {
+      name: "workspace root changes",
+      stale: async ({
+        renderWith,
+      }: {
+        renderWith: (options: {
+          activeDocument: EditorDocument;
+          workspaceRoot: string;
+        }) => Promise<void>;
+        setModelVersion: (version: number) => void;
+      }) => {
+        await renderWith({
+          activeDocument: {
+            content: "<?php\nroute('invoices.show');\n",
+            language: "php",
+            name: "InvoiceController.php",
+            path: "/workspace/app/InvoiceController.php",
+            savedContent: "",
+          },
+          workspaceRoot: "/other-workspace",
+        });
+      },
+    },
+  ])(
+    "does not call side-effect QA definition navigation when the $name while awaiting",
+    async ({ stale }) => {
+      const localStorage = memoryLocalStorage();
+      let modelVersion = 1;
+      vi.stubGlobal("localStorage", localStorage);
+      Object.defineProperty(window, "localStorage", {
+        configurable: true,
+        value: localStorage,
+      });
+      window.localStorage.setItem("codevo.qaBridge", "1");
+
+      const activeDocument: EditorDocument = {
+        content: "<?php\nroute('invoices.show');\n",
+        language: "php",
+        name: "InvoiceController.php",
+        path: "/workspace/app/InvoiceController.php",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        dispose: vi.fn(),
+        getOffsetAt: vi.fn(() => 14),
+        getValue: vi.fn(() => activeDocument.content),
+        getVersionId: vi.fn(() => modelVersion),
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const presenterDefinition = deferred<boolean>();
+      const navigateToDefinition = vi.fn();
+      const providePhpFrameworkDefinition = vi.fn(async () => true);
+      const providePhpPresenterLinkDefinition = vi.fn(
+        async (
+          _source: string,
+          _offset: number,
+          request: EditorQaDefinitionRequest,
+        ) => {
+          await presenterDefinition.promise;
+
+          if (!request.canNavigate()) {
+            return false;
+          }
+
+          navigateToDefinition();
+          return true;
+        },
+      );
+      editorSurfaceMocks.editor = createEditor(model);
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      const renderWith = async ({
+        activeDocument,
+        workspaceRoot,
+      }: {
+        activeDocument: EditorDocument;
+        workspaceRoot: string;
+      }) => {
+        await act(async () => {
+          root.render(
+            <EditorSurface
+              activeDocument={activeDocument}
+              changeHunks={[]}
+              editorRevealTarget={null}
+              flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+              languageServerDiagnosticsByPath={{}}
+              javaScriptTypeScriptValidationEnabled={true}
+              languageServerFeaturesGateway={languageServerFeaturesGateway()}
+              languageServerRuntimeStatus={null}
+              keymap={defaultKeymapSettings()}
+              monacoTheme="calm-dark"
+              onChange={vi.fn()}
+              onCloseActiveTab={vi.fn()}
+              onCursorPositionChange={vi.fn()}
+              onGoBack={vi.fn()}
+              onGoForward={vi.fn()}
+              onGoToDefinition={vi.fn()}
+              onGoToImplementationAt={vi.fn()}
+              onGoToSuperMethod={vi.fn()}
+              onEditorFocused={vi.fn()}
+              onLanguageServerError={vi.fn()}
+              onOpenClass={vi.fn()}
+              onOpenFile={vi.fn()}
+              onOpenFileStructure={vi.fn()}
+              onRevealTargetHandled={vi.fn()}
+              onRevertChangeHunk={vi.fn()}
+              phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+              frameworkIntelligenceProviders={{
+                providePhpPresenterLinkDefinition:
+                  providePhpPresenterLinkDefinition as unknown as (
+                    source: string,
+                    offset: number,
+                  ) => Promise<boolean>,
+              }}
+              providePhpFrameworkDefinition={providePhpFrameworkDefinition}
+              providePhpMethodCompletions={vi.fn(async () => [])}
+              providePhpMethodSignature={vi.fn(async () => null)}
+              workspaceRoot={workspaceRoot}
+            />,
+          );
+          await Promise.resolve();
+        });
+      };
+
+      await renderWith({ activeDocument, workspaceRoot: "/workspace" });
+
+      const definition = window.__codevoQa?.triggerDefinition();
+      await stale({
+        renderWith,
+        setModelVersion: (version) => {
+          modelVersion = version;
+        },
+      });
+      presenterDefinition.resolve(true);
+
+      await expect(definition).resolves.toBe(false);
+      expect(navigateToDefinition).not.toHaveBeenCalled();
+      expect(providePhpFrameworkDefinition).not.toHaveBeenCalled();
+      expect(editorSurfaceMocks.editor.trigger).not.toHaveBeenCalledWith(
+        "codevo.qa",
+        "editor.action.revealDefinition",
+        {},
+      );
+    },
+  );
 
   it("enables bracket pair colorization and sticky scroll like VS Code", async () => {
     const activeDocument: EditorDocument = {
@@ -11133,6 +11975,10 @@ function createEditor(model: FakeModel): FakeEditor {
     startColumn: number;
     startLineNumber: number;
   } | null = null;
+  let position: EditorPosition = {
+    column: 1,
+    lineNumber: 1,
+  };
   // Monaco's built-in Cmd/Ctrl definition gesture lives in the
   // `editor.contrib.gotodefinitionatposition` contribution. The surface does NOT
   // dispose it (that crashes Monaco's event delivery); instead it replaces the
@@ -11178,10 +12024,7 @@ function createEditor(model: FakeModel): FakeEditor {
       width: 900,
     })),
     getModel: vi.fn(() => model),
-    getPosition: vi.fn(() => ({
-      column: 1,
-      lineNumber: 1,
-    })),
+    getPosition: vi.fn(() => position),
     getSelection: vi.fn(() => selection),
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
@@ -11260,7 +12103,9 @@ function createEditor(model: FakeModel): FakeEditor {
       return { dispose: vi.fn() };
     }),
     revealPositionInCenter: vi.fn(),
-    setPosition: vi.fn(),
+    setPosition: vi.fn((nextPosition: EditorPosition) => {
+      position = nextPosition;
+    }),
     setSelection: vi.fn((nextSelection) => {
       selection = nextSelection;
     }),
@@ -11426,6 +12271,42 @@ function languageDefaults() {
     setEagerModelSync: vi.fn(),
     setModeConfiguration: vi.fn(),
   };
+}
+
+function memoryLocalStorage(): Storage {
+  const values = new Map<string, string>();
+
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: vi.fn(() => {
+      values.clear();
+    }),
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    key: vi.fn((index: number) => Array.from(values.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => {
+      values.delete(key);
+    }),
+    setItem: vi.fn((key: string, value: string) => {
+      values.set(key, value);
+    }),
+  };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  reject(error: unknown): void;
+  resolve(value: T): void;
+} {
+  let reject!: (error: unknown) => void;
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
 }
 
 function latestTypeScriptModeConfiguration(monaco: ReturnType<typeof createMonaco>) {

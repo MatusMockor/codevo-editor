@@ -17,15 +17,21 @@ import {
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 import {
+  guardedLatteProviderRequestContext,
   latteProviderRequestContext,
 } from "./latteProviderRequestContext";
+import type { NavigationRequest } from "./navigationRequest";
 
 export async function providePhpPresenterLinkDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
+  navigationRequest?: NavigationRequest,
 ): Promise<boolean> {
-  const request = latteProviderRequestContext(options);
+  const request = guardedLatteProviderRequestContext(
+    latteProviderRequestContext(options),
+    navigationRequest,
+  );
 
   if (!request) {
     return false;
@@ -95,8 +101,9 @@ export async function provideNettePhpLinkDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
+  request?: NavigationRequest,
 ): Promise<boolean> {
-  return providePhpPresenterLinkDefinition(options, source, offset);
+  return providePhpPresenterLinkDefinition(options, source, offset, request);
 }
 
 export async function providePhpPresenterLinkCompletions(

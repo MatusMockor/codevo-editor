@@ -14,6 +14,7 @@ import type {
   LatteIntelligence,
 } from "./latteIntelligenceContracts";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
+import type { NavigationRequest } from "./navigationRequest";
 import { type LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
 import {
   provideLatteDefinition as provideLatteDefinitionFlow,
@@ -30,7 +31,11 @@ export interface LatteProviderFlows {
     source: string,
     position: EditorPosition,
   ): Promise<LatteCompletionItem[]>;
-  provideLatteDefinition(source: string, offset: number): Promise<boolean>;
+  provideLatteDefinition(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   providePhpPresenterLinkCompletions(
     source: string,
     offset: number,
@@ -39,6 +44,7 @@ export interface LatteProviderFlows {
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   /**
    * @deprecated Use {@link providePhpPresenterLinkCompletions}.
@@ -53,6 +59,7 @@ export interface LatteProviderFlows {
   provideNettePhpLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -96,8 +103,8 @@ export function createLatteProviderFlows(
   return {
     provideLatteCompletions: (source, position) =>
       provideLatteCompletionsFlow(options, source, position),
-    provideLatteDefinition: (source, offset) =>
-      provideLatteDefinitionFlow(options, source, offset),
+    provideLatteDefinition: (source, offset, request) =>
+      provideLatteDefinitionFlow(options, source, offset, request),
     ...phpPresenterLinks,
   };
 }

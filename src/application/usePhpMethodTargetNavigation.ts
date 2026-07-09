@@ -20,6 +20,7 @@ import type {
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpMethodTargetNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -42,8 +43,12 @@ export interface PhpMethodTargetNavigation {
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
-  openPhpMethodHintTarget(hint: PhpMethodDefinitionHint): Promise<boolean>;
+  openPhpMethodHintTarget(
+    hint: PhpMethodDefinitionHint,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
 }
 
 export function usePhpMethodTargetNavigation({
@@ -59,7 +64,10 @@ export function usePhpMethodTargetNavigation({
   workspaceRoot,
 }: PhpMethodTargetNavigationDependencies): PhpMethodTargetNavigation {
   const openPhpMethodHintTarget = useCallback(
-    async (hint: PhpMethodDefinitionHint): Promise<boolean> => {
+    async (
+      hint: PhpMethodDefinitionHint,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -78,10 +86,18 @@ export function usePhpMethodTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         try {
           const content = await readNavigationFileContent(path);
 
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -92,6 +108,10 @@ export function usePhpMethodTargetNavigation({
           );
         } catch {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -111,7 +131,11 @@ export function usePhpMethodTargetNavigation({
   );
 
   const openDirectPhpMethodTarget = useCallback(
-    async (className: string, methodName: string): Promise<boolean> => {
+    async (
+      className: string,
+      methodName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -135,6 +159,10 @@ export function usePhpMethodTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         const target = symbols.find(
           (symbol) =>
             symbol.kind === "method" &&
@@ -144,6 +172,10 @@ export function usePhpMethodTargetNavigation({
 
         if (target) {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -174,10 +206,18 @@ export function usePhpMethodTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         visitedClassNames.add(visitedKey);
 
         for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -188,12 +228,20 @@ export function usePhpMethodTargetNavigation({
               return false;
             }
 
+            if (!canNavigate(request)) {
+              return false;
+            }
+
             const position =
               phpMethodPositionOrNull(content, methodName) ??
               phpDocMethodPositionOrNull(content, methodName);
 
             if (position) {
               if (!isRequestedRootActive()) {
+                return false;
+              }
+
+              if (!canNavigate(request)) {
                 return false;
               }
 
@@ -246,6 +294,10 @@ export function usePhpMethodTargetNavigation({
               return false;
             }
 
+            if (!canNavigate(request)) {
+              return false;
+            }
+
             continue;
           }
         }
@@ -261,6 +313,10 @@ export function usePhpMethodTargetNavigation({
         await resolvePhpFrameworkBoundConcrete(className);
 
       if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!canNavigate(request)) {
         return false;
       }
 

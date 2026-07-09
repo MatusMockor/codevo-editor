@@ -114,6 +114,28 @@ describe("provideBladeDefinition", () => {
     );
   });
 
+  it("does not open a Blade reference after the navigation request goes stale", async () => {
+    let navigationAllowed = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const readNavigationFileContent = vi.fn(async () => {
+      navigationAllowed = false;
+
+      return "";
+    });
+    const source = "@include('partials.alert')";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "partials.alert"),
+        makeDeps({ openNavigationTarget, readNavigationFileContent }),
+        { canNavigate: () => navigationAllowed },
+      ),
+    ).resolves.toBe(false);
+    expect(readNavigationFileContent).toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+  });
+
   it("tries component class targets before anonymous blade component views", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const readNavigationFileContent = vi.fn(async () => "");

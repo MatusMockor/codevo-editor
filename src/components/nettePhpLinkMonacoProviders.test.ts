@@ -23,6 +23,7 @@ describe("nette PHP link Monaco providers", () => {
     expect(context.providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       source,
       source.indexOf("Product"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
   });
 
@@ -143,6 +144,7 @@ describe("nette PHP link Monaco providers", () => {
     expect(context.provideNettePhpLinkDefinition).toHaveBeenCalledWith(
       source,
       source.indexOf("Product"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
   });
 

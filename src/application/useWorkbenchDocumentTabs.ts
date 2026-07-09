@@ -35,6 +35,7 @@ export interface OpenFileOptions {
   pin?: boolean;
   readOnly?: boolean;
   recordNavigation?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 export interface OpenReadOnlyDocumentOptions {
@@ -497,7 +498,8 @@ export function useWorkbenchDocumentTabs(
         if (
           openFileRequestTokenRef.current !== requestToken ||
           (requestedRoot !== null &&
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) ||
+          options.shouldCommit?.() === false
         ) {
           clearOpeningFileForRequest();
           return false;

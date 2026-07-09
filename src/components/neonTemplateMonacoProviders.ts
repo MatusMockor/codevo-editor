@@ -9,6 +9,7 @@ import {
   isStoredWorkspaceRootActive,
   modelSource,
   offsetAtMonacoPosition,
+  templateDefinitionNavigationRequest,
   templateCompletionFallbackRange,
   templateReplaceRange,
 } from "./templateLanguageMonacoUtils";
@@ -88,9 +89,15 @@ async function provideNeonDefinition(
 
   const source = modelSource(model, documentContext.activeDocument.content);
   const offset = offsetAtMonacoPosition(source, position);
+  const request = templateDefinitionNavigationRequest(
+    context,
+    model,
+    documentContext.rootPath,
+    documentContext.path,
+  );
 
   try {
-    await context.provideNeonDefinition(source, offset);
+    await context.provideNeonDefinition(source, offset, request);
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       context.reportError(error);

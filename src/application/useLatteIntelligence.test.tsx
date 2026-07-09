@@ -218,6 +218,28 @@ describe("createLatteIntelligence definition", () => {
     );
   });
 
+  it("does not open an include after the navigation request goes stale", async () => {
+    let navigationAllowed = true;
+    const openTarget = vi.fn(async () => true);
+    const readFileContent = vi.fn(async () => {
+      navigationAllowed = false;
+
+      return "template body";
+    });
+    const deps = makeDeps({ readFileContent, openTarget });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{include 'partials/menu'}";
+    const offset = source.indexOf("menu");
+
+    await expect(
+      latte.provideLatteDefinition(source, offset, {
+        canNavigate: () => navigationAllowed,
+      }),
+    ).resolves.toBe(false);
+    expect(readFileContent).toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
   it("returns false when no include candidate exists", async () => {
     const { readFileContent } = buildWorkspace([]);
     const openTarget = vi.fn(async () => true);
@@ -2788,6 +2810,37 @@ describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () =>
       expect.objectContaining({ lineNumber: 9 }),
       "Product:show",
     );
+  });
+
+  it("does not open a PHP presenter link after the navigation request goes stale", async () => {
+    let navigationAllowed = true;
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const staleReadFileContent = vi.fn(async (path: string) => {
+      const content = await readFileContent(path);
+      navigationAllowed = false;
+
+      return content;
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      listDirectory,
+      openTarget,
+      readFileContent: staleReadFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$url = $this->link('Product:show', $id);";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(
+      latte.provideNettePhpLinkDefinition(source, offset, {
+        canNavigate: () => navigationAllowed,
+      }),
+    ).resolves.toBe(false);
+    expect(staleReadFileContent).toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
   });
 
   it("navigates a relative $this->redirect('edit') to the current presenter", async () => {

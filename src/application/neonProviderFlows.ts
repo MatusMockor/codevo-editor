@@ -10,6 +10,7 @@ import {
   type NeonIntelligence,
   type NeonIntelligenceDependencies,
 } from "./neonIntelligenceContracts";
+import type { NavigationRequest } from "./navigationRequest";
 import { createNeonRequestContext } from "./neonIntelligenceRuntime";
 import {
   type NeonConfigCache,
@@ -36,6 +37,7 @@ export function createNeonIntelligence(
   const provideNeonDefinition = async (
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean> => {
     const context = createNeonRequestContext(
       getDependencies(),
@@ -47,7 +49,7 @@ export function createNeonIntelligence(
       return false;
     }
 
-    return provideNeonDefinitionFromProvider(context, source, offset);
+    return provideNeonDefinitionFromProvider(context, source, offset, request);
   };
 
   const provideNeonCompletions = async (

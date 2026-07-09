@@ -1,5 +1,6 @@
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import type { LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
+import type { NavigationRequest } from "./navigationRequest";
 import {
   isPhpPresenterLinkCompletionContext as isPhpPresenterLinkCompletionContextFromProvider,
   providePhpPresenterLinkCompletions as providePhpPresenterLinkCompletionsFromProvider,
@@ -15,6 +16,7 @@ export interface LattePhpPresenterLinkFlow {
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   /**
    * @deprecated Use {@link providePhpPresenterLinkCompletions}.
@@ -29,6 +31,7 @@ export interface LattePhpPresenterLinkFlow {
   provideNettePhpLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -47,6 +50,7 @@ export interface LattePhpPresenterLinkFlowDriver {
     options: LatteProviderFlowFactoryOptions,
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -66,8 +70,22 @@ export function createLattePhpPresenterLinkFlow(
 ): LattePhpPresenterLinkFlow {
   const providePhpPresenterLinkCompletions = (source: string, offset: number) =>
     driver.providePhpPresenterLinkCompletions(options, source, offset);
-  const providePhpPresenterLinkDefinition = (source: string, offset: number) =>
-    driver.providePhpPresenterLinkDefinition(options, source, offset);
+  const providePhpPresenterLinkDefinition = (
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ) => {
+    if (!request) {
+      return driver.providePhpPresenterLinkDefinition(options, source, offset);
+    }
+
+    return driver.providePhpPresenterLinkDefinition(
+      options,
+      source,
+      offset,
+      request,
+    );
+  };
 
   return {
     isPhpPresenterLinkCompletionContext: (source, offset) =>

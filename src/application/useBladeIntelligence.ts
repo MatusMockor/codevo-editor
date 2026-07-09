@@ -33,6 +33,7 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
+import type { NavigationRequest } from "./navigationRequest";
 import {
   provideBladeCodeActions as provideBladeCodeActionsFromProvider,
 } from "./bladeCodeActionProvider";
@@ -165,7 +166,11 @@ export function useBladeIntelligence(
   );
 
   const provideBladeDefinition = useCallback(
-    async (source: string, offset: number): Promise<boolean> => {
+    async (
+      source: string,
+      offset: number,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       return provideBladeDefinitionFromProvider(source, offset, {
         activeDocument,
         collectPhpLaravelNamedRouteTargets,
@@ -182,7 +187,7 @@ export function useBladeIntelligence(
         relativeWorkspacePath,
         resolveBladeViewVariableTypeForView,
         workspaceRoot,
-      });
+      }, request);
     },
     [
       activeDocument,

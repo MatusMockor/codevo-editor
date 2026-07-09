@@ -29,15 +29,21 @@ import {
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 import {
+  guardedLatteProviderRequestContext,
   latteProviderRequestContext,
 } from "./latteProviderRequestContext";
+import type { NavigationRequest } from "./navigationRequest";
 
 export async function provideLatteDefinition(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   offset: number,
+  navigationRequest?: NavigationRequest,
 ): Promise<boolean> {
-  const request = latteProviderRequestContext(options);
+  const request = guardedLatteProviderRequestContext(
+    latteProviderRequestContext(options),
+    navigationRequest,
+  );
 
   if (!request) {
     return false;

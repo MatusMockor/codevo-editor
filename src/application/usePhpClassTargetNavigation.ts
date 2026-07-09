@@ -16,6 +16,7 @@ import {
   bestIndexedSymbolMatch,
   editorPositionFromProjectSymbol,
 } from "./projectSymbolNavigation";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpClassTargetNavigationDependencies {
   activeDocument: EditorDocument | null;
@@ -33,7 +34,11 @@ export interface PhpClassTargetNavigationDependencies {
 }
 
 export interface PhpClassTargetNavigation {
-  openPhpClassTarget(className: string, label: string): Promise<boolean>;
+  openPhpClassTarget(
+    className: string,
+    label: string,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
 }
 
 export function usePhpClassTargetNavigation({
@@ -47,7 +52,11 @@ export function usePhpClassTargetNavigation({
   workspaceRoot,
 }: PhpClassTargetNavigationDependencies): PhpClassTargetNavigation {
   const openPhpClassTarget = useCallback(
-    async (className: string, label: string): Promise<boolean> => {
+    async (
+      className: string,
+      label: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const requestedSourcePath = activeDocument?.path ?? "";
@@ -69,6 +78,10 @@ export function usePhpClassTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         const indexedTarget = bestIndexedSymbolMatch(
           indexedSymbols,
           className,
@@ -77,6 +90,10 @@ export function usePhpClassTargetNavigation({
 
         if (indexedTarget) {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -97,10 +114,18 @@ export function usePhpClassTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         try {
           const content = await readNavigationFileContent(path);
 
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -111,6 +136,10 @@ export function usePhpClassTargetNavigation({
           );
         } catch {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 

@@ -1348,6 +1348,7 @@ function App() {
             onEditorFocused={markActiveFileRevealSignal}
             onOpenClass={openClass}
             onOpenFile={openFile}
+            onOpenWorkspaceFile={workbench.openWorkspaceFile}
             onOpenFileStructure={workbench.openFileStructure}
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}

@@ -1,9 +1,11 @@
 import type * as Monaco from "monaco-editor";
+import type { NavigationRequest } from "../application/navigationRequest";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import {
   activePhpDocumentContext,
   isPhpDocumentContextActive,
+  modelPath,
   modelSource,
   offsetAtMonacoPosition,
 } from "./phpMonacoDocumentContext";
@@ -24,6 +26,7 @@ export interface PhpPresenterLinkMonacoProviderContext {
   providePhpPresenterLinkDefinition?(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   providePhpPresenterLinkCompletions?(
     source: string,
@@ -36,6 +39,7 @@ export interface PhpPresenterLinkMonacoProviderContext {
   provideNettePhpLinkDefinition?(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   /**
    * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
@@ -85,9 +89,10 @@ export async function providePhpPresenterLinkDefinition(
 
   const source = modelSource(model, documentContext.activeDocument.content);
   const offset = offsetAtMonacoPosition(source, position);
+  const request = phpDefinitionNavigationRequest(context, model, documentContext);
 
   try {
-    return await provideDefinition(source, offset);
+    return await provideDefinition(source, offset, request);
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);
@@ -95,6 +100,30 @@ export async function providePhpPresenterLinkDefinition(
 
     return false;
   }
+}
+
+function phpDefinitionNavigationRequest(
+  context: PhpPresenterLinkMonacoProviderContext,
+  model: MonacoModel,
+  documentContext: {
+    path: string;
+    rootPath: string;
+    sessionId: number | null;
+  },
+): NavigationRequest {
+  return {
+    canNavigate: () => {
+      if (context.getActiveDocument()?.path !== documentContext.path) {
+        return false;
+      }
+
+      if (modelPath(model) !== documentContext.path) {
+        return false;
+      }
+
+      return isPhpDocumentContextActive(context, documentContext);
+    },
+  };
 }
 
 /**

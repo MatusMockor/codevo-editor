@@ -146,6 +146,19 @@ describe("createNeonIntelligence definition", () => {
     expect(openClassTarget).toHaveBeenCalledWith("App\\Router\\RouterFactory");
   });
 
+  it("does not open a class target when the navigation request is stale", async () => {
+    const openClassTarget = vi.fn(async () => true);
+    const deps = makeDeps({ openClassTarget });
+    const neon = createNeonIntelligence(() => deps);
+    const source = "services:\n    router: App\\Router\\RouterFactory\n";
+    const offset = source.indexOf("App\\Router\\RouterFactory") + 2;
+
+    await expect(
+      neon.provideNeonDefinition(source, offset, { canNavigate: () => false }),
+    ).resolves.toBe(false);
+    expect(openClassTarget).not.toHaveBeenCalled();
+  });
+
   it("navigates an anonymous `- Class` FQN entry", async () => {
     const openClassTarget = vi.fn(async () => true);
     const deps = makeDeps({ openClassTarget });

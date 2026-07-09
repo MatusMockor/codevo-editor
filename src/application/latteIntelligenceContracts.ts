@@ -6,6 +6,7 @@ import type {
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
+import type { NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
@@ -31,7 +32,11 @@ export interface LatteIntelligenceDependencies {
     position: EditorPosition,
     label: string,
   ): Promise<boolean>;
-  openPhpMethodTarget(className: string, methodName: string): Promise<boolean>;
+  openPhpMethodTarget(
+    className: string,
+    methodName: string,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   openPhpPropertyTarget(
     className: string,
     propertyName: string,
@@ -67,11 +72,16 @@ export interface LatteIntelligence {
     source: string,
     position: EditorPosition,
   ): Promise<LatteCompletionItem[]>;
-  provideLatteDefinition(source: string, offset: number): Promise<boolean>;
+  provideLatteDefinition(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   providePhpPresenterLinkCompletions(
     source: string,
@@ -85,6 +95,7 @@ export interface LatteIntelligence {
   provideNettePhpLinkDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   /**
    * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a

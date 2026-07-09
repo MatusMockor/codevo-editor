@@ -28,6 +28,7 @@ import {
 } from "./phpFrameworkLiteralNavigation";
 import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -45,7 +46,11 @@ export interface PhpFrameworkDefinitionNavigationDependencies {
     label: string,
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
-  openPhpClassTarget(className: string, label: string): Promise<boolean>;
+  openPhpClassTarget(
+    className: string,
+    label: string,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   providers: Parameters<typeof resolvePhpFrameworkLiteralNavigationTarget>[0]["providers"];
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
@@ -55,7 +60,11 @@ export interface PhpFrameworkDefinitionNavigationDependencies {
 }
 
 export interface PhpFrameworkDefinitionNavigation {
-  providePhpFrameworkDefinition(source: string, offset: number): Promise<boolean>;
+  providePhpFrameworkDefinition(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
 }
 
 export function usePhpFrameworkDefinitionNavigation({
@@ -85,7 +94,11 @@ export function usePhpFrameworkDefinitionNavigation({
     supportsLaravelRouteDefinitionNavigation;
 
   const openPhpLaravelHandlerTarget = useCallback(
-    async (className: string, shortName: string): Promise<boolean> => {
+    async (
+      className: string,
+      shortName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -123,6 +136,10 @@ export function usePhpFrameworkDefinitionNavigation({
           continue;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         return openNavigationTarget(path, methodPosition, `${shortName}`);
       }
 
@@ -130,7 +147,13 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      return openPhpClassTarget(className, shortName);
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      return request
+        ? openPhpClassTarget(className, shortName, request)
+        : openPhpClassTarget(className, shortName);
     },
     [
       currentWorkspaceRootRef,
@@ -143,7 +166,10 @@ export function usePhpFrameworkDefinitionNavigation({
   );
 
   const goToPhpLaravelEventListenerDefinition = useCallback(
-    async (eventClassName: string): Promise<boolean> => {
+    async (
+      eventClassName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -221,10 +247,15 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         if (
           await openPhpLaravelHandlerTarget(
             listenerClassName,
             shortPhpName(listenerClassName),
+            request,
           )
         ) {
           return true;
@@ -247,6 +278,7 @@ export function usePhpFrameworkDefinitionNavigation({
     async (
       source: string,
       target: PhpLaravelDispatchTarget,
+      request?: NavigationRequest,
     ): Promise<boolean> => {
       const resolvedClassName = resolvePhpClassName(source, target.className);
 
@@ -257,18 +289,36 @@ export function usePhpFrameworkDefinitionNavigation({
       const shortName = shortPhpName(resolvedClassName);
 
       if (target.kind === "event") {
-        return goToPhpLaravelEventListenerDefinition(resolvedClassName);
+        if (!canNavigate(request)) {
+          return false;
+        }
+
+        return goToPhpLaravelEventListenerDefinition(resolvedClassName, request);
       }
 
       if (target.kind === "job") {
-        return openPhpLaravelHandlerTarget(resolvedClassName, shortName);
+        if (!canNavigate(request)) {
+          return false;
+        }
+
+        return openPhpLaravelHandlerTarget(resolvedClassName, shortName, request);
       }
 
-      if (await goToPhpLaravelEventListenerDefinition(resolvedClassName)) {
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      if (
+        await goToPhpLaravelEventListenerDefinition(resolvedClassName, request)
+      ) {
         return true;
       }
 
-      return openPhpLaravelHandlerTarget(resolvedClassName, shortName);
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      return openPhpLaravelHandlerTarget(resolvedClassName, shortName, request);
     },
     [goToPhpLaravelEventListenerDefinition, openPhpLaravelHandlerTarget],
   );
@@ -357,7 +407,11 @@ export function usePhpFrameworkDefinitionNavigation({
   );
 
   const providePhpFrameworkDefinition = useCallback(
-    async (source: string, offset: number): Promise<boolean> => {
+    async (
+      source: string,
+      offset: number,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -383,10 +437,20 @@ export function usePhpFrameworkDefinitionNavigation({
             return false;
           }
 
-          const handled = await openPhpClassTarget(
-            resolvedExplicitClassName,
-            shortPhpName(resolvedExplicitClassName),
-          );
+          if (!canNavigate(request)) {
+            return false;
+          }
+
+          const handled = request
+            ? await openPhpClassTarget(
+                resolvedExplicitClassName,
+                shortPhpName(resolvedExplicitClassName),
+                request,
+              )
+            : await openPhpClassTarget(
+                resolvedExplicitClassName,
+                shortPhpName(resolvedExplicitClassName),
+              );
 
           if (handled) {
             return true;
@@ -402,10 +466,20 @@ export function usePhpFrameworkDefinitionNavigation({
             return false;
           }
 
-          const handled = await openPhpClassTarget(
-            `${namespace}${routeBinding.modelShortName}`,
-            routeBinding.modelShortName,
-          );
+          if (!canNavigate(request)) {
+            return false;
+          }
+
+          const handled = request
+            ? await openPhpClassTarget(
+                `${namespace}${routeBinding.modelShortName}`,
+                routeBinding.modelShortName,
+                request,
+              )
+            : await openPhpClassTarget(
+                `${namespace}${routeBinding.modelShortName}`,
+                routeBinding.modelShortName,
+              );
 
           if (handled) {
             return true;
@@ -424,7 +498,11 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
-        return goToPhpLaravelDispatchDefinition(source, dispatchTarget);
+        if (!canNavigate(request)) {
+          return false;
+        }
+
+        return goToPhpLaravelDispatchDefinition(source, dispatchTarget, request);
       }
 
       const classIdentifierName = phpClassIdentifierNameAt(source, offset);
@@ -436,10 +514,17 @@ export function usePhpFrameworkDefinitionNavigation({
         );
 
         if (resolvedClassName) {
-          const handledClassTarget = await openPhpClassTarget(
-            resolvedClassName,
-            classIdentifierName,
-          );
+          if (!canNavigate(request)) {
+            return false;
+          }
+
+          const handledClassTarget = request
+            ? await openPhpClassTarget(
+                resolvedClassName,
+                classIdentifierName,
+                request,
+              )
+            : await openPhpClassTarget(resolvedClassName, classIdentifierName);
 
           if (handledClassTarget) {
             return true;
@@ -461,6 +546,10 @@ export function usePhpFrameworkDefinitionNavigation({
       );
 
       if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!canNavigate(request)) {
         return false;
       }
 

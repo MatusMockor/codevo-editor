@@ -12,6 +12,7 @@ import type {
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { NavigationRequest } from "./navigationRequest";
 
 /**
  * A Blade completion item the controller hands to the Monaco "blade" completion
@@ -81,6 +82,7 @@ export interface BladeIntelligenceDependencies {
   openDirectPhpMethodTarget: (
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ) => Promise<boolean>;
   openPhpLaravelModelAttributeTarget: (
     className: string,
@@ -102,7 +104,11 @@ export interface BladeIntelligence {
     source: string,
     position: EditorPosition,
   ) => Promise<BladeCompletionItem[]>;
-  provideBladeDefinition: (source: string, offset: number) => Promise<boolean>;
+  provideBladeDefinition: (
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ) => Promise<boolean>;
   invalidateBladeComponentNamesForPath: (root: string, path: string) => void;
   invalidateBladeViewDataEntriesForPath: (root: string, path: string) => void;
   resetBladeIntelligenceCaches: () => void;

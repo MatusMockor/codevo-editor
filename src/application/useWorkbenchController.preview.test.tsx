@@ -66518,6 +66518,166 @@ class PostRepository
     });
   });
 
+  describe("QA bridge workspace opens", () => {
+    it("opens only current-workspace absolute file paths through the document tab flow", async () => {
+      const readTextFile = vi.fn(async (path: string) => `content:${path}`);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile,
+      });
+      await flushAsyncTurns();
+
+      const request = { canOpen: vi.fn(() => true) };
+
+      let opened = false;
+      await act(async () => {
+        opened = await getWorkbench().openWorkspaceFile(
+          "/workspace/src/Target.php",
+          request,
+        );
+      });
+      await flushAsyncTurns();
+
+      expect(opened).toBe(true);
+      expect(getWorkbench().activePath).toBe("/workspace/src/Target.php");
+      expect(getWorkbench().activeDocument?.content).toBe(
+        "content:/workspace/src/Target.php",
+      );
+      expect(readTextFile).toHaveBeenCalledWith("/workspace/src/Target.php");
+
+      readTextFile.mockClear();
+
+      await act(async () => {
+        opened = await getWorkbench().openWorkspaceFile(
+          "/workspace-other/src/Escape.php",
+          request,
+        );
+      });
+
+      expect(opened).toBe(false);
+      expect(getWorkbench().activePath).toBe("/workspace/src/Target.php");
+      expect(readTextFile).not.toHaveBeenCalled();
+    });
+
+    it("drops a QA bridge workspace open when the request goes stale during the read", async () => {
+      const slowRead = createDeferred<string>();
+      const readTextFile = vi.fn((path: string) => {
+        if (path === "/workspace-a/src/Slow.php") {
+          return slowRead.promise;
+        }
+
+        return Promise.resolve(`content:${path}`);
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile,
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+      });
+
+      const request = {
+        canOpen: vi.fn(() => getWorkbench().workspaceRoot === "/workspace-a"),
+      };
+      let openedPromise: Promise<boolean> = Promise.resolve(false);
+
+      act(() => {
+        openedPromise = getWorkbench().openWorkspaceFile(
+          "/workspace-a/src/Slow.php",
+          request,
+        );
+      });
+
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith("/workspace-a/src/Slow.php");
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      let opened = true;
+      await act(async () => {
+        slowRead.resolve("stale");
+        opened = await openedPromise;
+      });
+      await flushAsyncTurns();
+
+      expect(opened).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe("/workspace-a/src/Slow.php");
+    });
+
+    it("does not commit a same-workspace QA bridge open after the active document changes", async () => {
+      const slowRead = createDeferred<string>();
+      const readTextFile = vi.fn((path: string) => {
+        if (path === "/workspace/src/Slow.php") {
+          return slowRead.promise;
+        }
+
+        return Promise.resolve(`content:${path}`);
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        readTextFile,
+      });
+      await flushAsyncTurns();
+
+      const request = {
+        canOpen: vi.fn(() => getWorkbench().activePath !== "/workspace/src/Other.php"),
+      };
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/src/Initial.php", "Initial.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      let openedPromise: Promise<boolean> = Promise.resolve(false);
+      act(() => {
+        openedPromise = getWorkbench().openWorkspaceFile(
+          "/workspace/src/Slow.php",
+          request,
+        );
+      });
+
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith("/workspace/src/Slow.php");
+      });
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(
+          fileEntry("/workspace/src/Other.php", "Other.php"),
+        );
+      });
+      await flushAsyncTurns();
+
+      let opened = true;
+      await act(async () => {
+        slowRead.resolve("stale");
+        opened = await openedPromise;
+      });
+      await flushAsyncTurns();
+
+      expect(opened).toBe(false);
+      expect(getWorkbench().activePath).toBe("/workspace/src/Other.php");
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

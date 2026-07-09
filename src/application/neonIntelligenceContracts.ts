@@ -1,6 +1,7 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { NeonCompletionItem } from "./neonCompletionItems";
+import type { NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
@@ -31,6 +32,7 @@ export interface NeonIntelligenceDependencies {
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   openTarget(
     path: string,
@@ -62,5 +64,9 @@ export interface NeonIntelligence {
     source: string,
     position: EditorPosition,
   ): Promise<NeonCompletionItem[]>;
-  provideNeonDefinition(source: string, offset: number): Promise<boolean>;
+  provideNeonDefinition(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
 }

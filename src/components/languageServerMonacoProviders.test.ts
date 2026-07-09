@@ -7894,7 +7894,11 @@ function store($request): void
       ),
     ).resolves.toBeNull();
     expect(providePhpFrameworkDefinition).toHaveBeenCalledTimes(1);
-    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(source, offset);
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
+      source,
+      offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
     expect(gateway.definition).not.toHaveBeenCalled();
   });
 
@@ -10384,7 +10388,17 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     const offset = source.indexOf("partials.alert");
     const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
     const column = offset - lineStart + 1;
-    const provideBladeDefinition = vi.fn(async () => true);
+    const providerModel = model({
+      content: source,
+      path: "/project/resources/views/show.blade.php",
+    });
+    const provideBladeDefinition = vi.fn(async (_source, _offset, request) => {
+      expect(request?.canNavigate()).toBe(true);
+      providerModel.getVersionId.mockReturnValue(43);
+      expect(request?.canNavigate()).toBe(false);
+
+      return true;
+    });
     const context = providerContext({
       activeDocument: bladeDocument(source),
       provideBladeDefinition,
@@ -10393,15 +10407,16 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
 
     await expect(
       registered.bladeDefinitionProvider.provideDefinition(
-        model({
-          content: source,
-          path: "/project/resources/views/show.blade.php",
-        }),
+        providerModel,
         { column, lineNumber: 1 },
       ),
     ).resolves.toBeNull();
     expect(provideBladeDefinition).toHaveBeenCalledTimes(1);
-    expect(provideBladeDefinition).toHaveBeenCalledWith(source, offset);
+    expect(provideBladeDefinition).toHaveBeenCalledWith(
+      source,
+      offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
   });
 
   it("does not call the blade definition callback for a non-blade active document", async () => {
@@ -10842,7 +10857,11 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
       ),
     ).resolves.toBeNull();
     expect(provideLatteDefinition).toHaveBeenCalledTimes(1);
-    expect(provideLatteDefinition).toHaveBeenCalledWith(source, offset);
+    expect(provideLatteDefinition).toHaveBeenCalledWith(
+      source,
+      offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
   });
 
   it("does not call the latte definition callback for a non-latte active document", async () => {
@@ -11109,7 +11128,11 @@ describe("registerLanguageServerMonacoProviders neon providers", () => {
         positionForOffset(source, offset),
       ),
     ).resolves.toBeNull();
-    expect(provideNeonDefinition).toHaveBeenCalledWith(source, offset);
+    expect(provideNeonDefinition).toHaveBeenCalledWith(
+      source,
+      offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
   });
 
   it("does not call neon completions for a non-neon active document", async () => {
@@ -11231,6 +11254,7 @@ describe("registerLanguageServerMonacoProviders nette php link definition", () =
     expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       source,
       offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
     expect(definitionGateway.definition).not.toHaveBeenCalled();
   });

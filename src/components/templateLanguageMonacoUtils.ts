@@ -1,4 +1,5 @@
 import type * as Monaco from "monaco-editor";
+import type { NavigationRequest } from "../application/navigationRequest";
 import type { PhpCodeActionRange } from "../application/phpCodeActionTypes";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { TemplateLanguageMonacoProviderContext } from "./templateLanguageMonacoTypes";
@@ -54,6 +55,35 @@ export function isStoredWorkspaceRootActive(
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
   return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
+}
+
+export function templateDefinitionNavigationRequest(
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  rootPath: string,
+  path: string,
+): NavigationRequest {
+  const version = modelVersion(model);
+
+  return {
+    canNavigate: () => {
+      const activeDocument = context.getActiveDocument();
+
+      if (activeDocument?.path !== path) {
+        return false;
+      }
+
+      if (!isStoredWorkspaceRootActive(context, rootPath)) {
+        return false;
+      }
+
+      if (modelPath(model) !== path) {
+        return false;
+      }
+
+      return modelVersion(model) === version;
+    },
+  };
 }
 
 export function modelSource(model: MonacoModel, fallbackSource: string): string {
@@ -127,6 +157,16 @@ function modelPath(model: MonacoModel): string | null {
   }
 
   return null;
+}
+
+function modelVersion(model: MonacoModel): number | null {
+  const versionProvider = (
+    model as MonacoModel & {
+      getVersionId?: () => number;
+    }
+  ).getVersionId;
+
+  return versionProvider?.() ?? null;
 }
 
 function monacoPositionAtOffset(

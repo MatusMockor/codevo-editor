@@ -3,6 +3,7 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "../application/phpCodeActionTypes";
+import type { NavigationRequest } from "../application/navigationRequest";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
@@ -89,7 +90,11 @@ export interface TemplateLanguageMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
-  provideBladeDefinition?(source: string, offset: number): Promise<boolean>;
+  provideBladeDefinition?(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   provideBladeCompletions?(
     source: string,
     position: MonacoPosition,
@@ -98,12 +103,20 @@ export interface TemplateLanguageMonacoProviderContext {
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
-  provideLatteDefinition?(source: string, offset: number): Promise<boolean>;
+  provideLatteDefinition?(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   provideLatteCompletions?(
     source: string,
     position: MonacoPosition,
   ): Promise<LatteCompletion[]>;
-  provideNeonDefinition?(source: string, offset: number): Promise<boolean>;
+  provideNeonDefinition?(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
   provideNeonCompletions?(
     source: string,
     position: MonacoPosition,

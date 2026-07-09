@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",
+    "debug:qa": "VITE_CODEVO_QA_BRIDGE=1 node ./scripts/debug-tauri.mjs",
     "debug:smoke": "node ./scripts/debug-tauri.mjs --smoke",
     "debug:tauri": "tauri dev",
     "debug:build": "tauri build --debug",

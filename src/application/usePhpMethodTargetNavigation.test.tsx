@@ -225,4 +225,31 @@ describe("usePhpMethodTargetNavigation", () => {
 
     harness.unmount();
   });
+
+  it("drops method targets when the navigation request becomes stale after an awaited resolver", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openNavigationTarget,
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().openDirectPhpMethodTarget(
+      "App\\Services\\ReportService",
+      "render",
+      { canNavigate: () => requestActive },
+    );
+
+    requestActive = false;
+    symbols.resolve([methodSymbol()]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });

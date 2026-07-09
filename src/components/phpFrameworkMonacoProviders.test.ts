@@ -24,6 +24,7 @@ describe("php framework Monaco providers", () => {
     expect(context.providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       source,
       source.indexOf("Product"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
     expect(context.providePhpFrameworkDefinition).not.toHaveBeenCalled();
   });
@@ -46,6 +47,7 @@ describe("php framework Monaco providers", () => {
     expect(context.providePhpFrameworkDefinition).toHaveBeenCalledWith(
       source,
       offset,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
   });
 

@@ -16,6 +16,7 @@ import type {
   EditorChangeHunk,
   EditorChangeKind,
 } from "../domain/editorChangeMarkers";
+import type { NavigationRequest } from "../application/navigationRequest";
 import {
   nextEditorSelectionExpansionRange,
   type EditorSelectionTextRange,
@@ -133,6 +134,12 @@ import {
   useEditorSurfaceFrameworkProviderRefs,
   type EditorSurfaceFrameworkIntelligenceProviders,
 } from "./useEditorSurfaceFrameworkProviderRefs";
+import {
+  type EditorQaDefinitionRequest,
+  type EditorQaOpenWorkspaceFileRequest,
+  editorQaBridgeEnabled,
+  installEditorQaBridge,
+} from "./editorQaBridge";
 import {
   applyImmediateFallbackTheme,
   configureShikiLanguageFeatures,
@@ -259,6 +266,10 @@ interface EditorSurfaceProps {
   onEditorFocused(): void;
   onOpenClass(): void;
   onOpenFile(): void;
+  onOpenWorkspaceFile?(
+    path: string,
+    request: EditorQaOpenWorkspaceFileRequest,
+  ): Promise<boolean>;
   onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
@@ -283,6 +294,7 @@ interface EditorSurfaceProps {
   providePhpFrameworkDefinition?(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   /**
    * @deprecated Use providePhpFrameworkDefinition. Kept so older callers can
@@ -291,6 +303,7 @@ interface EditorSurfaceProps {
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   providePhpMethodCompletions(
     source: string,
@@ -304,6 +317,25 @@ interface EditorSurfaceProps {
     source: string,
     range: { endLine: number; startLine: number },
   ): Promise<PhpParameterNameInlayHint[]>;
+}
+
+type GuardedQaDefinitionProvider = (
+  source: string,
+  offset: number,
+  request: EditorQaDefinitionRequest,
+) => Promise<boolean>;
+
+function provideGuardedQaDefinition(
+  provider: (source: string, offset: number) => Promise<boolean>,
+  source: string,
+  offset: number,
+  request: EditorQaDefinitionRequest,
+): Promise<boolean> {
+  if (!request.canNavigate()) {
+    return Promise.resolve(false);
+  }
+
+  return (provider as GuardedQaDefinitionProvider)(source, offset, request);
 }
 
 function EditorSurfaceComponent({
@@ -365,6 +397,7 @@ function EditorSurfaceComponent({
   onEditorFocused,
   onOpenClass,
   onOpenFile,
+  onOpenWorkspaceFile,
   onOpenFileStructure,
   onChange,
   onLanguageServerError,
@@ -405,6 +438,7 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  const workspaceRootRef = useRef(workspaceRoot);
   const previousActiveDocumentPathRef = useRef<string | null>(
     activeDocument?.path ?? null,
   );
@@ -437,6 +471,7 @@ function EditorSurfaceComponent({
   // Holds the latest parent onChange so the Editor can receive a single stable
   // handler (see handleEditorChange) without the closure ever going stale.
   const onChangeRef = useRef(onChange);
+  const openWorkspaceFileRef = useRef(onOpenWorkspaceFile);
   const isLanguageServerDocumentSyncedRef = useRef(
     isLanguageServerDocumentSynced,
   );
@@ -501,6 +536,9 @@ function EditorSurfaceComponent({
   const gitBlameDecoratedPathRef = useRef<string | null>(null);
   const provideGitBlameRef = useRef(provideGitBlame);
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
+  const languageServerDiagnosticsByPathRef = useRef(
+    languageServerDiagnosticsByPath,
+  );
   // Tracks the diagnostics map seen on the previous run and the set of model
   // objects already given language-server markers, so the marker effect can
   // re-apply markers only for paths whose diagnostics actually changed (or for
@@ -557,6 +595,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
   }, [activeDocument]);
+
+  useEffect(() => {
+    workspaceRootRef.current = workspaceRoot;
+  }, [workspaceRoot]);
 
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
@@ -691,8 +733,16 @@ function EditorSurfaceComponent({
   }, [onChange]);
 
   useEffect(() => {
+    openWorkspaceFileRef.current = onOpenWorkspaceFile;
+  }, [onOpenWorkspaceFile]);
+
+  useEffect(() => {
     isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
   }, [isLanguageServerDocumentSynced]);
+
+  useEffect(() => {
+    languageServerDiagnosticsByPathRef.current = languageServerDiagnosticsByPath;
+  }, [languageServerDiagnosticsByPath]);
 
   useEffect(() => {
     phpCodeActionsRef.current = providePhpCodeActions;
@@ -917,6 +967,65 @@ function EditorSurfaceComponent({
     monacoApi,
     workspaceRoot,
   ]);
+
+  useEffect(() => {
+    if (!editorApi || !editorQaBridgeEnabled()) {
+      return;
+    }
+
+    return installEditorQaBridge({
+      diagnosticsByPath: () => languageServerDiagnosticsByPathRef.current,
+      editor: () => editorApi,
+      getActiveDocument: () => activeDocumentRef.current,
+      getWorkspaceRoot: () => workspaceRootRef.current,
+      openWorkspaceFile: (path, request) =>
+        openWorkspaceFileRef.current?.(path, request) ??
+        Promise.resolve(false),
+      provideBladeDefinition: (source, offset, request) =>
+        provideGuardedQaDefinition(
+          bladeDefinitionRef.current,
+          source,
+          offset,
+          request,
+        ),
+      provideBladeCompletions: (source, position) =>
+        bladeCompletionsRef.current(source, position),
+      provideLatteDefinition: (source, offset, request) =>
+        provideGuardedQaDefinition(
+          latteDefinitionRef.current,
+          source,
+          offset,
+          request,
+        ),
+      provideLatteCompletions: (source, position) =>
+        latteCompletionsRef.current(source, position),
+      provideNeonDefinition: (source, offset, request) =>
+        provideGuardedQaDefinition(
+          neonDefinitionRef.current,
+          source,
+          offset,
+          request,
+        ),
+      provideNeonCompletions: (source, position) =>
+        neonCompletionsRef.current(source, position),
+      providePhpFrameworkDefinition: (source, offset, request) =>
+        provideGuardedQaDefinition(
+          phpFrameworkDefinitionRef.current,
+          source,
+          offset,
+          request,
+        ),
+      providePhpMethodCompletions: (source, position) =>
+        phpMethodCompletionsRef.current(source, position),
+      providePhpPresenterLinkDefinition: (source, offset, request) =>
+        provideGuardedQaDefinition(
+          phpPresenterLinkDefinitionRef.current,
+          source,
+          offset,
+          request,
+        ),
+    });
+  }, [editorApi, workspaceRoot]);
 
   const handleMount: OnMount = useCallback((_editor, monaco) => {
     setEditorApi(_editor);

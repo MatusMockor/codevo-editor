@@ -381,6 +381,10 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
+interface OpenWorkspaceFileRequest {
+  canOpen(): boolean;
+}
+
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
   bookmarks: Bookmark[];
@@ -4536,6 +4540,52 @@ export function useWorkbenchController(
     [workspaceFiles],
   );
 
+  const openWorkspaceFile = useCallback(
+    async (
+      path: string,
+      request: OpenWorkspaceFileRequest,
+    ): Promise<boolean> => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+      const normalizedPath = normalizeAbsoluteWorkspacePath(path);
+
+      if (!requestedRoot || !normalizedPath) {
+        return false;
+      }
+
+      if (!absolutePathBelongsInsideRoot(normalizedPath, requestedRoot)) {
+        return false;
+      }
+
+      const isCurrentRequest = () =>
+        request.canOpen() &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isCurrentRequest()) {
+        return false;
+      }
+
+      const opened = await openFile(
+        {
+          kind: "file",
+          name: getFileName(normalizedPath),
+          path: normalizedPath,
+        },
+        { shouldCommit: isCurrentRequest },
+      );
+
+      if (!opened) {
+        return false;
+      }
+
+      if (!isCurrentRequest()) {
+        return false;
+      }
+
+      return activeDocumentRef.current?.path === normalizedPath;
+    },
+    [openFile],
+  );
+
   const {
     fileHistoryPanelOpen,
     fileHistoryRelativePath,
@@ -7445,6 +7495,7 @@ export function useWorkbenchController(
     openReferenceRow,
     openGitChange,
     openReadOnlyDocument,
+    openWorkspaceFile,
     openFileStructure,
     openImplementationTarget,
     openProblemNotice,
@@ -7731,6 +7782,63 @@ function workspacePathBelongsToRoot(
     normalizedPath.startsWith(`${normalizedRoot}/`) ||
     normalizedPath.startsWith(`${normalizedRoot}\\`)
   );
+}
+
+function absolutePathBelongsInsideRoot(path: string, root: string): boolean {
+  const normalizedRoot = normalizeAbsoluteWorkspacePath(root);
+  const normalizedPath = normalizeAbsoluteWorkspacePath(path);
+
+  if (!normalizedRoot || !normalizedPath || normalizedPath === normalizedRoot) {
+    return false;
+  }
+
+  const rootPrefix = normalizedRoot.endsWith("/")
+    ? normalizedRoot
+    : `${normalizedRoot}/`;
+
+  return normalizedPath.startsWith(rootPrefix);
+}
+
+function normalizeAbsoluteWorkspacePath(path: string): string | null {
+  const normalizedSeparators = path.trim().split("\\").join("/");
+  const driveMatch = /^[A-Za-z]:\//.exec(normalizedSeparators);
+  const prefix = driveMatch
+    ? normalizedSeparators.slice(0, 2).toLowerCase()
+    : normalizedSeparators.startsWith("/")
+      ? ""
+      : null;
+
+  if (prefix === null) {
+    return null;
+  }
+
+  const rest = driveMatch
+    ? normalizedSeparators.slice(3)
+    : normalizedSeparators.slice(1);
+  const segments: string[] = [];
+
+  for (const segment of rest.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+
+    if (segment === "..") {
+      if (segments.length === 0) {
+        return null;
+      }
+
+      segments.pop();
+      continue;
+    }
+
+    segments.push(segment);
+  }
+
+  if (prefix) {
+    return segments.length > 0 ? `${prefix}/${segments.join("/")}` : `${prefix}/`;
+  }
+
+  return `/${segments.join("/")}`;
 }
 
 function identifierAtEditorPosition(

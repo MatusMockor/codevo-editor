@@ -349,4 +349,53 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
 
     harness.unmount();
   });
+
+  it("drops literal navigation when the definition request becomes stale after an awaited finder", async () => {
+    const viewTarget = deferred<{
+      name: string;
+      path: string;
+      position: EditorPosition;
+    } | null>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const activeDocument: EditorDocument = {
+      content: "",
+      language: "php",
+      name: "Controller.php",
+      path: `${ROOT}/app/Http/Controllers/Controller.php`,
+      savedContent: "",
+    };
+    const deps = makeDeps({
+      activeDocument,
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(() => viewTarget.promise),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+    const source = "<?php view('orders.show');";
+    const navigationPromise = harness
+      .api()
+      .providePhpFrameworkDefinition(
+        source,
+        source.indexOf("orders.show") + 2,
+        { canNavigate: () => requestActive },
+      );
+
+    requestActive = false;
+    viewTarget.resolve({
+      name: "orders.show",
+      path: `${ROOT}/resources/views/orders/show.blade.php`,
+      position: position(1, 1),
+    });
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });

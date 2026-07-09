@@ -6,6 +6,7 @@ import type {
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
+import type { NavigationRequest } from "../application/navigationRequest";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type {
@@ -31,7 +32,11 @@ type PositionProvider<T> = (
   source: string,
   position: EditorPosition,
 ) => Promise<T>;
-type OffsetProvider<T> = (source: string, offset: number) => Promise<T>;
+type OffsetProvider<T> = (
+  source: string,
+  offset: number,
+  request?: NavigationRequest,
+) => Promise<T>;
 
 export interface EditorSurfaceLanguageProviderOptionsDependencies {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -167,18 +172,23 @@ export function createEditorSurfaceLanguageProviderOptions({
       bladeCodeActionsRef.current(source, range),
     provideBladeCompletions: (source, position) =>
       bladeCompletionsRef.current(source, position),
-    provideBladeDefinition: (source, offset) =>
-      bladeDefinitionRef.current(source, offset),
+    provideBladeDefinition: (source, offset, request) =>
+      callOffsetProvider(bladeDefinitionRef.current, source, offset, request),
     provideLatteCompletions: (source, position) =>
       latteCompletionsRef.current(source, position),
-    provideLatteDefinition: (source, offset) =>
-      latteDefinitionRef.current(source, offset),
+    provideLatteDefinition: (source, offset, request) =>
+      callOffsetProvider(latteDefinitionRef.current, source, offset, request),
     provideNeonCompletions: (source, position) =>
       neonCompletionsRef.current(source, position),
-    provideNeonDefinition: (source, offset) =>
-      neonDefinitionRef.current(source, offset),
-    providePhpPresenterLinkDefinition: (source, offset) =>
-      phpPresenterLinkDefinitionRef.current(source, offset),
+    provideNeonDefinition: (source, offset, request) =>
+      callOffsetProvider(neonDefinitionRef.current, source, offset, request),
+    providePhpPresenterLinkDefinition: (source, offset, request) =>
+      callOffsetProvider(
+        phpPresenterLinkDefinitionRef.current,
+        source,
+        offset,
+        request,
+      ),
     providePhpPresenterLinkCompletions: (source, offset) =>
       phpPresenterLinkCompletionsRef.current(source, offset),
     isPhpPresenterLinkCompletionContext: (source, offset) =>
@@ -187,8 +197,8 @@ export function createEditorSurfaceLanguageProviderOptions({
       phpFrameworkStringCompletionContextRef.current(source, position),
     providePhpCodeActions: (source, range) =>
       phpCodeActionsRef.current(source, range),
-    providePhpFrameworkDefinition: (source, offset) =>
-      phpFrameworkDefinitionRef.current(source, offset),
+    providePhpFrameworkDefinition: (source, offset, request) =>
+      callOffsetProvider(phpFrameworkDefinitionRef.current, source, offset, request),
     providePhpMethodCompletions: (source, position) =>
       phpMethodCompletionsRef.current(source, position),
     providePhpMethodSignature: (source, position) =>
@@ -201,4 +211,17 @@ export function createEditorSurfaceLanguageProviderOptions({
     reportError: (error) => errorReporterRef.current(error),
     workspaceEditGateway,
   };
+}
+
+function callOffsetProvider<T>(
+  provider: OffsetProvider<T>,
+  source: string,
+  offset: number,
+  request?: NavigationRequest,
+): Promise<T> {
+  if (!request) {
+    return provider(source, offset);
+  }
+
+  return provider(source, offset, request);
 }
