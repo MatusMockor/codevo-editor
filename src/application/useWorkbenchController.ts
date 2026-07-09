@@ -47,6 +47,7 @@ import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpCo
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
+import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
@@ -113,9 +114,6 @@ import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntell
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import {
-  goToPhpFrameworkIdentifierDefinition as goToPhpFrameworkIdentifierDefinitionForContext,
-} from "./phpFrameworkIdentifierDefinitionNavigation";
 import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
@@ -294,7 +292,6 @@ import {
 } from "../domain/phpFrameworkProviders";
 import {
   resolvePhpClassName,
-  type PhpIdentifierContext,
 } from "../domain/phpNavigation";
 import {
   phpTestClassPlan,
@@ -5498,87 +5495,28 @@ export function useWorkbenchController(
     [activeDocument, openPhpClassTarget],
   );
 
-  const goToPhpFrameworkIdentifierDefinition = useCallback(
-    async (context: PhpIdentifierContext): Promise<boolean> =>
-      goToPhpFrameworkIdentifierDefinitionForContext(context, {
-        activeDocument,
-        goToPhpFrameworkLiteralDefinition,
-        goToPhpLaravelAuthGuardDefinition,
-        goToPhpLaravelBroadcastConnectionDefinition,
-        goToPhpLaravelCacheStoreDefinition,
-        goToPhpLaravelDatabaseConnectionDefinition,
-        goToPhpLaravelGateAbilityDefinition,
-        goToPhpLaravelLogChannelDefinition,
-        goToPhpLaravelMailMailerDefinition,
-        goToPhpLaravelMiddlewareAliasDefinition,
-        goToPhpLaravelPasswordBrokerDefinition,
-        goToPhpLaravelQueueConnectionDefinition,
-        goToPhpLaravelRedisConnectionDefinition,
-        goToPhpLaravelRelationStringDefinition,
-        goToPhpLaravelStorageDiskDefinition,
-        openDirectPhpMethodTarget,
-      }),
-    [
-      activeDocument,
-      goToPhpFrameworkLiteralDefinition,
-      goToPhpLaravelAuthGuardDefinition,
-      goToPhpLaravelBroadcastConnectionDefinition,
-      goToPhpLaravelCacheStoreDefinition,
-      goToPhpLaravelDatabaseConnectionDefinition,
-      goToPhpLaravelGateAbilityDefinition,
-      goToPhpLaravelLogChannelDefinition,
-      goToPhpLaravelMailMailerDefinition,
-      goToPhpLaravelMiddlewareAliasDefinition,
-      goToPhpLaravelPasswordBrokerDefinition,
-      goToPhpLaravelQueueConnectionDefinition,
-      goToPhpLaravelRedisConnectionDefinition,
-      goToPhpLaravelRelationStringDefinition,
-      goToPhpLaravelStorageDiskDefinition,
-      openDirectPhpMethodTarget,
-    ],
-  );
-
-  const goToContextualPhpFrameworkIdentifierDefinition = useCallback(
-    async (context: PhpIdentifierContext): Promise<boolean> =>
-      goToPhpFrameworkIdentifierDefinitionForContext(context, {
-        activeDocument,
-        goToPhpFrameworkLiteralDefinition,
-        goToPhpLaravelAuthGuardDefinition,
-        goToPhpLaravelBroadcastConnectionDefinition,
-        goToPhpLaravelCacheStoreDefinition,
-        goToPhpLaravelDatabaseConnectionDefinition,
-        goToPhpLaravelGateAbilityDefinition,
-        goToPhpLaravelLogChannelDefinition,
-        goToPhpLaravelMailMailerDefinition,
-        goToPhpLaravelMiddlewareAliasDefinition,
-        goToPhpLaravelPasswordBrokerDefinition,
-        goToPhpLaravelQueueConnectionDefinition,
-        goToPhpLaravelRedisConnectionDefinition,
-        goToPhpLaravelRelationStringDefinition,
-        goToPhpLaravelStorageDiskDefinition,
-        openDirectPhpMethodTarget,
-        openPhpClassTarget,
-      }),
-    [
-      activeDocument,
-      goToPhpFrameworkLiteralDefinition,
-      goToPhpLaravelAuthGuardDefinition,
-      goToPhpLaravelBroadcastConnectionDefinition,
-      goToPhpLaravelCacheStoreDefinition,
-      goToPhpLaravelDatabaseConnectionDefinition,
-      goToPhpLaravelGateAbilityDefinition,
-      goToPhpLaravelLogChannelDefinition,
-      goToPhpLaravelMailMailerDefinition,
-      goToPhpLaravelMiddlewareAliasDefinition,
-      goToPhpLaravelPasswordBrokerDefinition,
-      goToPhpLaravelQueueConnectionDefinition,
-      goToPhpLaravelRedisConnectionDefinition,
-      goToPhpLaravelRelationStringDefinition,
-      goToPhpLaravelStorageDiskDefinition,
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
-    ],
-  );
+  const {
+    goToContextualPhpFrameworkIdentifierDefinition,
+    goToPhpFrameworkIdentifierDefinition,
+  } = usePhpFrameworkIdentifierDefinitionNavigation({
+    activeDocument,
+    goToPhpFrameworkLiteralDefinition,
+    goToPhpLaravelAuthGuardDefinition,
+    goToPhpLaravelBroadcastConnectionDefinition,
+    goToPhpLaravelCacheStoreDefinition,
+    goToPhpLaravelDatabaseConnectionDefinition,
+    goToPhpLaravelGateAbilityDefinition,
+    goToPhpLaravelLogChannelDefinition,
+    goToPhpLaravelMailMailerDefinition,
+    goToPhpLaravelMiddlewareAliasDefinition,
+    goToPhpLaravelPasswordBrokerDefinition,
+    goToPhpLaravelQueueConnectionDefinition,
+    goToPhpLaravelRedisConnectionDefinition,
+    goToPhpLaravelRelationStringDefinition,
+    goToPhpLaravelStorageDiskDefinition,
+    openDirectPhpMethodTarget,
+    openPhpClassTarget,
+  });
 
   const { goToContextualPhpDefinition } = usePhpContextualDefinitionNavigation({
     activeDocument,
