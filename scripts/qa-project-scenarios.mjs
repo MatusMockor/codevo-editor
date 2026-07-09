@@ -353,11 +353,12 @@ Options:
   --timeout-ms <ms>       Per-wait timeout. Default: ${DEFAULT_TIMEOUT_MS}.
 
 Live CDP/snippet runs require the app to be running with the dev-only
-window.__codevoQa bridge enabled. If the bridge exposes openWorkspaceFile(path),
-the harness opens each scenario file before setting the cursor. Older bridges
-still require the active editor tab to match each selected scenario's activeFile.
-Run scenarios from the matching workspace/project tab; getWorkspaceRoot() is
-checked when the bridge exposes it.
+window.__codevoQa bridge enabled. If the bridge exposes openWorkspaceRoot(path),
+the harness switches to each scenario project before opening its file. If the
+bridge exposes openWorkspaceFile(path), the harness opens each scenario file
+before setting the cursor. Older bridges still require the active workspace and
+editor tab to match each selected scenario. Run scenarios from the matching
+workspace/project tab; getWorkspaceRoot() is checked when the bridge exposes it.
 `);
 }
 
@@ -397,9 +398,9 @@ function manualGuideFor(
     "Next steps",
     "1. Start the QA app:",
     "   npm run debug:qa",
-    "2. Open the project workspace in the Tauri app for the matching project root.",
-    "3. Open Tauri WebView DevTools for the app window, then paste the matching project snippet into the Console.",
-    "4. Repeat once per project root. Each snippet runs only the scenarios listed above it.",
+    "2. Open Tauri WebView DevTools for the app window.",
+    "3. Paste the all-project snippet. On bridges with openWorkspaceRoot(path), it switches project roots before opening each scenario file.",
+    "4. If the bridge lacks openWorkspaceRoot(path), open the matching project workspace and use the grouped fallback snippets below.",
   ];
 
   if (preflightResult.some((item) => !item.ok)) {
@@ -408,6 +409,16 @@ function manualGuideFor(
       "Preflight failed. Fix the missing files or cursor anchors before trusting a manual run.",
     );
   }
+
+  lines.push(
+    "",
+    "All-project console snippet (new bridge with root switching):",
+    "```js",
+    snippetFor(selectedScenarios, timeoutMs),
+    "```",
+    "",
+    "Grouped fallback snippets for older bridges without openWorkspaceRoot(path):",
+  );
 
   for (const [projectRoot, projectScenarios] of scenariosByProjectRoot(selectedScenarios)) {
     lines.push(
@@ -980,7 +991,13 @@ function inPageRunnerSource() {
   }
 
   async function executeScenario(qa, scenario, waitMs, intervalMs) {
-    await assertProjectContext(qa, scenario, "before opening " + scenario.activeFile);
+    assertScenarioProjectShape(scenario);
+    const openedRoot = await openScenarioRoot(qa, scenario);
+
+    if (!openedRoot) {
+      await assertProjectContext(qa, scenario, "before opening " + scenario.activeFile);
+    }
+
     await openScenarioFile(qa, scenario, waitMs, intervalMs);
     await assertProjectContext(qa, scenario, "after opening " + scenario.activeFile);
 
@@ -1017,6 +1034,20 @@ function inPageRunnerSource() {
     throw new Error("Unsupported scenario action " + scenario.action + ".");
   }
 
+  async function openScenarioRoot(qa, scenario) {
+    if (typeof qa.openWorkspaceRoot !== "function") {
+      return false;
+    }
+
+    const opened = await qa.openWorkspaceRoot(scenario.projectRoot);
+
+    if (opened === false) {
+      throw new Error("openWorkspaceRoot returned false for " + scenario.projectRoot + ".");
+    }
+
+    return true;
+  }
+
   async function openScenarioFile(qa, scenario, waitMs, intervalMs) {
     if (typeof qa.openWorkspaceFile !== "function") {
       return;
@@ -1031,7 +1062,7 @@ function inPageRunnerSource() {
     await waitFor(() => qa.getActiveFile() === scenario.activeFile, waitMs, intervalMs);
   }
 
-  async function assertProjectContext(qa, scenario, phase) {
+  function assertScenarioProjectShape(scenario) {
     if (!scenario.projectRoot) {
       throw new Error("Scenario " + scenario.id + " has no projectRoot.");
     }
@@ -1047,6 +1078,10 @@ function inPageRunnerSource() {
           ".",
       );
     }
+  }
+
+  async function assertProjectContext(qa, scenario, phase) {
+    assertScenarioProjectShape(scenario);
 
     if (typeof qa.getWorkspaceRoot === "function") {
       const workspaceRoot = await qa.getWorkspaceRoot();

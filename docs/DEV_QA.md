@@ -7,14 +7,17 @@ and avoids pixel/token click automation.
 ## Current Scope
 
 The harness runs deterministic checks against real project files. When the
-dev-only bridge exposes `window.__codevoQa.openWorkspaceFile(path)`, each
-scenario opens its target file before setting the cursor and calling provider
-APIs. Older bridge builds are still supported: without `openWorkspaceFile`, the
-harness keeps the previous behavior and verifies that the current active editor
-tab already matches the scenario file. Run each scenario from the matching
-workspace/project tab. When the bridge exposes `getWorkspaceRoot()`, the harness
-requires it to match the scenario `projectRoot`; until then it verifies the
-active editor file is under that project root.
+dev-only bridge exposes `window.__codevoQa.openWorkspaceRoot(path)`, each
+scenario switches to its `projectRoot` before opening the scenario file. When the
+bridge also exposes `window.__codevoQa.openWorkspaceFile(path)`, each scenario
+opens its target file before setting the cursor and calling provider APIs. Older
+bridge builds are still supported: without `openWorkspaceRoot`, the harness keeps
+the previous behavior and verifies that the current active workspace/project
+matches the scenario before it opens the file. Without `openWorkspaceFile`, the
+active editor tab still needs to match the scenario file. When the bridge exposes
+`getWorkspaceRoot()`, the harness requires it to match the scenario
+`projectRoot`; until then it verifies the active editor file is under that
+project root.
 
 Built-in project roots:
 
@@ -55,8 +58,10 @@ Use this lane when Tauri WebView DevTools are available but Chromium CDP is not:
 npm run qa:projects:manual
 ```
 
-The manual command runs the same preflight first, then prints bounded
-copy-paste snippets grouped by project root. For each group:
+The manual command runs the same preflight first, then prints a bounded
+copy-paste snippet that can run all selected project roots on the new bridge.
+It also prints grouped fallback snippets for older bridges that do not expose
+`openWorkspaceRoot(path)`.
 
 1. Start the QA app:
 
@@ -64,13 +69,16 @@ copy-paste snippets grouped by project root. For each group:
    npm run debug:qa
    ```
 
-2. Open the matching project workspace in the Tauri app.
-3. Open Tauri WebView DevTools for the app window.
-4. Paste the snippet for that project root into the DevTools Console.
+2. Open Tauri WebView DevTools for the app window.
+3. Paste the all-project snippet into the DevTools Console. On bridges with
+   `openWorkspaceRoot(path)`, the snippet switches roots before each file open.
+4. If the bridge lacks `openWorkspaceRoot(path)`, open the matching project
+   workspace in the Tauri app and paste the grouped fallback snippet for that
+   project root. Repeat once per project root.
 
-The grouped snippets use the same `window.__codevoQa` bridge as the CDP runner.
-If `window.__codevoQa` is missing, restart with `npm run debug:qa`; for an
-already running dev app, set the DEV-only fallback in the console:
+The snippets use the same `window.__codevoQa` bridge as the CDP runner. If
+`window.__codevoQa` is missing, restart with `npm run debug:qa`; for an already
+running dev app, set the DEV-only fallback in the console:
 
 ```js
 localStorage.setItem("codevo.qaBridge", "1");
@@ -147,10 +155,12 @@ node ./scripts/qa-project-scenarios.mjs \
 CLI intentionally requires either `--all` or at least one `--scenario` so real
 project smoke checks are explicit.
 
-Each scenario opens the expected file when `openWorkspaceFile(path)` is
-available, guards the workspace/project context and active file, sets the cursor
-from an anchor, then calls either `getCompletionItems()` or
-`triggerDefinition()` through the bridge.
+Each scenario opens the expected root when `openWorkspaceRoot(path)` is
+available, opens the expected file when `openWorkspaceFile(path)` is available,
+guards the workspace/project context and active file, sets the cursor from an
+anchor, then calls either `getCompletionItems()` or `triggerDefinition()`
+through the bridge. Older bridges keep the manual active-workspace and
+active-file checks so mismatch errors still tell you which project tab to open.
 
 The CDP runner prints one block per scenario with:
 

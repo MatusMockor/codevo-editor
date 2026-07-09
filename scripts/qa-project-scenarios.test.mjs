@@ -80,6 +80,18 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(snippet).toContain('"timeoutMs":1234');
   });
 
+  it("prints snippets that switch project roots when the bridge supports it", () => {
+    const selected = [scenarios[0], scenarios[7]];
+    const snippet = snippetFor(selected, 1234);
+
+    expect(snippet).toContain("openWorkspaceRoot(scenario.projectRoot)");
+    expect(snippet.indexOf("openScenarioRoot")).toBeLessThan(
+      snippet.indexOf("openScenarioFile"),
+    );
+    expect(snippet).toContain("if (!openedRoot)");
+    expect(snippet).toContain("Open the matching workspace/project tab before running this scenario.");
+  });
+
   it("prints snippet guidance for a missing QA bridge", () => {
     const selected = selectScenarios(parseArgs(["--scenario", scenarios[0].id]));
     const snippet = snippetFor(selected);
@@ -110,6 +122,9 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(groups).toHaveLength(2);
     expect(guide).toContain("npm run debug:qa");
     expect(guide).toContain("Tauri WebView DevTools");
+    expect(guide).toContain("All-project console snippet (new bridge with root switching)");
+    expect(guide).toContain("openWorkspaceRoot(path)");
+    expect(guide).toContain("Grouped fallback snippets for older bridges without openWorkspaceRoot(path)");
     expect(guide).toContain(`Project root: ${scenarios[0].projectRoot}`);
     expect(guide).toContain(`Project root: ${scenarios[7].projectRoot}`);
     expect(guide).toContain(scenarios[0].id);
