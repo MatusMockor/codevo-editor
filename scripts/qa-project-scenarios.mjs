@@ -24,6 +24,55 @@ const scenarios = [
     projectRoot: "/Users/matusmockor/Developer/invoices",
   },
   {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/invoices/app/Http/Controllers/InvoicePdfPreviewController.php",
+    cursor: { after: "view('invoices.pdf-preview" },
+    expectActiveFile:
+      "/Users/matusmockor/Developer/invoices/resources/views/invoices/pdf-preview.blade.php",
+    id: "invoices-php-view-definition",
+    projectRoot: "/Users/matusmockor/Developer/invoices",
+  },
+  {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/invoices/resources/views/auth/reset-password.blade.php",
+    cursor: { after: "route('password.store" },
+    expectActiveFile: "/Users/matusmockor/Developer/invoices/routes/auth.php",
+    id: "invoices-blade-password-store-route-definition",
+    projectRoot: "/Users/matusmockor/Developer/invoices",
+  },
+  {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/invoices/resources/views/profile/edit.blade.php",
+    cursor: { after: "@include('profile.partials.update-password-form" },
+    expectActiveFile:
+      "/Users/matusmockor/Developer/invoices/resources/views/profile/partials/update-password-form.blade.php",
+    id: "invoices-blade-include-definition",
+    projectRoot: "/Users/matusmockor/Developer/invoices",
+  },
+  {
+    action: "completion",
+    activeFile:
+      "/Users/matusmockor/Developer/invoices/app/Http/Controllers/InvoicePdfPreviewController.php",
+    cursor: { after: "(string) $request->" },
+    expectLabels: ["query", "input"],
+    id: "invoices-php-request-query-completion",
+    minItems: 1,
+    projectRoot: "/Users/matusmockor/Developer/invoices",
+  },
+  {
+    action: "completion",
+    activeFile:
+      "/Users/matusmockor/Developer/invoices/app/Http/Controllers/InvoicePdfPreviewController.php",
+    cursor: { after: "$supplierBank = $invoice->" },
+    expectLabels: ["getSupplierBankSnapshot", "getSupplierSnapshot"],
+    id: "invoices-php-invoice-model-completion",
+    minItems: 1,
+    projectRoot: "/Users/matusmockor/Developer/invoices",
+  },
+  {
     action: "completion",
     activeFile:
       "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/default.latte",
@@ -40,6 +89,57 @@ const scenarios = [
     cursor: { after: 'n:href="SubscriptionTypesAdmin:Show' },
     expectActiveFileContains: "SubscriptionTypesAdminPresenter.php",
     id: "ebox-crm-latte-link-definition",
+    projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
+  },
+  {
+    action: "completion",
+    activeFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/paymentsModule/templates/PaymentGatewaysAdmin/default.latte",
+    cursor: { after: "{link PaymentGatewaysAdmin:" },
+    expectLabels: ["show", "edit", "editPermission", "default"],
+    id: "ebox-crm-latte-link-payment-gateways-completion",
+    minItems: 1,
+    projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
+  },
+  {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/paymentsModule/templates/PaymentGatewaysAdmin/default.latte",
+    cursor: { after: "{link PaymentGatewaysAdmin:Edit" },
+    expectActiveFileContains: "PaymentGatewaysAdminPresenter.php",
+    id: "ebox-crm-latte-link-payment-gateways-edit-definition",
+    projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
+  },
+  {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/crossSellModule/templates/CrossSellTransfersAdmin/show.latte",
+    cursor: { after: "{control crossSellTimeline" },
+    expectActiveFileContains: "CrossSellTransfersAdminPresenter.php",
+    id: "ebox-crm-latte-control-cross-sell-timeline-definition",
+    projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
+  },
+  {
+    action: "definition",
+    activeFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/stepperModule/config.neon",
+    cursor: {
+      after:
+        "factory: Efabrica\\Crm\\StepperModule\\Model\\StepperAttemptProcessor\\StepperAttemptProcessor",
+    },
+    expectActiveFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/stepperModule/Model/StepperAttemptProcessor/StepperAttemptProcessor.php",
+    id: "ebox-crm-neon-stepper-processor-definition",
+    projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
+  },
+  {
+    action: "completion",
+    activeFile:
+      "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/apiModule/templates/ApiTokensAdmin/default.latte",
+    cursor: { after: "<code>{$apiToken->" },
+    expectLabels: ["token", "name", "ip_restrictions", "created_at", "active"],
+    id: "ebox-crm-latte-api-token-member-completion",
+    minItems: 1,
     projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
   },
 ];
