@@ -2488,7 +2488,7 @@ class EventServiceProvider
         phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, [
           phpLaravelFrameworkProvider,
         ]),
-      ).toEqual(direct);
+      ).toEqual({ ...direct!, providerId: "laravel" });
     });
 
     it("dispatches Laravel literal target admissibility 1:1 through the provider", () => {

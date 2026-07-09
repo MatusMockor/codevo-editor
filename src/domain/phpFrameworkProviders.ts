@@ -387,6 +387,7 @@ export interface PhpFrameworkStringLiteralHelperMatch {
   literal: string;
   literalStart: number;
   literalEnd: number;
+  providerId?: string;
 }
 
 export interface PhpFrameworkStringLiteralContext {
@@ -1597,7 +1598,7 @@ export function phpFrameworkStringLiteralHelperAt(
     const match = provider.stringLiterals?.helperAt?.({ offset, source });
 
     if (match) {
-      return match;
+      return { ...match, providerId: provider.id };
     }
   }
 

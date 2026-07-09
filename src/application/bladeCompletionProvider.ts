@@ -3,7 +3,7 @@ import {
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
 } from "../domain/bladeNavigation";
-import { bladeLaravelHelperCompletionContextAt } from "../domain/bladeLaravelHelperCompletions";
+import { bladeFrameworkHelperCompletionContextAt } from "../domain/bladeFrameworkHelperCompletions";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
@@ -92,6 +92,8 @@ export async function provideBladeCompletions(
     workspaceRoot,
   } = dependencies;
   const supportsStringLiterals = frameworkRuntime.supports("stringLiterals");
+  const supportsLaravelStringLiterals =
+    supportsStringLiterals && frameworkRuntime.hasProvider("laravel");
   const supportsViews = frameworkRuntime.supports("views");
   const supportsViewData = frameworkRuntime.supports("viewData");
   const requestedRoot = workspaceRoot;
@@ -215,7 +217,7 @@ export async function provideBladeCompletions(
   }
 
   if (phpLikeCompletion?.kind === "helper") {
-    if (!supportsStringLiterals) {
+    if (!supportsLaravelStringLiterals) {
       return [];
     }
 
@@ -226,12 +228,13 @@ export async function provideBladeCompletions(
   }
 
   if (supportsStringLiterals) {
-    const helperCompletion = bladeLaravelHelperCompletionContextAt(
+    const helperCompletion = bladeFrameworkHelperCompletionContextAt(
       source,
       position,
+      frameworkRuntime.providers,
     );
 
-    if (helperCompletion) {
+    if (helperCompletion?.providerId === "laravel") {
       return provideBladeLaravelHelperCompletionItems(helperCompletion, offset, {
         collectPhpLaravelConfigTargets,
         collectPhpLaravelNamedRouteTargets,

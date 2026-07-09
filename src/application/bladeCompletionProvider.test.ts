@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { provideBladeCompletions } from "./bladeCompletionProvider";
@@ -145,6 +148,113 @@ describe("provideBladeCompletions", () => {
         }),
       ),
     ).resolves.toEqual([]);
+    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not ask provider helper reference scanners when string literals are unsupported", async () => {
+    const referenceAt = vi.fn(() => ({
+      call: "route",
+      name: "dash",
+      position: { column: 11, lineNumber: 1 },
+      prefix: "dash",
+    }));
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      routes: { referenceAt },
+    };
+    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+      {
+        name: "dashboard",
+        path: `${ROOT}/routes/web.php`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "routes/web.php",
+      },
+    ]);
+    const source = "{{ route('dash') }}";
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
+        makeDeps({
+          collectPhpLaravelNamedRouteTargets,
+          frameworkRuntime: {
+            ...GENERIC_RUNTIME,
+            providers: [provider],
+            supports: (capability) =>
+              capability === "stringLiterals"
+                ? false
+                : GENERIC_RUNTIME.supports(capability),
+          },
+        }),
+      ),
+    ).resolves.toEqual([]);
+    expect(referenceAt).not.toHaveBeenCalled();
+    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Laravel helper-name completions for a custom string-literal provider", async () => {
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: { helperAt: vi.fn(() => null) },
+    };
+
+    await expect(
+      provideBladeCompletions(
+        "{{ ro",
+        { column: 6, lineNumber: 1 },
+        makeDeps({
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toEqual([]);
+  });
+
+  it("does not collect Laravel helper literals for a custom string-literal provider", async () => {
+    const routeReferenceAt = vi.fn(() => ({
+      call: "route",
+      name: "dash",
+      position: { column: 11, lineNumber: 1 },
+      prefix: "dash",
+    }));
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      routes: { referenceAt: routeReferenceAt },
+      stringLiterals: { helperAt: vi.fn(() => null) },
+    };
+    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+      {
+        name: "dashboard",
+        path: `${ROOT}/routes/web.php`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "routes/web.php",
+      },
+    ]);
+    const source = "{{ route('dash') }}";
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
+        makeDeps({
+          collectPhpLaravelNamedRouteTargets,
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toEqual([]);
+    expect(routeReferenceAt).toHaveBeenCalled();
     expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
   });
 

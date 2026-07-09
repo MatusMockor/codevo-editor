@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import {
   provideBladeDefinition,
   type BladeDefinitionProviderDependencies,
@@ -218,6 +221,127 @@ describe("provideBladeDefinition", () => {
         }),
       ),
     ).resolves.toBe(false);
+    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not ask provider helper scanners when string literals are unsupported", async () => {
+    const helperAt = vi.fn(() => ({
+      helper: "config",
+      literal: "app.name",
+      literalEnd: 22,
+      literalStart: 14,
+    }) as const);
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: { helperAt },
+    };
+    const findPhpLaravelConfigTarget = vi.fn(async () => ({
+      key: "app.name",
+      path: `${ROOT}/config/app.php`,
+      position: position(7, 10),
+      relativePath: "config/app.php",
+    }));
+    const source = "{{ config('app.name') }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "app.name"),
+        makeDeps({
+          findPhpLaravelConfigTarget,
+          frameworkRuntime: {
+            ...GENERIC_RUNTIME,
+            providers: [provider],
+            supports: (capability) =>
+              capability === "stringLiterals"
+                ? false
+                : GENERIC_RUNTIME.supports(capability),
+          },
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(helperAt).not.toHaveBeenCalled();
+    expect(findPhpLaravelConfigTarget).not.toHaveBeenCalled();
+  });
+
+  it("requires provider literal target admission before calling target finders", async () => {
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: {
+        helperAt: vi.fn(() => ({
+          helper: "config",
+          literal: "app.name",
+          literalEnd: 22,
+          literalStart: 14,
+        }) as const),
+      },
+    };
+    const findPhpLaravelConfigTarget = vi.fn(async () => ({
+      key: "app.name",
+      path: `${ROOT}/config/app.php`,
+      position: position(7, 10),
+      relativePath: "config/app.php",
+    }));
+    const source = "{{ config('app.name') }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "app.name"),
+        makeDeps({
+          findPhpLaravelConfigTarget,
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(provider.stringLiterals?.helperAt).toHaveBeenCalled();
+    expect(findPhpLaravelConfigTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not collect Laravel route definitions for a custom string-literal provider", async () => {
+    const helperAt = vi.fn(() => ({
+      helper: "route",
+      literal: "dashboard",
+      literalEnd: 21,
+      literalStart: 12,
+    }) as const);
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: { helperAt },
+    };
+    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+      {
+        name: "dashboard",
+        path: `${ROOT}/routes/web.php`,
+        position: position(12, 5),
+        relativePath: "routes/web.php",
+      },
+    ]);
+    const source = "{{ route('dashboard') }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "dashboard"),
+        makeDeps({
+          collectPhpLaravelNamedRouteTargets,
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(helperAt).toHaveBeenCalled();
     expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
   });
 

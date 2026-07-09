@@ -4,12 +4,13 @@ import {
   detectBladeReferenceAt,
   isInsideBladeComment,
 } from "../domain/bladeNavigation";
-import { bladeLaravelStringLiteralHelperAt } from "../domain/bladeLaravelHelperCompletions";
+import { bladeFrameworkStringLiteralHelperAt } from "../domain/bladeFrameworkHelperCompletions";
 import {
-  resolveLaravelConfigTarget,
-  resolveLaravelTransTarget,
-  resolveLaravelViewTarget,
-} from "../domain/laravelPathResolution";
+  phpFrameworkConfigLiteralTarget,
+  phpFrameworkTranslationLiteralTarget,
+  phpFrameworkViewLiteralTarget,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
 import { joinWorkspacePath } from "../domain/workspace";
@@ -77,20 +78,25 @@ export async function provideBladeDefinition(
   }
 
   if (frameworkRuntime.supports("stringLiterals")) {
-    const openedLaravelHelper = await openLaravelHelperDefinition(source, offset, {
-      activeDocument,
-      collectPhpLaravelNamedRouteTargets,
-      findPhpLaravelConfigTarget,
-      findPhpLaravelTranslationTarget,
-      findPhpLaravelViewTarget,
-      isRequestedRootActive,
-      openNavigationTarget: guardedOpenNavigationTarget(
-        openNavigationTarget,
+    const openedFrameworkHelper = await openFrameworkHelperDefinition(
+      source,
+      offset,
+      {
+        activeDocument,
+        collectPhpLaravelNamedRouteTargets,
+        findPhpLaravelConfigTarget,
+        findPhpLaravelTranslationTarget,
+        findPhpLaravelViewTarget,
+        frameworkProviders: frameworkRuntime.providers,
         isRequestedRootActive,
-      ),
-    });
+        openNavigationTarget: guardedOpenNavigationTarget(
+          openNavigationTarget,
+          isRequestedRootActive,
+        ),
+      },
+    );
 
-    if (openedLaravelHelper) {
+    if (openedFrameworkHelper) {
       return true;
     }
   }
@@ -174,28 +180,50 @@ interface RequestedRootState {
   isRequestedRootActive: () => boolean;
 }
 
-interface LaravelHelperDefinitionDependencies extends RequestedRootState {
+interface FrameworkHelperDefinitionDependencies extends RequestedRootState {
   activeDocument: BladeIntelligenceDependencies["activeDocument"];
   collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
   findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
   findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
   findPhpLaravelViewTarget: BladeIntelligenceDependencies["findPhpLaravelViewTarget"];
+  frameworkProviders: readonly PhpFrameworkProvider[];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
 }
 
-async function openLaravelHelperDefinition(
+async function openFrameworkHelperDefinition(
   source: string,
   offset: number,
-  dependencies: LaravelHelperDefinitionDependencies,
+  dependencies: FrameworkHelperDefinitionDependencies,
 ): Promise<boolean> {
-  const helper = bladeLaravelStringLiteralHelperAt(source, offset);
+  const helper = bladeFrameworkStringLiteralHelperAt(
+    source,
+    offset,
+    dependencies.frameworkProviders,
+  );
 
   if (!helper) {
     return false;
   }
 
+  if (helper.providerId !== "laravel") {
+    return false;
+  }
+
+  const laravelProvider = dependencies.frameworkProviders.find(
+    (provider) => provider.id === "laravel",
+  );
+
+  if (!laravelProvider) {
+    return false;
+  }
+
   if (helper.helper === "view") {
-    if (!resolveLaravelViewTarget(helper.literal)) {
+    if (
+      !phpFrameworkViewLiteralTarget(
+        helper.literal,
+        [laravelProvider],
+      )
+    ) {
       return false;
     }
 
@@ -234,7 +262,12 @@ async function openLaravelHelperDefinition(
   }
 
   if (helper.helper === "config") {
-    if (!resolveLaravelConfigTarget(helper.literal)) {
+    if (
+      !phpFrameworkConfigLiteralTarget(
+        helper.literal,
+        [laravelProvider],
+      )
+    ) {
       return false;
     }
 
@@ -250,7 +283,12 @@ async function openLaravelHelperDefinition(
   }
 
   if (helper.helper === "trans") {
-    if (!resolveLaravelTransTarget(helper.literal)) {
+    if (
+      !phpFrameworkTranslationLiteralTarget(
+        helper.literal,
+        [laravelProvider],
+      )
+    ) {
       return false;
     }
 

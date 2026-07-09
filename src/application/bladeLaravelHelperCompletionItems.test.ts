@@ -22,7 +22,7 @@ describe("blade Laravel helper completion items", () => {
 
   it("uses route-relative insert text for dotted prefixes", async () => {
     const completions = await provideBladeLaravelHelperCompletionItems(
-      { kind: "route", prefix: "admin." },
+      { kind: "route", prefix: "admin.", providerId: "laravel" },
       20,
       {
         collectPhpLaravelConfigTargets: vi.fn(async () => []),
@@ -50,7 +50,7 @@ describe("blade Laravel helper completion items", () => {
 
   it("drops async helper results after the requested root becomes stale", async () => {
     const completions = await provideBladeLaravelHelperCompletionItems(
-      { kind: "config", prefix: "app" },
+      { kind: "config", prefix: "app", providerId: "laravel" },
       10,
       {
         collectPhpLaravelConfigTargets: vi.fn(async () => [

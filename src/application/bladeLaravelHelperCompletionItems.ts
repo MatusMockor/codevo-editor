@@ -2,7 +2,7 @@ import {
   phpLaravelConfigCompletionInsertText,
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
-import type { BladeLaravelHelperCompletionContext } from "../domain/bladeLaravelHelperCompletions";
+import type { BladeFrameworkHelperCompletionContext } from "../domain/bladeFrameworkHelperCompletions";
 import {
   phpLaravelJsonTranslationCompletionInsertText,
   phpLaravelTranslationCompletionInsertText,
@@ -51,7 +51,7 @@ export function bladeLaravelHelperNameCompletions(
  * insert-text formatting the PHP completion path uses.
  */
 export async function provideBladeLaravelHelperCompletionItems(
-  helperCompletion: BladeLaravelHelperCompletionContext,
+  helperCompletion: BladeFrameworkHelperCompletionContext,
   offset: number,
   dependencies: BladeLaravelHelperCompletionDependencies,
 ): Promise<BladeCompletionItem[]> {
