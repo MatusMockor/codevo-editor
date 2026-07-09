@@ -25,6 +25,15 @@ interface UsePhpCodeActionProviderOptions {
   workspaceRoot: string | null;
 }
 
+interface PhpCodeActionFrameworkCapabilityOptions {
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  legacyIsLaravelFrameworkActive: boolean;
+}
+
+interface PhpCodeActionFrameworkCapabilities {
+  canCreateMissingBladeViews: boolean;
+}
+
 export function usePhpCodeActionProvider({
   activeDocumentPath,
   collectPhpLaravelViewTargets,
@@ -46,10 +55,11 @@ export function usePhpCodeActionProvider({
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
   });
-  const canCreateMissingBladeViews =
-    frameworkRuntime !== undefined
-      ? frameworkRuntime.isLaravel && frameworkRuntime.supports("views")
-      : legacyIsLaravelFrameworkActive;
+  const { canCreateMissingBladeViews } =
+    resolvePhpCodeActionFrameworkCapabilities({
+      frameworkRuntime,
+      legacyIsLaravelFrameworkActive,
+    });
 
   return usePhpCodeActions({
     activeDocumentPath,
@@ -65,4 +75,20 @@ export function usePhpCodeActionProvider({
     workspaceDescriptor,
     workspaceRoot,
   });
+}
+
+function resolvePhpCodeActionFrameworkCapabilities({
+  frameworkRuntime,
+  legacyIsLaravelFrameworkActive,
+}: PhpCodeActionFrameworkCapabilityOptions): PhpCodeActionFrameworkCapabilities {
+  if (!frameworkRuntime) {
+    return {
+      canCreateMissingBladeViews: legacyIsLaravelFrameworkActive,
+    };
+  }
+
+  return {
+    canCreateMissingBladeViews:
+      frameworkRuntime.isLaravel && frameworkRuntime.supports("views"),
+  };
 }
