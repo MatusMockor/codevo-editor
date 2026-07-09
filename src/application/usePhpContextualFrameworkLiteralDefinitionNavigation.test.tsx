@@ -41,6 +41,7 @@ function makeDeps(
     openNavigationTarget: vi.fn(async () => true),
     providers: [phpLaravelFrameworkProvider],
     setMessage: vi.fn(),
+    supportsStringLiterals: true,
     workspaceRoot: ROOT,
     ...overrides,
   };
@@ -248,6 +249,38 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       POSITION,
       "dashboard",
     );
+
+    harness.unmount();
+  });
+
+  it("returns false before resolving targets when runtime string literals are unsupported", async () => {
+    const findConfigTarget = vi.fn(async () => ({
+      key: "app.name",
+      path: `${ROOT}/config/app.php`,
+      position: POSITION,
+    }));
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget,
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+      supportsStringLiterals: false,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpFrameworkLiteralDefinition({
+      configKey: "app.name",
+      kind: "laravelConfigString",
+    });
+
+    expect(handled).toBe(false);
+    expect(findConfigTarget).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
 
     harness.unmount();
   });

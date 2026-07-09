@@ -4,7 +4,6 @@ import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 import {
   type PhpFrameworkLiteralNavigationDependencies,
   type PhpFrameworkLiteralNavigationTarget,
@@ -33,8 +32,9 @@ export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
     label: string,
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
-  providers: readonly PhpFrameworkProvider[];
+  providers?: readonly PhpFrameworkProvider[];
   setMessage(message: string | null): void;
+  supportsStringLiterals: boolean;
   workspaceRoot: string | null;
 }
 
@@ -49,8 +49,8 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   currentWorkspaceRootRef,
   frameworkLiteralNavigationDependencies,
   openNavigationTarget,
-  providers,
   setMessage,
+  supportsStringLiterals,
   workspaceRoot,
 }: PhpContextualFrameworkLiteralDefinitionNavigationDependencies): PhpContextualFrameworkLiteralDefinitionNavigation {
   const goToPhpFrameworkLiteralDefinition = useCallback(
@@ -65,7 +65,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         !requestedRoot ||
         !activeDocument ||
         activeDocument.language !== "php" ||
-        !phpFrameworkSupportsCapability(providers, "stringLiterals")
+        !supportsStringLiterals
       ) {
         return false;
       }
@@ -92,8 +92,8 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies,
       openNavigationTarget,
-      providers,
       setMessage,
+      supportsStringLiterals,
       workspaceRoot,
     ],
   );

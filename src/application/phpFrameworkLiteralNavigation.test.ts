@@ -23,7 +23,7 @@ function dependencies(
 }
 
 describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
-  it("returns null when no active provider supports framework literals", async () => {
+  it("returns null when runtime capabilities do not support framework literals", async () => {
     const deps = dependencies({
       findConfigTarget: vi.fn(async () => ({
         key: "app.name",
@@ -31,6 +31,17 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
         position: targetPosition,
       })),
     });
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: {
+        helperAt: vi.fn(() => ({
+          helper: "config",
+          literal: "app.name",
+          literalEnd: 24,
+          literalStart: 16,
+        }) as const),
+      },
+    };
 
     await expect(
       resolvePhpFrameworkLiteralNavigationTarget(
@@ -38,13 +49,15 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           activeDocument: null,
           offset: "<?php\nconfig('app.name');".indexOf("app.name") + 1,
           position,
-          providers: [],
+          providers: [provider],
           source: "<?php\nconfig('app.name');",
+          supportsStringLiterals: false,
         },
         deps,
       ),
     ).resolves.toBeNull();
 
+    expect(provider.stringLiterals?.helperAt).not.toHaveBeenCalled();
     expect(deps.findConfigTarget).not.toHaveBeenCalled();
   });
 
@@ -66,6 +79,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           position,
           providers: [phpLaravelFrameworkProvider],
           source,
+          supportsStringLiterals: true,
         },
         deps,
       ),
@@ -97,6 +111,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           position,
           providers: [phpLaravelFrameworkProvider],
           source,
+          supportsStringLiterals: true,
         },
         deps,
       ),
@@ -134,6 +149,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           position,
           providers: [provider],
           source,
+          supportsStringLiterals: true,
         },
         deps,
       ),
@@ -165,6 +181,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
           position,
           providers: [phpLaravelFrameworkProvider],
           source,
+          supportsStringLiterals: true,
         },
         deps,
       ),

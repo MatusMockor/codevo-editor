@@ -5475,6 +5475,8 @@ export function useWorkbenchController(
       openNavigationTarget,
       providers: activePhpFrameworkProviders,
       setMessage,
+      supportsStringLiterals:
+        phpFrameworkRuntimeContext.supports("stringLiterals"),
       workspaceRoot,
     });
 

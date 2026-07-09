@@ -93,6 +93,10 @@ const LARAVEL_RUNTIME_WITHOUT_DISPATCH: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   supports: (capability) => capability !== "dispatch",
 };
+const LARAVEL_RUNTIME_WITHOUT_STRING_LITERALS: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  supports: (capability) => capability !== "stringLiterals",
+};
 
 function makeDescriptor(): WorkspaceDescriptor {
   return {
@@ -449,6 +453,38 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
 
     expect(handled).toBe(false);
     expect(findViewTarget).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("requires the runtime stringLiterals capability for direct literal navigation", async () => {
+    const findConfigTarget = vi.fn(async () => ({
+      key: "app.name",
+      path: `${ROOT}/config/app.php`,
+      position: position(1, 1),
+    }));
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkRuntime: LARAVEL_RUNTIME_WITHOUT_STRING_LITERALS,
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget,
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+    const source = "<?php config('app.name');";
+
+    const handled = await harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("app.name") + 2);
+
+    expect(handled).toBe(false);
+    expect(findConfigTarget).not.toHaveBeenCalled();
     expect(openNavigationTarget).not.toHaveBeenCalled();
 
     harness.unmount();

@@ -1,6 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
   evictOtherRootConfigCacheEntries,
@@ -25,10 +24,7 @@ export type NeonRequestContext<
 export function isNeonSemanticActive(deps: NeonRuntimeDependencies): boolean {
   return (
     deps.isSemanticIntelligenceActive &&
-    phpFrameworkSupportsCapability(
-      deps.frameworkIntelligence.providers,
-      "neonConfigIntelligence",
-    )
+    deps.frameworkIntelligence.capabilities.supports("neonConfigIntelligence")
   );
 }
 

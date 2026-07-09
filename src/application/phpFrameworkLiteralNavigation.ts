@@ -8,7 +8,6 @@ import {
   phpFrameworkViewReferenceAt,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 export interface PhpFrameworkLiteralNavigationDocument {
   content: string;
@@ -53,15 +52,23 @@ export interface PhpFrameworkLiteralNavigationRequest {
   position: EditorPosition;
   providers: readonly PhpFrameworkProvider[];
   source: string;
+  supportsStringLiterals: boolean;
 }
 
 export async function resolvePhpFrameworkLiteralNavigationTarget(
   request: PhpFrameworkLiteralNavigationRequest,
   dependencies: PhpFrameworkLiteralNavigationDependencies,
 ): Promise<PhpFrameworkLiteralNavigationTarget | null> {
-  const { activeDocument, offset, position, providers, source } = request;
+  const {
+    activeDocument,
+    offset,
+    position,
+    providers,
+    source,
+    supportsStringLiterals,
+  } = request;
 
-  if (!phpFrameworkSupportsCapability(providers, "stringLiterals")) {
+  if (!supportsStringLiterals) {
     return null;
   }
 

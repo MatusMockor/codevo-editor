@@ -91,6 +91,8 @@ export function usePhpFrameworkDefinitionNavigation({
     phpFrameworkRuntime.supports("routes");
   const supportsFrameworkDispatchDefinitionNavigation =
     phpFrameworkRuntime.supports("dispatch");
+  const supportsFrameworkStringLiteralDefinitionNavigation =
+    phpFrameworkRuntime.supports("stringLiterals");
 
   const openPhpFrameworkHandlerTarget = useCallback(
     async (
@@ -565,6 +567,8 @@ export function usePhpFrameworkDefinitionNavigation({
           position: editorPositionAtOffset(source, offset),
           providers: activePhpFrameworkProviders,
           source,
+          supportsStringLiterals:
+            supportsFrameworkStringLiteralDefinitionNavigation,
         },
         frameworkLiteralNavigationDependencies,
       );
@@ -596,6 +600,7 @@ export function usePhpFrameworkDefinitionNavigation({
       resolvePhpFrameworkExplicitRouteModelBindingClassName,
       supportsFrameworkDispatchDefinitionNavigation,
       supportsFrameworkRouteDefinitionNavigation,
+      supportsFrameworkStringLiteralDefinitionNavigation,
       workspaceDescriptor,
       workspaceRoot,
     ],
