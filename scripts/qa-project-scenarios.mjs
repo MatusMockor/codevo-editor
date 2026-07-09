@@ -1,7 +1,24 @@
 #!/usr/bin/env node
 
+import { existsSync, readFileSync, statSync } from "node:fs";
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_MS = 100;
+
+const defaultPreflightFs = {
+  exists(path) {
+    return existsSync(path);
+  },
+  isDirectory(path) {
+    return statSync(path).isDirectory();
+  },
+  isFile(path) {
+    return statSync(path).isFile();
+  },
+  readText(path) {
+    return readFileSync(path, "utf8");
+  },
+};
 
 const scenarios = [
   {
@@ -76,7 +93,7 @@ const scenarios = [
     action: "completion",
     activeFile:
       "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/default.latte",
-    cursor: { after: 'n:href="SubscriptionTypesAdmin:' },
+    cursor: { after: '<a n:href="SubscriptionTypesAdmin:new' },
     expectLabels: ["show", "new"],
     id: "ebox-crm-latte-link-completion",
     minItems: 1,
@@ -86,7 +103,9 @@ const scenarios = [
     action: "definition",
     activeFile:
       "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm/app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/default.latte",
-    cursor: { after: 'n:href="SubscriptionTypesAdmin:Show' },
+    cursor: {
+      after: '<a n:href="SubscriptionTypesAdmin:Show $type->next_subscription_type_id',
+    },
     expectActiveFileContains: "SubscriptionTypesAdminPresenter.php",
     id: "ebox-crm-latte-link-definition",
     projectRoot: "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm",
@@ -173,6 +192,11 @@ async function main() {
 
   const selectedScenarios = selectScenarios(options);
 
+  if (options.preflight) {
+    printPreflightResult(validatePreflightScenarios(selectedScenarios));
+    return;
+  }
+
   if (options.printSnippet) {
     console.log(snippetFor(selectedScenarios, options.timeoutMs));
     return;
@@ -180,7 +204,7 @@ async function main() {
 
   if (!options.cdpUrl) {
     printHelp();
-    throw new Error("Pass --cdp-url, --print-snippet, or --list.");
+    throw new Error("Pass --cdp-url, --print-snippet, --preflight, or --list.");
   }
 
   const result = await runViaCdp(options.cdpUrl, {
@@ -197,6 +221,7 @@ function parseArgs(args) {
     cdpUrl: "",
     help: false,
     list: false,
+    preflight: false,
     printSnippet: false,
     scenarioIds: [],
     targetUrl: "",
@@ -223,6 +248,11 @@ function parseArgs(args) {
 
     if (arg === "--print-snippet") {
       options.printSnippet = true;
+      continue;
+    }
+
+    if (arg === "--preflight") {
+      options.preflight = true;
       continue;
     }
 
@@ -305,14 +335,16 @@ Options:
   --scenario <id>         Run only one scenario. Can be repeated.
   --cdp-url <url>         Chrome DevTools HTTP endpoint, for example http://127.0.0.1:9222.
   --target-url <text>     Select the CDP page whose URL contains this text.
+  --preflight             Validate selected scenario files and cursor anchors only.
   --print-snippet         Print an in-page snippet for Tauri WebView DevTools.
   --timeout-ms <ms>       Per-wait timeout. Default: ${DEFAULT_TIMEOUT_MS}.
 
-The app must be running with the dev-only window.__codevoQa bridge enabled. If
-the bridge exposes openWorkspaceFile(path), the harness opens each scenario file
-before setting the cursor. Older bridges still require the active editor tab to
-match each selected scenario's activeFile. Run scenarios from the matching
-workspace/project tab; getWorkspaceRoot() is checked when the bridge exposes it.
+Live CDP/snippet runs require the app to be running with the dev-only
+window.__codevoQa bridge enabled. If the bridge exposes openWorkspaceFile(path),
+the harness opens each scenario file before setting the cursor. Older bridges
+still require the active editor tab to match each selected scenario's activeFile.
+Run scenarios from the matching workspace/project tab; getWorkspaceRoot() is
+checked when the bridge exposes it.
 `);
 }
 
@@ -330,6 +362,182 @@ function snippetFor(selectedScenarios, timeoutMs = DEFAULT_TIMEOUT_MS) {
     scenarios: selectedScenarios,
     timeoutMs,
   })});`;
+}
+
+function validatePreflightScenarios(selectedScenarios) {
+  return selectedScenarios.map((scenario) => validateScenarioPreflight(scenario));
+}
+
+function validateScenarioPreflight(scenario, fs = defaultPreflightFs) {
+  const checks = [];
+  const failures = [];
+  const warnings = [];
+
+  const projectRoot = checkPath(scenario.projectRoot, "projectRoot", "directory", fs);
+  checks.push(projectRoot);
+  collectIssue(projectRoot, failures, warnings);
+
+  const activeFile = checkPath(scenario.activeFile, "activeFile", "file", fs);
+  checks.push(activeFile);
+  collectIssue(activeFile, failures, warnings);
+
+  const source = activeFile.ok ? readPreflightText(scenario.activeFile, fs) : null;
+
+  if (source?.check) {
+    checks.push(source.check);
+    collectIssue(source.check, failures, warnings);
+  }
+
+  const cursor = checkCursorAnchor(scenario, typeof source?.text === "string" ? source.text : null);
+  checks.push(cursor);
+  collectIssue(cursor, failures, warnings);
+
+  if (scenario.action === "definition" && scenario.expectActiveFile) {
+    const expectActiveFile = checkPath(scenario.expectActiveFile, "expectActiveFile", "file", fs);
+    checks.push(expectActiveFile);
+    collectIssue(expectActiveFile, failures, warnings);
+  }
+
+  return {
+    activeFile: scenario.activeFile,
+    action: scenario.action,
+    checks,
+    failures,
+    id: scenario.id,
+    ok: failures.length === 0,
+    projectRoot: scenario.projectRoot,
+    warnings,
+  };
+}
+
+function readPreflightText(path, fs) {
+  try {
+    return { text: fs.readText(path) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      check: failedCheck("activeFile", `activeFile could not be read: ${path} (${message})`),
+    };
+  }
+}
+
+function checkPath(path, label, expectedType, fs) {
+  if (!path) {
+    return failedCheck(label, `${label} is not configured.`);
+  }
+
+  if (!fs.exists(path)) {
+    return failedCheck(label, `${label} does not exist: ${path}`);
+  }
+
+  const isExpectedType = expectedType === "directory" ? fs.isDirectory(path) : fs.isFile(path);
+
+  if (!isExpectedType) {
+    return failedCheck(label, `${label} is not a ${expectedType}: ${path}`);
+  }
+
+  return passedCheck(label, `${label} exists: ${path}`);
+}
+
+function checkCursorAnchor(scenario, source) {
+  const anchor = scenario.cursor?.after ?? scenario.cursor?.before;
+
+  if (!anchor) {
+    return failedCheck("cursor", "cursor must define a non-empty after or before anchor.");
+  }
+
+  if (source === null) {
+    return failedCheck(
+      "cursor",
+      `cursor anchor was not checked because activeFile is unavailable: ${anchor}`,
+    );
+  }
+
+  const count = countOccurrences(source, anchor);
+  const detail = `cursor anchor matches ${count} time(s): ${anchor}`;
+
+  if (count === 0) {
+    return failedCheck("cursor", detail, { count });
+  }
+
+  if (count > 1) {
+    return warnedCheck("cursor", detail, { count });
+  }
+
+  return passedCheck("cursor", detail, { count });
+}
+
+function countOccurrences(source, needle) {
+  let count = 0;
+  let index = source.indexOf(needle);
+
+  while (index !== -1) {
+    count += 1;
+    index = source.indexOf(needle, index + needle.length);
+  }
+
+  return count;
+}
+
+function passedCheck(label, detail, extra = {}) {
+  return { detail, label, ok: true, status: "PASS", ...extra };
+}
+
+function warnedCheck(label, detail, extra = {}) {
+  return { detail, label, ok: true, status: "WARN", ...extra };
+}
+
+function failedCheck(label, detail, extra = {}) {
+  return { detail, label, ok: false, status: "FAIL", ...extra };
+}
+
+function collectIssue(check, failures, warnings) {
+  if (!check.ok) {
+    failures.push(check.detail);
+    return;
+  }
+
+  if (check.status === "WARN") {
+    warnings.push(check.detail);
+  }
+}
+
+function printPreflightResult(result) {
+  if (!Array.isArray(result)) {
+    throw new Error("Preflight runner did not return an array.");
+  }
+
+  let passed = 0;
+  let warned = 0;
+
+  for (const item of result) {
+    const status = item.ok ? (item.warnings.length > 0 ? "WARN" : "PASS") : "FAIL";
+    console.log(`${status} ${item.id}`);
+    console.log(`  action:  ${displayValue(item.action)}`);
+    console.log(`  project: ${displayValue(item.projectRoot)}`);
+    console.log(`  file:    ${displayValue(item.activeFile)}`);
+
+    for (const check of item.checks) {
+      console.log(`  ${check.status.toLowerCase()}:   ${check.detail}`);
+    }
+
+    if (item.ok) {
+      passed += 1;
+    }
+
+    if (item.warnings.length > 0) {
+      warned += 1;
+    }
+  }
+
+  const failed = result.length - passed;
+  console.log(`Summary: ${passed}/${result.length} passed, ${warned} warned, ${failed} failed.`);
+
+  if (failed === 0) {
+    return;
+  }
+
+  process.exitCode = 1;
 }
 
 async function runViaCdp(cdpUrl, options) {
@@ -503,10 +711,13 @@ export {
   formatActual,
   formatExpected,
   parseArgs,
+  printPreflightResult,
   printRunResult,
   scenarios,
   selectScenarios,
   snippetFor,
+  validatePreflightScenarios,
+  validateScenarioPreflight,
 };
 
 class CdpClient {

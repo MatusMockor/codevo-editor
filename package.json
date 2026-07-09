@@ -22,6 +22,7 @@
     "smoke:desktop": "node ./scripts/qa-smoke.mjs desktop",
     "smoke:projects": "node ./scripts/qa-smoke.mjs projects",
     "qa:projects": "node ./scripts/qa-project-scenarios.mjs --all",
+    "qa:projects:preflight": "node ./scripts/qa-project-scenarios.mjs --all --preflight",
     "test": "vitest run"
   },
   "dependencies": {

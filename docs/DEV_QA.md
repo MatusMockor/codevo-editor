@@ -27,6 +27,24 @@ List scenarios:
 node ./scripts/qa-project-scenarios.mjs --list
 ```
 
+Preflight selected scenarios before opening a live app/CDP session:
+
+```sh
+node ./scripts/qa-project-scenarios.mjs --all --preflight
+```
+
+The same preflight is available through npm:
+
+```sh
+npm run qa:projects:preflight
+```
+
+`--preflight` works with `--all` or repeated `--scenario <id>` flags. It checks
+that each scenario's `projectRoot`, `activeFile`, cursor anchor, and exact
+`expectActiveFile` definition target exist before the live bridge/snippet run.
+Cursor anchors report their match count; zero matches fail, while multiple
+matches warn because the live runner currently uses the first match.
+
 ## Running
 
 Start the app with the bridge enabled:
