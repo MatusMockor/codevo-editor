@@ -1,5 +1,4 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
@@ -10,7 +9,7 @@ import {
   createWorkspaceTargetCollector,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 /**
  * A resolved view navigation target: the parsed view plus the 1:1 blade file
@@ -23,7 +22,7 @@ export interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 export interface PhpLaravelViewTargetResolverDeps {
   currentWorkspaceRootRef: { readonly current: string | null };
   workspaceRoot: string | null;
-  phpFrameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   workspaceTargetCollectorDeps: WorkspaceTargetCollectorDeps;
   readNavigationFileContent: (path: string) => Promise<string>;
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
@@ -47,7 +46,7 @@ function isWorkspaceRootActive(
 }
 
 function supportsViews(deps: PhpLaravelViewTargetResolverDeps): boolean {
-  return phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "views");
+  return deps.frameworkRuntime.supports("views");
 }
 
 async function collectPhpLaravelViewTargets(

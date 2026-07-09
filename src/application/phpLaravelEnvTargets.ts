@@ -1,9 +1,8 @@
 import {
   phpFrameworkEnvEntriesFromSource,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   createWorkspaceTargetCollector,
   type WorkspaceTargetCollectorDeps,
@@ -11,7 +10,7 @@ import {
 
 export interface PhpLaravelEnvTargetResolverDeps {
   workspaceRoot: string | null;
-  phpFrameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   workspaceTargetCollectorDeps: WorkspaceTargetCollectorDeps;
 }
 
@@ -20,7 +19,7 @@ export interface PhpLaravelEnvTargetResolver {
 }
 
 function supportsEnv(deps: PhpLaravelEnvTargetResolverDeps): boolean {
-  return phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "env");
+  return deps.frameworkRuntime.supports("env");
 }
 
 async function collectPhpLaravelEnvTargets(
@@ -35,7 +34,7 @@ async function collectPhpLaravelEnvTargets(
       parseTargets: ({ content, path, relativePath }) =>
         phpFrameworkEnvEntriesFromSource(
           content,
-          deps.phpFrameworkProviders,
+          deps.frameworkRuntime.providers,
         ).map((entry) => ({
           ...entry,
           path,

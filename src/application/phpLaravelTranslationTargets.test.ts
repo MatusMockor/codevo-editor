@@ -6,9 +6,25 @@ import {
   createPhpLaravelTranslationTargetResolver,
   type PhpLaravelTranslationTargetResolverDeps,
 } from "./phpLaravelTranslationTargets";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: PROVIDERS,
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -68,7 +84,7 @@ function createHarness(
   const deps: PhpLaravelTranslationTargetResolverDeps = {
     currentWorkspaceRootRef: ref,
     workspaceRoot: ROOT,
-    phpFrameworkProviders: PROVIDERS,
+    frameworkRuntime: LARAVEL_RUNTIME,
     readNavigationFileContent: readFileContent as never,
     readWorkspaceDirectory: readWorkspaceDirectory as never,
     relativeWorkspacePath,
@@ -181,6 +197,20 @@ describe("createPhpLaravelTranslationTargetResolver", () => {
     });
 
     await expect(harness.resolver.collect()).resolves.toBe(cached);
+    expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(harness.readFileContent).not.toHaveBeenCalled();
+    expect(harness.writeCachedTranslationTargets).not.toHaveBeenCalled();
+  });
+
+  it("returns empty results without reading or caching when translations are unsupported", async () => {
+    const harness = createHarness({
+      frameworkRuntime: GENERIC_RUNTIME,
+    });
+
+    await expect(harness.resolver.collect()).resolves.toEqual([]);
+    await expect(harness.resolver.find("messages.welcome")).resolves.toBeNull();
+
+    expect(harness.readCachedTranslationTargets).not.toHaveBeenCalled();
     expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
     expect(harness.readFileContent).not.toHaveBeenCalled();
     expect(harness.writeCachedTranslationTargets).not.toHaveBeenCalled();

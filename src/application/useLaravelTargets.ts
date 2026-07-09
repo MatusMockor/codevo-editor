@@ -202,7 +202,6 @@ function useLaravelFrameworkTargetAdapter(
       isLaravelFrameworkActive,
     ],
   );
-  const targetPhpFrameworkProviders = frameworkRuntime.providers;
 
   const engineDeps = useMemo<WorkspaceTargetCollectorDeps>(
     () => ({
@@ -249,10 +248,10 @@ function useLaravelFrameworkTargetAdapter(
     () =>
       createPhpLaravelEnvTargetResolver({
         workspaceRoot,
-        phpFrameworkProviders: targetPhpFrameworkProviders,
+        frameworkRuntime,
         workspaceTargetCollectorDeps: engineDeps,
       }),
-    [workspaceRoot, targetPhpFrameworkProviders, engineDeps],
+    [workspaceRoot, frameworkRuntime, engineDeps],
   );
 
   const viewTargetResolver = useMemo(
@@ -260,7 +259,7 @@ function useLaravelFrameworkTargetAdapter(
       createPhpLaravelViewTargetResolver({
         currentWorkspaceRootRef,
         workspaceRoot,
-        phpFrameworkProviders: targetPhpFrameworkProviders,
+        frameworkRuntime,
         workspaceTargetCollectorDeps: engineDeps,
         readNavigationFileContent,
         joinWorkspacePath,
@@ -272,7 +271,7 @@ function useLaravelFrameworkTargetAdapter(
     [
       currentWorkspaceRootRef,
       workspaceRoot,
-      targetPhpFrameworkProviders,
+      frameworkRuntime,
       engineDeps,
       readNavigationFileContent,
       joinWorkspacePath,
@@ -286,7 +285,7 @@ function useLaravelFrameworkTargetAdapter(
       createPhpLaravelConfigTargetResolver({
         currentWorkspaceRootRef,
         workspaceRoot,
-        phpFrameworkProviders: targetPhpFrameworkProviders,
+        frameworkRuntime,
         workspaceTargetCollectorDeps: engineDeps,
         readNavigationFileContent,
         joinWorkspacePath,
@@ -298,7 +297,7 @@ function useLaravelFrameworkTargetAdapter(
     [
       currentWorkspaceRootRef,
       workspaceRoot,
-      targetPhpFrameworkProviders,
+      frameworkRuntime,
       engineDeps,
       readNavigationFileContent,
       joinWorkspacePath,
@@ -312,7 +311,7 @@ function useLaravelFrameworkTargetAdapter(
       createPhpLaravelTranslationTargetResolver({
         currentWorkspaceRootRef,
         workspaceRoot,
-        phpFrameworkProviders: targetPhpFrameworkProviders,
+        frameworkRuntime,
         readNavigationFileContent,
         readWorkspaceDirectory,
         relativeWorkspacePath,
@@ -325,7 +324,7 @@ function useLaravelFrameworkTargetAdapter(
     [
       currentWorkspaceRootRef,
       workspaceRoot,
-      targetPhpFrameworkProviders,
+      frameworkRuntime,
       readNavigationFileContent,
       readWorkspaceDirectory,
       relativeWorkspacePath,

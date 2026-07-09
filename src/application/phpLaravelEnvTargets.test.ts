@@ -7,10 +7,26 @@ import {
   type PhpLaravelEnvTargetResolver,
   type PhpLaravelEnvTargetResolverDeps,
 } from "./phpLaravelEnvTargets";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other-workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: PROVIDERS,
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -65,7 +81,7 @@ function createHarness(
   const deps: PhpLaravelEnvTargetResolverDeps = {
     workspaceRoot:
       "workspaceRoot" in overrides ? (overrides.workspaceRoot ?? null) : ROOT,
-    phpFrameworkProviders: overrides.phpFrameworkProviders ?? PROVIDERS,
+    frameworkRuntime: overrides.frameworkRuntime ?? LARAVEL_RUNTIME,
     workspaceTargetCollectorDeps: {
       currentWorkspaceRootRef: ref,
       textSearch: { searchText: vi.fn(async () => [] as TextSearchResult[]) },
@@ -145,7 +161,7 @@ describe("createPhpLaravelEnvTargetResolver", () => {
 
   it("returns empty results without reading when env targets are unsupported or the root is missing", async () => {
     const unsupported = createHarness({
-      phpFrameworkProviders: [],
+      frameworkRuntime: GENERIC_RUNTIME,
       readNavigationFileContent: async () => "APP_URL=https://local.test",
     });
 

@@ -1,7 +1,6 @@
 import {
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigTargetFromSource,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
   phpLaravelConfigFileNameFromRelativePath,
@@ -13,12 +12,12 @@ import {
   createWorkspaceTargetCollector,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpLaravelConfigTargetResolverDeps {
   currentWorkspaceRootRef: { readonly current: string | null };
   workspaceRoot: string | null;
-  phpFrameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   workspaceTargetCollectorDeps: WorkspaceTargetCollectorDeps;
   readNavigationFileContent: (path: string) => Promise<string>;
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
@@ -44,7 +43,7 @@ function isWorkspaceRootActive(
 }
 
 function supportsConfig(deps: PhpLaravelConfigTargetResolverDeps): boolean {
-  return phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "config");
+  return deps.frameworkRuntime.supports("config");
 }
 
 async function collectPhpLaravelConfigTargets(
@@ -86,7 +85,7 @@ async function collectPhpLaravelConfigTargets(
           ...phpFrameworkConfigKeysFromSource(
             content,
             fileName,
-            deps.phpFrameworkProviders,
+            deps.frameworkRuntime.providers,
           ).map((target) => ({
             ...target,
             path,
@@ -141,7 +140,7 @@ async function findPhpLaravelConfigTarget(
       content,
       fileName,
       configKey,
-      deps.phpFrameworkProviders,
+      deps.frameworkRuntime.providers,
     );
 
     if (!target) {

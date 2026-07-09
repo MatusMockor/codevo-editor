@@ -7,10 +7,26 @@ import {
   type PhpLaravelViewTargetResolver,
   type PhpLaravelViewTargetResolverDeps,
 } from "./phpLaravelViewTargets";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other-workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: PROVIDERS,
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function fileEntry(path: string): FileEntry {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -90,7 +106,7 @@ function createHarness(
   const deps: PhpLaravelViewTargetResolverDeps = {
     currentWorkspaceRootRef: ref,
     workspaceRoot: overrides.workspaceRoot ?? ROOT,
-    phpFrameworkProviders: overrides.phpFrameworkProviders ?? PROVIDERS,
+    frameworkRuntime: overrides.frameworkRuntime ?? LARAVEL_RUNTIME,
     workspaceTargetCollectorDeps: {
       currentWorkspaceRootRef: ref,
       textSearch: { searchText: vi.fn(async () => [] as TextSearchResult[]) },
@@ -187,7 +203,7 @@ describe("createPhpLaravelViewTargetResolver", () => {
 
   it("returns empty results without reading or caching when views are unsupported", async () => {
     const harness = createHarness({
-      phpFrameworkProviders: [],
+      frameworkRuntime: GENERIC_RUNTIME,
     });
 
     await expect(harness.resolver.collect()).resolves.toEqual([]);

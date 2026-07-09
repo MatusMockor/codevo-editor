@@ -3,7 +3,6 @@ import {
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationTargetFromSource,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
   isUsableLaravelTranslationLocale,
@@ -14,7 +13,7 @@ import {
 } from "../domain/phpLaravelTranslations";
 import { getFileName, type FileEntry } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface PhpLaravelTranslationFile {
   path: string;
@@ -24,7 +23,7 @@ interface PhpLaravelTranslationFile {
 export interface PhpLaravelTranslationTargetResolverDeps {
   currentWorkspaceRootRef: { readonly current: string | null };
   workspaceRoot: string | null;
-  phpFrameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readNavigationFileContent: (path: string) => Promise<string>;
   readWorkspaceDirectory: (path: string) => Promise<FileEntry[]>;
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
@@ -53,10 +52,7 @@ function isWorkspaceRootActive(
 function supportsTranslations(
   deps: PhpLaravelTranslationTargetResolverDeps,
 ): boolean {
-  return phpFrameworkSupportsCapability(
-    deps.phpFrameworkProviders,
-    "translations",
-  );
+  return deps.frameworkRuntime.supports("translations");
 }
 
 async function collectPhpLaravelTranslationLocaleRoots(
@@ -235,7 +231,7 @@ async function collectPhpLaravelTranslationTargets(
         for (const target of phpFrameworkTranslationKeysFromSource(
           content,
           fileName,
-          deps.phpFrameworkProviders,
+          deps.frameworkRuntime.providers,
         )) {
           const key = target.key.toLowerCase();
 
@@ -278,7 +274,7 @@ async function collectPhpLaravelTranslationTargets(
 
       for (const target of phpFrameworkJsonTranslationKeysFromSource(
         content,
-        deps.phpFrameworkProviders,
+        deps.frameworkRuntime.providers,
       )) {
         const key = target.key.toLowerCase();
 
@@ -354,7 +350,7 @@ async function findPhpLaravelTranslationTarget(
           content,
           fileName,
           translationKey,
-          deps.phpFrameworkProviders,
+          deps.frameworkRuntime.providers,
         );
 
         if (!target) {
@@ -396,7 +392,7 @@ async function findPhpLaravelTranslationTarget(
       const target = phpFrameworkJsonTranslationTargetFromSource(
         content,
         translationKey,
-        deps.phpFrameworkProviders,
+        deps.frameworkRuntime.providers,
       );
 
       if (!target) {
