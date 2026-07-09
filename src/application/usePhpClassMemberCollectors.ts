@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import {
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
@@ -109,6 +109,14 @@ export function usePhpClassMemberCollectors({
     : activePhpFrameworkProviderSignature;
   const isLaravelFrameworkActive =
     frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const memberCollectionStrategy = useMemo(
+    () =>
+      createPhpClassMemberCollectionStrategy({
+        isLaravelFrameworkActive,
+        resolvePhpDeclaredType,
+      }),
+    [isLaravelFrameworkActive, resolvePhpDeclaredType],
+  );
 
   const resetPhpClassMemberCache = useCallback((): void => {
     phpClassMemberCacheRef.current = {};
@@ -458,7 +466,7 @@ export function usePhpClassMemberCollectors({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !isLaravelFrameworkActive ||
+        !memberCollectionStrategy.canCollectLaravelMembers ||
         !requestedRoot ||
         !requestedDescriptor?.php
       ) {
@@ -488,11 +496,11 @@ export function usePhpClassMemberCollectors({
             return [];
           }
 
-          for (const method of phpLaravelDynamicWhereCompletionsFromSource(
-            content,
-            normalizedClassName,
+          for (const method of memberCollectionStrategy.dynamicWhereMethods({
+            className: normalizedClassName,
             options,
-          )) {
+            source: content,
+          })) {
             if (!isRequestedRootActive()) {
               return [];
             }
@@ -521,7 +529,7 @@ export function usePhpClassMemberCollectors({
     [
       readPhpClassMembersFromPath,
       resolvePhpClassSourcePaths,
-      isLaravelFrameworkActive,
+      memberCollectionStrategy,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -535,7 +543,7 @@ export function usePhpClassMemberCollectors({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !isLaravelFrameworkActive ||
+        !memberCollectionStrategy.canCollectLaravelMembers ||
         !requestedRoot ||
         !requestedDescriptor?.php
       ) {
@@ -588,18 +596,10 @@ export function usePhpClassMemberCollectors({
             }
 
             rememberRelations(
-              phpLaravelRelationPropertyCompletionsFromSource(
-                content,
-                normalizedClassName,
-              ).map((relation) => ({
-                ...relation,
-                returnType:
-                  phpLooksLikeQualifiedClassName(relation.returnType) ||
-                  phpIsBuiltinDeclaredType(relation.returnType)
-                    ? phpNormalizedDeclaredTypeName(relation.returnType)
-                    : resolvePhpDeclaredType(content, relation.returnType) ??
-                      relation.returnType,
-              })),
+              memberCollectionStrategy.relationCompletions({
+                className: normalizedClassName,
+                source: content,
+              }),
             );
 
             for (const traitName of phpTraitClassNames(content)) {
@@ -660,9 +660,8 @@ export function usePhpClassMemberCollectors({
     },
     [
       readPhpClassMembersFromPath,
-      resolvePhpDeclaredType,
       resolvePhpClassSourcePaths,
-      isLaravelFrameworkActive,
+      memberCollectionStrategy,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -678,6 +677,65 @@ export function usePhpClassMemberCollectors({
     resolvePhpGenericTemplateTypesForMixinClass,
   };
 }
+
+interface PhpClassMemberCollectionStrategy {
+  canCollectLaravelMembers: boolean;
+  dynamicWhereMethods: (
+    context: PhpLaravelDynamicWhereMemberStrategyContext,
+  ) => PhpMethodCompletion[];
+  relationCompletions: (
+    context: PhpLaravelRelationMemberStrategyContext,
+  ) => PhpMethodCompletion[];
+}
+
+interface PhpClassMemberCollectionStrategyOptions {
+  isLaravelFrameworkActive: boolean;
+  resolvePhpDeclaredType: (source: string, typeName: string | null) => string | null;
+}
+
+interface PhpLaravelDynamicWhereMemberStrategyContext {
+  className: string;
+  options: { isStatic?: boolean };
+  source: string;
+}
+
+interface PhpLaravelRelationMemberStrategyContext {
+  className: string;
+  source: string;
+}
+
+function createPhpClassMemberCollectionStrategy({
+  isLaravelFrameworkActive,
+  resolvePhpDeclaredType,
+}: PhpClassMemberCollectionStrategyOptions): PhpClassMemberCollectionStrategy {
+  if (!isLaravelFrameworkActive) {
+    return genericPhpClassMemberCollectionStrategy;
+  }
+
+  return {
+    canCollectLaravelMembers: true,
+    dynamicWhereMethods: ({ className, options, source }) =>
+      phpLaravelDynamicWhereCompletionsFromSource(source, className, options),
+    relationCompletions: ({ className, source }) =>
+      phpLaravelRelationPropertyCompletionsFromSource(source, className).map(
+        (relation) => ({
+          ...relation,
+          returnType:
+            phpLooksLikeQualifiedClassName(relation.returnType) ||
+            phpIsBuiltinDeclaredType(relation.returnType)
+              ? phpNormalizedDeclaredTypeName(relation.returnType)
+              : resolvePhpDeclaredType(source, relation.returnType) ??
+                relation.returnType,
+        }),
+      ),
+  };
+}
+
+const genericPhpClassMemberCollectionStrategy: PhpClassMemberCollectionStrategy = {
+  canCollectLaravelMembers: false,
+  dynamicWhereMethods: () => [],
+  relationCompletions: () => [],
+};
 
 function phpClassMemberCacheKey(
   path: string,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, type MutableRefObject } from "react";
 import {
   filterPhpLanguageServerDiagnostics,
   phpMemberMethodDiagnosticKey,
@@ -127,6 +127,23 @@ export function usePhpDiagnosticContextFilter(
     frameworkRuntime?.providers ?? activePhpFrameworkProviders;
   const isLaravelFrameworkActive =
     frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const diagnosticContextStrategy = useMemo(
+    () =>
+      createPhpDiagnosticContextStrategy({
+        ensurePhpFrameworkSourceCollectionsLoaded,
+        isLaravelFrameworkActive,
+        phpClassHasLaravelDynamicWhere,
+        phpClassHasLaravelLocalScope,
+        resolvePhpEloquentBuilderModelType,
+      }),
+    [
+      ensurePhpFrameworkSourceCollectionsLoaded,
+      isLaravelFrameworkActive,
+      phpClassHasLaravelDynamicWhere,
+      phpClassHasLaravelLocalScope,
+      resolvePhpEloquentBuilderModelType,
+    ],
+  );
 
   const filterPhpDiagnosticsWithContext = useCallback(
     async (
@@ -163,20 +180,11 @@ export function usePhpDiagnosticContextFilter(
             source,
             staticMethodContext.className,
           );
-          const hasContextualScopeMethod =
-            resolvedClassName && isLaravelFrameworkActive
-              ? await phpClassHasLaravelLocalScope(
-                  resolvedClassName,
-                  staticMethodContext.methodName,
-                )
-              : false;
-          const hasContextualDynamicWhereMethod =
-            isLaravelFrameworkActive && resolvedClassName
-              ? await phpClassHasLaravelDynamicWhere(
-                  resolvedClassName,
-                  staticMethodContext.methodName,
-                )
-              : false;
+          const hasProviderStaticMethod =
+            await diagnosticContextStrategy.staticMethodExists({
+              className: resolvedClassName,
+              methodName: staticMethodContext.methodName,
+            });
           const hasContextualExistingStaticMethod = resolvedClassName
             ? await phpClassHierarchyHasStaticMethod(
                 resolvedClassName,
@@ -184,11 +192,7 @@ export function usePhpDiagnosticContextFilter(
               )
             : false;
 
-          if (
-            hasContextualScopeMethod ||
-            hasContextualDynamicWhereMethod ||
-            hasContextualExistingStaticMethod
-          ) {
+          if (hasProviderStaticMethod || hasContextualExistingStaticMethod) {
             contextualExistingMethods.add(
               phpMethodDiagnosticKey(
                 staticMethodContext.className,
@@ -205,27 +209,13 @@ export function usePhpDiagnosticContextFilter(
 
         if (memberMethodContext) {
           const diagnosticPosition = diagnosticPositionFromDiagnostic(diagnostic);
-          const builderModelType = isLaravelFrameworkActive
-            ? await resolvePhpEloquentBuilderModelType(
-                source,
-                diagnosticPosition,
-                memberMethodContext.receiverExpression,
-              )
-            : null;
-          const hasContextualScopeMethod =
-            builderModelType && isLaravelFrameworkActive
-              ? await phpClassHasLaravelLocalScope(
-                  builderModelType,
-                  memberMethodContext.methodName,
-                )
-              : false;
-          const hasContextualDynamicWhereMethod =
-            isLaravelFrameworkActive && builderModelType
-              ? await phpClassHasLaravelDynamicWhere(
-                  builderModelType,
-                  memberMethodContext.methodName,
-                )
-              : false;
+          const hasProviderMemberMethod =
+            await diagnosticContextStrategy.memberMethodExists({
+              methodName: memberMethodContext.methodName,
+              position: diagnosticPosition,
+              receiverExpression: memberMethodContext.receiverExpression,
+              source,
+            });
           const receiverType = await resolvePhpExpressionType(
             source,
             diagnosticPosition,
@@ -260,8 +250,7 @@ export function usePhpDiagnosticContextFilter(
               : false;
 
           if (
-            hasContextualScopeMethod ||
-            hasContextualDynamicWhereMethod ||
+            hasProviderMemberMethod ||
             hasContextualExistingMemberMethod ||
             hasContextualTraitHostPropertyMethod
           ) {
@@ -403,8 +392,10 @@ export function usePhpDiagnosticContextFilter(
 
       const workspaceRoot = currentWorkspaceRoot();
 
-      if (isLaravelFrameworkActive && workspaceRoot) {
-        void ensurePhpFrameworkSourceCollectionsLoaded(workspaceRoot);
+      if (workspaceRoot) {
+        diagnosticContextStrategy.ensureFrameworkSourceCollectionsLoaded(
+          workspaceRoot,
+        );
       }
 
       const { workspaceSources } = currentPhpFrameworkSourceContext();
@@ -427,12 +418,9 @@ export function usePhpDiagnosticContextFilter(
     [
       currentPhpFrameworkSourceContext,
       currentWorkspaceRoot,
-      ensurePhpFrameworkSourceCollectionsLoaded,
+      diagnosticContextStrategy,
       frameworkProviders,
-      isLaravelFrameworkActive,
       isPhpPath,
-      phpClassHasLaravelDynamicWhere,
-      phpClassHasLaravelLocalScope,
       phpClassHierarchyHasMethod,
       phpClassHierarchyHasProperty,
       phpClassHierarchyHasStaticMethod,
@@ -442,7 +430,6 @@ export function usePhpDiagnosticContextFilter(
       phpTraitHostPropertyMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
-      resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
     ],
   );
@@ -468,6 +455,113 @@ function frameworkSourceContextFromSources(
 ): PhpFrameworkSourceContext {
   return { workspaceSources };
 }
+
+interface PhpDiagnosticContextStrategy {
+  ensureFrameworkSourceCollectionsLoaded(rootPath: string): void;
+  memberMethodExists(
+    context: PhpDiagnosticMemberMethodStrategyContext,
+  ): Promise<boolean>;
+  staticMethodExists(
+    context: PhpDiagnosticStaticMethodStrategyContext,
+  ): Promise<boolean>;
+}
+
+interface PhpDiagnosticContextStrategyOptions {
+  ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
+  isLaravelFrameworkActive: boolean;
+  phpClassHasLaravelDynamicWhere(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
+  phpClassHasLaravelLocalScope(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
+  resolvePhpEloquentBuilderModelType(
+    source: string,
+    position: DiagnosticEditorPosition,
+    receiverExpression: string,
+  ): Promise<string | null>;
+}
+
+interface PhpDiagnosticStaticMethodStrategyContext {
+  className: string | null;
+  methodName: string;
+}
+
+interface PhpDiagnosticMemberMethodStrategyContext {
+  methodName: string;
+  position: DiagnosticEditorPosition;
+  receiverExpression: string;
+  source: string;
+}
+
+function createPhpDiagnosticContextStrategy({
+  ensurePhpFrameworkSourceCollectionsLoaded,
+  isLaravelFrameworkActive,
+  phpClassHasLaravelDynamicWhere,
+  phpClassHasLaravelLocalScope,
+  resolvePhpEloquentBuilderModelType,
+}: PhpDiagnosticContextStrategyOptions): PhpDiagnosticContextStrategy {
+  if (!isLaravelFrameworkActive) {
+    return genericPhpDiagnosticContextStrategy;
+  }
+
+  return {
+    ensureFrameworkSourceCollectionsLoaded: (rootPath) => {
+      void ensurePhpFrameworkSourceCollectionsLoaded(rootPath);
+    },
+    memberMethodExists: async ({
+      methodName,
+      position,
+      receiverExpression,
+      source,
+    }) => {
+      const builderModelType = await resolvePhpEloquentBuilderModelType(
+        source,
+        position,
+        receiverExpression,
+      );
+
+      if (!builderModelType) {
+        return false;
+      }
+
+      const hasScopeMethod = await phpClassHasLaravelLocalScope(
+        builderModelType,
+        methodName,
+      );
+      const hasDynamicWhereMethod = await phpClassHasLaravelDynamicWhere(
+        builderModelType,
+        methodName,
+      );
+
+      return hasScopeMethod || hasDynamicWhereMethod;
+    },
+    staticMethodExists: async ({ className, methodName }) => {
+      if (!className) {
+        return false;
+      }
+
+      const hasScopeMethod = await phpClassHasLaravelLocalScope(
+        className,
+        methodName,
+      );
+      const hasDynamicWhereMethod = await phpClassHasLaravelDynamicWhere(
+        className,
+        methodName,
+      );
+
+      return hasScopeMethod || hasDynamicWhereMethod;
+    },
+  };
+}
+
+const genericPhpDiagnosticContextStrategy: PhpDiagnosticContextStrategy = {
+  ensureFrameworkSourceCollectionsLoaded: () => undefined,
+  memberMethodExists: async () => false,
+  staticMethodExists: async () => false,
+};
 
 function resolveTraitClassName(
   source: string,

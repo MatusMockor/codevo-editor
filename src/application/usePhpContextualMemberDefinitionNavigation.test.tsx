@@ -224,4 +224,64 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
 
     harness.unmount();
   });
+
+  it("keeps Laravel method-call decisions inactive for a generic runtime", async () => {
+    const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
+    const openPhpMethodHintTarget = vi.fn(async () => true);
+    const resolvePhpEloquentBuilderModelType = vi.fn(async () =>
+      "App\\Models\\Post",
+    );
+    const deps = makeDeps({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      openPhpLaravelDynamicWhereTarget,
+      openPhpMethodHintTarget,
+      resolvePhpEloquentBuilderModelType,
+      resolvePhpExpressionType: vi.fn(async () => "Illuminate\\Http\\Request"),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpMethodCallDefinition({
+      kind: "methodCall",
+      methodName: "input",
+      receiverExpression: "$request",
+      variableName: "request",
+    });
+
+    expect(handled).toBe(false);
+    expect(openPhpMethodHintTarget).not.toHaveBeenCalled();
+    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(openPhpLaravelDynamicWhereTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("keeps static Laravel magic navigation inactive for a generic runtime", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => false);
+    const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      openDirectPhpMethodTarget,
+      openPhpLaravelDynamicWhereTarget,
+      resolvePhpClassReference: vi.fn(() => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpStaticMethodCallDefinition({
+      className: "Post",
+      kind: "staticMethodCall",
+      methodName: "where",
+    });
+
+    expect(handled).toBe(false);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledTimes(1);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "where",
+    );
+    expect(openPhpLaravelDynamicWhereTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });

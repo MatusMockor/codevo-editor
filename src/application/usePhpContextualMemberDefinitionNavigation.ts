@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import {
   isLaravelEloquentBuilderMethodName,
   phpLaravelScopeMethodName,
@@ -125,6 +125,14 @@ export function usePhpContextualMemberDefinitionNavigation({
 }: PhpContextualMemberDefinitionNavigationDependencies): PhpContextualMemberDefinitionNavigation {
   const isLaravelFrameworkActive =
     frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const navigationStrategy = useMemo(
+    () =>
+      createPhpContextualMemberDefinitionNavigationStrategy({
+        isLaravelFrameworkActive,
+        resolvePhpEloquentBuilderModelType,
+      }),
+    [isLaravelFrameworkActive, resolvePhpEloquentBuilderModelType],
+  );
 
   const openDirectPhpClassConstantTarget = useCallback(
     async (className: string, constantName: string): Promise<boolean> => {
@@ -276,12 +284,10 @@ export function usePhpContextualMemberDefinitionNavigation({
         (variableType
           ? resolvePhpClassName(activeDocument.content, variableType)
           : null);
-      const frameworkHint = isLaravelFrameworkActive
-        ? phpLaravelRequestMethodDefinition(
-            resolvedVariableType,
-            context.methodName,
-          )
-        : null;
+      const frameworkHint = navigationStrategy.methodDefinitionHint(
+        resolvedVariableType,
+        context.methodName,
+      );
 
       if (frameworkHint) {
         const hintTargetOpened = await openPhpMethodHintTarget(frameworkHint);
@@ -308,7 +314,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         context.receiverExpression ||
         (context.variableName ? `$${context.variableName}` : null);
       const builderModelType = builderReceiverExpression
-        ? await resolvePhpEloquentBuilderModelType(
+        ? await navigationStrategy.builderModelType(
             activeDocument.content,
             position,
             builderReceiverExpression,
@@ -319,10 +325,9 @@ export function usePhpContextualMemberDefinitionNavigation({
         return false;
       }
 
-      const builderScopeMethodName =
-        isLaravelFrameworkActive && builderModelType
-          ? phpLaravelScopeMethodName(context.methodName)
-          : null;
+      const builderScopeMethodName = builderModelType
+        ? navigationStrategy.localScopeMethodName(context.methodName)
+        : null;
 
       if (builderModelType && builderScopeMethodName) {
         const scopeTargetOpened = await openDirectPhpMethodTarget(
@@ -339,7 +344,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
       }
 
-      if (builderModelType) {
+      if (navigationStrategy.shouldOpenDynamicWhereTarget(builderModelType)) {
         const dynamicWhereTargetOpened = await openPhpLaravelDynamicWhereTarget(
           builderModelType,
           context.methodName,
@@ -367,11 +372,10 @@ export function usePhpContextualMemberDefinitionNavigation({
       activeDocument,
       activeEditorPositionRef,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      navigationStrategy,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
       openPhpMethodHintTarget,
-      resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
       setMessage,
       workspaceRoot,
@@ -410,9 +414,9 @@ export function usePhpContextualMemberDefinitionNavigation({
         return true;
       }
 
-      const scopeMethodName = isLaravelFrameworkActive
-        ? phpLaravelScopeMethodName(context.methodName)
-        : null;
+      const scopeMethodName = navigationStrategy.localScopeMethodName(
+        context.methodName,
+      );
 
       if (scopeMethodName) {
         const scopeTargetOpened = await openDirectPhpMethodTarget(
@@ -429,10 +433,10 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
       }
 
-      const dynamicWhereTargetOpened = await openPhpLaravelDynamicWhereTarget(
-        className,
-        context.methodName,
-      );
+      const dynamicWhereTargetOpened =
+        navigationStrategy.shouldOpenDynamicWhereTarget(className)
+          ? await openPhpLaravelDynamicWhereTarget(className, context.methodName)
+          : false;
 
       if (!isRequestedRootActive()) {
         return false;
@@ -442,12 +446,12 @@ export function usePhpContextualMemberDefinitionNavigation({
         return true;
       }
 
-      if (
-        isLaravelFrameworkActive &&
-        isLaravelEloquentBuilderMethodName(context.methodName)
-      ) {
+      const builderTargetClassName =
+        navigationStrategy.staticBuilderTargetClassName(context.methodName);
+
+      if (builderTargetClassName) {
         const builderTargetOpened = await openDirectPhpMethodTarget(
-          "Illuminate\\Database\\Eloquent\\Builder",
+          builderTargetClassName,
           context.methodName,
         );
 
@@ -472,7 +476,7 @@ export function usePhpContextualMemberDefinitionNavigation({
     [
       activeDocument,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      navigationStrategy,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
       resolvePhpClassReference,
@@ -531,7 +535,11 @@ export function usePhpContextualMemberDefinitionNavigation({
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !isLaravelFrameworkActive || !activeDocument) {
+      if (
+        !requestedRoot ||
+        !navigationStrategy.supportsRelationStringDefinition() ||
+        !activeDocument
+      ) {
         return false;
       }
 
@@ -541,7 +549,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         ? resolvePhpClassName(activeDocument.content, context.className)
         : null;
       const receiverModelType = context.receiverExpression
-        ? await resolvePhpEloquentBuilderModelType(
+        ? await navigationStrategy.builderModelType(
             activeDocument.content,
             position,
             context.receiverExpression,
@@ -613,9 +621,8 @@ export function usePhpContextualMemberDefinitionNavigation({
       activeDocument,
       activeEditorPositionRef,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      navigationStrategy,
       openDirectPhpMethodTarget,
-      resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
       resolvePhpLaravelRelationPathOwnerType,
       setMessage,
@@ -630,3 +637,65 @@ export function usePhpContextualMemberDefinitionNavigation({
     goToPhpStaticMethodCallDefinition,
   };
 }
+
+interface PhpContextualMemberDefinitionNavigationStrategy {
+  builderModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
+  localScopeMethodName(methodName: string): string | null;
+  methodDefinitionHint(
+    receiverType: string | null,
+    methodName: string,
+  ): PhpMethodDefinitionHint | null;
+  shouldOpenDynamicWhereTarget(className: string | null): className is string;
+  staticBuilderTargetClassName(methodName: string): string | null;
+  supportsRelationStringDefinition(): boolean;
+}
+
+interface PhpContextualMemberDefinitionNavigationStrategyOptions {
+  isLaravelFrameworkActive: boolean;
+  resolvePhpEloquentBuilderModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
+}
+
+function createPhpContextualMemberDefinitionNavigationStrategy({
+  isLaravelFrameworkActive,
+  resolvePhpEloquentBuilderModelType,
+}: PhpContextualMemberDefinitionNavigationStrategyOptions): PhpContextualMemberDefinitionNavigationStrategy {
+  if (!isLaravelFrameworkActive) {
+    return genericPhpContextualMemberDefinitionNavigationStrategy;
+  }
+
+  return {
+    builderModelType: resolvePhpEloquentBuilderModelType,
+    localScopeMethodName: phpLaravelScopeMethodName,
+    methodDefinitionHint: phpLaravelRequestMethodDefinition,
+    shouldOpenDynamicWhereTarget: (className): className is string =>
+      Boolean(className),
+    staticBuilderTargetClassName: (methodName) =>
+      isLaravelEloquentBuilderMethodName(methodName)
+        ? "Illuminate\\Database\\Eloquent\\Builder"
+        : null,
+    supportsRelationStringDefinition: () => true,
+  };
+}
+
+const genericPhpContextualMemberDefinitionNavigationStrategy: PhpContextualMemberDefinitionNavigationStrategy =
+  {
+    builderModelType: async () => null,
+    localScopeMethodName: () => null,
+    methodDefinitionHint: () => null,
+    shouldOpenDynamicWhereTarget: (
+      className: string | null,
+    ): className is string => {
+      void className;
+      return false;
+    },
+    staticBuilderTargetClassName: () => null,
+    supportsRelationStringDefinition: () => false,
+  };
