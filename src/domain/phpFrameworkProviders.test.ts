@@ -5,6 +5,8 @@ import {
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   isNettePhpProject,
+  phpFrameworkAuthorizationAbilityDefinitionsFromSource,
+  phpFrameworkAuthorizationAbilitySearchQueries,
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkConfigLiteralTarget,
@@ -19,6 +21,8 @@ import {
   phpFrameworkProviderRegistry,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
+  phpFrameworkMiddlewareAliasDefinitionsFromSource,
+  phpFrameworkMiddlewareAliasSearchQueries,
   phpFrameworkPropertyTypeFromSource,
   phpFrameworkProvidersForProject,
   phpFrameworkConfigKeysFromSource,
@@ -41,9 +45,11 @@ import {
   phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
   phpFrameworkStringLiteralHelperAt,
+  phpFrameworkSupportsAuthorizationAbilities,
   phpFrameworkSupportsConfig,
   phpFrameworkSupportsDispatch,
   phpFrameworkSupportsEnv,
+  phpFrameworkSupportsMiddlewareAliases,
   phpFrameworkSupportsNeonConfigIntelligence,
   phpFrameworkSupportsPhpPresenterLinks,
   phpFrameworkSupportsRoutes,
@@ -103,6 +109,8 @@ import {
   phpLaravelTranslationReferenceContextAt,
   phpLaravelTranslationTargetFromSource,
 } from "./phpLaravelTranslations";
+import { phpLaravelGateAbilityDefinitions } from "./phpLaravelAuthorization";
+import { phpLaravelMiddlewareAliasDefinitions } from "./phpLaravelMiddleware";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import {
@@ -1829,6 +1837,101 @@ Route::model('user', AdminUser::class);
       expect(
         phpFrameworkSupportsTargetCollection("viewData", [legacyProvider]),
       ).toBe(false);
+    });
+  });
+
+  describe("authorization ability capability", () => {
+    const source = `<?php
+
+Gate::define('update-post', [PostPolicy::class, 'update']);
+Gate::define('delete-post', fn ($user) => $user->isAdmin());
+`;
+
+    it("dispatches Laravel Gate ability definitions 1:1 through the provider", () => {
+      expect(
+        phpFrameworkAuthorizationAbilityDefinitionsFromSource(source, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(phpLaravelGateAbilityDefinitions(source));
+    });
+
+    it("exposes authorization ability search anchors through the provider", () => {
+      expect(
+        phpFrameworkAuthorizationAbilitySearchQueries([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(["Gate::define"]);
+      expect(
+        phpFrameworkAuthorizationAbilitySearchQueries([
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+    });
+
+    it("reports authorization ability support only for providers shipping the capability", () => {
+      expect(
+        phpFrameworkSupportsAuthorizationAbilities([phpLaravelFrameworkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsAuthorizationAbilities([phpNetteFrameworkProvider]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsAuthorizationAbilities([])).toBe(false);
+    });
+
+    it("stays a safe no-op without the capability", () => {
+      expect(
+        phpFrameworkAuthorizationAbilityDefinitionsFromSource(source, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(phpFrameworkAuthorizationAbilitySearchQueries([])).toEqual([]);
+    });
+  });
+
+  describe("middleware alias capability", () => {
+    const source = `<?php
+
+class Kernel {
+    protected $middlewareAliases = [
+        'auth' => Authenticate::class,
+    ];
+}
+`;
+
+    it("dispatches Laravel middleware alias definitions 1:1 through the provider", () => {
+      expect(
+        phpFrameworkMiddlewareAliasDefinitionsFromSource(source, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(phpLaravelMiddlewareAliasDefinitions(source));
+    });
+
+    it("exposes middleware alias search anchors through the provider", () => {
+      expect(
+        phpFrameworkMiddlewareAliasSearchQueries([phpLaravelFrameworkProvider]),
+      ).toEqual(["middlewareAliases", "routeMiddleware"]);
+      expect(
+        phpFrameworkMiddlewareAliasSearchQueries([phpNetteFrameworkProvider]),
+      ).toEqual([]);
+    });
+
+    it("reports middleware alias support only for providers shipping the capability", () => {
+      expect(
+        phpFrameworkSupportsMiddlewareAliases([phpLaravelFrameworkProvider]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsMiddlewareAliases([phpNetteFrameworkProvider]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsMiddlewareAliases([])).toBe(false);
+    });
+
+    it("stays a safe no-op without the capability", () => {
+      expect(
+        phpFrameworkMiddlewareAliasDefinitionsFromSource(source, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(phpFrameworkMiddlewareAliasSearchQueries([])).toEqual([]);
     });
   });
 

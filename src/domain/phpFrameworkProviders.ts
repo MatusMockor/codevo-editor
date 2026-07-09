@@ -111,6 +111,26 @@ export interface PhpFrameworkRouteDefinitionsContext {
   source: string;
 }
 
+/** A named authorization ability declared in framework configuration/source. */
+export interface PhpFrameworkAuthorizationAbilityDefinition {
+  name: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkAuthorizationAbilityDefinitionsContext {
+  source: string;
+}
+
+/** A named middleware alias declared in framework configuration/source. */
+export interface PhpFrameworkMiddlewareAliasDefinition {
+  name: string;
+  position: EditorPosition;
+}
+
+export interface PhpFrameworkMiddlewareAliasDefinitionsContext {
+  source: string;
+}
+
 export interface PhpFrameworkRouteModelBinding {
   explicitModelClassName: string | null;
   modelShortName: string;
@@ -479,6 +499,28 @@ export interface PhpFrameworkProvider {
      */
     explicitModelBindingSearchQueries?: readonly string[];
   };
+  authorizationAbilities?: {
+    definitionsFromSource?: (
+      context: PhpFrameworkAuthorizationAbilityDefinitionsContext,
+    ) => PhpFrameworkAuthorizationAbilityDefinition[];
+    /**
+     * Text-search anchors that surface files declaring authorization abilities
+     * outside the active document. Owned by the provider so application
+     * collectors do not depend on one framework's registration API.
+     */
+    searchQueries?: readonly string[];
+  };
+  middlewareAliases?: {
+    definitionsFromSource?: (
+      context: PhpFrameworkMiddlewareAliasDefinitionsContext,
+    ) => PhpFrameworkMiddlewareAliasDefinition[];
+    /**
+     * Text-search anchors that surface files declaring middleware aliases
+     * outside the active document. Owned by the provider so application
+     * collectors do not depend on one framework's Kernel shape.
+     */
+    searchQueries?: readonly string[];
+  };
   dispatch?: {
     eventListenerMapFromSource?: (
       context: PhpFrameworkEventListenerMapContext,
@@ -665,11 +707,13 @@ export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
 ];
 
 export type PhpFrameworkProviderCapability =
+  | "authorizationAbilities"
   | "config"
   | "dispatch"
   | "env"
   | "lattePresenterLinkIntelligence"
   | "latteTemplateIntelligence"
+  | "middlewareAliases"
   | "neonConfigIntelligence"
   | "phpPresenterLinks"
   | "routes"
@@ -962,6 +1006,57 @@ export function phpFrameworkSupportsRoutes(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "routes");
+}
+
+export function phpFrameworkAuthorizationAbilityDefinitionsFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkAuthorizationAbilityDefinition[] {
+  return providers.flatMap(
+    (provider) =>
+      provider.authorizationAbilities?.definitionsFromSource?.({ source }) ?? [],
+  );
+}
+
+export function phpFrameworkAuthorizationAbilitySearchQueries(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap(
+    (provider) => provider.authorizationAbilities?.searchQueries ?? [],
+  );
+}
+
+export function phpFrameworkSupportsAuthorizationAbilities(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "authorizationAbilities",
+  );
+}
+
+export function phpFrameworkMiddlewareAliasDefinitionsFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkMiddlewareAliasDefinition[] {
+  return providers.flatMap(
+    (provider) =>
+      provider.middlewareAliases?.definitionsFromSource?.({ source }) ?? [],
+  );
+}
+
+export function phpFrameworkMiddlewareAliasSearchQueries(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): readonly string[] {
+  return providers.flatMap(
+    (provider) => provider.middlewareAliases?.searchQueries ?? [],
+  );
+}
+
+export function phpFrameworkSupportsMiddlewareAliases(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportCapability(providers, "middlewareAliases");
 }
 
 export function phpFrameworkDispatchTargetAt(
@@ -1620,6 +1715,10 @@ function phpFrameworkProvidersSupportCapability(
   capability: PhpFrameworkProviderCapability,
 ): boolean {
   switch (capability) {
+    case "authorizationAbilities":
+      return providers.some(
+        (provider) => provider.authorizationAbilities !== undefined,
+      );
     case "config":
       return providers.some((provider) => provider.config !== undefined);
     case "dispatch":
@@ -1634,6 +1733,10 @@ function phpFrameworkProvidersSupportCapability(
     case "latteTemplateIntelligence":
       return providers.some(
         (provider) => provider.latte?.supportsTemplateIntelligence === true,
+      );
+    case "middlewareAliases":
+      return providers.some(
+        (provider) => provider.middlewareAliases !== undefined,
       );
     case "neonConfigIntelligence":
       return providers.some(

@@ -1,5 +1,6 @@
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
+import { phpLaravelGateAbilityDefinitions } from "./phpLaravelAuthorization";
 import {
   resolveLaravelConfigTarget,
   resolveLaravelEnvTarget,
@@ -58,6 +59,7 @@ import {
   phpLaravelTranslationReferenceContextAt,
   phpLaravelTranslationTargetFromSource,
 } from "./phpLaravelTranslations";
+import { phpLaravelMiddlewareAliasDefinitions } from "./phpLaravelMiddleware";
 import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
@@ -86,6 +88,15 @@ const laravelRouteSearchQueries: readonly string[] = [
 const laravelExplicitRouteModelBindingSearchQueries: readonly string[] = [
   "Route::model",
   "Route::bind",
+];
+
+const laravelAuthorizationAbilitySearchQueries: readonly string[] = [
+  "Gate::define",
+];
+
+const laravelMiddlewareAliasSearchQueries: readonly string[] = [
+  "middlewareAliases",
+  "routeMiddleware",
 ];
 
 /**
@@ -203,6 +214,16 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     eventServiceProviderClassNames: ({ php }) =>
       phpEventServiceProviderClassNames(php),
     targetAt: ({ offset, source }) => phpLaravelDispatchTargetAt(source, offset),
+  },
+  authorizationAbilities: {
+    definitionsFromSource: ({ source }) =>
+      phpLaravelGateAbilityDefinitions(source),
+    searchQueries: laravelAuthorizationAbilitySearchQueries,
+  },
+  middlewareAliases: {
+    definitionsFromSource: ({ source }) =>
+      phpLaravelMiddlewareAliasDefinitions(source),
+    searchQueries: laravelMiddlewareAliasSearchQueries,
   },
   targetCollections: [
     {

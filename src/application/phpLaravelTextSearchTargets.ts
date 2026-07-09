@@ -1,16 +1,14 @@
 import {
+  phpFrameworkAuthorizationAbilityDefinitionsFromSource,
+  phpFrameworkAuthorizationAbilitySearchQueries,
+  phpFrameworkMiddlewareAliasDefinitionsFromSource,
+  phpFrameworkMiddlewareAliasSearchQueries,
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteSearchQueries,
+  type PhpFrameworkAuthorizationAbilityDefinition,
+  type PhpFrameworkMiddlewareAliasDefinition,
   type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
-import {
-  phpLaravelGateAbilityDefinitions,
-  type PhpLaravelGateAbilityDefinition,
-} from "../domain/phpLaravelAuthorization";
-import {
-  phpLaravelMiddlewareAliasDefinitions,
-  type PhpLaravelMiddlewareAliasDefinition,
-} from "../domain/phpLaravelMiddleware";
 import {
   createWorkspaceTargetCollector,
   type TextSearchCollectRequest,
@@ -22,9 +20,9 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 export type PhpLaravelNamedRouteTarget =
   WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
 export type PhpLaravelGateAbilityTarget =
-  WorkspaceFileTarget<PhpLaravelGateAbilityDefinition>;
+  WorkspaceFileTarget<PhpFrameworkAuthorizationAbilityDefinition>;
 export type PhpLaravelMiddlewareAliasTarget =
-  WorkspaceFileTarget<PhpLaravelMiddlewareAliasDefinition>;
+  WorkspaceFileTarget<PhpFrameworkMiddlewareAliasDefinition>;
 
 export interface PhpLaravelTextSearchTargetCollectorDeps {
   workspaceRoot: string | null;
@@ -78,17 +76,32 @@ export function createPhpLaravelTextSearchTargetCollectors(
   const collectGateAbilities =
     createWorkspaceTargetCollector(deps.workspaceTargetCollectorDeps, {
       kind: "textSearch",
-      isEnabled: () => deps.frameworkRuntime.isLaravel,
-      queries: () => ["Gate::define"],
-      parseDefinitions: phpLaravelGateAbilityDefinitions,
+      isEnabled: () =>
+        deps.frameworkRuntime.supports("authorizationAbilities"),
+      queries: () =>
+        phpFrameworkAuthorizationAbilitySearchQueries(
+          deps.frameworkRuntime.providers,
+        ),
+      parseDefinitions: (source) =>
+        phpFrameworkAuthorizationAbilityDefinitionsFromSource(
+          source,
+          deps.frameworkRuntime.providers,
+        ),
     });
 
   const collectMiddlewareAliases =
     createWorkspaceTargetCollector(deps.workspaceTargetCollectorDeps, {
       kind: "textSearch",
-      isEnabled: () => deps.frameworkRuntime.isLaravel,
-      queries: () => ["middlewareAliases", "routeMiddleware"],
-      parseDefinitions: phpLaravelMiddlewareAliasDefinitions,
+      isEnabled: () => deps.frameworkRuntime.supports("middlewareAliases"),
+      queries: () =>
+        phpFrameworkMiddlewareAliasSearchQueries(
+          deps.frameworkRuntime.providers,
+        ),
+      parseDefinitions: (source) =>
+        phpFrameworkMiddlewareAliasDefinitionsFromSource(
+          source,
+          deps.frameworkRuntime.providers,
+        ),
     });
 
   return {

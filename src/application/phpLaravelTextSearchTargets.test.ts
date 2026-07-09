@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  phpFrameworkAuthorizationAbilityDefinitionsFromSource,
+  phpFrameworkMiddlewareAliasDefinitionsFromSource,
   phpFrameworkRouteDefinitionsFromSource,
   phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
-import { phpLaravelGateAbilityDefinitions } from "../domain/phpLaravelAuthorization";
-import { phpLaravelMiddlewareAliasDefinitions } from "../domain/phpLaravelMiddleware";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
 import {
   createPhpLaravelTextSearchTargetCollectors,
@@ -40,6 +41,44 @@ const ROUTE_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   hasProvider: () => false,
   supports: (capability) => capability === "routes",
   supportsTargetCollection: (kind) => kind === "routes",
+};
+const CUSTOM_PROVIDER: PhpFrameworkProvider = {
+  id: "custom",
+  authorizationAbilities: {
+    definitionsFromSource: ({ source }) =>
+      source.includes("allow-report")
+        ? [
+            {
+              name: "allow-report",
+              position: { column: 2, lineNumber: 1 },
+            },
+          ]
+        : [],
+    searchQueries: ["registerAbility"],
+  },
+  middlewareAliases: {
+    definitionsFromSource: ({ source }) =>
+      source.includes("customAuth")
+        ? [
+            {
+              name: "customAuth",
+              position: { column: 3, lineNumber: 1 },
+            },
+          ]
+        : [],
+    searchQueries: ["registerMiddlewareAlias"],
+  },
+};
+const CUSTOM_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  providers: [CUSTOM_PROVIDER],
+  profile: "generic",
+  isLaravel: false,
+  hasProvider: (providerId) => providerId === "custom",
+  supports: (capability) =>
+    capability === "authorizationAbilities" ||
+    capability === "middlewareAliases",
+  supportsTargetCollection: () => false,
 };
 
 interface Deferred<T> {
@@ -222,7 +261,10 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
 
     const targets = await collectors.collectGateAbilities(source, currentPath);
 
-    const expected = phpLaravelGateAbilityDefinitions(source)
+    const expected = phpFrameworkAuthorizationAbilityDefinitionsFromSource(
+      source,
+      PROVIDERS,
+    )
       .map((definition) => ({
         ...definition,
         path: currentPath,
@@ -242,6 +284,26 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
     expect(searchText).toHaveBeenCalledWith(ROOT, "Gate::define", 200);
   });
 
+  it("collects authorization abilities from a capable non-Laravel provider", async () => {
+    const source = "<?php\nregisterAbility('allow-report');\n";
+    const currentPath = `${ROOT}/config/abilities.php`;
+    const { collectors, searchText } = createDeps({
+      frameworkRuntime: CUSTOM_CAPABLE_NON_LARAVEL_RUNTIME,
+    });
+
+    await expect(
+      collectors.collectGateAbilities(source, currentPath),
+    ).resolves.toEqual([
+      {
+        name: "allow-report",
+        path: currentPath,
+        position: { column: 2, lineNumber: 1 },
+        relativePath: "config/abilities.php",
+      },
+    ]);
+    expect(searchText).toHaveBeenCalledWith(ROOT, "registerAbility", 200);
+  });
+
   it("collects middleware aliases with both legacy Kernel anchors", async () => {
     const source = `<?php\n\nclass Kernel {\n    protected $middlewareAliases = [\n        'auth' => Authenticate::class,\n        'verified' => EnsureEmailIsVerified::class,\n    ];\n}\n`;
     const currentPath = `${ROOT}/app/Http/Kernel.php`;
@@ -249,7 +311,10 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
 
     const targets = await collectors.collectMiddlewareAliases(source, currentPath);
 
-    const expected = phpLaravelMiddlewareAliasDefinitions(source)
+    const expected = phpFrameworkMiddlewareAliasDefinitionsFromSource(
+      source,
+      PROVIDERS,
+    )
       .map((definition) => ({
         ...definition,
         path: currentPath,
@@ -268,6 +333,30 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
     expect(targets).toEqual(expected);
     expect(searchText).toHaveBeenCalledWith(ROOT, "middlewareAliases", 200);
     expect(searchText).toHaveBeenCalledWith(ROOT, "routeMiddleware", 200);
+  });
+
+  it("collects middleware aliases from a capable non-Laravel provider", async () => {
+    const source = "<?php\nregisterMiddlewareAlias('customAuth');\n";
+    const currentPath = `${ROOT}/config/middleware.php`;
+    const { collectors, searchText } = createDeps({
+      frameworkRuntime: CUSTOM_CAPABLE_NON_LARAVEL_RUNTIME,
+    });
+
+    await expect(
+      collectors.collectMiddlewareAliases(source, currentPath),
+    ).resolves.toEqual([
+      {
+        name: "customAuth",
+        path: currentPath,
+        position: { column: 3, lineNumber: 1 },
+        relativePath: "config/middleware.php",
+      },
+    ]);
+    expect(searchText).toHaveBeenCalledWith(
+      ROOT,
+      "registerMiddlewareAlias",
+      200,
+    );
   });
 
   it("drops text-search results when the workspace root changes mid-flight", async () => {
