@@ -201,6 +201,50 @@ Route::get('/reports', [ReportController::class, 'in']);
     harness.unmount();
   });
 
+  it("returns Laravel relation string completions from the resolved owner type", async () => {
+    const source = `<?php
+use App\\Models\\Comment;
+
+Comment::with('par')->first();
+`;
+    const collectPhpLaravelRelationCompletionsForClass = vi.fn(async () => [
+      method("children"),
+      method("parent"),
+      method("participants"),
+    ]);
+    const resolvePhpClassReference = vi.fn(
+      (_source: string, className: string) => `App\\Models\\${className}`,
+    );
+    const resolvePhpLaravelRelationPathOwnerType = vi.fn(
+      async (className: string) => className,
+    );
+    const deps = makeDeps({
+      collectPhpLaravelRelationCompletionsForClass,
+      resolvePhpClassReference,
+      resolvePhpLaravelRelationPathOwnerType,
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "with('par"));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "parent",
+      "participants",
+    ]);
+    expect(resolvePhpClassReference).toHaveBeenCalledWith(source, "Comment");
+    expect(resolvePhpLaravelRelationPathOwnerType).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+      [],
+    );
+    expect(collectPhpLaravelRelationCompletionsForClass).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+    );
+
+    harness.unmount();
+  });
+
   it("drops receiver completions that resolve after the active workspace changed", async () => {
     const source = `<?php
 $comment->loa`;
