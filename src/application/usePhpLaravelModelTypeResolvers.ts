@@ -27,6 +27,7 @@ import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpLaravelCarrierKind } from "./usePhpLaravelMethodGenericModelType";
 import { phpClassDocGenericCollectionModelTypeCandidate } from "./usePhpLaravelRelationResolver";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export type PhpLaravelModelTypeResolver = (
   source: string,
@@ -38,7 +39,8 @@ export type PhpLaravelModelTypeResolver = (
 export interface UsePhpLaravelModelTypeResolversOptions {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   phpClassHasLaravelDynamicWhere: (
     className: string,
     methodName: string,
@@ -75,7 +77,8 @@ export interface UsePhpLaravelModelTypeResolversOptions {
 export function usePhpLaravelModelTypeResolvers({
   activePhpFrameworkProviders,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
@@ -88,6 +91,11 @@ export function usePhpLaravelModelTypeResolvers({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
       source: string,
@@ -113,7 +121,7 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           normalizedModelExpression,
-          { frameworkProviders: activePhpFrameworkProviders },
+          { frameworkProviders },
         );
 
         if (directType) {
@@ -142,7 +150,7 @@ export function usePhpLaravelModelTypeResolvers({
           phpNewExpressionClassName(normalizedModelExpression) ??
           phpFrameworkContainerExpressionClassName(
             normalizedModelExpression,
-            activePhpFrameworkProviders,
+            frameworkProviders,
           );
 
         if (constructedClassName) {
@@ -271,14 +279,14 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders: activePhpFrameworkProviders },
+          { frameworkProviders },
         );
         const constructedReceiverType =
           directReceiverType ??
           phpNewExpressionClassName(methodCall.receiverExpression) ??
           phpFrameworkContainerExpressionClassName(
             methodCall.receiverExpression,
-            activePhpFrameworkProviders,
+            frameworkProviders,
           );
         const receiverType = constructedReceiverType
           ? resolvePhpClassReference(source, constructedReceiverType)
@@ -399,7 +407,7 @@ export function usePhpLaravelModelTypeResolvers({
       return null;
     },
     [
-      activePhpFrameworkProviders,
+      frameworkProviders,
       phpClassHasLaravelDynamicWhere,
       phpClassHasLaravelLocalScope,
       isLaravelFrameworkActive,
@@ -531,7 +539,7 @@ export function usePhpLaravelModelTypeResolvers({
         source,
         position,
         normalizedExpression,
-        { frameworkProviders: activePhpFrameworkProviders },
+        { frameworkProviders },
       );
       const resolvedDirectCollectionType = directCollectionType
         ? resolvePhpClassReference(source, directCollectionType)
@@ -621,14 +629,14 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders: activePhpFrameworkProviders },
+          { frameworkProviders },
         );
         const constructedReceiverType =
           directReceiverType ??
           phpNewExpressionClassName(methodCall.receiverExpression) ??
           phpFrameworkContainerExpressionClassName(
             methodCall.receiverExpression,
-            activePhpFrameworkProviders,
+            frameworkProviders,
           );
         const receiverType = constructedReceiverType
           ? resolvePhpClassReference(source, constructedReceiverType)
@@ -665,7 +673,7 @@ export function usePhpLaravelModelTypeResolvers({
       return null;
     },
     [
-      activePhpFrameworkProviders,
+      frameworkProviders,
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpCollectionModelTypeFromClass,

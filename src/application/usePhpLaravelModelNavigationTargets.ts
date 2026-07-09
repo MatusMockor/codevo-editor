@@ -7,6 +7,7 @@ import {
 } from "../domain/phpFrameworkLaravel";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -14,7 +15,8 @@ interface OpenNavigationOptions {
 
 export interface PhpLaravelModelNavigationTargetsDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -40,13 +42,17 @@ export interface PhpLaravelModelNavigationTargets {
 
 export function usePhpLaravelModelNavigationTargets({
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openNavigationTarget,
   readNavigationFileContent,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> =>
       openLaravelModelSourceTarget({

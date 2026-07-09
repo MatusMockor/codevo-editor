@@ -23,9 +23,18 @@ import type { FileEntry, TextSearchResult } from "../domain/workspace";
 import { phpLaravelAuthGuardConfigKey } from "../domain/phpLaravelAuth";
 import { phpLaravelDatabaseConnectionConfigKey } from "../domain/phpLaravelDatabase";
 import { phpLaravelStorageDiskConfigKey } from "../domain/phpLaravelStorage";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function fileEntry(path: string): FileEntry {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -268,6 +277,34 @@ describe("useLaravelTargets", () => {
       await harness
         .hook()
         .collectPhpLaravelGateAbilityTargets("<?php Gate::define('x', fn () => true);", `${ROOT}/a.php`),
+    ).toEqual([]);
+    expect(await harness.hook().collectPhpLaravelEnvTargets()).toEqual([]);
+    expect(harness.searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("lets the runtime context supersede legacy active providers", async () => {
+    const harness = renderLaravelTargets({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+    });
+
+    expect(
+      await harness
+        .hook()
+        .collectPhpLaravelNamedRouteTargets(
+          "<?php Route::get('/x')->name('x');",
+          `${ROOT}/routes/web.php`,
+        ),
+    ).toEqual([]);
+    expect(
+      await harness
+        .hook()
+        .collectPhpLaravelGateAbilityTargets(
+          "<?php Gate::define('x', fn () => true);",
+          `${ROOT}/a.php`,
+        ),
     ).toEqual([]);
     expect(await harness.hook().collectPhpLaravelEnvTargets()).toEqual([]);
     expect(harness.searchText).not.toHaveBeenCalled();

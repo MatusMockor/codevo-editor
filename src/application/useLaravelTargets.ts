@@ -32,6 +32,8 @@ import {
   createPhpLaravelViewTargetResolver,
   type PhpLaravelViewNavigationTarget,
 } from "./phpLaravelViewTargets";
+import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { type WorkspaceTargetCollectorDeps } from "./phpWorkspaceTargetCollector";
 
 export type {
@@ -54,12 +56,10 @@ export type {
 export type { PhpLaravelConfigDerivedTarget } from "./phpLaravelConfigDerivedTargets";
 export type { PhpLaravelViewNavigationTarget } from "./phpLaravelViewTargets";
 
-const EMPTY_PHP_FRAMEWORK_PROVIDERS: readonly PhpFrameworkProvider[] = [];
-
 /**
  * Collaborators the Laravel target collectors need from the workbench shell.
  * Every collaborator is a shared shell primitive (the file/search gateways, the
- * active-root ref/value, the path helpers, the active framework providers) - the
+ * active-root ref/value, the path helpers, the framework runtime) - the
  * hook owns only the per-root target cache, wiring the shared isolation-guarded
  * target-collection engine to Laravel's parsers.
  */
@@ -73,6 +73,7 @@ export interface LaravelTargetsDependencies {
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
   isPhpPath: (path: string) => boolean;
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
   isLaravelFrameworkActive: boolean;
 }
 
@@ -180,11 +181,23 @@ function useLaravelFrameworkTargetAdapter(
     joinWorkspacePath,
     isPhpPath,
     activePhpFrameworkProviders,
+    frameworkRuntime: providedFrameworkRuntime,
     isLaravelFrameworkActive,
   } = dependencies;
-  const targetPhpFrameworkProviders = isLaravelFrameworkActive
-    ? activePhpFrameworkProviders
-    : EMPTY_PHP_FRAMEWORK_PROVIDERS;
+  const frameworkRuntime = useMemo(
+    () =>
+      phpFrameworkRuntimeContextFromDependencies({
+        activePhpFrameworkProviders,
+        frameworkRuntime: providedFrameworkRuntime,
+        isLaravelFrameworkActive,
+      }),
+    [
+      activePhpFrameworkProviders,
+      providedFrameworkRuntime,
+      isLaravelFrameworkActive,
+    ],
+  );
+  const targetPhpFrameworkProviders = frameworkRuntime.providers;
 
   const engineDeps = useMemo<WorkspaceTargetCollectorDeps>(
     () => ({
@@ -217,14 +230,12 @@ function useLaravelFrameworkTargetAdapter(
     () =>
       createPhpLaravelTextSearchTargetCollectors({
         workspaceRoot,
-        phpFrameworkProviders: targetPhpFrameworkProviders,
-        isLaravelFrameworkActive,
+        frameworkRuntime,
         workspaceTargetCollectorDeps: engineDeps,
       }),
     [
       workspaceRoot,
-      targetPhpFrameworkProviders,
-      isLaravelFrameworkActive,
+      frameworkRuntime,
       engineDeps,
     ],
   );

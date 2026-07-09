@@ -10,10 +10,37 @@ import {
   createPhpLaravelTextSearchTargetCollectors,
   type PhpLaravelTextSearchTargetCollectorDeps,
 } from "./phpLaravelTextSearchTargets";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import type { WorkspaceTargetCollectorDeps } from "./phpWorkspaceTargetCollector";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: PROVIDERS,
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
+const ROUTE_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  profile: "generic",
+  isLaravel: false,
+  hasProvider: () => false,
+  supports: (capability) => capability === "routes",
+  supportsTargetCollection: (kind) => kind === "routes",
+};
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -85,8 +112,7 @@ function createDeps(
 
   const deps: PhpLaravelTextSearchTargetCollectorDeps = {
     workspaceRoot: ROOT,
-    phpFrameworkProviders: PROVIDERS,
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     workspaceTargetCollectorDeps,
     ...overrides,
   };
@@ -148,11 +174,11 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
     expect(readFileContent).toHaveBeenCalledWith(externalPath);
   });
 
-  it("gates routes by route-capable providers and gates abilities by Laravel activity", async () => {
+  it("gates routes by runtime capability and abilities by Laravel identity", async () => {
     const routeSource = "<?php\nRoute::get('/x')->name('x');\n";
     const gateSource = "<?php\nGate::define('update-post', fn () => true);\n";
     const { collectors, searchText } = createDeps({
-      isLaravelFrameworkActive: false,
+      frameworkRuntime: ROUTE_CAPABLE_NON_LARAVEL_RUNTIME,
     });
 
     const routeTargets = await collectors.collectNamedRoutes(
@@ -179,7 +205,7 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
     ).toEqual([]);
     expect(searchText).toHaveBeenCalledTimes(routeSearchCount);
 
-    const inactiveRoutes = createDeps({ phpFrameworkProviders: [] });
+    const inactiveRoutes = createDeps({ frameworkRuntime: GENERIC_RUNTIME });
     expect(
       await inactiveRoutes.collectors.collectNamedRoutes(
         routeSource,

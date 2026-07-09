@@ -5,6 +5,8 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { WorkspaceDescriptor } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpLaravelModelNavigationTargets,
   type PhpLaravelModelNavigationTargets,
@@ -16,6 +18,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
 const MODEL_PATH = `${ROOT}/app/Models/Comment.php`;
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function makeDescriptor(): WorkspaceDescriptor {
   return {
@@ -148,6 +157,28 @@ describe("usePhpLaravelModelNavigationTargets", () => {
       expect.objectContaining<Partial<EditorPosition>>({ lineNumber: 9 }),
       "full_name",
     );
+
+    harness.unmount();
+  });
+
+  it("uses runtime Laravel state over the legacy boolean", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const readNavigationFileContent = vi.fn(async () => modelSource());
+    const deps = makeDeps({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      openNavigationTarget,
+      readNavigationFileContent,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness
+      .api()
+      .openPhpLaravelModelAttributeTarget("App\\Models\\Comment", "full_name");
+
+    expect(handled).toBe(false);
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
 
     harness.unmount();
   });

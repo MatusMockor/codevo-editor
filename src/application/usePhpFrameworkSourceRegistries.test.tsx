@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpFrameworkSourceRegistries,
   type PhpFrameworkSourceRegistries,
@@ -17,6 +19,13 @@ const MIGRATION_PATH = `${ROOT}/database/migrations/2026_07_05_000000_create_pos
 const PROVIDER_PATH = `${ROOT}/app/Providers/AppServiceProvider.php`;
 const MIGRATION_SOURCE = "<?php Schema::create('posts', fn () => null);";
 const PROVIDER_SOURCE = "<?php Builder::macro('published', fn () => $this);";
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function fileEntry(path: string): FileEntry {
   return { name: path.split("/").pop() ?? path, path, kind: "file" };
@@ -134,6 +143,26 @@ describe("usePhpFrameworkSourceRegistries", () => {
     harness.api().invalidatePhpFrameworkSourcePath(ROOT, PROVIDER_PATH);
     await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
     expect(workspaceFiles.readDirectory).toHaveBeenCalledTimes(4);
+
+    harness.unmount();
+  });
+
+  it("lets the runtime context supersede the legacy Laravel activity flag", async () => {
+    const workspaceFiles = makeWorkspaceFiles();
+    const deps = makeDeps({
+      frameworkRuntime: GENERIC_RUNTIME,
+      workspaceFiles,
+    });
+    const harness = renderHook(deps);
+
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+
+    expect(harness.api().currentPhpFrameworkSourceContext()).toEqual({
+      signature: "m:|p:",
+      workspaceSources: [],
+    });
+    expect(workspaceFiles.readDirectory).not.toHaveBeenCalled();
+    expect(deps.onSourcesLoaded).not.toHaveBeenCalled();
 
     harness.unmount();
   });

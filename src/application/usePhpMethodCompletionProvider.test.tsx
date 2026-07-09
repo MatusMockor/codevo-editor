@@ -3,7 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpMethodCompletionProvider,
   type PhpMethodCompletionProvider,
@@ -14,6 +17,20 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -92,6 +109,7 @@ function makeDeps(
     collectViewTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
+    frameworkRuntime: LARAVEL_RUNTIME,
     isLaravelFrameworkActive: true,
     resolvePhpClassReference: vi.fn(
       (_source: string, className: string) => `App\\Http\\Controllers\\${className}`,
@@ -228,6 +246,32 @@ $comment->lo`;
 
     expect(completions.map((completion) => completion.name)).toEqual(["load"]);
     expect(ensurePhpFrameworkSourceCollectionsLoaded).toHaveBeenCalledWith(ROOT);
+
+    harness.unmount();
+  });
+
+  it("does not use legacy Laravel magic when runtime is generic", async () => {
+    const source = `<?php
+$comment->lo`;
+    const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
+      async () => undefined,
+    );
+    const deps = makeDeps({
+      ensurePhpFrameworkSourceCollectionsLoaded,
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      resolvePhpReceiverMethodCompletions: vi.fn(async () => [
+        method("load"),
+      ]),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "$comment->lo"));
+
+    expect(completions.map((completion) => completion.name)).toEqual(["load"]);
+    expect(ensurePhpFrameworkSourceCollectionsLoaded).not.toHaveBeenCalled();
 
     harness.unmount();
   });

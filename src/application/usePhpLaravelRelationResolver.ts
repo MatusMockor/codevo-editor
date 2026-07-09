@@ -19,6 +19,7 @@ import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import { phpLaravelRelationTargetClassNameFromExpression } from "../domain/phpFrameworkLaravel";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -27,7 +28,8 @@ export interface PhpClassMemberReadResult {
 
 export interface UsePhpLaravelRelationResolverOptions {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -55,7 +57,8 @@ export interface UsePhpLaravelRelationResolverOptions {
 
 export function usePhpLaravelRelationResolver({
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -66,6 +69,9 @@ export function usePhpLaravelRelationResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelRelationResolverOptions) {
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
       className: string,

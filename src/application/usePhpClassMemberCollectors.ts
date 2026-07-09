@@ -26,6 +26,7 @@ import {
   phpMethodCompletionWithTemplateReturnType,
 } from "./usePhpLaravelRelationResolver";
 import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -42,7 +43,8 @@ export interface UsePhpClassMemberCollectorsOptions {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentPhpFrameworkSourceContext: () => PhpFrameworkSourceRegistryContext;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
@@ -87,7 +89,8 @@ export function usePhpClassMemberCollectors({
   activePhpFrameworkProviders,
   currentPhpFrameworkSourceContext,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readNavigationFileContent,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -99,6 +102,13 @@ export function usePhpClassMemberCollectors({
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const frameworkProviderSignature = frameworkRuntime
+    ? phpFrameworkRuntimeProviderSignature(frameworkRuntime)
+    : activePhpFrameworkProviderSignature;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
 
   const resetPhpClassMemberCache = useCallback((): void => {
     phpClassMemberCacheRef.current = {};
@@ -218,7 +228,7 @@ export function usePhpClassMemberCollectors({
       const cacheKey = phpClassMemberCacheKey(
         path,
         className,
-        activePhpFrameworkProviderSignature,
+        frameworkProviderSignature,
         frameworkSourceSignature,
       );
       const cached = phpClassMemberCacheRef.current[cacheKey];
@@ -231,7 +241,7 @@ export function usePhpClassMemberCollectors({
       }
 
       const members = phpMethodCompletionsFromSource(content, className, {
-        frameworkProviders: activePhpFrameworkProviders,
+        frameworkProviders,
         frameworkSourceContext:
           workspaceSources.length > 0 ? { workspaceSources } : undefined,
       });
@@ -246,9 +256,9 @@ export function usePhpClassMemberCollectors({
       };
     },
     [
-      activePhpFrameworkProviderSignature,
-      activePhpFrameworkProviders,
       currentPhpFrameworkSourceContext,
+      frameworkProviderSignature,
+      frameworkProviders,
       readNavigationFileContent,
     ],
   );
@@ -676,6 +686,14 @@ function phpClassMemberCacheKey(
   migrationSourcesSignature: string,
 ): string {
   return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${migrationSourcesSignature}`;
+}
+
+function phpFrameworkRuntimeProviderSignature(
+  frameworkRuntime: PhpFrameworkRuntimeContext,
+): string {
+  return `${frameworkRuntime.profile}:${frameworkRuntime.providers
+    .map((provider) => provider.id)
+    .join(",")}`;
 }
 
 function phpSourceSignature(source: string): string {

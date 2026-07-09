@@ -21,6 +21,7 @@ import type {
   PhpFrameworkProvider,
   PhpFrameworkSourceContext,
 } from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface DiagnosticEditorPosition {
   column: number;
@@ -42,7 +43,8 @@ export interface PhpDiagnosticContextFilterDependencies {
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   currentWorkspaceRoot(): string | null;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   isPhpPath(path: string): boolean;
   phpClassHasLaravelDynamicWhere(
     className: string,
@@ -104,7 +106,8 @@ export function usePhpDiagnosticContextFilter(
     currentPhpFrameworkSourceContext,
     currentWorkspaceRoot,
     ensurePhpFrameworkSourceCollectionsLoaded,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
+    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
     isPhpPath,
     phpClassHasLaravelDynamicWhere,
     phpClassHasLaravelLocalScope,
@@ -120,6 +123,10 @@ export function usePhpDiagnosticContextFilter(
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
 
   const filterPhpDiagnosticsWithContext = useCallback(
     async (
@@ -409,7 +416,7 @@ export function usePhpDiagnosticContextFilter(
         contextualTraitHostConstants,
         contextualTraitHostMethods,
         contextualTraitHostProperties,
-        frameworkProviders: activePhpFrameworkProviders,
+        frameworkProviders,
         frameworkSourceContext:
           workspaceSources.length > 0
             ? frameworkSourceContextFromSources(workspaceSources)
@@ -418,10 +425,10 @@ export function usePhpDiagnosticContextFilter(
       });
     },
     [
-      activePhpFrameworkProviders,
       currentPhpFrameworkSourceContext,
       currentWorkspaceRoot,
       ensurePhpFrameworkSourceCollectionsLoaded,
+      frameworkProviders,
       isLaravelFrameworkActive,
       isPhpPath,
       phpClassHasLaravelDynamicWhere,

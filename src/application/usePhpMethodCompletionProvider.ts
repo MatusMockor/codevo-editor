@@ -16,6 +16,7 @@ import {
 } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   resolvePhpFrameworkLiteralCompletions,
   type PhpFrameworkLiteralCompletionDependencies,
@@ -40,7 +41,8 @@ export interface PhpMethodCompletionProviderDependencies
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpEloquentBuilderModelType(
     source: string,
@@ -100,7 +102,8 @@ export function usePhpMethodCompletionProvider({
   collectViewTargets,
   currentWorkspaceRootRef,
   ensurePhpFrameworkSourceCollectionsLoaded,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   resolvePhpClassReference,
   resolvePhpEloquentBuilderModelType,
   resolvePhpExpressionType,
@@ -109,6 +112,11 @@ export function usePhpMethodCompletionProvider({
   resolvePhpStaticMethodCompletions,
   workspaceRoot,
 }: PhpMethodCompletionProviderDependencies): PhpMethodCompletionProvider {
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const providePhpMethodCompletions = useCallback(
     async (
       source: string,
@@ -131,7 +139,7 @@ export function usePhpMethodCompletionProvider({
               }
             : null,
           position,
-          providers: activePhpFrameworkProviders,
+          providers: frameworkProviders,
           source,
         },
         {
@@ -219,13 +227,13 @@ export function usePhpMethodCompletionProvider({
       const validationRuleContext = phpFrameworkValidationRuleReferenceAt(
         source,
         position,
-        activePhpFrameworkProviders,
+        frameworkProviders,
       );
 
       if (validationRuleContext) {
         return phpFrameworkValidationRuleCompletions(
           validationRuleContext.prefix,
-          activePhpFrameworkProviders,
+          frameworkProviders,
         )
           .slice(0, 80)
           .map((rule) => ({
@@ -362,7 +370,6 @@ export function usePhpMethodCompletionProvider({
     },
     [
       activeDocument,
-      activePhpFrameworkProviders,
       collectAuthGuardTargets,
       collectBroadcastConnectionTargets,
       collectCacheStoreTargets,
@@ -384,6 +391,7 @@ export function usePhpMethodCompletionProvider({
       collectViewTargets,
       currentWorkspaceRootRef,
       ensurePhpFrameworkSourceCollectionsLoaded,
+      frameworkProviders,
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpEloquentBuilderModelType,

@@ -22,6 +22,7 @@ import type {
   WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -48,7 +49,8 @@ export interface PhpContextualMemberDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
@@ -104,7 +106,8 @@ export function usePhpContextualMemberDefinitionNavigation({
   activeDocument,
   activeEditorPositionRef,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openDirectPhpMethodTarget,
   openNavigationTarget,
   openPhpClassTarget,
@@ -120,6 +123,9 @@ export function usePhpContextualMemberDefinitionNavigation({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpContextualMemberDefinitionNavigationDependencies): PhpContextualMemberDefinitionNavigation {
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const openDirectPhpClassConstantTarget = useCallback(
     async (className: string, constantName: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;

@@ -38,6 +38,7 @@ import {
   laravelFacadeTargetClassName,
   type PhpMethodReturnTypeResolver,
 } from "./usePhpMethodReturnTypeResolver";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export type PhpExpressionTypeResolver = (
   source: string,
@@ -51,7 +52,8 @@ export interface UsePhpExpressionTypeResolverOptions {
   collectPhpMethodsForClass: (
     className: string,
   ) => Promise<PhpMethodCompletion[]>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   phpClassHasLaravelDynamicWhere: (
     className: string,
     methodName: string,
@@ -85,7 +87,8 @@ export interface UsePhpExpressionTypeResolverOptions {
 export function usePhpExpressionTypeResolver({
   activePhpFrameworkProviders,
   collectPhpMethodsForClass,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
@@ -97,6 +100,11 @@ export function usePhpExpressionTypeResolver({
   resolvePhpMethodReturnType,
   resolvePhpSemanticTypeReference,
 }: UsePhpExpressionTypeResolverOptions) {
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const phpClassMethodReturnsClassStringArgument = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methods = await collectPhpMethodsForClass(className);
@@ -135,7 +143,7 @@ export function usePhpExpressionTypeResolver({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders: activePhpFrameworkProviders },
+          { frameworkProviders },
         );
         const receiverType = directReceiverType
           ? resolvePhpClassReference(source, directReceiverType)
@@ -184,7 +192,7 @@ export function usePhpExpressionTypeResolver({
             source,
             position,
             assignmentExpression,
-            { frameworkProviders: activePhpFrameworkProviders },
+            { frameworkProviders },
           ),
         );
 
@@ -208,7 +216,7 @@ export function usePhpExpressionTypeResolver({
         source,
         position,
         expression,
-        { frameworkProviders: activePhpFrameworkProviders },
+        { frameworkProviders },
       );
 
       if (directType) {
@@ -253,7 +261,7 @@ export function usePhpExpressionTypeResolver({
         phpNewExpressionClassName(expression) ??
         phpFrameworkContainerExpressionClassName(
           expression,
-          activePhpFrameworkProviders,
+          frameworkProviders,
         );
 
       if (constructedClassName) {
@@ -529,15 +537,16 @@ export function usePhpExpressionTypeResolver({
           }
         }
 
-        const localScopeModelType = await resolvePhpEloquentBuilderModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
+        const localScopeModelType = isLaravelFrameworkActive
+          ? await resolvePhpEloquentBuilderModelType(
+              source,
+              position,
+              methodCall.receiverExpression,
+              depth + 1,
+            )
+          : null;
 
         if (
-          isLaravelFrameworkActive &&
           localScopeModelType &&
           (await phpClassHasLaravelLocalScope(
             localScopeModelType,
@@ -548,7 +557,6 @@ export function usePhpExpressionTypeResolver({
         }
 
         if (
-          isLaravelFrameworkActive &&
           localScopeModelType &&
           (await phpClassHasLaravelDynamicWhere(
             localScopeModelType,
@@ -600,7 +608,7 @@ export function usePhpExpressionTypeResolver({
           methodCall.methodName,
           receiverType,
           methodCall.receiverExpression,
-          activePhpFrameworkProviders,
+          frameworkProviders,
           expression,
         );
         const resolvedFrameworkReturnType = frameworkReturnType
@@ -682,7 +690,7 @@ export function usePhpExpressionTypeResolver({
       return null;
     },
     [
-      activePhpFrameworkProviders,
+      frameworkProviders,
       resolvePhpEloquentBuilderModelType,
       resolvePhpLaravelCollectionModelType,
       resolvePhpClassReference,

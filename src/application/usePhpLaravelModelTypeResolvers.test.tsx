@@ -7,11 +7,20 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import { defaultPhpFrameworkProviders } from "../domain/phpFrameworkProviders";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 type HookOptions = Parameters<typeof usePhpLaravelModelTypeResolvers>[0];
 type HookApi = ReturnType<typeof usePhpLaravelModelTypeResolvers>;
@@ -138,6 +147,36 @@ function createDeferred<T>() {
 }
 
 describe("usePhpLaravelModelTypeResolvers", () => {
+  it("uses runtime Laravel state over the legacy boolean", async () => {
+    const source = `<?php
+$query->whereEmail('a@example.com');
+`;
+    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
+    const options = makeOptions(
+      {},
+      {
+        frameworkRuntime: GENERIC_RUNTIME,
+        isLaravelFrameworkActive: true,
+        phpClassHasLaravelDynamicWhere,
+      },
+    );
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpEloquentBuilderModelType(
+          source,
+          positionAfter(source, "$query->whereEmail"),
+          "$query->whereEmail('a@example.com')",
+        ),
+    ).resolves.toBeNull();
+
+    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("resolves a model from a custom collection PHPDoc generic", async () => {
     const source = `<?php
 namespace App\\Http\\Controllers;

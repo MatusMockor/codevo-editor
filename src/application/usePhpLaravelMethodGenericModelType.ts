@@ -3,6 +3,7 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { phpMethodReturnExpressions } from "../domain/phpTypeAnalysis";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export type PhpLaravelCarrierKind = "builder" | "collection";
 
@@ -38,8 +39,9 @@ export interface PhpLaravelGenericModelTypeHelpers {
 
 export interface UsePhpLaravelMethodGenericModelTypeOptions {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
   helpers: PhpLaravelGenericModelTypeHelpers;
-  isLaravelFrameworkActive: boolean;
+  isLaravelFrameworkActive?: boolean;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -52,14 +54,18 @@ export interface UsePhpLaravelMethodGenericModelTypeOptions {
 
 export function usePhpLaravelMethodGenericModelType({
   currentWorkspaceRootRef,
+  frameworkRuntime,
   helpers,
-  isLaravelFrameworkActive,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelMethodGenericModelTypeOptions) {
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const resolvePhpLaravelMethodGenericModelType = useCallback(
     async (
       carrierKind: PhpLaravelCarrierKind,

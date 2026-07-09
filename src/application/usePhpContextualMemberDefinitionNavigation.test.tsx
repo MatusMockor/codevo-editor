@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptor } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpContextualMemberDefinitionNavigation,
   type PhpContextualMemberDefinitionNavigation,
@@ -14,6 +16,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 function makeDescriptor(): WorkspaceDescriptor {
   return {
@@ -187,6 +196,31 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("uses runtime Laravel state over the legacy boolean for relation navigation", async () => {
+    const resolvePhpLaravelRelationPathOwnerType = vi.fn(async () =>
+      "App\\Models\\Comment",
+    );
+    const deps = makeDeps({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      resolvePhpLaravelRelationPathOwnerType,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelRelationStringDefinition({
+      className: "App\\Models\\Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "author",
+    });
+
+    expect(handled).toBe(false);
+    expect(resolvePhpLaravelRelationPathOwnerType).not.toHaveBeenCalled();
 
     harness.unmount();
   });

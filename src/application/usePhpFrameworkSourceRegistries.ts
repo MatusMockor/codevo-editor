@@ -1,8 +1,10 @@
 import { phpLaravelFrameworkSourceRegistryProvider } from "./phpLaravelFrameworkSourceRegistryAdapter";
+import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import {
   useLaravelSourceRegistries,
   type UseLaravelSourceRegistriesDependencies,
 } from "./useLaravelSourceRegistries";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpFrameworkSourceRegistryContext {
   signature: string;
@@ -10,7 +12,9 @@ export interface PhpFrameworkSourceRegistryContext {
 }
 
 export type UsePhpFrameworkSourceRegistriesDependencies =
-  UseLaravelSourceRegistriesDependencies;
+  UseLaravelSourceRegistriesDependencies & {
+    frameworkRuntime?: PhpFrameworkRuntimeContext;
+  };
 
 export interface PhpFrameworkSourceRegistryProvider {
   currentPhpFrameworkSourceContextForRoot(
@@ -32,7 +36,12 @@ export function usePhpFrameworkSourceRegistries(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): PhpFrameworkSourceRegistries {
   const { currentWorkspaceRootRef } = dependencies;
-  const laravelSources = useLaravelSourceRegistries(dependencies);
+  const frameworkRuntime =
+    phpFrameworkRuntimeContextFromDependencies(dependencies);
+  const laravelSources = useLaravelSourceRegistries({
+    ...dependencies,
+    isLaravelFrameworkActive: frameworkRuntime.isLaravel,
+  });
   const sourceRegistryProviders = [
     phpLaravelFrameworkSourceRegistryProvider(laravelSources),
   ];

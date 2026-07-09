@@ -13,6 +13,7 @@ import {
 } from "../domain/phpFrameworkLaravel";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpTraitThisCompletionContext {
   contextualThisClassName: string | null;
@@ -32,7 +33,8 @@ export interface PhpMethodCompletionResolverDependencies {
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpEloquentBuilderModelType(
@@ -68,12 +70,17 @@ export function usePhpMethodCompletionResolvers(
     collectPhpLaravelDynamicWhereMethodsForClass,
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
+    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
 
   const resolvePhpReceiverMethodCompletions = useCallback(
     async (
@@ -89,9 +96,9 @@ export function usePhpMethodCompletionResolvers(
         const semanticOptions = traitThisContext.contextualThisClassName
           ? {
               contextualThisClassName: traitThisContext.contextualThisClassName,
-              frameworkProviders: activePhpFrameworkProviders,
+              frameworkProviders,
             }
-          : { frameworkProviders: activePhpFrameworkProviders };
+          : { frameworkProviders };
         const declaringClassName =
           phpReceiverExpressionTypeInSource(
             source,
@@ -105,7 +112,7 @@ export function usePhpMethodCompletionResolvers(
           traitThisContext.memberSource,
           declaringClassName,
           {
-            frameworkProviders: activePhpFrameworkProviders,
+            frameworkProviders,
             frameworkSourceContext:
               workspaceSources.length > 0 ? { workspaceSources } : undefined,
           },
@@ -120,16 +127,20 @@ export function usePhpMethodCompletionResolvers(
       const receiverMethods = resolvedReceiverType
         ? await collectPhpMethodsForClass(resolvedReceiverType)
         : [];
-      const builderModelType = await resolvePhpEloquentBuilderModelType(
-        source,
-        position,
-        receiverExpression,
-      );
+      const builderModelType = isLaravelFrameworkActive
+        ? await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            receiverExpression,
+          )
+        : null;
       const receiverModelType =
         !builderModelType && isLaravelFrameworkActive && resolvedReceiverType
           ? phpLaravelResolvedModelTypeCandidate(source, resolvedReceiverType)
           : null;
-      const localScopeModelType = builderModelType ?? receiverModelType;
+      const localScopeModelType = isLaravelFrameworkActive
+        ? builderModelType ?? receiverModelType
+        : null;
       const localScopeSourceMethods =
         localScopeModelType && localScopeModelType === resolvedReceiverType
           ? receiverMethods
@@ -141,7 +152,7 @@ export function usePhpMethodCompletionResolvers(
             localScopeSourceMethods,
           )
         : [];
-      const dynamicWhereMethods = builderModelType
+      const dynamicWhereMethods = isLaravelFrameworkActive && builderModelType
         ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
         : [];
 
@@ -159,10 +170,10 @@ export function usePhpMethodCompletionResolvers(
       );
     },
     [
-      activePhpFrameworkProviders,
       collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
       currentPhpFrameworkSourceContext,
+      frameworkProviders,
       isLaravelFrameworkActive,
       phpNormalizedReceiverExpressionIsThis,
       resolvePhpEloquentBuilderModelType,
@@ -192,10 +203,11 @@ export function usePhpMethodCompletionResolvers(
         return methods;
       }
 
-      const dynamicWhereMethods =
-        await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
-          isStatic: true,
-        });
+      const dynamicWhereMethods = isLaravelFrameworkActive
+        ? await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
+            isStatic: true,
+          })
+        : [];
       const isLaravelModelStaticAccess =
         isLaravelFrameworkActive &&
         phpLaravelResolvedModelTypeCandidate(source, resolvedClassName);

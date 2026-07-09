@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { TextSearchResult, WorkspaceDescriptor } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpLaravelMorphMapResolver,
   type UsePhpLaravelMorphMapResolverOptions,
@@ -12,6 +14,13 @@ import {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 type HookApi = ReturnType<typeof usePhpLaravelMorphMapResolver>;
 type HookOptions = UsePhpLaravelMorphMapResolverOptions;
@@ -188,6 +197,26 @@ describe("usePhpLaravelMorphMapResolver", () => {
 
     await expect(modelType).resolves.toBeNull();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("uses runtime Laravel state over the legacy boolean", async () => {
+    const textSearch = {
+      searchText: vi.fn(async () => [] as TextSearchResult[]),
+    };
+    const options = makeOptions({
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      textSearch,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness.api().resolvePhpLaravelProjectMorphMapModelType(),
+    ).resolves.toBeNull();
+
+    expect(textSearch.searchText).not.toHaveBeenCalled();
 
     harness.unmount();
   });

@@ -2,11 +2,13 @@ import { useCallback, useRef, type MutableRefObject } from "react";
 import { phpLaravelMorphMapEntriesFromSource } from "../domain/phpFrameworkLaravel";
 import type { TextSearchGateway, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface UsePhpLaravelMorphMapResolverOptions {
   activePhpFrameworkProviderSignature: string;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   textSearch: Pick<TextSearchGateway, "searchText">;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -21,7 +23,8 @@ export interface PhpLaravelMorphMapResolver {
 export function usePhpLaravelMorphMapResolver({
   activePhpFrameworkProviderSignature,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readNavigationFileContent,
   textSearch,
   workspaceDescriptor,
@@ -30,6 +33,11 @@ export function usePhpLaravelMorphMapResolver({
   const phpLaravelMorphMapModelTypeCacheRef = useRef<
     Record<string, string | null>
   >({});
+  const frameworkProviderSignature = frameworkRuntime
+    ? phpFrameworkRuntimeProviderSignature(frameworkRuntime)
+    : activePhpFrameworkProviderSignature;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
 
   const resetPhpLaravelMorphMapModelTypeCache = useCallback((): void => {
     phpLaravelMorphMapModelTypeCacheRef.current = {};
@@ -50,7 +58,7 @@ export function usePhpLaravelMorphMapResolver({
         return null;
       }
 
-      const cacheKey = `${requestedRoot}:${activePhpFrameworkProviderSignature}`;
+      const cacheKey = `${requestedRoot}:${frameworkProviderSignature}`;
 
       if (
         Object.prototype.hasOwnProperty.call(
@@ -115,8 +123,8 @@ export function usePhpLaravelMorphMapResolver({
 
       return modelType;
     }, [
-      activePhpFrameworkProviderSignature,
       currentWorkspaceRootRef,
+      frameworkProviderSignature,
       isLaravelFrameworkActive,
       readNavigationFileContent,
       textSearch,
@@ -132,4 +140,12 @@ export function usePhpLaravelMorphMapResolver({
 
 function isPhpPath(path: string): boolean {
   return path.toLowerCase().endsWith(".php");
+}
+
+function phpFrameworkRuntimeProviderSignature(
+  frameworkRuntime: PhpFrameworkRuntimeContext,
+): string {
+  return `${frameworkRuntime.profile}:${frameworkRuntime.providers
+    .map((provider) => provider.id)
+    .join(",")}`;
 }

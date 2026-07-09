@@ -24,6 +24,7 @@ import {
 } from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { isLaravelMorphToFactoryExpression } from "./usePhpLaravelRelationResolver";
 
 export interface PhpClassMemberReadResult {
@@ -42,7 +43,8 @@ export type PhpMethodReturnTypeResolver = (
 export interface UsePhpMethodReturnTypeResolverOptions {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  isLaravelFrameworkActive?: boolean;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -87,7 +89,8 @@ export interface UsePhpMethodReturnTypeResolverOptions {
 export function usePhpMethodReturnTypeResolver({
   activePhpFrameworkProviders,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  frameworkRuntime,
+  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -101,6 +104,11 @@ export function usePhpMethodReturnTypeResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpMethodReturnTypeResolverOptions) {
+  const frameworkProviders =
+    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const isLaravelFrameworkActive =
+    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+
   const resolvePhpMethodReturnType: PhpMethodReturnTypeResolver = useCallback(
     async (
       className: string,
@@ -180,7 +188,7 @@ export function usePhpMethodReturnTypeResolver({
           phpNewExpressionClassName(expression) ??
           phpFrameworkContainerExpressionClassName(
             expression,
-            activePhpFrameworkProviders,
+            frameworkProviders,
           );
 
         if (constructedClassName) {
@@ -194,14 +202,14 @@ export function usePhpMethodReturnTypeResolver({
             ownerSource,
             { column: 1, lineNumber: 1 },
             methodCall.receiverExpression,
-            { frameworkProviders: activePhpFrameworkProviders },
+            { frameworkProviders },
           );
           const constructedReceiverType =
             directReceiverType ??
             phpNewExpressionClassName(methodCall.receiverExpression) ??
             phpFrameworkContainerExpressionClassName(
               methodCall.receiverExpression,
-              activePhpFrameworkProviders,
+              frameworkProviders,
             );
           const resolvedReceiverType = constructedReceiverType
             ? resolvePhpClassReference(ownerSource, constructedReceiverType)
@@ -212,7 +220,7 @@ export function usePhpMethodReturnTypeResolver({
               methodCall.methodName,
               resolvedReceiverType,
               methodCall.receiverExpression,
-              activePhpFrameworkProviders,
+              frameworkProviders,
               expression,
             );
           const resolvedFrameworkReturnType = frameworkReturnType
@@ -239,7 +247,10 @@ export function usePhpMethodReturnTypeResolver({
             }
           }
 
-          if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
+          if (
+            isLaravelFrameworkActive &&
+            isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)
+          ) {
             const builderModelType =
               await resolvePhpEloquentBuilderModelTypeRef.current(
                 ownerSource,
@@ -270,6 +281,7 @@ export function usePhpMethodReturnTypeResolver({
           );
 
           if (
+            isLaravelFrameworkActive &&
             className &&
             isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
           ) {
@@ -482,8 +494,8 @@ export function usePhpMethodReturnTypeResolver({
       return resolveBoundConcreteReturnType();
     },
     [
-      activePhpFrameworkProviders,
       currentWorkspaceRootRef,
+      frameworkProviders,
       isLaravelFrameworkActive,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,

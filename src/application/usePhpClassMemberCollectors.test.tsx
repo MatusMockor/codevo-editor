@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultPhpFrameworkProviders } from "../domain/phpFrameworkProviders";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   usePhpClassMemberCollectors,
   type PhpClassMemberCollectors,
@@ -14,6 +16,13 @@ import {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
 
 type HookOptions = Parameters<typeof usePhpClassMemberCollectors>[0];
 
@@ -224,6 +233,36 @@ class User
         name: "whereEmail",
       }),
     );
+
+    harness.unmount();
+  });
+
+  it("uses runtime Laravel state over the legacy boolean for dynamic where completions", async () => {
+    const harness = renderHook(
+      makeOptions(
+        {
+          "App\\Models\\User": `<?php
+namespace App\\Models;
+
+class User
+{
+    protected $fillable = ['email'];
+}
+`,
+        },
+        {
+          frameworkRuntime: GENERIC_RUNTIME,
+          isLaravelFrameworkActive: true,
+        },
+      ),
+    );
+
+    await expect(
+      harness.api().collectPhpLaravelDynamicWhereMethodsForClass(
+        "App\\Models\\User",
+        { isStatic: true },
+      ),
+    ).resolves.toEqual([]);
 
     harness.unmount();
   });
