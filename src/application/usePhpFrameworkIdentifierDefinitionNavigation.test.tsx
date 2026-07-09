@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import {
   usePhpFrameworkIdentifierDefinitionNavigation,
   type PhpFrameworkIdentifierDefinitionNavigation,
@@ -11,44 +12,10 @@ import {
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const ROOT = "/workspace";
-const SOURCE = `<?php
-use App\\Http\\Controllers\\ReportController;
-
-Route::get('/reports', [ReportController::class, 'store']);`;
-
-function makeDeps(
-  overrides: Partial<PhpFrameworkIdentifierDefinitionNavigationDependencies> = {},
-): PhpFrameworkIdentifierDefinitionNavigationDependencies {
-  const falseHandler = vi.fn(async () => false);
-
-  return {
-    activeDocument: {
-      content: SOURCE,
-      language: "php",
-      name: "web.php",
-      path: `${ROOT}/routes/web.php`,
-      savedContent: "",
-    },
-    goToPhpFrameworkLiteralDefinition: falseHandler,
-    goToPhpLaravelAuthGuardDefinition: falseHandler,
-    goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
-    goToPhpLaravelCacheStoreDefinition: falseHandler,
-    goToPhpLaravelDatabaseConnectionDefinition: falseHandler,
-    goToPhpLaravelGateAbilityDefinition: falseHandler,
-    goToPhpLaravelLogChannelDefinition: falseHandler,
-    goToPhpLaravelMailMailerDefinition: falseHandler,
-    goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
-    goToPhpLaravelPasswordBrokerDefinition: falseHandler,
-    goToPhpLaravelQueueConnectionDefinition: falseHandler,
-    goToPhpLaravelRedisConnectionDefinition: falseHandler,
-    goToPhpLaravelRelationStringDefinition: falseHandler,
-    goToPhpLaravelStorageDiskDefinition: falseHandler,
-    openDirectPhpMethodTarget: vi.fn(async () => false),
-    openPhpClassTarget: vi.fn(async () => false),
-    ...overrides,
-  };
-}
+const context: PhpIdentifierContext = {
+  kind: "laravelNamedRouteString",
+  routeName: "dashboard",
+};
 
 function renderHook(
   deps: PhpFrameworkIdentifierDefinitionNavigationDependencies,
@@ -93,59 +60,40 @@ function renderHook(
 }
 
 describe("usePhpFrameworkIdentifierDefinitionNavigation", () => {
-  it("keeps indexed route action method navigation direct-only", async () => {
-    const openDirectPhpMethodTarget = vi.fn(async () => true);
-    const openPhpClassTarget = vi.fn(async () => true);
-    const deps = makeDeps({
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
+  it("dispatches indexed framework navigation through direct adapters", async () => {
+    const directAdapter = { goToDefinition: vi.fn(async () => true) };
+    const contextualAdapter = { goToDefinition: vi.fn(async () => true) };
+    const harness = renderHook({
+      adapters: [directAdapter],
+      contextualAdapters: [contextualAdapter],
     });
-    const harness = renderHook(deps);
 
     const handled = await harness
       .api()
-      .goToPhpFrameworkIdentifierDefinition({
-        className: "ReportController",
-        kind: "laravelRouteActionMethod",
-        methodName: "store",
-      });
+      .goToPhpFrameworkIdentifierDefinition(context);
 
     expect(handled).toBe(true);
-    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
-      "App\\Http\\Controllers\\ReportController",
-      "store",
-    );
-    expect(openPhpClassTarget).not.toHaveBeenCalled();
+    expect(directAdapter.goToDefinition).toHaveBeenCalledWith(context);
+    expect(contextualAdapter.goToDefinition).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
-  it("lets contextual route action method navigation fall back to the class", async () => {
-    const openDirectPhpMethodTarget = vi.fn(async () => false);
-    const openPhpClassTarget = vi.fn(async () => true);
-    const deps = makeDeps({
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
+  it("dispatches contextual framework navigation through contextual adapters", async () => {
+    const directAdapter = { goToDefinition: vi.fn(async () => true) };
+    const contextualAdapter = { goToDefinition: vi.fn(async () => true) };
+    const harness = renderHook({
+      adapters: [directAdapter],
+      contextualAdapters: [contextualAdapter],
     });
-    const harness = renderHook(deps);
 
     const handled = await harness
       .api()
-      .goToContextualPhpFrameworkIdentifierDefinition({
-        className: "ReportController",
-        kind: "laravelRouteActionMethod",
-        methodName: "store",
-      });
+      .goToContextualPhpFrameworkIdentifierDefinition(context);
 
     expect(handled).toBe(true);
-    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
-      "App\\Http\\Controllers\\ReportController",
-      "store",
-    );
-    expect(openPhpClassTarget).toHaveBeenCalledWith(
-      "App\\Http\\Controllers\\ReportController",
-      "ReportController",
-    );
+    expect(contextualAdapter.goToDefinition).toHaveBeenCalledWith(context);
+    expect(directAdapter.goToDefinition).not.toHaveBeenCalled();
 
     harness.unmount();
   });

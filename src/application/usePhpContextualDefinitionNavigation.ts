@@ -6,7 +6,6 @@ import {
 } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import {
-  isPhpFrameworkIdentifierContext,
   type PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
 
@@ -72,8 +71,11 @@ export function usePhpContextualDefinitionNavigation({
       return goToPhpClassConstantDefinition(context);
     }
 
-    if (isPhpFrameworkIdentifierContext(context)) {
-      return goToPhpFrameworkIdentifierDefinition(context);
+    const openedFrameworkTarget =
+      await goToPhpFrameworkIdentifierDefinition(context);
+
+    if (openedFrameworkTarget) {
+      return true;
     }
 
     if (context.kind === "classIdentifier") {

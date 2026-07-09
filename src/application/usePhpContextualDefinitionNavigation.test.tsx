@@ -7,8 +7,11 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { EditorDocument } from "../domain/workspace";
 import {
   goToPhpFrameworkIdentifierDefinition,
-  type PhpFrameworkIdentifierDefinitionNavigationDependencies,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
+import {
+  createPhpLaravelIdentifierDefinitionNavigationAdapter,
+  type PhpLaravelIdentifierDefinitionNavigationAdapterDependencies,
+} from "./phpLaravelIdentifierDefinitionNavigationAdapter";
 import {
   usePhpContextualDefinitionNavigation,
   type PhpContextualDefinitionNavigation,
@@ -61,8 +64,8 @@ function makeDeps(
 
 function makeFrameworkIdentifierDeps(
   activeDocument: EditorDocument,
-  overrides: Partial<PhpFrameworkIdentifierDefinitionNavigationDependencies> = {},
-): PhpFrameworkIdentifierDefinitionNavigationDependencies {
+  overrides: Partial<PhpLaravelIdentifierDefinitionNavigationAdapterDependencies> = {},
+): PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   const falseHandler = vi.fn(async () => false);
 
   return {
@@ -149,6 +152,7 @@ namespace App;
 
 new ReportService();`;
     const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
     const deps = makeDeps({
       activeDocument: {
         content: source,
@@ -158,6 +162,7 @@ new ReportService();`;
         savedContent: "",
       },
       activeEditorPositionRef: { current: positionAfter(source, "Report") },
+      goToPhpFrameworkIdentifierDefinition,
       goToPhpClassIdentifierDefinition,
     });
     const harness = renderHook(deps);
@@ -165,6 +170,10 @@ new ReportService();`;
     const handled = await harness.api().goToContextualPhpDefinition();
 
     expect(handled).toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      kind: "classIdentifier",
+      name: "ReportService",
+    });
     expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith(
       "ReportService",
     );
@@ -187,13 +196,16 @@ Route::get('/reports', [ReportController::class, 'store']);`;
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const openPhpClassTarget = vi.fn(async () => true);
     const goToPhpFrameworkIdentifierDefinitionHandler = vi.fn((context) =>
-      goToPhpFrameworkIdentifierDefinition(
-        context,
-        makeFrameworkIdentifierDeps(activeDocument, {
-          openDirectPhpMethodTarget,
-          openPhpClassTarget,
-        }),
-      ),
+      goToPhpFrameworkIdentifierDefinition(context, {
+        adapters: [
+          createPhpLaravelIdentifierDefinitionNavigationAdapter(
+            makeFrameworkIdentifierDeps(activeDocument, {
+              openDirectPhpMethodTarget,
+              openPhpClassTarget,
+            }),
+          ),
+        ],
+      }),
     );
     const deps = makeDeps({
       activeDocument,

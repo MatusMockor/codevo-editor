@@ -136,7 +136,8 @@ describe("usePhpIndexedDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("prefers deterministic PHP class navigation before indexed fallback", async () => {
+  it("uses deterministic PHP class navigation after a framework miss before indexed fallback", async () => {
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
     const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
     const deps = makeDeps({
       activeDocument: {
@@ -150,6 +151,7 @@ new ReportService();`,
         savedContent: "",
       },
       activeEditorPositionRef: { current: { column: 6, lineNumber: 4 } },
+      goToPhpFrameworkIdentifierDefinition,
       goToPhpClassIdentifierDefinition,
     });
     const harness = renderHook(deps);
@@ -157,6 +159,10 @@ new ReportService();`,
     const handled = await harness.api().goToIndexedSymbolDefinition();
 
     expect(handled).toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      kind: "classIdentifier",
+      name: "ReportService",
+    });
     expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith(
       "ReportService",
     );

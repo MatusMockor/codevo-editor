@@ -9,7 +9,6 @@ import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { EditorDocument, IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
-  isPhpFrameworkIdentifierContext,
   type PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
 import {
@@ -154,8 +153,15 @@ export function usePhpIndexedDefinitionNavigation({
         return goToPhpClassConstantDefinition(context);
       }
 
-      if (isPhpFrameworkIdentifierContext(context)) {
-        return goToPhpFrameworkIdentifierDefinition(context);
+      const openedFrameworkTarget =
+        await goToPhpFrameworkIdentifierDefinition(context);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (openedFrameworkTarget) {
+        return true;
       }
 
       if (context.kind !== "classIdentifier") {

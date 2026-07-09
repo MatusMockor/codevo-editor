@@ -1,6 +1,5 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -13,14 +12,32 @@ interface OpenNavigationOptions {
   readOnly?: boolean;
 }
 
-export type PhpContextualFrameworkLiteralContext = Extract<
-  PhpIdentifierContext,
-  | { kind: "laravelNamedRouteString" }
-  | { kind: "laravelConfigString" }
-  | { kind: "laravelEnvString" }
-  | { kind: "laravelTranslationString" }
-  | { kind: "laravelViewString" }
->;
+export type PhpContextualFrameworkLiteralDefinitionRequest =
+  | {
+      kind: "route";
+      missingMessage: string;
+      name: string;
+    }
+  | {
+      key: string;
+      kind: "config";
+      missingMessage: string;
+    }
+  | {
+      kind: "env";
+      missingMessage: string;
+      name: string;
+    }
+  | {
+      key: string;
+      kind: "translation";
+      missingMessage: string;
+    }
+  | {
+      kind: "view";
+      missingMessage: string;
+      name: string;
+    };
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
@@ -40,7 +57,7 @@ export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigation {
   goToPhpFrameworkLiteralDefinition(
-    context: PhpContextualFrameworkLiteralContext,
+    request: PhpContextualFrameworkLiteralDefinitionRequest,
   ): Promise<boolean>;
 }
 
@@ -55,7 +72,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
 }: PhpContextualFrameworkLiteralDefinitionNavigationDependencies): PhpContextualFrameworkLiteralDefinitionNavigation {
   const goToPhpFrameworkLiteralDefinition = useCallback(
     async (
-      context: PhpContextualFrameworkLiteralContext,
+      request: PhpContextualFrameworkLiteralDefinitionRequest,
     ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
@@ -71,7 +88,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       const target = await resolveContextualFrameworkLiteralTarget(
-        context,
+        request,
         activeDocument,
         frameworkLiteralNavigationDependencies,
       );
@@ -81,7 +98,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       if (!target) {
-        setMessage(missingMessageForContext(context));
+        setMessage(request.missingMessage);
         return false;
       }
 
@@ -102,18 +119,18 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
 }
 
 async function resolveContextualFrameworkLiteralTarget(
-  context: PhpContextualFrameworkLiteralContext,
+  request: PhpContextualFrameworkLiteralDefinitionRequest,
   activeDocument: EditorDocument,
   dependencies: PhpFrameworkLiteralNavigationDependencies,
 ): Promise<PhpFrameworkLiteralNavigationTarget | null> {
-  if (context.kind === "laravelNamedRouteString") {
+  if (request.kind === "route") {
     const routes = await dependencies.collectNamedRouteTargets(
       activeDocument.content,
       activeDocument.path,
     );
     const target = routes.find(
       (route) =>
-        route.name.toLowerCase() === context.routeName.toLowerCase(),
+        route.name.toLowerCase() === request.name.toLowerCase(),
     );
 
     return target
@@ -126,8 +143,8 @@ async function resolveContextualFrameworkLiteralTarget(
       : null;
   }
 
-  if (context.kind === "laravelConfigString") {
-    const target = await dependencies.findConfigTarget(context.configKey);
+  if (request.kind === "config") {
+    const target = await dependencies.findConfigTarget(request.key);
 
     return target
       ? {
@@ -139,8 +156,8 @@ async function resolveContextualFrameworkLiteralTarget(
       : null;
   }
 
-  if (context.kind === "laravelEnvString") {
-    const target = await dependencies.findEnvTarget(context.envName);
+  if (request.kind === "env") {
+    const target = await dependencies.findEnvTarget(request.name);
 
     return target
       ? {
@@ -152,10 +169,8 @@ async function resolveContextualFrameworkLiteralTarget(
       : null;
   }
 
-  if (context.kind === "laravelTranslationString") {
-    const target = await dependencies.findTranslationTarget(
-      context.translationKey,
-    );
+  if (request.kind === "translation") {
+    const target = await dependencies.findTranslationTarget(request.key);
 
     return target
       ? {
@@ -167,7 +182,7 @@ async function resolveContextualFrameworkLiteralTarget(
       : null;
   }
 
-  const target = await dependencies.findViewTarget(context.viewName);
+  const target = await dependencies.findViewTarget(request.name);
 
   return target
     ? {
@@ -177,26 +192,4 @@ async function resolveContextualFrameworkLiteralTarget(
         position: target.position,
       }
     : null;
-}
-
-function missingMessageForContext(
-  context: PhpContextualFrameworkLiteralContext,
-): string {
-  if (context.kind === "laravelNamedRouteString") {
-    return `No Laravel route named ${context.routeName} found.`;
-  }
-
-  if (context.kind === "laravelConfigString") {
-    return `No Laravel config key ${context.configKey} found.`;
-  }
-
-  if (context.kind === "laravelEnvString") {
-    return `No Laravel env key ${context.envName} found.`;
-  }
-
-  if (context.kind === "laravelTranslationString") {
-    return `No Laravel translation key ${context.translationKey} found.`;
-  }
-
-  return `No Laravel view named ${context.viewName} found.`;
 }

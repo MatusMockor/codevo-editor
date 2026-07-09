@@ -103,11 +103,15 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
   it("opens provider-backed framework literal targets from context", async () => {
     const cases = [
       {
-        context: { configKey: "app.name", kind: "laravelConfigString" },
         expectedLabel: "app.name",
         expectedPath: `${ROOT}/config/app.php`,
         expectedResolver: "findConfigTarget",
         expectedValue: "app.name",
+        request: {
+          key: "app.name",
+          kind: "config",
+          missingMessage: "No Laravel config key app.name found.",
+        },
         target: {
           key: "app.name",
           path: `${ROOT}/config/app.php`,
@@ -115,11 +119,15 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         },
       },
       {
-        context: { envName: "APP_URL", kind: "laravelEnvString" },
         expectedLabel: "APP_URL",
         expectedPath: `${ROOT}/.env`,
         expectedResolver: "findEnvTarget",
         expectedValue: "APP_URL",
+        request: {
+          kind: "env",
+          missingMessage: "No Laravel env key APP_URL found.",
+          name: "APP_URL",
+        },
         target: {
           name: "APP_URL",
           path: `${ROOT}/.env`,
@@ -127,14 +135,16 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         },
       },
       {
-        context: {
-          kind: "laravelTranslationString",
-          translationKey: "messages.welcome",
-        },
         expectedLabel: "messages.welcome",
         expectedPath: `${ROOT}/lang/en/messages.php`,
         expectedResolver: "findTranslationTarget",
         expectedValue: "messages.welcome",
+        request: {
+          key: "messages.welcome",
+          kind: "translation",
+          missingMessage:
+            "No Laravel translation key messages.welcome found.",
+        },
         target: {
           key: "messages.welcome",
           path: `${ROOT}/lang/en/messages.php`,
@@ -142,11 +152,15 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         },
       },
       {
-        context: { kind: "laravelViewString", viewName: "dashboard.index" },
         expectedLabel: "dashboard.index",
         expectedPath: `${ROOT}/resources/views/dashboard/index.blade.php`,
         expectedResolver: "findViewTarget",
         expectedValue: "dashboard.index",
+        request: {
+          kind: "view",
+          missingMessage: "No Laravel view named dashboard.index found.",
+          name: "dashboard.index",
+        },
         target: {
           name: "dashboard.index",
           path: `${ROOT}/resources/views/dashboard/index.blade.php`,
@@ -187,7 +201,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
 
       const handled = await harness
         .api()
-        .goToPhpFrameworkLiteralDefinition(testCase.context);
+        .goToPhpFrameworkLiteralDefinition(testCase.request);
 
       expect(handled).toBe(true);
       expect(
@@ -235,8 +249,9 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const harness = renderHook(deps);
 
     const handled = await harness.api().goToPhpFrameworkLiteralDefinition({
-      kind: "laravelNamedRouteString",
-      routeName: "Dashboard",
+      kind: "route",
+      missingMessage: "No Laravel route named Dashboard found.",
+      name: "Dashboard",
     });
 
     expect(handled).toBe(true);
@@ -274,8 +289,9 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const harness = renderHook(deps);
 
     const handled = await harness.api().goToPhpFrameworkLiteralDefinition({
-      configKey: "app.name",
-      kind: "laravelConfigString",
+      key: "app.name",
+      kind: "config",
+      missingMessage: "No Laravel config key app.name found.",
     });
 
     expect(handled).toBe(false);
@@ -288,43 +304,49 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
   it("preserves missing Laravel literal messages", async () => {
     const cases = [
       {
-        context: {
-          kind: "laravelNamedRouteString",
-          routeName: "missing.route",
-        },
         expectedMessage: "No Laravel route named missing.route found.",
+        request: {
+          kind: "route",
+          missingMessage: "No Laravel route named missing.route found.",
+          name: "missing.route",
+        },
         source: "<?php route('missing.route');",
       },
       {
-        context: {
-          configKey: "app.missing",
-          kind: "laravelConfigString",
-        },
         expectedMessage: "No Laravel config key app.missing found.",
+        request: {
+          key: "app.missing",
+          kind: "config",
+          missingMessage: "No Laravel config key app.missing found.",
+        },
         source: "<?php config('app.missing');",
       },
       {
-        context: {
-          envName: "APP_MISSING",
-          kind: "laravelEnvString",
-        },
         expectedMessage: "No Laravel env key APP_MISSING found.",
+        request: {
+          kind: "env",
+          missingMessage: "No Laravel env key APP_MISSING found.",
+          name: "APP_MISSING",
+        },
         source: "<?php env('APP_MISSING');",
       },
       {
-        context: {
-          kind: "laravelTranslationString",
-          translationKey: "messages.missing",
-        },
         expectedMessage: "No Laravel translation key messages.missing found.",
+        request: {
+          key: "messages.missing",
+          kind: "translation",
+          missingMessage:
+            "No Laravel translation key messages.missing found.",
+        },
         source: "<?php __('messages.missing');",
       },
       {
-        context: {
-          kind: "laravelViewString",
-          viewName: "missing.view",
-        },
         expectedMessage: "No Laravel view named missing.view found.",
+        request: {
+          kind: "view",
+          missingMessage: "No Laravel view named missing.view found.",
+          name: "missing.view",
+        },
         source: "<?php view('missing.view');",
       },
     ] as const;
@@ -345,7 +367,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
 
       const handled = await harness
         .api()
-        .goToPhpFrameworkLiteralDefinition(testCase.context);
+        .goToPhpFrameworkLiteralDefinition(testCase.request);
 
       expect(handled).toBe(false);
       expect(setMessage).toHaveBeenCalledWith(testCase.expectedMessage);
@@ -383,8 +405,9 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
     const navigationPromise = harness.api().goToPhpFrameworkLiteralDefinition({
-      kind: "laravelNamedRouteString",
-      routeName: "dashboard",
+      kind: "route",
+      missingMessage: "No Laravel route named dashboard found.",
+      name: "dashboard",
     });
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
