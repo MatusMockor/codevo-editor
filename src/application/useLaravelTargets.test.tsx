@@ -28,6 +28,13 @@ import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 const ROOT = "/workspace";
 const PROVIDERS = [phpLaravelFrameworkProvider];
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: PROVIDERS,
+  }),
+);
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -108,7 +115,7 @@ function renderLaravelTargets(
     joinWorkspacePath,
     isPhpPath,
     activePhpFrameworkProviders: PROVIDERS,
-    isLaravelFrameworkActive: true,
+    ...(overrides.frameworkRuntime ? {} : { isLaravelFrameworkActive: true }),
     ...overrides,
   };
 
@@ -308,6 +315,30 @@ describe("useLaravelTargets", () => {
     ).toEqual([]);
     expect(await harness.hook().collectPhpLaravelEnvTargets()).toEqual([]);
     expect(harness.searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("collects targets from a Laravel runtime context without legacy activation", async () => {
+    const source = "<?php\nRoute::get('/x')->name('runtime.route');\n";
+    const currentPath = `${ROOT}/routes/web.php`;
+    const harness = renderLaravelTargets({
+      activePhpFrameworkProviders: [],
+      frameworkRuntime: LARAVEL_RUNTIME,
+    });
+
+    const targets = await harness
+      .hook()
+      .collectPhpLaravelNamedRouteTargets(source, currentPath);
+
+    expect(targets).toEqual([
+      expect.objectContaining({
+        name: "runtime.route",
+        path: currentPath,
+        relativePath: "routes/web.php",
+      }),
+    ]);
+    expect(harness.searchText).toHaveBeenCalledWith(ROOT, "->name(", 200);
 
     harness.unmount();
   });

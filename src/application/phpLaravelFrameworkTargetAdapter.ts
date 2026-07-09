@@ -2,6 +2,7 @@ import {
   useLaravelTargets,
   type LaravelTargets,
 } from "./useLaravelTargets";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type {
   PhpFrameworkTargetCollectorAdapter,
   PhpFrameworkTargets,
@@ -63,8 +64,7 @@ function usePhpLaravelFrameworkTargetAdapter(
   const { frameworkIntelligence, ...shellDependencies } = dependencies;
   const laravelTargets = useLaravelTargets({
     ...shellDependencies,
-    activePhpFrameworkProviders: frameworkIntelligence.providers,
-    isLaravelFrameworkActive: frameworkIntelligence.hasProvider("laravel"),
+    frameworkRuntime: createPhpFrameworkRuntimeContext(frameworkIntelligence),
   });
 
   return phpFrameworkTargetsFromLaravelTargets(laravelTargets);

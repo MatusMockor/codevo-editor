@@ -72,9 +72,14 @@ export interface LaravelTargetsDependencies {
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
   isPhpPath: (path: string) => boolean;
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
+  activePhpFrameworkProviders?: readonly PhpFrameworkProvider[];
   frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive: boolean;
+  /**
+   * Legacy fallback for callers that have not migrated to frameworkRuntime yet.
+   * New framework-boundary callers should pass PhpFrameworkRuntimeContext so
+   * capability gates are sourced from the runtime contract.
+   */
+  isLaravelFrameworkActive?: boolean;
 }
 
 export interface LaravelTargets {
