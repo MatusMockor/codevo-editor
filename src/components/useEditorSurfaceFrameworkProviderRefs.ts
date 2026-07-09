@@ -13,7 +13,6 @@ export type {
 export function useEditorSurfaceFrameworkProviderRefs({
   frameworkIntelligenceProviders,
   providePhpFrameworkDefinition,
-  providePhpLaravelDefinition,
 }: {
   frameworkIntelligenceProviders?: EditorSurfaceFrameworkIntelligenceProviders;
 } & EditorSurfaceFrameworkDefinitionProviders) {
@@ -37,7 +36,6 @@ export function useEditorSurfaceFrameworkProviderRefs({
   } = resolveEditorSurfaceFrameworkProviders({
     frameworkIntelligenceProviders,
     providePhpFrameworkDefinition,
-    providePhpLaravelDefinition,
   });
 
   const bladeCodeActionsRef = useRef(resolvedProvideBladeCodeActions);

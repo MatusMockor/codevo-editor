@@ -38,16 +38,6 @@ export interface PhpFrameworkMonacoProviderContext
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  /**
-   * @deprecated Use {@link providePhpFrameworkDefinition}. Kept as a narrow
-   * compatibility alias for callers still named after the original Laravel-only
-   * callback.
-   */
-  providePhpLaravelDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
 }
 
 export async function providePhpFrameworkDefinitionBeforeLsp(
@@ -156,7 +146,7 @@ function phpDefinitionNavigationRequest(
 function frameworkStringLiteralDefinitionProvider(
   context: PhpFrameworkMonacoProviderContext,
 ) {
-  return context.providePhpFrameworkDefinition ?? context.providePhpLaravelDefinition;
+  return context.providePhpFrameworkDefinition;
 }
 
 function presenterLinkDefinitionProvider(

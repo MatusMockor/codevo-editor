@@ -79,11 +79,6 @@ export interface EditorSurfaceFrameworkDefinitionProviders {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  providePhpLaravelDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
 }
 
 export interface ResolvedEditorSurfaceFrameworkProviders {
@@ -142,15 +137,12 @@ export interface ResolvedEditorSurfaceFrameworkProviders {
 export function resolveEditorSurfaceFrameworkProviders({
   frameworkIntelligenceProviders,
   providePhpFrameworkDefinition,
-  providePhpLaravelDefinition,
 }: {
   frameworkIntelligenceProviders?: EditorSurfaceFrameworkIntelligenceProviders;
 } & EditorSurfaceFrameworkDefinitionProviders): ResolvedEditorSurfaceFrameworkProviders {
   return {
     providePhpFrameworkDefinition:
-      providePhpFrameworkDefinition ??
-      providePhpLaravelDefinition ??
-      noopPhpFrameworkDefinition,
+      providePhpFrameworkDefinition ?? noopPhpFrameworkDefinition,
     provideBladeCodeActions:
       frameworkIntelligenceProviders?.provideBladeCodeActions ??
       noopPhpCodeActions,

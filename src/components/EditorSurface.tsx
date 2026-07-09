@@ -297,15 +297,6 @@ interface EditorSurfaceProps {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  /**
-   * @deprecated Use providePhpFrameworkDefinition. Kept so older callers can
-   * cross the provider boundary without changing behavior.
-   */
-  providePhpLaravelDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
   providePhpMethodCompletions(
     source: string,
     position: EditorPosition,
@@ -411,7 +402,6 @@ function EditorSurfaceComponent({
   frameworkIntelligenceProviders,
   providePhpCodeActions = async () => [],
   providePhpFrameworkDefinition,
-  providePhpLaravelDefinition,
   providePhpMethodCompletions,
   providePhpMethodSignature,
   providePhpParameterInlayHints = async () => [],
@@ -432,7 +422,6 @@ function EditorSurfaceComponent({
   } = useEditorSurfaceFrameworkProviderRefs({
     frameworkIntelligenceProviders,
     providePhpFrameworkDefinition,
-    providePhpLaravelDefinition,
   });
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =

@@ -167,7 +167,6 @@ const editorSurfaceMocks = vi.hoisted(() => ({
       range: { end: number; start: number },
     ) => unknown;
     providePhpFrameworkDefinition?: (source: string, offset: number) => unknown;
-    providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
   } | null,
 }));
 
@@ -192,7 +191,6 @@ vi.mock("./languageServerMonacoProviders", async () => {
           source: string,
           offset: number,
         ) => unknown;
-        providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
       },
     ) => {
       editorSurfaceMocks.registeredContext = context;

@@ -40,31 +40,16 @@ describe("editor surface framework provider resolution", () => {
     ).toBe(false);
   });
 
-  it("prefers current framework definition callbacks over Laravel aliases", async () => {
+  it("uses the current framework definition callback when registered", async () => {
     const providePhpFrameworkDefinition = vi.fn(async () => true);
-    const providePhpLaravelDefinition = vi.fn(async () => false);
     const resolved = resolveEditorSurfaceFrameworkProviders({
       providePhpFrameworkDefinition,
-      providePhpLaravelDefinition,
     });
 
     await expect(
       resolved.providePhpFrameworkDefinition("source", 12),
     ).resolves.toBe(true);
     expect(providePhpFrameworkDefinition).toHaveBeenCalledWith("source", 12);
-    expect(providePhpLaravelDefinition).not.toHaveBeenCalled();
-  });
-
-  it("keeps Laravel definition aliases available during migration", async () => {
-    const providePhpLaravelDefinition = vi.fn(async () => true);
-    const resolved = resolveEditorSurfaceFrameworkProviders({
-      providePhpLaravelDefinition,
-    });
-
-    await expect(
-      resolved.providePhpFrameworkDefinition("source", 15),
-    ).resolves.toBe(true);
-    expect(providePhpLaravelDefinition).toHaveBeenCalledWith("source", 15);
   });
 
   it("prefers current presenter-link callbacks over Nette aliases", async () => {

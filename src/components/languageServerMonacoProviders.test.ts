@@ -8002,10 +8002,10 @@ function store($request): void
     expect(gateway.definition).not.toHaveBeenCalled();
   });
 
-  it("falls back to phpactor definition when the legacy Laravel callback does not handle the offset", async () => {
+  it("falls back to phpactor definition when the framework callback does not handle the offset", async () => {
     const registered = createRegisteredProviders();
     const source = "<?php\n$user = $repository->find();\n";
-    const providePhpLaravelDefinition = vi.fn(async () => false);
+    const providePhpFrameworkDefinition = vi.fn(async () => false);
     const gateway = featuresGateway({
       definition: [
         {
@@ -8023,7 +8023,7 @@ function store($request): void
         savedContent: source,
       },
       featuresGateway: gateway,
-      providePhpLaravelDefinition,
+      providePhpFrameworkDefinition,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -8040,7 +8040,7 @@ function store($request): void
         },
       }),
     ]);
-    expect(providePhpLaravelDefinition).toHaveBeenCalledTimes(1);
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledTimes(1);
     expect(gateway.definition).toHaveBeenCalledTimes(1);
   });
 
@@ -12186,9 +12186,6 @@ function providerContext(
     providePhpFrameworkDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpFrameworkDefinition"]
     >;
-    providePhpLaravelDefinition: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpLaravelDefinition"]
-    >;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
@@ -12247,7 +12244,6 @@ function providerContext(
         ])),
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpFrameworkDefinition: overrides.providePhpFrameworkDefinition,
-    providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     providePhpParameterInlayHints: overrides.providePhpParameterInlayHints,
