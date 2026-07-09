@@ -41,6 +41,7 @@ import {
   phpFrameworkRouteModelBindingAt,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
+  phpFrameworkScopedStringCompletionAt,
   phpFrameworkScopedStringCompletionContextAt,
   phpFrameworkSupportsLattePresenterLinkIntelligence,
   phpFrameworkSupportsLatteTemplateIntelligence,
@@ -2585,6 +2586,39 @@ class EventServiceProvider
       expect(
         phpFrameworkScopedStringCompletionContextAt(source, position, []),
       ).toBe(false);
+    });
+
+    it("resolves scoped PHP string completion formatting only from the owning provider", () => {
+      const source = "<?php\n\nGate::allows('upd');\n";
+      const position = positionAfter(source, "upd");
+
+      expect(
+        phpFrameworkScopedStringCompletionAt(source, position, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toMatchObject({
+        kind: "gateAbility",
+        prefix: "upd",
+        providerId: "laravel",
+      });
+      expect(
+        phpFrameworkScopedStringCompletionAt(source, position, [
+          phpLaravelFrameworkProvider,
+        ])?.insertText("update-post"),
+      ).toBe("update-post");
+      expect(
+        phpFrameworkScopedStringCompletionAt(source, position, [
+          {
+            id: "custom-php",
+            php: {
+              scopedStringCompletionAt: () => ({
+                kind: "gateAbility",
+                prefix: "upd",
+              }),
+            },
+          },
+        ]),
+      ).toBeNull();
     });
 
     it("dispatches Nette PHP presenter-link navigation through the provider", () => {

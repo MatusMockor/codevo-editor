@@ -1,24 +1,11 @@
-import {
-  phpLaravelConfigCompletionInsertText,
-} from "../domain/phpLaravelConfig";
-import {
-  phpLaravelEnvCompletionInsertText,
-} from "../domain/phpLaravelEnv";
-import {
-  phpLaravelJsonTranslationCompletionInsertText,
-  phpLaravelTranslationCompletionInsertText,
-} from "../domain/phpLaravelTranslations";
-import {
-  phpLaravelViewCompletionInsertText,
-} from "../domain/phpLaravelViews";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
-  phpFrameworkConfigReferenceAt,
-  phpFrameworkEnvReferenceAt,
-  phpFrameworkRouteReferenceAt,
-  phpFrameworkTranslationReferenceAt,
-  phpFrameworkViewReferenceAt,
+  phpFrameworkConfigCompletionContextAt,
+  phpFrameworkEnvCompletionContextAt,
+  phpFrameworkRouteCompletionContextAt,
+  phpFrameworkTranslationCompletionContextAt,
+  phpFrameworkViewCompletionContextAt,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { getFileName } from "../domain/workspace";
@@ -87,10 +74,20 @@ export async function resolvePhpFrameworkLiteralCompletions(
 ): Promise<PhpMethodCompletion[] | null> {
   const { activeDocument, position, providers, source } = request;
 
-  const routeContext = phpFrameworkRouteReferenceAt(source, position, providers);
+  const routeContext = phpFrameworkRouteCompletionContextAt(
+    source,
+    position,
+    providers,
+  );
 
   if (routeContext && activeDocument) {
-    const normalizedPrefix = routeContext.prefix.toLowerCase();
+    const insertText = routeContext.provider.routes?.completionInsertText;
+
+    if (!insertText) {
+      return [];
+    }
+
+    const normalizedPrefix = routeContext.reference.prefix.toLowerCase();
     const routes = await dependencies.collectNamedRouteTargets(
       activeDocument.content,
       activeDocument.path,
@@ -105,10 +102,10 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((route) => ({
         declaringClassName: route.relativePath ?? getFileName(route.path),
-        insertText: phpNamedRouteCompletionInsertText(
-          route.name,
-          routeContext.prefix,
-        ),
+        insertText: insertText({
+          name: route.name,
+          prefix: routeContext.reference.prefix,
+        }),
         kind: "route",
         name: route.name,
         parameters: "",
@@ -116,14 +113,21 @@ export async function resolvePhpFrameworkLiteralCompletions(
       }));
   }
 
-  const translationContext = phpFrameworkTranslationReferenceAt(
+  const translationContext = phpFrameworkTranslationCompletionContextAt(
     source,
     position,
     providers,
   );
 
   if (translationContext && activeDocument) {
-    const normalizedPrefix = translationContext.prefix.toLowerCase();
+    const insertText = translationContext.provider.translations
+      ?.completionInsertText;
+
+    if (!insertText) {
+      return [];
+    }
+
+    const normalizedPrefix = translationContext.reference.prefix.toLowerCase();
     const targets = await dependencies.collectTranslationTargets();
 
     if (!dependencies.isRequestStillCurrent()) {
@@ -135,15 +139,11 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
-        insertText: target.relativePath.endsWith(".json")
-          ? phpLaravelJsonTranslationCompletionInsertText(
-              target.key,
-              translationContext.prefix,
-            )
-          : phpLaravelTranslationCompletionInsertText(
-              target.key,
-              translationContext.prefix,
-            ),
+        insertText: insertText({
+          key: target.key,
+          prefix: translationContext.reference.prefix,
+          relativePath: target.relativePath,
+        }),
         kind: "translation",
         name: target.key,
         parameters: "",
@@ -151,10 +151,20 @@ export async function resolvePhpFrameworkLiteralCompletions(
       }));
   }
 
-  const envContext = phpFrameworkEnvReferenceAt(source, position, providers);
+  const envContext = phpFrameworkEnvCompletionContextAt(
+    source,
+    position,
+    providers,
+  );
 
   if (envContext && activeDocument) {
-    const normalizedPrefix = envContext.prefix.toLowerCase();
+    const insertText = envContext.provider.env?.completionInsertText;
+
+    if (!insertText) {
+      return [];
+    }
+
+    const normalizedPrefix = envContext.reference.prefix.toLowerCase();
     const targets = await dependencies.collectEnvTargets();
 
     if (!dependencies.isRequestStillCurrent()) {
@@ -166,7 +176,10 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
-        insertText: phpLaravelEnvCompletionInsertText(target.name),
+        insertText: insertText({
+          name: target.name,
+          prefix: envContext.reference.prefix,
+        }),
         kind: "env",
         name: target.name,
         parameters: "",
@@ -174,10 +187,20 @@ export async function resolvePhpFrameworkLiteralCompletions(
       }));
   }
 
-  const configContext = phpFrameworkConfigReferenceAt(source, position, providers);
+  const configContext = phpFrameworkConfigCompletionContextAt(
+    source,
+    position,
+    providers,
+  );
 
   if (configContext && activeDocument) {
-    const normalizedPrefix = configContext.prefix.toLowerCase();
+    const insertText = configContext.provider.config?.completionInsertText;
+
+    if (!insertText) {
+      return [];
+    }
+
+    const normalizedPrefix = configContext.reference.prefix.toLowerCase();
     const targets = await dependencies.collectConfigTargets();
 
     if (!dependencies.isRequestStillCurrent()) {
@@ -189,10 +212,10 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
-        insertText: phpLaravelConfigCompletionInsertText(
-          target.key,
-          configContext.prefix,
-        ),
+        insertText: insertText({
+          key: target.key,
+          prefix: configContext.reference.prefix,
+        }),
         kind: "config",
         name: target.key,
         parameters: "",
@@ -200,10 +223,20 @@ export async function resolvePhpFrameworkLiteralCompletions(
       }));
   }
 
-  const viewContext = phpFrameworkViewReferenceAt(source, position, providers);
+  const viewContext = phpFrameworkViewCompletionContextAt(
+    source,
+    position,
+    providers,
+  );
 
   if (viewContext && activeDocument) {
-    const normalizedPrefix = viewContext.prefix.toLowerCase();
+    const insertText = viewContext.provider.templating?.completionInsertText;
+
+    if (!insertText) {
+      return [];
+    }
+
+    const normalizedPrefix = viewContext.reference.prefix.toLowerCase();
     const views = await dependencies.collectViewTargets();
 
     if (!dependencies.isRequestStillCurrent()) {
@@ -215,10 +248,10 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((view) => ({
         declaringClassName: view.relativePath,
-        insertText: phpLaravelViewCompletionInsertText(
-          view.name,
-          viewContext.prefix,
-        ),
+        insertText: insertText({
+          name: view.name,
+          prefix: viewContext.reference.prefix,
+        }),
         kind: "view",
         name: view.name,
         parameters: "",
@@ -227,17 +260,4 @@ export async function resolvePhpFrameworkLiteralCompletions(
   }
 
   return null;
-}
-
-function phpNamedRouteCompletionInsertText(
-  routeName: string,
-  prefix: string,
-): string {
-  const lastDotIndex = prefix.lastIndexOf(".");
-
-  if (lastDotIndex < 0) {
-    return routeName;
-  }
-
-  return routeName.slice(lastDotIndex + 1);
 }

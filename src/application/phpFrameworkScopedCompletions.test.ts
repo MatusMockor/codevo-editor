@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -184,6 +185,87 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
     expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
   });
 
+  it("does not synthesize Laravel scoped items for custom providers without formatter hooks", async () => {
+    const customRuntime = runtimeForCustomProvider({
+      id: "custom",
+      php: {
+        scopedStringCompletionAt: () => ({
+          kind: "authGuard",
+          prefix: "ad",
+        }),
+      },
+    });
+    const deps = dependencies({
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: "/workspace/config/auth.php",
+          position: { column: 12, lineNumber: 4 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn custom_guard('ad');";
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(
+        {
+          activeDocument: {
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          frameworkRuntime: customRuntime,
+          position: positionAfter(source, "ad"),
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not route custom scoped providers into Laravel collectors", async () => {
+    const customRuntime = runtimeForCustomProvider({
+      id: "custom",
+      php: {
+        scopedStringCompletionAt: () => ({
+          kind: "authGuard",
+          prefix: "ad",
+        }),
+        scopedStringCompletionInsertText: ({ name }) => `custom:${name}`,
+      },
+    });
+    const deps = dependencies({
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: "/workspace/config/auth.php",
+          position: { column: 12, lineNumber: 4 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn custom_guard('ad');";
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(
+        {
+          activeDocument: {
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          frameworkRuntime: customRuntime,
+          position: positionAfter(source, "ad"),
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
+  });
+
   it("completes middleware aliases with file fallback metadata", async () => {
     const deps = dependencies({
       collectMiddlewareAliasTargets: vi.fn(async () => [
@@ -223,6 +305,29 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
       source,
       "/workspace/app/Http/Controllers/HomeController.php",
     );
+  });
+
+  it("does not complete middleware aliases after parameters", async () => {
+    const deps = dependencies({
+      collectMiddlewareAliasTargets: vi.fn(async () => [
+        {
+          name: "verified",
+          path: "/workspace/app/Http/Kernel.php",
+          position: { column: 10, lineNumber: 20 },
+          relativePath: "app/Http/Kernel.php",
+        },
+      ]),
+    });
+    const source = "<?php\nRoute::middleware('verified:param');";
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(
+        request(source, "param"),
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectMiddlewareAliasTargets).not.toHaveBeenCalled();
   });
 
   it("completes auth guards", async () => {
@@ -365,6 +470,16 @@ function request(source: string, token: string) {
     position: positionAfter(source, token),
     source,
   };
+}
+
+function runtimeForCustomProvider(provider: PhpFrameworkProvider) {
+  return createPhpFrameworkRuntimeContext(
+    createPhpFrameworkIntelligence({
+      matchedProviderIds: [provider.id],
+      profile: "generic",
+      providers: [provider],
+    }),
+  );
 }
 
 function positionAfter(source: string, token: string) {

@@ -38,11 +38,13 @@ import {
   phpLaravelEventListenerMap,
 } from "./phpLaravelDispatch";
 import {
+  phpLaravelConfigCompletionInsertText,
   phpLaravelConfigKeysFromSource,
   phpLaravelConfigReferenceContextAt,
   phpLaravelConfigTargetFromSource,
 } from "./phpLaravelConfig";
 import {
+  phpLaravelEnvCompletionInsertText,
   phpLaravelEnvEntriesFromSource,
   phpLaravelEnvReferenceContextAt,
   phpLaravelEnvTargetFromSource,
@@ -51,10 +53,16 @@ import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
 } from "./phpLaravelRoutes";
-import { phpLaravelScopedStringCompletionContextAt } from "./phpLaravelScopedCompletions";
 import {
+  phpLaravelScopedStringCompletionAt,
+  phpLaravelScopedStringCompletionContextAt,
+  phpLaravelScopedStringCompletionInsertText,
+} from "./phpLaravelScopedCompletions";
+import {
+  phpLaravelJsonTranslationCompletionInsertText,
   phpLaravelJsonTranslationKeysFromSource,
   phpLaravelJsonTranslationTargetFromSource,
+  phpLaravelTranslationCompletionInsertText,
   phpLaravelTranslationKeysFromSource,
   phpLaravelTranslationReferenceContextAt,
   phpLaravelTranslationTargetFromSource,
@@ -64,7 +72,10 @@ import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
-import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
+import {
+  phpLaravelViewCompletionInsertText,
+  phpLaravelViewReferenceContextAt,
+} from "./phpLaravelViews";
 import type { PhpProjectDescriptor } from "./workspace";
 
 /**
@@ -196,6 +207,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       isLaravelApiResourceStaticMethod(source, className, methodName),
   },
   routes: {
+    completionInsertText: ({ name, prefix }) =>
+      phpLaravelNamedRouteCompletionInsertText(name, prefix),
     definitionsFromSource: ({ source }) =>
       phpLaravelNamedRouteDefinitions(source),
     explicitModelBindingClassNameFromSource: ({ parameterName, source }) =>
@@ -236,6 +249,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     },
   ],
   config: {
+    completionInsertText: ({ key, prefix }) =>
+      phpLaravelConfigCompletionInsertText(key, prefix),
     referenceAt: ({ position, source }) =>
       phpLaravelConfigReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelConfigTarget(literal),
@@ -245,6 +260,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelConfigTargetFromSource(source, fileName, key),
   },
   env: {
+    completionInsertText: ({ name }) => phpLaravelEnvCompletionInsertText(name),
     referenceAt: ({ position, source }) =>
       phpLaravelEnvReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelEnvTarget(literal),
@@ -253,6 +269,10 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelEnvTargetFromSource(source, name),
   },
   translations: {
+    completionInsertText: ({ key, prefix, relativePath }) =>
+      relativePath.endsWith(".json")
+        ? phpLaravelJsonTranslationCompletionInsertText(key, prefix)
+        : phpLaravelTranslationCompletionInsertText(key, prefix),
     referenceAt: ({ position, source }) =>
       phpLaravelTranslationReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelTransTarget(literal),
@@ -266,6 +286,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelJsonTranslationTargetFromSource(source, key),
   },
   templating: {
+    completionInsertText: ({ name, prefix }) =>
+      phpLaravelViewCompletionInsertText(name, prefix),
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),
@@ -287,6 +309,10 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   php: {
     isScopedStringCompletionContext: ({ position, source }) =>
       phpLaravelScopedStringCompletionContextAt(source, position),
+    scopedStringCompletionAt: ({ position, source }) =>
+      phpLaravelScopedStringCompletionAt(source, position),
+    scopedStringCompletionInsertText: ({ kind, name }) =>
+      phpLaravelScopedStringCompletionInsertText(kind, name),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
@@ -317,3 +343,16 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelContainerBindingsFromSource(source),
   },
 };
+
+function phpLaravelNamedRouteCompletionInsertText(
+  routeName: string,
+  prefix: string,
+): string {
+  const lastDotIndex = prefix.lastIndexOf(".");
+
+  if (lastDotIndex < 0) {
+    return routeName;
+  }
+
+  return routeName.slice(lastDotIndex + 1);
+}

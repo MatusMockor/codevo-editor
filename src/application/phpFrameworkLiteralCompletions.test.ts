@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import {
   resolvePhpFrameworkLiteralCompletions,
   type PhpFrameworkLiteralCompletionDependencies,
@@ -47,6 +50,94 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toBeNull();
 
     expect(deps.collectConfigTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not synthesize Laravel insert text for custom providers without formatter hooks", async () => {
+    const customProvider: PhpFrameworkProvider = {
+      config: {
+        referenceAt: () => ({
+          call: "custom",
+          key: "app.",
+          position: { column: 22, lineNumber: 2 },
+          prefix: "app.",
+        }),
+      },
+      id: "custom",
+    };
+    const deps = dependencies({
+      collectConfigTargets: vi.fn(async () => [
+        {
+          key: "app.name",
+          relativePath: "config/app.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn custom_config('app.');";
+
+    await expect(
+      resolvePhpFrameworkLiteralCompletions(
+        {
+          activeDocument: {
+            content: source,
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          position: positionAfter(source, "app."),
+          providers: [customProvider],
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toEqual([]);
+
+    expect(deps.collectConfigTargets).not.toHaveBeenCalled();
+  });
+
+  it("lets custom providers own literal completion formatting with their hook", async () => {
+    const customProvider: PhpFrameworkProvider = {
+      config: {
+        completionInsertText: ({ key, prefix }) => key.slice(prefix.length),
+        referenceAt: () => ({
+          call: "custom",
+          key: "app.",
+          position: { column: 22, lineNumber: 2 },
+          prefix: "app.",
+        }),
+      },
+      id: "custom",
+    };
+    const deps = dependencies({
+      collectConfigTargets: vi.fn(async () => [
+        {
+          key: "app.name",
+          relativePath: "config/app.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn custom_config('app.');";
+
+    await expect(
+      resolvePhpFrameworkLiteralCompletions(
+        {
+          activeDocument: {
+            content: source,
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          position: positionAfter(source, "app."),
+          providers: [customProvider],
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("completes named routes case-insensitively and inserts the suffix for a dotted prefix", async () => {

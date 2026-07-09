@@ -111,6 +111,11 @@ export interface PhpFrameworkRouteDefinitionsContext {
   source: string;
 }
 
+export interface PhpFrameworkRouteCompletionInsertTextContext {
+  name: string;
+  prefix: string;
+}
+
 /** A named authorization ability declared in framework configuration/source. */
 export interface PhpFrameworkAuthorizationAbilityDefinition {
   name: string;
@@ -207,6 +212,11 @@ export interface PhpFrameworkConfigTargetContext {
   source: string;
 }
 
+export interface PhpFrameworkConfigCompletionInsertTextContext {
+  key: string;
+  prefix: string;
+}
+
 /**
  * An environment-variable reference detected at the cursor (e.g. the
  * `env('APP_...')` argument). Framework-agnostic mirror of Laravel's env
@@ -236,6 +246,11 @@ export interface PhpFrameworkEnvEntriesContext {
 export interface PhpFrameworkEnvTargetContext {
   name: string;
   source: string;
+}
+
+export interface PhpFrameworkEnvCompletionInsertTextContext {
+  name: string;
+  prefix: string;
 }
 
 /**
@@ -282,6 +297,12 @@ export interface PhpFrameworkJsonTranslationTargetContext {
   source: string;
 }
 
+export interface PhpFrameworkTranslationCompletionInsertTextContext {
+  key: string;
+  prefix: string;
+  relativePath: string;
+}
+
 /**
  * A view reference detected at the cursor (e.g. the `view('x')` argument).
  * Framework-agnostic mirror of the Laravel view reference so the controller's
@@ -297,6 +318,11 @@ export interface PhpFrameworkViewReference {
 export interface PhpFrameworkViewReferenceContext {
   position: EditorPosition;
   source: string;
+}
+
+export interface PhpFrameworkViewCompletionInsertTextContext {
+  name: string;
+  prefix: string;
 }
 
 /**
@@ -406,6 +432,36 @@ export interface PhpFrameworkPhpStringCompletionContext {
   source: string;
 }
 
+export type PhpFrameworkScopedStringCompletionKind =
+  | "authGuard"
+  | "broadcastConnection"
+  | "cacheStore"
+  | "databaseConnection"
+  | "gateAbility"
+  | "logChannel"
+  | "mailMailer"
+  | "middlewareAlias"
+  | "passwordBroker"
+  | "queueConnection"
+  | "redisConnection"
+  | "storageDisk";
+
+export interface PhpFrameworkScopedStringCompletion {
+  kind: PhpFrameworkScopedStringCompletionKind;
+  prefix: string;
+}
+
+export interface PhpFrameworkResolvedScopedStringCompletion
+  extends PhpFrameworkScopedStringCompletion {
+  insertText: (name: string) => string;
+  providerId: string;
+}
+
+export interface PhpFrameworkScopedStringCompletionInsertTextContext {
+  kind: PhpFrameworkScopedStringCompletionKind;
+  name: string;
+}
+
 export interface PhpFrameworkPhpPresenterLinkContext {
   offset: number;
   source: string;
@@ -474,6 +530,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkRouteReferenceContext,
     ) => PhpFrameworkRouteReference | null;
+    completionInsertText?: (
+      context: PhpFrameworkRouteCompletionInsertTextContext,
+    ) => string;
     definitionsFromSource?: (
       context: PhpFrameworkRouteDefinitionsContext,
     ) => PhpFrameworkRouteDefinition[];
@@ -537,6 +596,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkConfigReferenceContext,
     ) => PhpFrameworkConfigReference | null;
+    completionInsertText?: (
+      context: PhpFrameworkConfigCompletionInsertTextContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -551,6 +613,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkEnvReferenceContext,
     ) => PhpFrameworkEnvReference | null;
+    completionInsertText?: (
+      context: PhpFrameworkEnvCompletionInsertTextContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -565,6 +630,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkTranslationReferenceContext,
     ) => PhpFrameworkTranslationReference | null;
+    completionInsertText?: (
+      context: PhpFrameworkTranslationCompletionInsertTextContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -585,6 +653,9 @@ export interface PhpFrameworkProvider {
     referenceAt?: (
       context: PhpFrameworkViewReferenceContext,
     ) => PhpFrameworkViewReference | null;
+    completionInsertText?: (
+      context: PhpFrameworkViewCompletionInsertTextContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -635,6 +706,12 @@ export interface PhpFrameworkProvider {
     isScopedStringCompletionContext?: (
       context: PhpFrameworkPhpStringCompletionContext,
     ) => boolean;
+    scopedStringCompletionAt?: (
+      context: PhpFrameworkPhpStringCompletionContext,
+    ) => PhpFrameworkScopedStringCompletion | null;
+    scopedStringCompletionInsertText?: (
+      context: PhpFrameworkScopedStringCompletionInsertTextContext,
+    ) => string;
     /**
      * Provider-owned PHP presenter-link navigation target detector. Today Nette
      * owns this (`$this->link(...)`, redirects), but the central definition path
@@ -729,6 +806,31 @@ export interface PhpFrameworkProviderCapabilityRegistry {
   readonly providerSignature: string;
   supports(capability: PhpFrameworkProviderCapability): boolean;
   supportsTargetCollection(kind: PhpFrameworkTargetCollectionKind): boolean;
+}
+
+export interface PhpFrameworkRouteCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkRouteReference;
+}
+
+export interface PhpFrameworkConfigCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkConfigReference;
+}
+
+export interface PhpFrameworkEnvCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkEnvReference;
+}
+
+export interface PhpFrameworkTranslationCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkTranslationReference;
+}
+
+export interface PhpFrameworkViewCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkViewReference;
 }
 
 export function createPhpFrameworkProviderCapabilityRegistry(
@@ -908,11 +1010,20 @@ export function phpFrameworkRouteReferenceAt(
   position: EditorPosition,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): PhpFrameworkRouteReference | null {
+  return phpFrameworkRouteCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkRouteCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkRouteCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.routes?.referenceAt?.({ position, source });
 
     if (reference) {
-      return reference;
+      return { provider, reference };
     }
   }
 
@@ -1174,11 +1285,20 @@ export function phpFrameworkConfigReferenceAt(
   position: EditorPosition,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): PhpFrameworkConfigReference | null {
+  return phpFrameworkConfigCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkConfigCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkConfigCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.config?.referenceAt?.({ position, source });
 
     if (reference) {
-      return reference;
+      return { provider, reference };
     }
   }
 
@@ -1244,11 +1364,20 @@ export function phpFrameworkEnvReferenceAt(
   position: EditorPosition,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): PhpFrameworkEnvReference | null {
+  return phpFrameworkEnvCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkEnvCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkEnvCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.env?.referenceAt?.({ position, source });
 
     if (reference) {
-      return reference;
+      return { provider, reference };
     }
   }
 
@@ -1321,11 +1450,20 @@ export function phpFrameworkTranslationReferenceAt(
   position: EditorPosition,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): PhpFrameworkTranslationReference | null {
+  return phpFrameworkTranslationCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkTranslationCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkTranslationCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.translations?.referenceAt?.({ position, source });
 
     if (reference) {
-      return reference;
+      return { provider, reference };
     }
   }
 
@@ -1448,11 +1586,20 @@ export function phpFrameworkViewReferenceAt(
   position: EditorPosition,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): PhpFrameworkViewReference | null {
+  return phpFrameworkViewCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkViewCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkViewCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.templating?.referenceAt?.({ position, source });
 
     if (reference) {
-      return reference;
+      return { provider, reference };
     }
   }
 
@@ -1615,6 +1762,34 @@ export function phpFrameworkScopedStringCompletionContextAt(
       provider.php?.isScopedStringCompletionContext?.({ position, source }) ??
       false,
   );
+}
+
+export function phpFrameworkScopedStringCompletionAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedScopedStringCompletion | null {
+  for (const provider of providers) {
+    const completion = provider.php?.scopedStringCompletionAt?.({
+      position,
+      source,
+    });
+    const insertText = provider.php?.scopedStringCompletionInsertText;
+
+    if (completion && insertText) {
+      return {
+        ...completion,
+        insertText: (name) =>
+          insertText({
+            kind: completion.kind,
+            name,
+          }),
+        providerId: provider.id,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function phpFrameworkPhpPresenterLinkAt(
