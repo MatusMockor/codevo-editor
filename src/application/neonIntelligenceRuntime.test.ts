@@ -81,8 +81,14 @@ describe("createNeonRequestContext", () => {
 
   it("evicts other cached roots before returning a live-root-aware context", () => {
     const cache: NeonConfigCache = {
-      "/other": { config: emptyConfig(), expiresAt: Date.now() + 1_000 },
-      [ROOT]: { config: emptyConfig(), expiresAt: Date.now() + 1_000 },
+      "/other": {
+        config: emptyConfig(),
+        expiresAt: Date.now() + 1_000,
+      },
+      [ROOT]: {
+        config: emptyConfig(),
+        expiresAt: Date.now() + 1_000,
+      },
     };
     const currentWorkspaceRootRef = { current: ROOT };
     const context = createNeonRequestContext(

@@ -591,7 +591,7 @@ export function detectNeonClassReferenceAt(
  * Returns every `includes:` entry in `source`, in document order. Each entry is
  * a sequence item whose scalar value is a relative `.neon` path.
  */
-function neonIncludes(source: string): NeonInclude[] {
+export function neonIncludesFromSource(source: string): NeonInclude[] {
   const includes: NeonInclude[] = [];
 
   for (const line of buildLineModels(source)) {
@@ -661,7 +661,7 @@ export function detectNeonIncludeAt(
     return null;
   }
 
-  for (const include of neonIncludes(source)) {
+  for (const include of neonIncludesFromSource(source)) {
     if (offset >= include.span.start && offset <= include.span.end) {
       return include;
     }

@@ -88,6 +88,7 @@ export interface WorkbenchFileOperationsDependencies {
     rootPath: string,
     path: string,
   ) => void;
+  invalidateNeonConfigForPath: (rootPath: string, path: string) => void;
   invalidatePhpFrameworkSourcePath: (
     rootPath: string,
     path: string,
@@ -173,6 +174,7 @@ export function useWorkbenchFileOperations(
     forgetRecentLocationsForPath,
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
+    invalidateNeonConfigForPath,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
@@ -833,6 +835,7 @@ export function useWorkbenchFileOperations(
       invalidatePhpFrameworkSourcePath(requestedRoot, event.path);
       invalidateBladeComponentNamesForPath(requestedRoot, event.path);
       invalidateBladeViewDataEntriesForPath(requestedRoot, event.path);
+      invalidateNeonConfigForPath(requestedRoot, event.path);
 
       if (event.previousPath) {
         invalidatePhpFrameworkSourcePath(requestedRoot, event.previousPath);
@@ -844,6 +847,7 @@ export function useWorkbenchFileOperations(
           requestedRoot,
           event.previousPath,
         );
+        invalidateNeonConfigForPath(requestedRoot, event.previousPath);
       }
 
       if (event.kind === "deleted") {
@@ -875,6 +879,7 @@ export function useWorkbenchFileOperations(
       handleExternalRemovedPath,
       invalidateBladeComponentNamesForPath,
       invalidateBladeViewDataEntriesForPath,
+      invalidateNeonConfigForPath,
       invalidatePhpFrameworkSourcePath,
       queueWorkspaceDirectoryRefresh,
       queueWorkspaceGitStatusRefresh,

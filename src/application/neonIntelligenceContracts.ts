@@ -60,6 +60,7 @@ export interface NeonIntelligenceDependencies {
 }
 
 export interface NeonIntelligence {
+  invalidateNeonConfigForPath(rootPath: string, path: string): void;
   provideNeonCompletions(
     source: string,
     position: EditorPosition,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   evictOtherRootConfigCacheEntries,
+  invalidateNeonConfigCacheForPath,
   loadNeonProjectConfig,
   resolveNeonServiceTypeFromMaps,
   type NeonConfigCache,
@@ -10,6 +11,15 @@ import {
 } from "./neonProjectConfigDiscovery";
 
 const ROOT = "/ws";
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+
+  return { promise, resolve };
+}
 
 function buildNeonWorkspace(
   sources: Record<string, string>,
@@ -68,8 +78,11 @@ function buildNeonWorkspace(
 
     return content;
   });
+  const setFileContent = (relativePath: string, content: string): void => {
+    fileContents.set(`${root}/${relativePath}`, content);
+  };
 
-  return { listDirectory, readFileContent };
+  return { listDirectory, readFileContent, setFileContent };
 }
 
 function makeContext(
@@ -177,6 +190,60 @@ describe("loadNeonProjectConfig", () => {
     expect(workspace.readFileContent).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let an invalidated in-flight scan overwrite a newer cached scan", async () => {
+    const cache: NeonConfigCache = {};
+    const inFlight: NeonConfigInFlight = new Map();
+    const staleReadStarted = createDeferred();
+    const releaseStaleRead = createDeferred();
+    let readCount = 0;
+    let content = "parameters:\n    staleOnly: old\n";
+    const workspace = buildNeonWorkspace({
+      "config/config.neon": content,
+    });
+    const context = makeContext({
+      cache,
+      inFlight,
+      listDirectory: workspace.listDirectory,
+      readFileContent: vi.fn(async (path: string): Promise<string> => {
+        readCount += 1;
+
+        if (readCount === 1) {
+          staleReadStarted.resolve();
+          await releaseStaleRead.promise;
+
+          return "parameters:\n    staleOnly: old\n";
+        }
+
+        if (path !== `${ROOT}/config/config.neon`) {
+          throw new Error(`no such file: ${path}`);
+        }
+
+        return content;
+      }),
+    });
+
+    const staleScan = loadNeonProjectConfig(context);
+    await staleReadStarted.promise;
+
+    invalidateNeonConfigCacheForPath(
+      cache,
+      inFlight,
+      ROOT,
+      `${ROOT}/config/config.neon`,
+    );
+    content = "parameters:\n    freshOnly: new\n";
+
+    const freshScan = await loadNeonProjectConfig(context);
+    expect(freshScan.parameterNames).toEqual(["freshOnly"]);
+
+    releaseStaleRead.resolve();
+    const staleResult = await staleScan;
+
+    expect(staleResult.parameterNames).toEqual(["staleOnly"]);
+    expect(cache[ROOT]?.config.parameterNames).toEqual(["freshOnly"]);
+    expect(await loadNeonProjectConfig(context)).toBe(freshScan);
+  });
+
   it("drops stale results and does not write cache when the root changes after awaits", async () => {
     const cache: NeonConfigCache = {};
     const workspace = buildNeonWorkspace({
@@ -204,6 +271,153 @@ describe("loadNeonProjectConfig", () => {
 
     expect(config.parameterNames).toEqual([]);
     expect(cache[ROOT]).toBeUndefined();
+  });
+
+  it("reloads cached project config after explicit NEON file invalidation", async () => {
+    const cache: NeonConfigCache = {};
+    const inFlight: NeonConfigInFlight = new Map();
+    const workspace = buildNeonWorkspace({
+      "config/config.neon": "parameters:\n    dbHost: localhost\n",
+    });
+    const context = makeContext({
+      cache,
+      inFlight,
+      listDirectory: workspace.listDirectory,
+      readFileContent: workspace.readFileContent,
+    });
+
+    const first = await loadNeonProjectConfig(context);
+    workspace.setFileContent(
+      "config/config.neon",
+      "parameters:\n    dbHost: remote\n    dbPassword: secret\n",
+    );
+    const cached = await loadNeonProjectConfig(context);
+
+    expect(cached).toBe(first);
+    expect(cached.parameterNames).toEqual(["dbHost"]);
+
+    invalidateNeonConfigCacheForPath(
+      cache,
+      inFlight,
+      ROOT,
+      `${ROOT}/config/config.neon`,
+    );
+
+    const reloaded = await loadNeonProjectConfig(context);
+
+    expect(reloaded).not.toBe(first);
+    expect(reloaded.parameterNames).toEqual(["dbHost", "dbPassword"]);
+  });
+
+  it("loads and refreshes recursively included NEON files outside scan directories", async () => {
+    const cache: NeonConfigCache = {};
+    const inFlight: NeonConfigInFlight = new Map();
+    const workspace = buildNeonWorkspace({
+      "config/config.neon": "includes:\n    - ../shared/parameters\n",
+      "shared/parameters.neon": "parameters:\n    apiToken: first\n",
+    });
+    const context = makeContext({
+      cache,
+      inFlight,
+      listDirectory: workspace.listDirectory,
+      readFileContent: workspace.readFileContent,
+    });
+
+    const config = await loadNeonProjectConfig(context);
+
+    expect(config.parameterNames).toEqual(["apiToken"]);
+    expect(config.parameters.get("apiToken")?.path).toBe(
+      `${ROOT}/shared/parameters.neon`,
+    );
+
+    workspace.setFileContent(
+      "shared/parameters.neon",
+      "parameters:\n    apiToken: second\n    apiSecret: fresh\n",
+    );
+    invalidateNeonConfigCacheForPath(
+      cache,
+      inFlight,
+      ROOT,
+      `${ROOT}/shared/parameters.neon`,
+    );
+
+    const refreshed = await loadNeonProjectConfig(context);
+
+    expect(refreshed.parameterNames).toEqual(["apiSecret", "apiToken"]);
+  });
+
+  it("discovers includes and invalidates cache for native backslash paths", async () => {
+    const root = "C:\\workspace";
+    const cache: NeonConfigCache = {};
+    const inFlight: NeonConfigInFlight = new Map();
+    const fileContents = new Map([
+      [
+        "C:/workspace/config/config.neon",
+        "includes:\n    - ..\\shared\\parameters\n",
+      ],
+      [
+        "C:/workspace/shared/parameters.neon",
+        "parameters:\n    apiToken: first\n",
+      ],
+    ]);
+    const normalize = (path: string): string => path.split("\\").join("/");
+    const context = makeContext({
+      cache,
+      currentRoot: root,
+      getActiveDocument: () => ({
+        path: "C:\\workspace\\config\\config.neon",
+      }),
+      inFlight,
+      joinPath: (rootPath, relativePath) => `${rootPath}\\${relativePath}`,
+      listDirectory: vi.fn(
+        async (path): Promise<NeonProjectConfigDirectoryEntry[]> => {
+          const normalized = normalize(path);
+
+          if (normalized === "C:/workspace/config") {
+            return [
+              {
+                kind: "file",
+                path: "C:\\workspace\\config\\config.neon",
+              },
+            ];
+          }
+
+          throw new Error(`no such directory: ${path}`);
+        },
+      ),
+      readFileContent: vi.fn(async (path) => {
+        const content = fileContents.get(normalize(path));
+
+        if (content === undefined) {
+          throw new Error(`no such file: ${path}`);
+        }
+
+        return content;
+      }),
+      root,
+    });
+
+    const config = await loadNeonProjectConfig(context);
+
+    expect(config.parameterNames).toEqual(["apiToken"]);
+    expect(config.parameters.get("apiToken")?.path).toBe(
+      "C:/workspace/shared/parameters.neon",
+    );
+
+    fileContents.set(
+      "C:/workspace/shared/parameters.neon",
+      "parameters:\n    apiToken: second\n    apiSecret: fresh\n",
+    );
+    invalidateNeonConfigCacheForPath(
+      cache,
+      inFlight,
+      root,
+      "C:\\workspace\\shared\\parameters.neon",
+    );
+
+    const refreshed = await loadNeonProjectConfig(context);
+
+    expect(refreshed.parameterNames).toEqual(["apiSecret", "apiToken"]);
   });
 });
 
@@ -234,8 +448,14 @@ describe("NEON project config service helpers", () => {
 
   it("evicts cached roots except the requested root", () => {
     const cache: NeonConfigCache = {
-      "/a": { config: { ...emptyConfig() }, expiresAt: Date.now() + 1_000 },
-      "/b": { config: { ...emptyConfig() }, expiresAt: Date.now() + 1_000 },
+      "/a": {
+        config: { ...emptyConfig() },
+        expiresAt: Date.now() + 1_000,
+      },
+      "/b": {
+        config: { ...emptyConfig() },
+        expiresAt: Date.now() + 1_000,
+      },
     };
 
     evictOtherRootConfigCacheEntries(cache, "/b");

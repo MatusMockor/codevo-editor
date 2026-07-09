@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { neonIncludesFromSource } from "../domain/neonConfig";
 import {
   neonGeneratedServiceNamesFromServices,
   neonParametersFromSource,
@@ -51,6 +52,12 @@ export type NeonConfigCache = Record<string, NeonConfigCacheEntry>;
 /** In-flight config scans keyed by requested root (concurrent callers join). */
 export type NeonConfigInFlight = Map<string, Promise<NeonProjectConfig>>;
 
+const NEON_CONFIG_CACHE_REVISIONS = Symbol("neonConfigCacheRevisions");
+
+interface NeonConfigCacheRevisionStore {
+  [NEON_CONFIG_CACHE_REVISIONS]?: Map<string, number>;
+}
+
 export interface NeonProjectConfigRequestContext<
   Deps extends NeonProjectConfigDiscoveryDependencies =
     NeonProjectConfigDiscoveryDependencies,
@@ -67,9 +74,10 @@ export const NEON_EXTENSION = ".neon";
 /**
  * TTL for the per-root project-config listing (parameters + services collected
  * across the project's `.neon` files). A short TTL bounds staleness after a
- * config file changes, while `evictOtherRootConfigCacheEntries` bounds cross-root
- * growth; together they keep a single active project to at most one entry.
- * Precise file-change invalidation is a documented follow-up.
+ * config file changes, while explicit file-change invalidation removes entries
+ * immediately when a known `.neon` file changes. `evictOtherRootConfigCacheEntries`
+ * bounds cross-root growth; together they keep a single active project to at
+ * most one entry.
  */
 const NEON_CONFIG_CACHE_TTL_MS = 5_000;
 
@@ -105,6 +113,25 @@ export function evictOtherRootConfigCacheEntries(
 
     delete cache[cachedRoot];
   }
+}
+
+export function invalidateNeonConfigCacheForPath(
+  cache: NeonConfigCache,
+  inFlight: NeonConfigInFlight,
+  requestedRoot: string | null,
+  path: string,
+): void {
+  if (!requestedRoot || !path.endsWith(NEON_EXTENSION)) {
+    return;
+  }
+
+  if (!pathBelongsToRoot(path, requestedRoot)) {
+    return;
+  }
+
+  delete cache[requestedRoot];
+  inFlight.delete(requestedRoot);
+  bumpNeonConfigCacheRevision(cache, requestedRoot);
 }
 
 /**
@@ -166,6 +193,10 @@ async function scanNeonProjectConfig<
   context: NeonProjectConfigRequestContext<Deps>,
 ): Promise<NeonProjectConfig> {
   const { configCache, deps, isRequestedRootActive, requestedRoot } = context;
+  const cacheRevision = currentNeonConfigCacheRevision(
+    configCache,
+    requestedRoot,
+  );
   const filePaths = await collectNeonFilePaths(context);
 
   if (!isRequestedRootActive()) {
@@ -179,7 +210,13 @@ async function scanNeonProjectConfig<
   const serviceTypes = new Map<string, NeonDefinitionLocation>();
   let generatedServiceStartIndex = 1;
 
-  for (const path of filePaths) {
+  for (let index = 0; index < filePaths.length; index += 1) {
+    const path = filePaths[index];
+
+    if (!path) {
+      continue;
+    }
+
     if (!isRequestedRootActive()) {
       return emptyNeonProjectConfig();
     }
@@ -199,6 +236,8 @@ async function scanNeonProjectConfig<
     if (!isRequestedRootActive()) {
       return emptyNeonProjectConfig();
     }
+
+    collectNeonIncludedFilePaths(context, path, content, filePaths);
 
     for (const parameter of neonParametersFromSource(content)) {
       if (!parameters.has(parameter.name)) {
@@ -298,12 +337,50 @@ async function scanNeonProjectConfig<
     services,
     serviceTypes,
   };
+
+  if (
+    cacheRevision !== currentNeonConfigCacheRevision(configCache, requestedRoot)
+  ) {
+    return config;
+  }
+
   configCache[requestedRoot] = {
     config,
     expiresAt: Date.now() + NEON_CONFIG_CACHE_TTL_MS,
   };
 
   return config;
+}
+
+function collectNeonIncludedFilePaths<
+  Deps extends NeonProjectConfigDiscoveryDependencies,
+>(
+  context: NeonProjectConfigRequestContext<Deps>,
+  currentPath: string,
+  content: string,
+  filePaths: string[],
+): void {
+  const { requestedRoot } = context;
+  const knownPaths = new Set(filePaths);
+
+  for (const include of neonIncludesFromSource(content)) {
+    if (filePaths.length >= NEON_MAX_CONFIG_FILES) {
+      return;
+    }
+
+    const includedPath = resolveNeonIncludePath(
+      requestedRoot,
+      currentPath,
+      include.path,
+    );
+
+    if (!includedPath || knownPaths.has(includedPath)) {
+      continue;
+    }
+
+    knownPaths.add(includedPath);
+    filePaths.push(includedPath);
+  }
 }
 
 /**
@@ -445,6 +522,37 @@ function recursiveNeonScanDirectories(
   );
 }
 
+function resolveNeonIncludePath(
+  requestedRoot: string,
+  currentPath: string,
+  includePath: string,
+): string | null {
+  const reference = includePath.split("\\").join("/").trim();
+
+  if (reference.length === 0) {
+    return null;
+  }
+
+  const basePath = reference.startsWith("/")
+    ? normalizePathSeparators(requestedRoot)
+    : dirnameOf(currentPath);
+  const body = reference.startsWith("/") ? reference.replace(/^\/+/, "") : reference;
+  const combined = body.length > 0 ? `${basePath}/${body}` : basePath;
+  const collapsed = collapseAbsolutePath(combined);
+
+  if (!collapsed || !pathBelongsToRoot(collapsed, requestedRoot)) {
+    return null;
+  }
+
+  const lastSegment = collapsed.split("/").pop() ?? "";
+
+  if (lastSegment.includes(".")) {
+    return collapsed;
+  }
+
+  return `${collapsed}${NEON_EXTENSION}`;
+}
+
 export function editorPositionAtOffset(
   source: string,
   offset: number,
@@ -534,11 +642,118 @@ export function neonResolvableServiceType(service: {
 }
 
 function dirnameOf(path: string): string {
-  const index = path.lastIndexOf("/");
+  const normalizedPath = normalizePathSeparators(path);
+  const index = normalizedPath.lastIndexOf("/");
 
   if (index < 0) {
     return "";
   }
 
-  return path.slice(0, index);
+  return normalizedPath.slice(0, index);
+}
+
+function collapseAbsolutePath(path: string): string | null {
+  const normalizedPath = normalizePathSeparators(path);
+  const isAbsolute = normalizedPath.startsWith("/");
+  const result: string[] = [];
+
+  for (const segment of normalizedPath.split("/")) {
+    if (segment.length === 0 || segment === ".") {
+      continue;
+    }
+
+    if (segment === "..") {
+      if (result.length === 0) {
+        return null;
+      }
+
+      result.pop();
+      continue;
+    }
+
+    result.push(segment);
+  }
+
+  if (result.length === 0) {
+    return isAbsolute ? "/" : null;
+  }
+
+  return `${isAbsolute ? "/" : ""}${result.join("/")}`;
+}
+
+function pathBelongsToRoot(path: string, root: string): boolean {
+  const normalizedPath = normalizePathSeparators(path);
+  const normalizedRoot = normalizeRootPathForComparison(root);
+
+  if (normalizedRoot === "/") {
+    return normalizedPath.startsWith("/");
+  }
+
+  if (/^[A-Za-z]:\/$/.test(normalizedRoot)) {
+    return normalizedPath.startsWith(normalizedRoot);
+  }
+
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`)
+  );
+}
+
+function normalizePathSeparators(path: string): string {
+  return path.split("\\").join("/");
+}
+
+function normalizeRootPathForComparison(root: string): string {
+  const normalizedRoot = normalizePathSeparators(root);
+
+  if (normalizedRoot === "/") {
+    return normalizedRoot;
+  }
+
+  if (/^[A-Za-z]:\/$/.test(normalizedRoot)) {
+    return normalizedRoot;
+  }
+
+  return normalizedRoot.replace(/\/+$/, "");
+}
+
+function currentNeonConfigCacheRevision(
+  cache: NeonConfigCache,
+  requestedRoot: string,
+): number {
+  return (
+    (cache as NeonConfigCacheRevisionStore)[NEON_CONFIG_CACHE_REVISIONS]?.get(
+      neonConfigCacheRevisionKey(requestedRoot),
+    ) ?? 0
+  );
+}
+
+function bumpNeonConfigCacheRevision(
+  cache: NeonConfigCache,
+  requestedRoot: string,
+): void {
+  const revisions = neonConfigCacheRevisions(cache);
+  const key = neonConfigCacheRevisionKey(requestedRoot);
+  revisions.set(key, (revisions.get(key) ?? 0) + 1);
+}
+
+function neonConfigCacheRevisions(cache: NeonConfigCache): Map<string, number> {
+  const store = cache as NeonConfigCacheRevisionStore;
+  const existing = store[NEON_CONFIG_CACHE_REVISIONS];
+
+  if (existing) {
+    return existing;
+  }
+
+  const revisions = new Map<string, number>();
+  Object.defineProperty(store, NEON_CONFIG_CACHE_REVISIONS, {
+    enumerable: false,
+    value: revisions,
+  });
+
+  return revisions;
+}
+
+function neonConfigCacheRevisionKey(requestedRoot: string): string {
+  return normalizeRootPathForComparison(requestedRoot);
 }

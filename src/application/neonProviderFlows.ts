@@ -13,6 +13,7 @@ import {
 import type { NavigationRequest } from "./navigationRequest";
 import { createNeonRequestContext } from "./neonIntelligenceRuntime";
 import {
+  invalidateNeonConfigCacheForPath,
   type NeonConfigCache,
   type NeonConfigInFlight,
 } from "./neonProjectConfigDiscovery";
@@ -69,5 +70,13 @@ export function createNeonIntelligence(
     return provideNeonCompletionsFromProvider(context, source, position);
   };
 
-  return { provideNeonCompletions, provideNeonDefinition };
+  const invalidateNeonConfigForPath = (rootPath: string, path: string): void => {
+    invalidateNeonConfigCacheForPath(configCache, configInFlight, rootPath, path);
+  };
+
+  return {
+    invalidateNeonConfigForPath,
+    provideNeonCompletions,
+    provideNeonDefinition,
+  };
 }
