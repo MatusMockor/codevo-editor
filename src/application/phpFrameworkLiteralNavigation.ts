@@ -3,12 +3,12 @@ import {
   phpFrameworkConfigLiteralTarget,
   phpFrameworkEnvLiteralTarget,
   phpFrameworkStringLiteralHelperAt,
-  phpFrameworkSupportsStringLiterals,
   phpFrameworkTranslationLiteralTarget,
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 export interface PhpFrameworkLiteralNavigationDocument {
   content: string;
@@ -61,7 +61,7 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
 ): Promise<PhpFrameworkLiteralNavigationTarget | null> {
   const { activeDocument, offset, position, providers, source } = request;
 
-  if (!phpFrameworkSupportsStringLiterals(providers)) {
+  if (!phpFrameworkSupportsCapability(providers, "stringLiterals")) {
     return null;
   }
 

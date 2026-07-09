@@ -1,7 +1,6 @@
 import {
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
-  phpFrameworkSupportsTranslations,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationTargetFromSource,
   type PhpFrameworkProvider,
@@ -15,6 +14,7 @@ import {
 } from "../domain/phpLaravelTranslations";
 import { getFileName, type FileEntry } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 interface PhpLaravelTranslationFile {
   path: string;
@@ -53,7 +53,10 @@ function isWorkspaceRootActive(
 function supportsTranslations(
   deps: PhpLaravelTranslationTargetResolverDeps,
 ): boolean {
-  return phpFrameworkSupportsTranslations(deps.phpFrameworkProviders);
+  return phpFrameworkSupportsCapability(
+    deps.phpFrameworkProviders,
+    "translations",
+  );
 }
 
 async function collectPhpLaravelTranslationLocaleRoots(

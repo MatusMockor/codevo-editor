@@ -1,5 +1,4 @@
 import {
-  phpFrameworkSupportsViewData,
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
   type PhpFrameworkProvider,
@@ -7,6 +6,7 @@ import {
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import type { TextSearchGateway } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 export interface BladeViewDataCacheRef {
   current: Record<string, BladeViewDataEntry[]>;
@@ -38,7 +38,10 @@ export async function ensureBladeViewDataEntriesLoaded(
     textSearch,
   } = dependencies;
 
-  if (!requestedRoot || !phpFrameworkSupportsViewData(frameworkProviders)) {
+  if (
+    !requestedRoot ||
+    !phpFrameworkSupportsCapability(frameworkProviders, "viewData")
+  ) {
     return null;
   }
 

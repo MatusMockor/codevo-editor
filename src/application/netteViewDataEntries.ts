@@ -3,7 +3,7 @@ import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
-import { phpFrameworkSupportsViewDataComponentFactories } from "../domain/phpFrameworkProviders";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 import { scanNetteCreateComponentViewDataEntries } from "./netteCreateComponentViewDataScanner";
 
 export interface NetteViewDataSearchResult {
@@ -98,7 +98,10 @@ export async function loadNetteViewDataEntries(
 export function supportsNetteComponentFactoryViewData(
   providers: readonly PhpFrameworkProvider[],
 ): boolean {
-  return phpFrameworkSupportsViewDataComponentFactories(providers);
+  return phpFrameworkSupportsCapability(
+    providers,
+    "viewDataComponentFactories",
+  );
 }
 
 export function netteViewDataVariablesForViews(

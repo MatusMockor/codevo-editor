@@ -1,7 +1,6 @@
 import {
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigTargetFromSource,
-  phpFrameworkSupportsConfig,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -14,6 +13,7 @@ import {
   createWorkspaceTargetCollector,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 export interface PhpLaravelConfigTargetResolverDeps {
   currentWorkspaceRootRef: { readonly current: string | null };
@@ -44,7 +44,7 @@ function isWorkspaceRootActive(
 }
 
 function supportsConfig(deps: PhpLaravelConfigTargetResolverDeps): boolean {
-  return phpFrameworkSupportsConfig(deps.phpFrameworkProviders);
+  return phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "config");
 }
 
 async function collectPhpLaravelConfigTargets(

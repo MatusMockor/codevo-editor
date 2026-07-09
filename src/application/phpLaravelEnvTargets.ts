@@ -1,9 +1,9 @@
 import {
   phpFrameworkEnvEntriesFromSource,
-  phpFrameworkSupportsEnv,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 import {
   createWorkspaceTargetCollector,
   type WorkspaceTargetCollectorDeps,
@@ -20,7 +20,7 @@ export interface PhpLaravelEnvTargetResolver {
 }
 
 function supportsEnv(deps: PhpLaravelEnvTargetResolverDeps): boolean {
-  return phpFrameworkSupportsEnv(deps.phpFrameworkProviders);
+  return phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "env");
 }
 
 async function collectPhpLaravelEnvTargets(

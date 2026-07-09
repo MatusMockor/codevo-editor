@@ -1,7 +1,6 @@
 import {
   phpFrameworkRouteDefinitionsFromSource,
   phpFrameworkRouteSearchQueries,
-  phpFrameworkSupportsRoutes,
   type PhpFrameworkProvider,
   type PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
@@ -19,6 +18,7 @@ import {
   type WorkspaceFileTarget,
   type WorkspaceTargetCollectorDeps,
 } from "./phpWorkspaceTargetCollector";
+import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 
 export type PhpLaravelNamedRouteTarget =
   WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
@@ -67,7 +67,8 @@ export function createPhpLaravelTextSearchTargetCollectors(
   const collectNamedRoutes =
     createWorkspaceTargetCollector(deps.workspaceTargetCollectorDeps, {
       kind: "textSearch",
-      isEnabled: () => phpFrameworkSupportsRoutes(deps.phpFrameworkProviders),
+      isEnabled: () =>
+        phpFrameworkSupportsCapability(deps.phpFrameworkProviders, "routes"),
       queries: () => phpFrameworkRouteSearchQueries(deps.phpFrameworkProviders),
       parseDefinitions: (source) =>
         phpFrameworkRouteDefinitionsFromSource(source, deps.phpFrameworkProviders),
