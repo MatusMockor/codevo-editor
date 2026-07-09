@@ -28,24 +28,20 @@ function makeDeps(
 
   return {
     activeDocument,
+    goToPhpFrameworkLiteralDefinition: falseHandler,
     goToPhpLaravelAuthGuardDefinition: falseHandler,
     goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
     goToPhpLaravelCacheStoreDefinition: falseHandler,
-    goToPhpLaravelConfigDefinition: falseHandler,
     goToPhpLaravelDatabaseConnectionDefinition: falseHandler,
-    goToPhpLaravelEnvDefinition: falseHandler,
     goToPhpLaravelGateAbilityDefinition: falseHandler,
     goToPhpLaravelLogChannelDefinition: falseHandler,
     goToPhpLaravelMailMailerDefinition: falseHandler,
     goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
-    goToPhpLaravelNamedRouteDefinition: falseHandler,
     goToPhpLaravelPasswordBrokerDefinition: falseHandler,
     goToPhpLaravelQueueConnectionDefinition: falseHandler,
     goToPhpLaravelRedisConnectionDefinition: falseHandler,
     goToPhpLaravelRelationStringDefinition: falseHandler,
     goToPhpLaravelStorageDiskDefinition: falseHandler,
-    goToPhpLaravelTranslationDefinition: falseHandler,
-    goToPhpLaravelViewDefinition: falseHandler,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     ...overrides,
   };
@@ -67,7 +63,7 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
     ],
     [
       { configKey: "app.name", kind: "laravelConfigString" },
-      "goToPhpLaravelConfigDefinition",
+      "goToPhpFrameworkLiteralDefinition",
     ],
     [
       { connectionName: "mysql", kind: "laravelDatabaseConnectionString" },
@@ -75,7 +71,7 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
     ],
     [
       { envName: "APP_URL", kind: "laravelEnvString" },
-      "goToPhpLaravelEnvDefinition",
+      "goToPhpFrameworkLiteralDefinition",
     ],
     [
       { ability: "update-post", kind: "laravelGateAbilityString" },
@@ -95,7 +91,7 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
     ],
     [
       { kind: "laravelNamedRouteString", routeName: "dashboard" },
-      "goToPhpLaravelNamedRouteDefinition",
+      "goToPhpFrameworkLiteralDefinition",
     ],
     [
       { brokerName: "users", kind: "laravelPasswordBrokerString" },
@@ -125,11 +121,11 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
     ],
     [
       { kind: "laravelTranslationString", translationKey: "messages.welcome" },
-      "goToPhpLaravelTranslationDefinition",
+      "goToPhpFrameworkLiteralDefinition",
     ],
     [
       { kind: "laravelViewString", viewName: "dashboard.index" },
-      "goToPhpLaravelViewDefinition",
+      "goToPhpFrameworkLiteralDefinition",
     ],
   ] as const)("dispatches %s to %s", async (context, handlerName) => {
     const handler = vi.fn(async () => true);

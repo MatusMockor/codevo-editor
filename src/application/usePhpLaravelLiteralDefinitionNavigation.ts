@@ -1,6 +1,5 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -16,10 +15,6 @@ interface NamedNavigationTarget {
   position: EditorPosition;
 }
 
-type LaravelNamedRouteContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelNamedRouteString" }
->;
 type LaravelGateAbilityContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelGateAbilityString" }
@@ -27,14 +22,6 @@ type LaravelGateAbilityContext = Extract<
 type LaravelMiddlewareAliasContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelMiddlewareAliasString" }
->;
-type LaravelViewContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelViewString" }
->;
-type LaravelConfigContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelConfigString" }
 >;
 type LaravelAuthGuardContext = Extract<
   PhpIdentifierContext,
@@ -76,37 +63,22 @@ type LaravelStorageDiskContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelStorageDiskString" }
 >;
-type LaravelEnvContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelEnvString" }
->;
-type LaravelTranslationContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelTranslationString" }
->;
 
 export interface PhpLaravelLiteralDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   collectAuthorizationAbilityTargets: PhpFrameworkTargets["collectAuthorizationAbilityTargets"];
   collectMiddlewareAliasTargets: PhpFrameworkTargets["collectMiddlewareAliasTargets"];
-  collectNamedRouteTargets: PhpFrameworkTargets["collectNamedRouteTargets"];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   findAuthGuardTarget: PhpFrameworkTargets["findAuthGuardTarget"];
   findBroadcastConnectionTarget: PhpFrameworkTargets["findBroadcastConnectionTarget"];
   findCacheStoreTarget: PhpFrameworkTargets["findCacheStoreTarget"];
-  findConfigTarget: PhpFrameworkTargets["findConfigTarget"];
   findDatabaseConnectionTarget: PhpFrameworkTargets["findDatabaseConnectionTarget"];
   findLogChannelTarget: PhpFrameworkTargets["findLogChannelTarget"];
   findMailMailerTarget: PhpFrameworkTargets["findMailMailerTarget"];
   findPasswordBrokerTarget: PhpFrameworkTargets["findPasswordBrokerTarget"];
-  findPhpLaravelEnvTarget(
-    envName: string,
-  ): Promise<PhpLaravelEnvTarget | null>;
   findQueueConnectionTarget: PhpFrameworkTargets["findQueueConnectionTarget"];
   findRedisConnectionTarget: PhpFrameworkTargets["findRedisConnectionTarget"];
   findStorageDiskTarget: PhpFrameworkTargets["findStorageDiskTarget"];
-  findTranslationTarget: PhpFrameworkTargets["findTranslationTarget"];
-  findViewTarget: PhpFrameworkTargets["findViewTarget"];
   frameworkRuntime: PhpFrameworkRuntimeContext;
   openNavigationTarget(
     path: string,
@@ -128,11 +100,9 @@ export interface PhpLaravelLiteralDefinitionNavigation {
   goToPhpLaravelCacheStoreDefinition(
     context: LaravelCacheStoreContext,
   ): Promise<boolean>;
-  goToPhpLaravelConfigDefinition(context: LaravelConfigContext): Promise<boolean>;
   goToPhpLaravelDatabaseConnectionDefinition(
     context: LaravelDatabaseConnectionContext,
   ): Promise<boolean>;
-  goToPhpLaravelEnvDefinition(context: LaravelEnvContext): Promise<boolean>;
   goToPhpLaravelGateAbilityDefinition(
     context: LaravelGateAbilityContext,
   ): Promise<boolean>;
@@ -144,9 +114,6 @@ export interface PhpLaravelLiteralDefinitionNavigation {
   ): Promise<boolean>;
   goToPhpLaravelMiddlewareAliasDefinition(
     context: LaravelMiddlewareAliasContext,
-  ): Promise<boolean>;
-  goToPhpLaravelNamedRouteDefinition(
-    context: LaravelNamedRouteContext,
   ): Promise<boolean>;
   goToPhpLaravelPasswordBrokerDefinition(
     context: LaravelPasswordBrokerContext,
@@ -160,40 +127,29 @@ export interface PhpLaravelLiteralDefinitionNavigation {
   goToPhpLaravelStorageDiskDefinition(
     context: LaravelStorageDiskContext,
   ): Promise<boolean>;
-  goToPhpLaravelTranslationDefinition(
-    context: LaravelTranslationContext,
-  ): Promise<boolean>;
-  goToPhpLaravelViewDefinition(context: LaravelViewContext): Promise<boolean>;
 }
 
 export function usePhpLaravelLiteralDefinitionNavigation({
   activeDocument,
   collectAuthorizationAbilityTargets,
   collectMiddlewareAliasTargets,
-  collectNamedRouteTargets,
   currentWorkspaceRootRef,
   findAuthGuardTarget,
   findBroadcastConnectionTarget,
   findCacheStoreTarget,
-  findConfigTarget,
   findDatabaseConnectionTarget,
   findLogChannelTarget,
   findMailMailerTarget,
   findPasswordBrokerTarget,
-  findPhpLaravelEnvTarget,
   findQueueConnectionTarget,
   findRedisConnectionTarget,
   findStorageDiskTarget,
-  findTranslationTarget,
-  findViewTarget,
   frameworkRuntime,
   openNavigationTarget,
   setMessage,
   workspaceRoot,
 }: PhpLaravelLiteralDefinitionNavigationDependencies): PhpLaravelLiteralDefinitionNavigation {
   const supportsLaravelOnlyTargets = frameworkRuntime.isLaravel;
-  const supportsRoutes = frameworkRuntime.supports("routes");
-  const supportsViews = frameworkRuntime.supports("views");
   const openResolvedTarget = useCallback(
     async <Target extends NamedNavigationTarget>({
       gate = supportsLaravelOnlyTargets,
@@ -237,38 +193,6 @@ export function usePhpLaravelLiteralDefinitionNavigation({
     ],
   );
 
-  const goToPhpLaravelNamedRouteDefinition = useCallback(
-    async (context: LaravelNamedRouteContext): Promise<boolean> =>
-      openResolvedTarget({
-        gate: supportsRoutes,
-        label: (target) => target.name,
-        missingMessage: `No Laravel route named ${context.routeName} found.`,
-        resolve: async () => {
-          if (!activeDocument) {
-            return null;
-          }
-
-          const routes = await collectNamedRouteTargets(
-            activeDocument.content,
-            activeDocument.path,
-          );
-
-          return (
-            routes.find(
-              (route) =>
-                route.name.toLowerCase() === context.routeName.toLowerCase(),
-            ) ?? null
-          );
-        },
-      }),
-    [
-      activeDocument,
-      collectNamedRouteTargets,
-      openResolvedTarget,
-      supportsRoutes,
-    ],
-  );
-
   const goToPhpLaravelGateAbilityDefinition = useCallback(
     async (context: LaravelGateAbilityContext): Promise<boolean> =>
       openResolvedTarget({
@@ -309,27 +233,6 @@ export function usePhpLaravelLiteralDefinitionNavigation({
         },
       }),
     [activeDocument, collectMiddlewareAliasTargets, openResolvedTarget],
-  );
-
-  const goToPhpLaravelViewDefinition = useCallback(
-    async (context: LaravelViewContext): Promise<boolean> =>
-      openResolvedTarget({
-        gate: supportsViews,
-        label: (target) => target.name,
-        missingMessage: `No Laravel view named ${context.viewName} found.`,
-        resolve: () => findViewTarget(context.viewName),
-      }),
-    [findViewTarget, openResolvedTarget, supportsViews],
-  );
-
-  const goToPhpLaravelConfigDefinition = useCallback(
-    async (context: LaravelConfigContext): Promise<boolean> =>
-      openResolvedTarget({
-        label: (target) => target.key,
-        missingMessage: `No Laravel config key ${context.configKey} found.`,
-        resolve: () => findConfigTarget(context.configKey),
-      }),
-    [findConfigTarget, openResolvedTarget],
   );
 
   const goToPhpLaravelAuthGuardDefinition = useCallback(
@@ -432,43 +335,18 @@ export function usePhpLaravelLiteralDefinitionNavigation({
     [findStorageDiskTarget, openResolvedTarget],
   );
 
-  const goToPhpLaravelEnvDefinition = useCallback(
-    async (context: LaravelEnvContext): Promise<boolean> =>
-      openResolvedTarget({
-        label: (target) => target.name,
-        missingMessage: `No Laravel env key ${context.envName} found.`,
-        resolve: () => findPhpLaravelEnvTarget(context.envName),
-      }),
-    [findPhpLaravelEnvTarget, openResolvedTarget],
-  );
-
-  const goToPhpLaravelTranslationDefinition = useCallback(
-    async (context: LaravelTranslationContext): Promise<boolean> =>
-      openResolvedTarget({
-        label: (target) => target.key,
-        missingMessage: `No Laravel translation key ${context.translationKey} found.`,
-        resolve: () => findTranslationTarget(context.translationKey),
-      }),
-    [findTranslationTarget, openResolvedTarget],
-  );
-
   return {
     goToPhpLaravelAuthGuardDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelCacheStoreDefinition,
-    goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
-    goToPhpLaravelEnvDefinition,
     goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
-    goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRedisConnectionDefinition,
     goToPhpLaravelStorageDiskDefinition,
-    goToPhpLaravelTranslationDefinition,
-    goToPhpLaravelViewDefinition,
   };
 }

@@ -3,6 +3,7 @@ import {
   resolvePhpClassName,
   type PhpIdentifierContext,
 } from "../domain/phpNavigation";
+import type { PhpContextualFrameworkLiteralContext } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 import type { PhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 
 type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
@@ -39,6 +40,9 @@ export type PhpFrameworkIdentifierDefinitionHandler = (
 export interface PhpFrameworkIdentifierDefinitionNavigationDependencies
   extends PhpLaravelLiteralDefinitionNavigation {
   activeDocument: EditorDocument | null;
+  goToPhpFrameworkLiteralDefinition(
+    context: PhpContextualFrameworkLiteralContext,
+  ): Promise<boolean>;
   goToPhpLaravelRelationStringDefinition: PhpContextHandler<"laravelRelationString">;
   openDirectPhpMethodTarget(
     className: string,
@@ -80,24 +84,20 @@ export async function goToPhpFrameworkIdentifierDefinition(
   context: PhpIdentifierContext,
   {
     activeDocument,
+    goToPhpFrameworkLiteralDefinition,
     goToPhpLaravelAuthGuardDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelCacheStoreDefinition,
-    goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
-    goToPhpLaravelEnvDefinition,
     goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
-    goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRedisConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
-    goToPhpLaravelTranslationDefinition,
-    goToPhpLaravelViewDefinition,
     openDirectPhpMethodTarget,
     openPhpClassTarget,
   }: PhpFrameworkIdentifierDefinitionNavigationDependencies,
@@ -107,19 +107,19 @@ export async function goToPhpFrameworkIdentifierDefinition(
   }
 
   if (context.kind === "laravelNamedRouteString") {
-    return goToPhpLaravelNamedRouteDefinition(context);
+    return goToPhpFrameworkLiteralDefinition(context);
   }
 
   if (context.kind === "laravelTranslationString") {
-    return goToPhpLaravelTranslationDefinition(context);
+    return goToPhpFrameworkLiteralDefinition(context);
   }
 
   if (context.kind === "laravelEnvString") {
-    return goToPhpLaravelEnvDefinition(context);
+    return goToPhpFrameworkLiteralDefinition(context);
   }
 
   if (context.kind === "laravelConfigString") {
-    return goToPhpLaravelConfigDefinition(context);
+    return goToPhpFrameworkLiteralDefinition(context);
   }
 
   if (context.kind === "laravelAuthGuardString") {
@@ -171,7 +171,7 @@ export async function goToPhpFrameworkIdentifierDefinition(
   }
 
   if (context.kind === "laravelViewString") {
-    return goToPhpLaravelViewDefinition(context);
+    return goToPhpFrameworkLiteralDefinition(context);
   }
 
   if (context.kind === "laravelRouteActionMethod") {
