@@ -275,4 +275,32 @@ $comment->lo`;
 
     harness.unmount();
   });
+
+  it("keeps scoped Laravel completions for legacy callers without runtime context", async () => {
+    const source = "<?php\nreturn Auth::guard('ad');";
+    const deps = makeDeps({
+      activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: `${ROOT}/config/auth.php`,
+          position: { column: 12, lineNumber: 4 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+      frameworkRuntime: undefined,
+      isLaravelFrameworkActive: true,
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "ad"));
+
+    expect(completions.map((completion) => completion.name)).toEqual(["admin"]);
+    expect(deps.collectAuthGuardTargets).toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });

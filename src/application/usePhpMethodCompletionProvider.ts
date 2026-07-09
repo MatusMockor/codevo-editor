@@ -17,6 +17,7 @@ import {
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import {
   resolvePhpFrameworkLiteralCompletions,
   type PhpFrameworkLiteralCompletionDependencies,
@@ -112,10 +113,14 @@ export function usePhpMethodCompletionProvider({
   resolvePhpStaticMethodCompletions,
   workspaceRoot,
 }: PhpMethodCompletionProviderDependencies): PhpMethodCompletionProvider {
-  const frameworkProviders =
-    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
+  const activeFrameworkRuntime = phpFrameworkRuntimeContextFromDependencies({
+    activePhpFrameworkProviders,
+    frameworkRuntime,
+    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
+  });
+  const frameworkProviders = activeFrameworkRuntime.providers;
   const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+    activeFrameworkRuntime.isLaravel;
 
   const providePhpMethodCompletions = useCallback(
     async (
@@ -163,7 +168,7 @@ export function usePhpMethodCompletionProvider({
                 path: activeDocument.path,
               }
             : null,
-          isLaravelFrameworkActive,
+          frameworkRuntime: activeFrameworkRuntime,
           position,
           source,
         },
@@ -391,6 +396,7 @@ export function usePhpMethodCompletionProvider({
       collectViewTargets,
       currentWorkspaceRootRef,
       ensurePhpFrameworkSourceCollectionsLoaded,
+      activeFrameworkRuntime,
       frameworkProviders,
       isLaravelFrameworkActive,
       resolvePhpClassReference,

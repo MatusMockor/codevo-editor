@@ -1,8 +1,43 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
   resolvePhpFrameworkScopedCompletions,
   type PhpFrameworkScopedCompletionDependencies,
 } from "./phpFrameworkScopedCompletions";
+
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "generic",
+    providers: [],
+  }),
+);
+const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["nette"],
+    profile: "nette",
+    providers: [phpNetteFrameworkProvider],
+  }),
+);
+const STALE_LARAVEL_PROFILE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: [],
+    profile: "laravel",
+    providers: [],
+  }),
+);
 
 function dependencies(
   overrides: Partial<PhpFrameworkScopedCompletionDependencies> = {},
@@ -26,7 +61,7 @@ function dependencies(
 }
 
 describe("resolvePhpFrameworkScopedCompletions", () => {
-  it("returns null and does not collect when Laravel is inactive", async () => {
+  it("returns null and does not collect when runtime has no Laravel provider", async () => {
     const deps = dependencies({
       collectAuthGuardTargets: vi.fn(async () => [
         {
@@ -46,12 +81,104 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
           activeDocument: {
             path: "/workspace/app/Http/Controllers/HomeController.php",
           },
-          isLaravelFrameworkActive: false,
+          frameworkRuntime: GENERIC_RUNTIME,
           position: positionAfter(source, "ad"),
           source,
         },
         deps,
       ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
+  });
+
+  it("does not activate Laravel completions for Nette runtime", async () => {
+    const deps = dependencies({
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: "/workspace/config/auth.php",
+          position: { column: 1, lineNumber: 1 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn Auth::guard('ad');";
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(
+        {
+          activeDocument: {
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          frameworkRuntime: NETTE_RUNTIME,
+          position: positionAfter(source, "ad"),
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
+  });
+
+  it("uses provider identity instead of stale Laravel profile state", async () => {
+    const deps = dependencies({
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: "/workspace/config/auth.php",
+          position: { column: 1, lineNumber: 1 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn Auth::guard('ad');";
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(
+        {
+          activeDocument: {
+            path: "/workspace/app/Http/Controllers/HomeController.php",
+          },
+          frameworkRuntime: STALE_LARAVEL_PROFILE_RUNTIME,
+          position: positionAfter(source, "ad"),
+          source,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
+  });
+
+  it("ignores leaked legacy Laravel booleans when runtime is generic", async () => {
+    const deps = dependencies({
+      collectAuthGuardTargets: vi.fn(async () => [
+        {
+          guardName: "admin",
+          key: "auth.guards.admin",
+          path: "/workspace/config/auth.php",
+          position: { column: 1, lineNumber: 1 },
+          relativePath: "config/auth.php",
+        },
+      ]),
+    });
+    const source = "<?php\nreturn Auth::guard('ad');";
+    const requestWithLegacyLeak = {
+      activeDocument: {
+        path: "/workspace/app/Http/Controllers/HomeController.php",
+      },
+      frameworkRuntime: GENERIC_RUNTIME,
+      isLaravelFrameworkActive: true,
+      position: positionAfter(source, "ad"),
+      source,
+    };
+
+    await expect(
+      resolvePhpFrameworkScopedCompletions(requestWithLegacyLeak, deps),
     ).resolves.toBeNull();
 
     expect(deps.collectAuthGuardTargets).not.toHaveBeenCalled();
@@ -234,7 +361,7 @@ function request(source: string, token: string) {
     activeDocument: {
       path: "/workspace/app/Http/Controllers/HomeController.php",
     },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     position: positionAfter(source, token),
     source,
   };

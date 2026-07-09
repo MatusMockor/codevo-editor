@@ -49,6 +49,7 @@ import {
   phpLaravelStorageDiskReferenceContextAt,
 } from "../domain/phpLaravelStorage";
 import { getFileName } from "../domain/workspace";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type {
   PhpLaravelAuthGuardTarget,
   PhpLaravelBroadcastConnectionTarget,
@@ -112,7 +113,7 @@ export interface PhpFrameworkScopedCompletionDependencies {
 
 export interface PhpFrameworkScopedCompletionRequest {
   activeDocument: PhpFrameworkScopedCompletionDocument | null;
-  isLaravelFrameworkActive: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   position: EditorPosition;
   source: string;
 }
@@ -165,7 +166,7 @@ export async function resolvePhpFrameworkScopedCompletions(
 
 const phpLaravelScopedCompletionProvider: PhpFrameworkScopedCompletionProvider = {
   id: "laravel",
-  isActive: (request) => request.isLaravelFrameworkActive,
+  isActive: (request) => request.frameworkRuntime.hasProvider("laravel"),
   resolve: (context, dependencies) =>
     resolveScopedCompletionHandlers(
       [
