@@ -50,15 +50,15 @@ export function usePhpLaravelModelNavigationTargets({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
-  const isLaravelFrameworkActive =
+  const canOpenLaravelModelSourceTargets =
     frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> =>
       openLaravelModelSourceTarget({
         className,
+        canOpenLaravelModelSourceTargets,
         currentWorkspaceRootRef,
-        isLaravelFrameworkActive,
         openNavigationTarget,
         readNavigationFileContent,
         resolvePhpClassSourcePaths,
@@ -68,8 +68,8 @@ export function usePhpLaravelModelNavigationTargets({
         workspaceRoot,
       }),
     [
+      canOpenLaravelModelSourceTargets,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       readNavigationFileContent,
       resolvePhpClassSourcePaths,
@@ -82,8 +82,8 @@ export function usePhpLaravelModelNavigationTargets({
     async (className: string, attributeName: string): Promise<boolean> =>
       openLaravelModelSourceTarget({
         className,
+        canOpenLaravelModelSourceTargets,
         currentWorkspaceRootRef,
-        isLaravelFrameworkActive,
         openNavigationTarget,
         readNavigationFileContent,
         resolvePhpClassSourcePaths,
@@ -94,8 +94,8 @@ export function usePhpLaravelModelNavigationTargets({
         workspaceRoot,
       }),
     [
+      canOpenLaravelModelSourceTargets,
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
       openNavigationTarget,
       readNavigationFileContent,
       resolvePhpClassSourcePaths,
@@ -117,8 +117,8 @@ interface LaravelModelSourceTarget {
 
 interface OpenLaravelModelSourceTargetInput {
   className: string;
+  canOpenLaravelModelSourceTargets: boolean;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -134,8 +134,8 @@ interface OpenLaravelModelSourceTargetInput {
 
 async function openLaravelModelSourceTarget({
   className,
+  canOpenLaravelModelSourceTargets,
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
   openNavigationTarget,
   readNavigationFileContent,
   resolvePhpClassSourcePaths,
@@ -149,7 +149,7 @@ async function openLaravelModelSourceTarget({
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
   if (
-    !isLaravelFrameworkActive ||
+    !canOpenLaravelModelSourceTargets ||
     !requestedRoot ||
     !requestedDescriptor?.php
   ) {
