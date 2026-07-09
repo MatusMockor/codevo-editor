@@ -6,31 +6,18 @@ import {
   isLattePresenterLinkIntelligenceActive,
   isLatteSemanticActive,
   offsetAtEditorPosition,
-  type LatteRuntimeCapabilities,
   type LatteRuntimeDependencies,
 } from "./latteIntelligenceRuntime";
-
-const templateCapabilities: LatteRuntimeCapabilities = {
-  supportsLattePresenterLinkIntelligence: () => false,
-  supportsLatteTemplateIntelligence: () => true,
-};
-
-const linkCapabilities: LatteRuntimeCapabilities = {
-  supportsLattePresenterLinkIntelligence: () => true,
-  supportsLatteTemplateIntelligence: () => true,
-};
-
-const inertCapabilities: LatteRuntimeCapabilities = {
-  supportsLattePresenterLinkIntelligence: () => false,
-  supportsLatteTemplateIntelligence: () => false,
-};
 
 function deps(
   overrides: Partial<LatteRuntimeDependencies> = {},
 ): LatteRuntimeDependencies {
   return {
     currentWorkspaceRootRef: { current: "/ws" },
-    frameworkIntelligence: { providers: [{ id: "nette" }] },
+    frameworkIntelligence: frameworkIntelligence({
+      lattePresenterLinkIntelligence: false,
+      latteTemplateIntelligence: true,
+    }),
     getActiveDocument: () => ({ path: "/ws/app/UI/Home/default.latte" }),
     isSemanticIntelligenceActive: true,
     toRelativePath: (root, path) =>
@@ -40,9 +27,20 @@ function deps(
   };
 }
 
+function frameworkIntelligence(
+  support: Partial<Record<string, boolean>>,
+): LatteRuntimeDependencies["frameworkIntelligence"] {
+  return {
+    capabilities: {
+      supports: (capability) => support[capability] === true,
+    },
+    providers: [{ id: "nette" }],
+  };
+}
+
 describe("activeLatteWorkspaceContext", () => {
   it("returns requested root and live root guard when semantic Latte is active", () => {
-    const context = activeLatteWorkspaceContext(deps(), templateCapabilities);
+    const context = activeLatteWorkspaceContext(deps());
 
     expect(context?.requestedRoot).toBe("/ws");
     expect(context?.isRequestedRootActive()).toBe(true);
@@ -52,12 +50,15 @@ describe("activeLatteWorkspaceContext", () => {
     expect(
       activeLatteWorkspaceContext(
         deps({ isSemanticIntelligenceActive: false }),
-        templateCapabilities,
       ),
     ).toBeNull();
-    expect(activeLatteWorkspaceContext(deps(), inertCapabilities)).toBeNull();
     expect(
-      activeLatteWorkspaceContext(deps({ workspaceRoot: null }), templateCapabilities),
+      activeLatteWorkspaceContext(
+        deps({ frameworkIntelligence: frameworkIntelligence({}) }),
+      ),
+    ).toBeNull();
+    expect(
+      activeLatteWorkspaceContext(deps({ workspaceRoot: null })),
     ).toBeNull();
   });
 
@@ -65,7 +66,6 @@ describe("activeLatteWorkspaceContext", () => {
     const rootRef = { current: "/ws" };
     const context = activeLatteWorkspaceContext(
       deps({ currentWorkspaceRootRef: rootRef }),
-      templateCapabilities,
     );
 
     rootRef.current = "/other";
@@ -106,11 +106,19 @@ describe("Latte runtime helpers", () => {
   });
 
   it("checks semantic and presenter-link gates independently", () => {
-    expect(isLatteSemanticActive(deps(), templateCapabilities)).toBe(true);
-    expect(isLattePresenterLinkIntelligenceActive(deps(), templateCapabilities))
+    expect(isLatteSemanticActive(deps())).toBe(true);
+    expect(isLattePresenterLinkIntelligenceActive(deps()))
       .toBe(false);
-    expect(isLattePresenterLinkIntelligenceActive(deps(), linkCapabilities))
-      .toBe(true);
+    expect(
+      isLattePresenterLinkIntelligenceActive(
+        deps({
+          frameworkIntelligence: frameworkIntelligence({
+            lattePresenterLinkIntelligence: true,
+            latteTemplateIntelligence: true,
+          }),
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("converts Monaco line/column positions into source offsets", () => {

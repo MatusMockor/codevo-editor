@@ -1,12 +1,11 @@
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import type { TextSearchGateway } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface BladeViewDataCacheRef {
   current: Record<string, BladeViewDataEntry[]>;
@@ -20,7 +19,7 @@ export interface BladeViewDataCacheDependencies {
   entriesByRootRef: BladeViewDataCacheRef;
   loadInFlightRef: BladeViewDataInFlightRef;
   currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readNavigationFileContent: (path: string) => Promise<string>;
   textSearch: Pick<TextSearchGateway, "searchText">;
 }
@@ -32,18 +31,17 @@ export async function ensureBladeViewDataEntriesLoaded(
   const {
     currentWorkspaceRootRef,
     entriesByRootRef,
-    frameworkProviders,
+    frameworkRuntime,
     loadInFlightRef,
     readNavigationFileContent,
     textSearch,
   } = dependencies;
 
-  if (
-    !requestedRoot ||
-    !phpFrameworkSupportsCapability(frameworkProviders, "viewData")
-  ) {
+  if (!requestedRoot || !frameworkRuntime.supports("viewData")) {
     return null;
   }
+
+  const frameworkProviders = frameworkRuntime.providers;
 
   const cached = entriesByRootRef.current[requestedRoot];
 

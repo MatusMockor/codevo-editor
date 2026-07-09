@@ -2,13 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 
-const CUSTOM_LATTE_TEMPLATE_PROVIDER: PhpFrameworkProvider = {
-  id: "custom-latte-template",
-  latte: {
-    supportsTemplateIntelligence: true,
-  },
-};
-
 const CUSTOM_LATTE_VIEW_DATA_PROVIDER: PhpFrameworkProvider = {
   id: "custom-latte-view-data",
   latte: {
@@ -39,19 +32,6 @@ const CUSTOM_LATTE_VIEW_DATA_PROVIDER: PhpFrameworkProvider = {
 };
 
 describe("netteLatteFrameworkCapabilities", () => {
-  it("allows template-only Latte providers without enabling presenter links", () => {
-    expect(
-      netteLatteFrameworkCapabilities.supportsLatteTemplateIntelligence([
-        CUSTOM_LATTE_TEMPLATE_PROVIDER,
-      ]),
-    ).toBe(true);
-    expect(
-      netteLatteFrameworkCapabilities.supportsLattePresenterLinkIntelligence([
-        CUSTOM_LATTE_TEMPLATE_PROVIDER,
-      ]),
-    ).toBe(false);
-  });
-
   it("delegates view-data extraction and search queries to active providers", () => {
     const source = "<?php\n$custom = new Custom();\nassignView();\n";
     const entry = netteLatteFrameworkCapabilities.viewDataEntryFromSource(

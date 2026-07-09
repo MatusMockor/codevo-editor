@@ -153,12 +153,6 @@ export interface LatteFrameworkCapabilities {
   presenterLinkTargetsFromSource(path: string, source: string): string[];
   presenterScanDirectories: readonly string[];
   isPresenterSourcePath(path: string): boolean;
-  supportsLattePresenterLinkIntelligence(
-    providers: readonly PhpFrameworkProvider[],
-  ): boolean;
-  supportsLatteTemplateIntelligence(
-    providers: readonly PhpFrameworkProvider[],
-  ): boolean;
   viewDataEntryFromSource(
     source: string,
     providers: readonly PhpFrameworkProvider[],

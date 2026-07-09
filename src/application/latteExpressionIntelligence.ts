@@ -231,8 +231,11 @@ function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
     deps,
     isRequestedRootActive,
     phpExtension: PHP_EXTENSION,
-    providers: deps.frameworkIntelligence.providers,
     requestedRoot,
+    supportsComponentFactoryViewData:
+      deps.frameworkIntelligence.capabilities.supports(
+        "viewDataComponentFactories",
+      ),
     templateRelativePath,
   };
 }
@@ -259,6 +262,10 @@ function loadLatteViewDataEntries(
     providers: deps.frameworkIntelligence.providers,
     requestedRoot,
     searchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
+    supportsComponentFactoryViewData:
+      deps.frameworkIntelligence.capabilities.supports(
+        "viewDataComponentFactories",
+      ),
     ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
   });
 }

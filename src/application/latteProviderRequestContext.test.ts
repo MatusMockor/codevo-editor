@@ -36,9 +36,6 @@ const frameworkCapabilities: LatteFrameworkCapabilities = {
   presenterLinkCompletionContextAt: () => null,
   presenterLinkTargetsFromSource: () => [],
   presenterScanDirectories: [],
-  supportsLattePresenterLinkIntelligence: () => false,
-  supportsLatteTemplateIntelligence: (providers) =>
-    providers.some((provider) => provider.id === frameworkProvider.id),
   viewDataEntryFromSource: () => null,
   viewDataSearchQueries: () => [],
 };

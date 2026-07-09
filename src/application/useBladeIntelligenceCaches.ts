@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef } from "react";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchGateway } from "../domain/workspace";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
@@ -18,7 +18,7 @@ import {
 
 export interface BladeIntelligenceCacheDependencies {
   currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkProviders: readonly PhpFrameworkProvider[];
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readNavigationFileContent: (path: string) => Promise<string>;
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
   resolvePhpClassPropertyOrRelationType: BladeIntelligenceDependencies["resolvePhpClassPropertyOrRelationType"];
@@ -41,7 +41,7 @@ export function useBladeIntelligenceCaches(
 ): BladeIntelligenceCaches {
   const {
     currentWorkspaceRootRef,
-    frameworkProviders,
+    frameworkRuntime,
     readNavigationFileContent,
     relativeWorkspacePath,
     resolvePhpClassPropertyOrRelationType,
@@ -64,7 +64,7 @@ export function useBladeIntelligenceCaches(
       return loadBladeViewDataEntries(requestedRoot, {
         currentWorkspaceRootRef,
         entriesByRootRef: bladeViewDataEntriesByRootRef,
-        frameworkProviders,
+        frameworkRuntime,
         loadInFlightRef: bladeViewDataEntriesLoadInFlightRef,
         readNavigationFileContent,
         textSearch,
@@ -72,7 +72,7 @@ export function useBladeIntelligenceCaches(
     },
     [
       currentWorkspaceRootRef,
-      frameworkProviders,
+      frameworkRuntime,
       readNavigationFileContent,
       textSearch,
     ],

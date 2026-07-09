@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   loadNetteViewDataEntries,
-  supportsNetteComponentFactoryViewData,
   type NetteViewDataCache,
   type NetteViewDataDependencies,
   type NetteViewDataFrameworkCapabilities,
@@ -76,6 +75,7 @@ function makeContext({
   inFlight = new Map(),
   rootActive = true,
   providers = [CUSTOM_PROVIDER],
+  supportsComponentFactoryViewData = false,
 }: {
   cache?: NetteViewDataCache;
   deps?: NetteViewDataDependencies;
@@ -83,6 +83,7 @@ function makeContext({
   inFlight?: NetteViewDataInFlight;
   rootActive?: boolean;
   providers?: readonly PhpFrameworkProvider[];
+  supportsComponentFactoryViewData?: boolean;
 } = {}) {
   return {
     cache,
@@ -96,6 +97,7 @@ function makeContext({
       providers,
       requestedRoot: ROOT,
       searchLimit: 200,
+      supportsComponentFactoryViewData,
       ttlMs: 5_000,
     },
     inFlight,
@@ -234,6 +236,7 @@ class HomePresenter
       deps,
       frameworkCapabilities,
       providers: [NETTE_PROVIDER],
+      supportsComponentFactoryViewData: true,
     });
 
     const entries = await loadNetteViewDataEntries(context);
@@ -245,20 +248,26 @@ class HomePresenter
       typeHint: "\\App\\Model\\Product",
     });
   });
-});
+  it("skips Nette createComponent template variables when the runtime gate is off", async () => {
+    const deps = makeDeps({
+      searchText: vi.fn(async (_root, query) =>
+        query === "createComponent" ? [{ path: PHP_FILE }] : [],
+      ),
+    });
+    const frameworkCapabilities = makeCapabilities({
+      viewDataSearchQueries: vi.fn(() => []),
+    });
+    const { context } = makeContext({
+      deps,
+      frameworkCapabilities,
+      providers: [NETTE_PROVIDER],
+      supportsComponentFactoryViewData: false,
+    });
 
-describe("supportsNetteComponentFactoryViewData", () => {
-  it("detects component factory view data by provider capability", () => {
-    expect(supportsNetteComponentFactoryViewData([CUSTOM_PROVIDER])).toBe(false);
-    expect(
-      supportsNetteComponentFactoryViewData([
-        CUSTOM_PROVIDER,
-        { id: "nette" } as PhpFrameworkProvider,
-      ]),
-    ).toBe(false);
-    expect(
-      supportsNetteComponentFactoryViewData([CUSTOM_PROVIDER, NETTE_PROVIDER]),
-    ).toBe(true);
+    const entries = await loadNetteViewDataEntries(context);
+
+    expect(entries).toEqual([]);
+    expect(deps.searchText).not.toHaveBeenCalled();
   });
 });
 

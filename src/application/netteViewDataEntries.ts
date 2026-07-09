@@ -3,7 +3,6 @@ import type {
   PhpFrameworkViewDataEntry,
   PhpFrameworkViewDataVariable,
 } from "../domain/phpFrameworkProviders";
-import { phpFrameworkSupportsCapability } from "./phpFrameworkCapabilityGuards";
 import { scanNetteCreateComponentViewDataEntries } from "./netteCreateComponentViewDataScanner";
 
 export interface NetteViewDataSearchResult {
@@ -60,6 +59,7 @@ export interface NetteViewDataLoadContext {
   providers: readonly PhpFrameworkProvider[];
   requestedRoot: string;
   searchLimit: number;
+  supportsComponentFactoryViewData: boolean;
   ttlMs: number;
 }
 
@@ -93,15 +93,6 @@ export async function loadNetteViewDataEntries(
   inFlight.set(requestedRoot, load);
 
   return load;
-}
-
-export function supportsNetteComponentFactoryViewData(
-  providers: readonly PhpFrameworkProvider[],
-): boolean {
-  return phpFrameworkSupportsCapability(
-    providers,
-    "viewDataComponentFactories",
-  );
 }
 
 export function netteViewDataVariablesForViews(
@@ -142,13 +133,12 @@ async function scanNetteViewDataEntries(
     providers,
     requestedRoot,
     searchLimit,
+    supportsComponentFactoryViewData,
     ttlMs,
   } = context;
   const searchQueries = frameworkCapabilities.viewDataSearchQueries(providers);
-  const shouldScanCreateComponentContexts =
-    supportsNetteComponentFactoryViewData(providers);
 
-  if (searchQueries.length === 0 && !shouldScanCreateComponentContexts) {
+  if (searchQueries.length === 0 && !supportsComponentFactoryViewData) {
     cache[requestedRoot] = {
       entries: [],
       expiresAt: Date.now() + ttlMs,
@@ -219,7 +209,7 @@ async function scanNetteViewDataEntries(
     }
   }
 
-  if (shouldScanCreateComponentContexts) {
+  if (supportsComponentFactoryViewData) {
     entries.push(
       ...(await scanNetteCreateComponentViewDataEntries(context, visitedSources)),
     );

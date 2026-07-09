@@ -81,8 +81,6 @@ export function useBladeIntelligence(
     workspaceFiles,
     workspaceRoot,
   } = deps;
-  const activePhpFrameworkProviders = frameworkRuntime.providers;
-
   const {
     collectBladeComponentNames,
     collectBladeForeachLoopVariables,
@@ -94,7 +92,7 @@ export function useBladeIntelligence(
     resetBladeIntelligenceCaches,
   } = useBladeIntelligenceCaches({
     currentWorkspaceRootRef,
-    frameworkProviders: activePhpFrameworkProviders,
+    frameworkRuntime,
     readNavigationFileContent,
     relativeWorkspacePath,
     resolvePhpClassPropertyOrRelationType,

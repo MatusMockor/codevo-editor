@@ -1,5 +1,8 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import type {
+  PhpFrameworkProvider,
+  PhpFrameworkProviderCapability,
+} from "../domain/phpFrameworkProviders";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface LatteRuntimeActiveDocument {
@@ -9,21 +12,15 @@ export interface LatteRuntimeActiveDocument {
 export interface LatteRuntimeDependencies {
   currentWorkspaceRootRef: { readonly current: string | null };
   frameworkIntelligence: {
+    capabilities: {
+      supports(capability: PhpFrameworkProviderCapability): boolean;
+    };
     providers: readonly PhpFrameworkProvider[];
   };
   getActiveDocument(): LatteRuntimeActiveDocument | null;
   isSemanticIntelligenceActive: boolean;
   toRelativePath(rootPath: string, path: string): string;
   workspaceRoot: string | null;
-}
-
-export interface LatteRuntimeCapabilities {
-  supportsLattePresenterLinkIntelligence(
-    providers: readonly PhpFrameworkProvider[],
-  ): boolean;
-  supportsLatteTemplateIntelligence(
-    providers: readonly PhpFrameworkProvider[],
-  ): boolean;
 }
 
 export interface LatteWorkspaceContext {
@@ -33,9 +30,9 @@ export interface LatteWorkspaceContext {
 
 export function activeLatteWorkspaceContext(
   deps: LatteRuntimeDependencies,
-  capabilities: LatteRuntimeCapabilities,
+  _capabilities?: unknown,
 ): LatteWorkspaceContext | null {
-  if (!isLatteSemanticActive(deps, capabilities)) {
+  if (!isLatteSemanticActive(deps)) {
     return null;
   }
 
@@ -80,21 +77,21 @@ export function evictOtherRootCacheEntries<Entry>(
 
 export function isLattePresenterLinkIntelligenceActive(
   deps: LatteRuntimeDependencies,
-  capabilities: LatteRuntimeCapabilities,
+  _capabilities?: unknown,
 ): boolean {
-  return capabilities.supportsLattePresenterLinkIntelligence(
-    deps.frameworkIntelligence.providers,
+  return deps.frameworkIntelligence.capabilities.supports(
+    "lattePresenterLinkIntelligence",
   );
 }
 
 export function isLatteSemanticActive(
   deps: LatteRuntimeDependencies,
-  capabilities: LatteRuntimeCapabilities,
+  _capabilities?: unknown,
 ): boolean {
   return (
     deps.isSemanticIntelligenceActive &&
-    capabilities.supportsLatteTemplateIntelligence(
-      deps.frameworkIntelligence.providers,
+    deps.frameworkIntelligence.capabilities.supports(
+      "latteTemplateIntelligence",
     )
   );
 }

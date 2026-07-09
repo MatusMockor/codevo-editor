@@ -126,9 +126,6 @@ function frameworkCapabilities(): LatteFrameworkCapabilities {
     presenterLinkCompletionContextAt: () => null,
     presenterLinkTargetsFromSource: () => [],
     presenterScanDirectories: [],
-    supportsLattePresenterLinkIntelligence: (providers) =>
-      providers.some((provider) => provider.id === FRAMEWORK_PROVIDER.id),
-    supportsLatteTemplateIntelligence: () => false,
     viewDataEntryFromSource: () => null,
     viewDataSearchQueries: () => [],
   };

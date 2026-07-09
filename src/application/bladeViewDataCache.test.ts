@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  createPhpFrameworkProviderCapabilityRegistry,
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { TextSearchResult } from "../domain/workspace";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   ensureBladeViewDataEntriesLoaded,
   invalidateBladeViewDataEntriesForPath,
@@ -56,11 +61,30 @@ function makeDeps(
   return {
     currentWorkspaceRootRef: { current: ROOT },
     entriesByRootRef: { current: {} },
-    frameworkProviders: PROVIDERS,
+    frameworkRuntime: frameworkRuntime(PROVIDERS),
     loadInFlightRef: { current: new Map() },
     readNavigationFileContent: vi.fn(async () => invoiceControllerSource),
     textSearch: { searchText: vi.fn(async () => [textResult(PHP_FILE)]) },
     ...overrides,
+  };
+}
+
+function frameworkRuntime(
+  providers: readonly PhpFrameworkProvider[],
+): PhpFrameworkRuntimeContext {
+  const capabilities = createPhpFrameworkProviderCapabilityRegistry(providers);
+
+  return {
+    capabilities,
+    providers,
+    profile: "laravel",
+    isLaravel: providers.some((provider) => provider.id === "laravel"),
+    isNette: providers.some((provider) => provider.id === "nette"),
+    hasProvider: (providerId) =>
+      providers.some((provider) => provider.id === providerId),
+    supports: (capability) => capabilities.supports(capability),
+    supportsTargetCollection: (kind) =>
+      capabilities.supportsTargetCollection(kind),
   };
 }
 

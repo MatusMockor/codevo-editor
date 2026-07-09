@@ -8,13 +8,8 @@ import {
   resolveNetteControlVariableDefinition,
   type NetteCurrentClassContext,
 } from "./netteCurrentClasses";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 
 const ROOT = "/ws";
-const NETTE_PROVIDER = {
-  id: "nette",
-  viewData: { supportsComponentFactoryVariables: true },
-} as PhpFrameworkProvider;
 
 const PRESENTATION_PRESENTER = `<?php
 namespace App\\Presentation\\Invoice;
@@ -46,15 +41,15 @@ class GridControl
 
 function makeContext({
   active = true,
-  providers = [NETTE_PROVIDER],
   readFileContent,
   searchText = vi.fn(async () => []),
+  supportsComponentFactoryViewData = true,
   templateRelativePath = "app/UI/Invoice/Components/GridControl/default.latte",
 }: {
   active?: boolean | (() => boolean);
-  providers?: readonly PhpFrameworkProvider[];
   readFileContent?: (path: string) => Promise<string>;
   searchText?: (rootPath: string, query: string, limit: number) => Promise<{ path: string }[]>;
+  supportsComponentFactoryViewData?: boolean;
   templateRelativePath?: string;
 } = {}): NetteCurrentClassContext {
   const isActive = typeof active === "function" ? active : () => active;
@@ -88,8 +83,8 @@ function makeContext({
     },
     isRequestedRootActive: isActive,
     phpExtension: ".php",
-    providers,
     requestedRoot: ROOT,
+    supportsComponentFactoryViewData,
     templateRelativePath,
   };
 }
@@ -167,8 +162,8 @@ describe("currentNettePresenterClassName", () => {
       { path: `${ROOT}/app/UI/Invoice/InvoicePresenter.php` },
     ]);
     const context = makeContext({
-      providers: [{ id: "custom" } as PhpFrameworkProvider],
       searchText,
+      supportsComponentFactoryViewData: false,
     });
 
     await expect(currentNettePresenterClassName(context)).resolves.toBeNull();

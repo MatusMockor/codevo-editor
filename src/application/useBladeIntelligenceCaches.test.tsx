@@ -3,8 +3,13 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  createPhpFrameworkProviderCapabilityRegistry,
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   useBladeIntelligenceCaches,
   type BladeIntelligenceCacheDependencies,
@@ -36,7 +41,7 @@ function makeDeps(
 ): BladeIntelligenceCacheDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    frameworkProviders: [phpLaravelFrameworkProvider],
+    frameworkRuntime: frameworkRuntime([phpLaravelFrameworkProvider]),
     readNavigationFileContent: vi.fn(async () => `<?php
 use App\\Models\\Invoice;
 
@@ -53,6 +58,25 @@ return view('invoices.show', ['invoice' => Invoice::findOrFail(1)]);
     },
     workspaceRoot: ROOT,
     ...overrides,
+  };
+}
+
+function frameworkRuntime(
+  providers: readonly PhpFrameworkProvider[],
+): PhpFrameworkRuntimeContext {
+  const capabilities = createPhpFrameworkProviderCapabilityRegistry(providers);
+
+  return {
+    capabilities,
+    providers,
+    profile: "laravel",
+    isLaravel: providers.some((provider) => provider.id === "laravel"),
+    isNette: providers.some((provider) => provider.id === "nette"),
+    hasProvider: (providerId) =>
+      providers.some((provider) => provider.id === providerId),
+    supports: (capability) => capabilities.supports(capability),
+    supportsTargetCollection: (kind) =>
+      capabilities.supportsTargetCollection(kind),
   };
 }
 
