@@ -1,16 +1,14 @@
 import { useCallback, type MutableRefObject } from "react";
 import {
-  detectLaravelRouteModelBindingAt,
-  explicitLaravelRouteModelBindingClassName,
-  phpModelNamespacePrefixes,
-} from "../domain/laravelRouteModelBinding";
+  phpFrameworkDispatchTargetAt,
+  phpFrameworkEventListenerMapFromSource,
+  phpFrameworkEventServiceProviderClassNames,
+  phpFrameworkExplicitRouteModelBindingClassName,
+  phpFrameworkModelNamespacePrefixes,
+  phpFrameworkRouteModelBindingAt,
+  type PhpFrameworkDispatchTarget,
+} from "../domain/phpFrameworkProviders";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpEventServiceProviderClassNames,
-  phpLaravelDispatchTargetAt,
-  phpLaravelEventListenerMap,
-  type PhpLaravelDispatchTarget,
-} from "../domain/phpLaravelDispatch";
 import {
   phpClassIdentifierNameAt,
   phpMethodPositionOrNull,
@@ -88,12 +86,13 @@ export function usePhpFrameworkDefinitionNavigation({
     isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
   });
   const activePhpFrameworkProviders = phpFrameworkRuntime.providers;
-  const supportsLaravelRouteDefinitionNavigation =
+  const supportsFrameworkRouteDefinitionNavigation =
     phpFrameworkRuntime.isLaravel && phpFrameworkRuntime.supports("routes");
-  const supportsLaravelDispatchDefinitionNavigation =
-    supportsLaravelRouteDefinitionNavigation;
+  const supportsFrameworkDispatchDefinitionNavigation =
+    supportsFrameworkRouteDefinitionNavigation &&
+    phpFrameworkRuntime.supports("dispatch");
 
-  const openPhpLaravelHandlerTarget = useCallback(
+  const openPhpFrameworkHandlerTarget = useCallback(
     async (
       className: string,
       shortName: string,
@@ -165,7 +164,7 @@ export function usePhpFrameworkDefinitionNavigation({
     ],
   );
 
-  const goToPhpLaravelEventListenerDefinition = useCallback(
+  const goToPhpFrameworkEventListenerDefinition = useCallback(
     async (
       eventClassName: string,
       request?: NavigationRequest,
@@ -182,8 +181,9 @@ export function usePhpFrameworkDefinitionNavigation({
       const normalizedEventClassName = eventClassName.toLowerCase();
       const listenerClassNames: string[] = [];
 
-      for (const providerClassName of phpEventServiceProviderClassNames(
+      for (const providerClassName of phpFrameworkEventServiceProviderClassNames(
         requestedDescriptor.php,
+        activePhpFrameworkProviders,
       )) {
         if (!isRequestedRootActive()) {
           return false;
@@ -210,7 +210,10 @@ export function usePhpFrameworkDefinitionNavigation({
             return false;
           }
 
-          const listenerMap = phpLaravelEventListenerMap(providerSource);
+          const listenerMap = phpFrameworkEventListenerMapFromSource(
+            providerSource,
+            activePhpFrameworkProviders,
+          );
 
           for (const [mappedEvent, listeners] of listenerMap) {
             const resolvedMappedEvent = resolvePhpClassName(
@@ -252,7 +255,7 @@ export function usePhpFrameworkDefinitionNavigation({
         }
 
         if (
-          await openPhpLaravelHandlerTarget(
+          await openPhpFrameworkHandlerTarget(
             listenerClassName,
             shortPhpName(listenerClassName),
             request,
@@ -266,7 +269,8 @@ export function usePhpFrameworkDefinitionNavigation({
     },
     [
       currentWorkspaceRootRef,
-      openPhpLaravelHandlerTarget,
+      activePhpFrameworkProviders,
+      openPhpFrameworkHandlerTarget,
       readNavigationFileContent,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
@@ -274,10 +278,10 @@ export function usePhpFrameworkDefinitionNavigation({
     ],
   );
 
-  const goToPhpLaravelDispatchDefinition = useCallback(
+  const goToPhpFrameworkDispatchDefinition = useCallback(
     async (
       source: string,
-      target: PhpLaravelDispatchTarget,
+      target: PhpFrameworkDispatchTarget,
       request?: NavigationRequest,
     ): Promise<boolean> => {
       const resolvedClassName = resolvePhpClassName(source, target.className);
@@ -293,7 +297,7 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
-        return goToPhpLaravelEventListenerDefinition(resolvedClassName, request);
+        return goToPhpFrameworkEventListenerDefinition(resolvedClassName, request);
       }
 
       if (target.kind === "job") {
@@ -301,7 +305,7 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
-        return openPhpLaravelHandlerTarget(resolvedClassName, shortName, request);
+        return openPhpFrameworkHandlerTarget(resolvedClassName, shortName, request);
       }
 
       if (!canNavigate(request)) {
@@ -309,7 +313,7 @@ export function usePhpFrameworkDefinitionNavigation({
       }
 
       if (
-        await goToPhpLaravelEventListenerDefinition(resolvedClassName, request)
+        await goToPhpFrameworkEventListenerDefinition(resolvedClassName, request)
       ) {
         return true;
       }
@@ -318,9 +322,9 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      return openPhpLaravelHandlerTarget(resolvedClassName, shortName, request);
+      return openPhpFrameworkHandlerTarget(resolvedClassName, shortName, request);
     },
-    [goToPhpLaravelEventListenerDefinition, openPhpLaravelHandlerTarget],
+    [goToPhpFrameworkEventListenerDefinition, openPhpFrameworkHandlerTarget],
   );
 
   const resolvePhpLaravelExplicitRouteModelBindingClassName = useCallback(
@@ -329,9 +333,10 @@ export function usePhpFrameworkDefinitionNavigation({
       currentPath: string | null,
       parameterName: string,
     ): Promise<string | null> => {
-      const localClassName = explicitLaravelRouteModelBindingClassName(
+      const localClassName = phpFrameworkExplicitRouteModelBindingClassName(
         currentSource,
         parameterName,
+        activePhpFrameworkProviders,
       );
 
       if (localClassName) {
@@ -376,9 +381,10 @@ export function usePhpFrameworkDefinitionNavigation({
             return null;
           }
 
-          const className = explicitLaravelRouteModelBindingClassName(
+          const className = phpFrameworkExplicitRouteModelBindingClassName(
             content,
             parameterName,
+            activePhpFrameworkProviders,
           );
           const resolvedClassName = className
             ? resolvePhpClassName(content, className)
@@ -400,6 +406,7 @@ export function usePhpFrameworkDefinitionNavigation({
     },
     [
       currentWorkspaceRootRef,
+      activePhpFrameworkProviders,
       readNavigationFileContent,
       textSearch,
       workspaceRoot,
@@ -420,8 +427,12 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      const routeBinding = supportsLaravelRouteDefinitionNavigation
-        ? detectLaravelRouteModelBindingAt(source, offset)
+      const routeBinding = supportsFrameworkRouteDefinitionNavigation
+        ? phpFrameworkRouteModelBindingAt(
+            source,
+            offset,
+            activePhpFrameworkProviders,
+          )
         : null;
 
       if (routeBinding) {
@@ -457,8 +468,9 @@ export function usePhpFrameworkDefinitionNavigation({
           }
         }
 
-        const modelNamespaces = phpModelNamespacePrefixes(
+        const modelNamespaces = phpFrameworkModelNamespacePrefixes(
           workspaceDescriptor?.php,
+          activePhpFrameworkProviders,
         );
 
         for (const namespace of modelNamespaces) {
@@ -489,8 +501,12 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      const dispatchTarget = supportsLaravelDispatchDefinitionNavigation
-        ? phpLaravelDispatchTargetAt(source, offset)
+      const dispatchTarget = supportsFrameworkDispatchDefinitionNavigation
+        ? phpFrameworkDispatchTargetAt(
+            source,
+            offset,
+            activePhpFrameworkProviders,
+          )
         : null;
 
       if (dispatchTarget) {
@@ -502,7 +518,7 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
-        return goToPhpLaravelDispatchDefinition(source, dispatchTarget, request);
+        return goToPhpFrameworkDispatchDefinition(source, dispatchTarget, request);
       }
 
       const classIdentifierName = phpClassIdentifierNameAt(source, offset);
@@ -565,13 +581,13 @@ export function usePhpFrameworkDefinitionNavigation({
       activeDocument,
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies,
-      goToPhpLaravelDispatchDefinition,
+      goToPhpFrameworkDispatchDefinition,
       openNavigationTarget,
       openPhpClassTarget,
       activePhpFrameworkProviders,
       resolvePhpLaravelExplicitRouteModelBindingClassName,
-      supportsLaravelDispatchDefinitionNavigation,
-      supportsLaravelRouteDefinitionNavigation,
+      supportsFrameworkDispatchDefinitionNavigation,
+      supportsFrameworkRouteDefinitionNavigation,
       workspaceDescriptor,
       workspaceRoot,
     ],

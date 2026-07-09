@@ -111,6 +111,48 @@ export interface PhpFrameworkRouteDefinitionsContext {
   source: string;
 }
 
+export interface PhpFrameworkRouteModelBinding {
+  explicitModelClassName: string | null;
+  modelShortName: string;
+  parameterEnd: number;
+  parameterName: string;
+  parameterStart: number;
+}
+
+export interface PhpFrameworkRouteModelBindingContext {
+  offset: number;
+  source: string;
+}
+
+export interface PhpFrameworkExplicitRouteModelBindingContext {
+  parameterName: string;
+  source: string;
+}
+
+export interface PhpFrameworkModelNamespacePrefixesContext {
+  php: PhpProjectDescriptor | null | undefined;
+}
+
+export type PhpFrameworkDispatchKind = "dispatch" | "event" | "job";
+
+export interface PhpFrameworkDispatchTarget {
+  className: string;
+  kind: PhpFrameworkDispatchKind;
+}
+
+export interface PhpFrameworkDispatchTargetContext {
+  offset: number;
+  source: string;
+}
+
+export interface PhpFrameworkEventListenerMapContext {
+  source: string;
+}
+
+export interface PhpFrameworkEventServiceProviderClassNamesContext {
+  php: PhpProjectDescriptor | null | undefined;
+}
+
 /**
  * A config reference detected at the cursor (e.g. the `config('x')` argument).
  * Framework-agnostic mirror of the Laravel config reference so the controller's
@@ -414,6 +456,15 @@ export interface PhpFrameworkProvider {
     definitionsFromSource?: (
       context: PhpFrameworkRouteDefinitionsContext,
     ) => PhpFrameworkRouteDefinition[];
+    modelBindingAt?: (
+      context: PhpFrameworkRouteModelBindingContext,
+    ) => PhpFrameworkRouteModelBinding | null;
+    explicitModelBindingClassNameFromSource?: (
+      context: PhpFrameworkExplicitRouteModelBindingContext,
+    ) => string | null;
+    modelNamespacePrefixes?: (
+      context: PhpFrameworkModelNamespacePrefixesContext,
+    ) => string[];
     /**
      * Text-search anchors that surface files declaring named routes outside the
      * active document (route files, `->name(...)` chains, resource
@@ -421,6 +472,17 @@ export interface PhpFrameworkProvider {
      * is framework-agnostic.
      */
     searchQueries?: readonly string[];
+  };
+  dispatch?: {
+    eventListenerMapFromSource?: (
+      context: PhpFrameworkEventListenerMapContext,
+    ) => Map<string, string[]>;
+    eventServiceProviderClassNames?: (
+      context: PhpFrameworkEventServiceProviderClassNamesContext,
+    ) => string[];
+    targetAt?: (
+      context: PhpFrameworkDispatchTargetContext,
+    ) => PhpFrameworkDispatchTarget | null;
   };
   config?: {
     referenceAt?: (
@@ -598,6 +660,7 @@ export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
 
 export type PhpFrameworkProviderCapability =
   | "config"
+  | "dispatch"
   | "env"
   | "lattePresenterLinkIntelligence"
   | "latteTemplateIntelligence"
@@ -818,6 +881,55 @@ export function phpFrameworkRouteDefinitionsFromSource(
   );
 }
 
+export function phpFrameworkRouteModelBindingAt(
+  source: string,
+  offset: number,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkRouteModelBinding | null {
+  for (const provider of providers) {
+    const binding = provider.routes?.modelBindingAt?.({ offset, source });
+
+    if (binding) {
+      return binding;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkExplicitRouteModelBindingClassName(
+  source: string,
+  parameterName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const className =
+      provider.routes?.explicitModelBindingClassNameFromSource?.({
+        parameterName,
+        source,
+      });
+
+    if (className) {
+      return className;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkModelNamespacePrefixes(
+  php: PhpProjectDescriptor | null | undefined,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string[] {
+  const prefixes: string[] = [];
+
+  for (const provider of providers) {
+    prefixes.push(...(provider.routes?.modelNamespacePrefixes?.({ php }) ?? []));
+  }
+
+  return prefixes;
+}
+
 /**
  * Text-search anchors the active providers use to surface route declarations in
  * other files. Empty when no active provider ships routes.
@@ -836,6 +948,58 @@ export function phpFrameworkSupportsRoutes(
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "routes");
+}
+
+export function phpFrameworkDispatchTargetAt(
+  source: string,
+  offset: number,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkDispatchTarget | null {
+  for (const provider of providers) {
+    const target = provider.dispatch?.targetAt?.({ offset, source });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkEventListenerMapFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): Map<string, string[]> {
+  for (const provider of providers) {
+    const map = provider.dispatch?.eventListenerMapFromSource?.({ source });
+
+    if (map && map.size > 0) {
+      return map;
+    }
+  }
+
+  return new Map();
+}
+
+export function phpFrameworkEventServiceProviderClassNames(
+  php: PhpProjectDescriptor | null | undefined,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string[] {
+  const classNames: string[] = [];
+
+  for (const provider of providers) {
+    classNames.push(
+      ...(provider.dispatch?.eventServiceProviderClassNames?.({ php }) ?? []),
+    );
+  }
+
+  return classNames;
+}
+
+export function phpFrameworkSupportsDispatch(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportCapability(providers, "dispatch");
 }
 
 export function phpFrameworkTargetSearchQueries(
@@ -1444,6 +1608,8 @@ function phpFrameworkProvidersSupportCapability(
   switch (capability) {
     case "config":
       return providers.some((provider) => provider.config !== undefined);
+    case "dispatch":
+      return providers.some((provider) => provider.dispatch !== undefined);
     case "env":
       return providers.some((provider) => provider.env !== undefined);
     case "lattePresenterLinkIntelligence":

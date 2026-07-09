@@ -27,6 +27,16 @@ import {
 } from "./phpFrameworkLaravel";
 import type { PhpFrameworkProvider } from "./phpFrameworkProviders";
 import {
+  detectLaravelRouteModelBindingAt,
+  explicitLaravelRouteModelBindingClassName,
+  phpModelNamespacePrefixes,
+} from "./laravelRouteModelBinding";
+import {
+  phpEventServiceProviderClassNames,
+  phpLaravelDispatchTargetAt,
+  phpLaravelEventListenerMap,
+} from "./phpLaravelDispatch";
+import {
   phpLaravelConfigKeysFromSource,
   phpLaravelConfigReferenceContextAt,
   phpLaravelConfigTargetFromSource,
@@ -172,9 +182,20 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   routes: {
     definitionsFromSource: ({ source }) =>
       phpLaravelNamedRouteDefinitions(source),
+    explicitModelBindingClassNameFromSource: ({ parameterName, source }) =>
+      explicitLaravelRouteModelBindingClassName(source, parameterName),
+    modelBindingAt: ({ offset, source }) =>
+      detectLaravelRouteModelBindingAt(source, offset),
+    modelNamespacePrefixes: ({ php }) => phpModelNamespacePrefixes(php),
     referenceAt: ({ position, source }) =>
       phpLaravelNamedRouteReferenceContextAt(source, position),
     searchQueries: laravelRouteSearchQueries,
+  },
+  dispatch: {
+    eventListenerMapFromSource: ({ source }) => phpLaravelEventListenerMap(source),
+    eventServiceProviderClassNames: ({ php }) =>
+      phpEventServiceProviderClassNames(php),
+    targetAt: ({ offset, source }) => phpLaravelDispatchTargetAt(source, offset),
   },
   targetCollections: [
     {

@@ -8,7 +8,12 @@ import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkConfigLiteralTarget,
+  phpFrameworkDispatchTargetAt,
+  phpFrameworkEventListenerMapFromSource,
+  phpFrameworkEventServiceProviderClassNames,
+  phpFrameworkExplicitRouteModelBindingClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
+  phpFrameworkModelNamespacePrefixes,
   phpFrameworkMemberPropertyMagicDiagnostic,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderRegistry,
@@ -28,6 +33,7 @@ import {
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
+  phpFrameworkRouteModelBindingAt,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
   phpFrameworkScopedStringCompletionContextAt,
@@ -35,6 +41,7 @@ import {
   phpFrameworkSupportsLatteTemplateIntelligence,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkSupportsConfig,
+  phpFrameworkSupportsDispatch,
   phpFrameworkSupportsEnv,
   phpFrameworkSupportsNeonConfigIntelligence,
   phpFrameworkSupportsPhpPresenterLinks,
@@ -63,6 +70,15 @@ import {
   resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import {
+  detectLaravelRouteModelBindingAt,
+  explicitLaravelRouteModelBindingClassName,
+} from "./laravelRouteModelBinding";
+import {
+  phpEventServiceProviderClassNames,
+  phpLaravelDispatchTargetAt,
+  phpLaravelEventListenerMap,
+} from "./phpLaravelDispatch";
 import { NETTE_VIEW_DATA_SEARCH_QUERIES } from "./netteViewData";
 import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
 import {
@@ -1632,6 +1648,58 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toEqual(direct);
     });
 
+    it("dispatches Laravel route model binding detection 1:1 through the provider", () => {
+      const source = `<?php
+use Illuminate\\Support\\Facades\\Route;
+
+Route::get('/users/{user}', fn () => null);
+`;
+      const offset = source.indexOf("{user}") + 2;
+      const direct = detectLaravelRouteModelBindingAt(source, offset);
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkRouteModelBindingAt(source, offset, [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+      expect(
+        phpFrameworkRouteModelBindingAt(source, offset, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(phpFrameworkRouteModelBindingAt(source, offset, [])).toBeNull();
+    });
+
+    it("dispatches Laravel explicit route model bindings and model namespaces through the provider", () => {
+      const source = `<?php
+use App\\Models\\AdminUser;
+use Illuminate\\Support\\Facades\\Route;
+
+Route::model('user', AdminUser::class);
+`;
+      const direct = explicitLaravelRouteModelBindingClassName(source, "user");
+      const php = phpProjectDescriptor({
+        psr4Roots: [{ dev: false, namespace: "Domain\\", paths: ["app"] }],
+      });
+
+      expect(direct).toBe("AdminUser");
+      expect(
+        phpFrameworkExplicitRouteModelBindingClassName(source, "user", [
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(direct);
+      expect(
+        phpFrameworkExplicitRouteModelBindingClassName(source, "user", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(
+        phpFrameworkModelNamespacePrefixes(php, [phpLaravelFrameworkProvider]),
+      ).toEqual(["Domain\\Models\\", "Domain\\", "App\\Models\\", "App\\"]);
+      expect(phpFrameworkModelNamespacePrefixes(php, [])).toEqual([]);
+    });
+
     it("exposes the Laravel route search anchors through the provider", () => {
       const queries = phpFrameworkRouteSearchQueries([
         phpLaravelFrameworkProvider,
@@ -1648,6 +1716,16 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           phpLaravelFrameworkProvider,
         ]),
       ).toBe(true);
+    });
+
+    it("reports dispatch support through the Laravel provider", () => {
+      expect(phpFrameworkSupportsDispatch([phpLaravelFrameworkProvider])).toBe(
+        true,
+      );
+      expect(phpFrameworkSupportsDispatch([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
+      expect(phpFrameworkSupportsDispatch([])).toBe(false);
     });
 
     it("reports route support only for providers shipping the capability", () => {
@@ -1736,6 +1814,82 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(
         phpFrameworkSupportsTargetCollection("viewData", [legacyProvider]),
       ).toBe(false);
+    });
+  });
+
+  describe("dispatch capability", () => {
+    const providers = [phpLaravelFrameworkProvider];
+    const dispatchSource = `<?php
+use App\\Jobs\\SyncOrder;
+
+dispatch(new SyncOrder());
+`;
+    const listenerProviderSource = `<?php
+namespace App\\Providers;
+
+use App\\Events\\OrderSynced;
+use App\\Listeners\\SendOrderSyncedNotification;
+
+class EventServiceProvider
+{
+    protected $listen = [
+        OrderSynced::class => [
+            SendOrderSyncedNotification::class,
+        ],
+    ];
+}
+`;
+
+    it("dispatches Laravel dispatch targets 1:1 through the provider", () => {
+      const offset = dispatchSource.indexOf("SyncOrder())") + 2;
+      const direct = phpLaravelDispatchTargetAt(dispatchSource, offset);
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkDispatchTargetAt(dispatchSource, offset, providers),
+      ).toEqual(direct);
+      expect(
+        phpFrameworkDispatchTargetAt(dispatchSource, offset, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
+      expect(phpFrameworkDispatchTargetAt(dispatchSource, offset, [])).toBeNull();
+    });
+
+    it("dispatches Laravel event listener maps 1:1 through the provider", () => {
+      const direct = phpLaravelEventListenerMap(listenerProviderSource);
+
+      expect(direct.size).toBeGreaterThan(0);
+      expect(
+        phpFrameworkEventListenerMapFromSource(
+          listenerProviderSource,
+          providers,
+        ),
+      ).toEqual(direct);
+      expect(
+        phpFrameworkEventListenerMapFromSource(listenerProviderSource, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual(new Map());
+      expect(
+        phpFrameworkEventListenerMapFromSource(listenerProviderSource, []),
+      ).toEqual(new Map());
+    });
+
+    it("dispatches Laravel event service provider class candidates through the provider", () => {
+      const php = phpProjectDescriptor({
+        psr4Roots: [{ dev: false, namespace: "Domain\\", paths: ["app"] }],
+      });
+
+      expect(
+        phpFrameworkEventServiceProviderClassNames(php, providers),
+      ).toEqual(phpEventServiceProviderClassNames(php));
+      expect(
+        phpFrameworkEventServiceProviderClassNames(php, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual([]);
+      expect(phpFrameworkEventServiceProviderClassNames(php, [])).toEqual([]);
     });
   });
 
