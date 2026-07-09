@@ -36,10 +36,8 @@ import {
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
-import {
-  laravelFacadeTargetClassName,
-  type PhpMethodReturnTypeResolver,
-} from "./usePhpMethodReturnTypeResolver";
+import { laravelFacadeTargetClassName } from "./phpLaravelFacadeTargets";
+import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export type PhpExpressionTypeResolver = (

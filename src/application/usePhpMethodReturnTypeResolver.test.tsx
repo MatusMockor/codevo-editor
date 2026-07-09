@@ -30,7 +30,7 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: ["laravel"],
     profile: "laravel",
-    providers: [],
+    providers: [phpLaravelFrameworkProvider],
   }),
 );
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(

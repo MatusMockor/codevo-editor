@@ -12,11 +12,7 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
-import {
-  phpDeclaredTypeCandidate,
-  phpMethodReturnExpressions,
-} from "../domain/phpTypeAnalysis";
-import { isLaravelEloquentBuilderTerminalModelMethod } from "../domain/phpFrameworkLaravel";
+import { phpMethodReturnExpressions } from "../domain/phpTypeAnalysis";
 import {
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
@@ -25,7 +21,8 @@ import {
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { isLaravelMorphToFactoryExpression } from "./usePhpLaravelRelationResolver";
+import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
+import { createPhpFrameworkMethodReturnTypeStrategyAdapters } from "./phpFrameworkMethodReturnTypeStrategyAdapters";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -104,14 +101,20 @@ export function usePhpMethodReturnTypeResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpMethodReturnTypeResolverOptions) {
-  const frameworkProviders =
-    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const activeFrameworkRuntime = useMemo(
+    () =>
+      phpFrameworkRuntimeContextFromDependencies({
+        activePhpFrameworkProviders,
+        frameworkRuntime,
+        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
+      }),
+    [activePhpFrameworkProviders, frameworkRuntime, legacyIsLaravelFrameworkActive],
+  );
+  const frameworkProviders = activeFrameworkRuntime.providers;
   const returnTypeStrategy = useMemo(
     () =>
-      createPhpMethodReturnTypeStrategy({
-        isLaravelFrameworkActive,
+      createPhpFrameworkMethodReturnTypeStrategyAdapters({
+        frameworkRuntime: activeFrameworkRuntime,
         resolvePhpEloquentBuilderModelType: (source, position, expression) =>
           resolvePhpEloquentBuilderModelTypeRef.current(
             source,
@@ -121,7 +124,7 @@ export function usePhpMethodReturnTypeResolver({
         resolvePhpLaravelProjectMorphMapModelType,
       }),
     [
-      isLaravelFrameworkActive,
+      activeFrameworkRuntime,
       resolvePhpEloquentBuilderModelTypeRef,
       resolvePhpLaravelProjectMorphMapModelType,
     ],
@@ -509,149 +512,4 @@ export function usePhpMethodReturnTypeResolver({
   );
 
   return { resolvePhpMethodReturnType };
-}
-
-export function laravelFacadeTargetClassName(className: string): string | null {
-  const normalizedClassName = className.replace(/^\\+/, "").toLowerCase();
-  const targets: Record<string, string> = {
-    "illuminate\\support\\facades\\app": "Illuminate\\Contracts\\Foundation\\Application",
-    "illuminate\\support\\facades\\cache": "Illuminate\\Cache\\CacheManager",
-    "illuminate\\support\\facades\\config": "Illuminate\\Config\\Repository",
-    "illuminate\\support\\facades\\db": "Illuminate\\Database\\DatabaseManager",
-    "illuminate\\support\\facades\\event": "Illuminate\\Events\\Dispatcher",
-    "illuminate\\support\\facades\\file": "Illuminate\\Filesystem\\Filesystem",
-    "illuminate\\support\\facades\\gate": "Illuminate\\Contracts\\Auth\\Access\\Gate",
-    "illuminate\\support\\facades\\log": "Psr\\Log\\LoggerInterface",
-    "illuminate\\support\\facades\\queue": "Illuminate\\Queue\\QueueManager",
-    "illuminate\\support\\facades\\route": "Illuminate\\Routing\\Router",
-    "illuminate\\support\\facades\\schema": "Illuminate\\Database\\Schema\\Builder",
-    "illuminate\\support\\facades\\storage": "Illuminate\\Filesystem\\FilesystemManager",
-    "illuminate\\support\\facades\\validator": "Illuminate\\Validation\\Factory",
-    "illuminate\\support\\facades\\view": "Illuminate\\View\\Factory",
-  };
-
-  return targets[normalizedClassName] ?? null;
-}
-
-interface PhpMethodReturnTypeStrategy {
-  declaredReturnTypeOverride: (
-    context: PhpDeclaredReturnTypeStrategyContext,
-  ) => Promise<string | null>;
-  facadeTargetClassName: (className: string) => string | null;
-  methodCallReturnType: (
-    context: PhpMethodCallReturnTypeStrategyContext,
-  ) => Promise<string | null>;
-  staticCallReturnType: (
-    context: PhpStaticCallReturnTypeStrategyContext,
-  ) => string | null;
-}
-
-interface PhpDeclaredReturnTypeStrategyContext {
-  methodReturnExpressions: readonly string[];
-  returnType: string;
-}
-
-interface PhpMethodCallReturnTypeStrategyContext {
-  methodName: string;
-  ownerSource: string;
-  receiverExpression: string;
-  receiverType: string | null;
-}
-
-interface PhpStaticCallReturnTypeStrategyContext {
-  className: string | null;
-  methodName: string;
-}
-
-interface PhpMethodReturnTypeStrategyOptions {
-  isLaravelFrameworkActive: boolean;
-  resolvePhpEloquentBuilderModelType: (
-    source: string,
-    position: EditorPosition,
-    expression: string,
-  ) => Promise<string | null>;
-  resolvePhpLaravelProjectMorphMapModelType: () => Promise<string | null>;
-}
-
-function createPhpMethodReturnTypeStrategy({
-  isLaravelFrameworkActive,
-  resolvePhpEloquentBuilderModelType,
-  resolvePhpLaravelProjectMorphMapModelType,
-}: PhpMethodReturnTypeStrategyOptions): PhpMethodReturnTypeStrategy {
-  if (!isLaravelFrameworkActive) {
-    return genericPhpMethodReturnTypeStrategy;
-  }
-
-  return {
-    declaredReturnTypeOverride: async ({ methodReturnExpressions, returnType }) => {
-      if (
-        !isLaravelMorphToReturnTypeName(returnType) ||
-        !methodReturnExpressions.some(isLaravelMorphToFactoryExpression)
-      ) {
-        return null;
-      }
-
-      return laravelMorphToReturnType(
-        await resolvePhpLaravelProjectMorphMapModelType(),
-      );
-    },
-    facadeTargetClassName: laravelFacadeTargetClassName,
-    methodCallReturnType: async ({
-      methodName,
-      ownerSource,
-      receiverExpression,
-      receiverType,
-    }) => {
-      if (methodName.toLowerCase() === "morphto" && receiverType) {
-        return laravelMorphToReturnType(
-          await resolvePhpLaravelProjectMorphMapModelType(),
-        );
-      }
-
-      if (isLaravelEloquentBuilderTerminalModelMethod(methodName)) {
-        return resolvePhpEloquentBuilderModelType(
-          ownerSource,
-          {
-            column: 1,
-            lineNumber: 1,
-          },
-          receiverExpression,
-        );
-      }
-
-      return null;
-    },
-    staticCallReturnType: ({ className, methodName }) =>
-      className && isLaravelEloquentBuilderTerminalModelMethod(methodName)
-        ? className
-        : null,
-  };
-}
-
-const genericPhpMethodReturnTypeStrategy: PhpMethodReturnTypeStrategy = {
-  declaredReturnTypeOverride: async () => null,
-  facadeTargetClassName: () => null,
-  methodCallReturnType: async () => null,
-  staticCallReturnType: () => null,
-};
-
-function laravelMorphToReturnType(modelType: string | null): string | null {
-  return modelType
-    ? `Illuminate\\Database\\Eloquent\\Relations\\MorphTo<${modelType}>`
-    : null;
-}
-
-function isLaravelMorphToReturnTypeName(returnType: string | null): boolean {
-  const typeName = phpDeclaredTypeCandidate(returnType ?? "") ?? returnType ?? "";
-  const normalizedTypeName = typeName
-    .trim()
-    .replace(/^\?/, "")
-    .replace(/^\\+/, "")
-    .split("<")[0]
-    ?.toLowerCase();
-
-  return (
-    normalizedTypeName === "morphto" ||
-    normalizedTypeName?.endsWith("\\morphto") === true
-  );
 }
