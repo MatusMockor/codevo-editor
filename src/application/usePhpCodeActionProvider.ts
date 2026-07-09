@@ -46,19 +46,19 @@ export function usePhpCodeActionProvider({
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
   });
-  const isLaravelFrameworkActive =
+  const canCreateMissingBladeViews =
     frameworkRuntime !== undefined
       ? frameworkRuntime.isLaravel && frameworkRuntime.supports("views")
       : legacyIsLaravelFrameworkActive;
 
   return usePhpCodeActions({
     activeDocumentPath,
+    canCreateMissingBladeViews,
     collectPhpAbstractMembersToImplement,
     collectPhpLaravelViewTargets,
     collectPhpOverridableParentMethods,
     currentWorkspaceRootRef,
     intelligenceMode,
-    isLaravelFrameworkActive,
     projectSymbolSearch,
     readTestFileIfExists,
     resolvePhpClassSourcePaths,

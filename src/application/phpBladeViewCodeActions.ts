@@ -6,15 +6,15 @@ import type {
 } from "./phpCodeActionTypes";
 
 export interface CreateMissingBladeViewCodeActionOptions {
+  canCreateMissingBladeViews: boolean;
   collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
-  isLaravelFrameworkActive: boolean;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   workspaceRoot: string | null;
 }
 
 export function buildCreateMissingBladeViewCodeAction({
+  canCreateMissingBladeViews,
   collectPhpLaravelViewTargets,
-  isLaravelFrameworkActive,
   readTestFileIfExists,
   workspaceRoot,
 }: CreateMissingBladeViewCodeActionOptions): (
@@ -31,7 +31,7 @@ export function buildCreateMissingBladeViewCodeAction({
   ): Promise<PhpCodeActionDescriptor | null> => {
     const requestedRoot = workspaceRoot;
 
-    if (!requestedRoot || !isLaravelFrameworkActive) {
+    if (!requestedRoot || !canCreateMissingBladeViews) {
       return null;
     }
 

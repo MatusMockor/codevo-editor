@@ -47,9 +47,9 @@ export interface UsePhpCodeActionsOptions {
   collectPhpAbstractMembersToImplement: PhpAbstractMembersCollector;
   collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   collectPhpOverridableParentMethods: PhpOverridableParentMethodsCollector;
+  canCreateMissingBladeViews: boolean;
   currentWorkspaceRootRef: { readonly current: string | null };
   intelligenceMode: IntelligenceMode;
-  isLaravelFrameworkActive: boolean;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
@@ -67,12 +67,12 @@ export interface UsePhpCodeActionsResult {
 
 export function usePhpCodeActions({
   activeDocumentPath,
+  canCreateMissingBladeViews,
   collectPhpAbstractMembersToImplement,
   collectPhpLaravelViewTargets,
   collectPhpOverridableParentMethods,
   currentWorkspaceRootRef,
   intelligenceMode,
-  isLaravelFrameworkActive,
   projectSymbolSearch,
   readTestFileIfExists,
   resolvePhpClassSourcePaths,
@@ -81,14 +81,14 @@ export function usePhpCodeActions({
 }: UsePhpCodeActionsOptions): UsePhpCodeActionsResult {
   const createMissingBladeViewCodeAction = useCallback(
     buildCreateMissingBladeViewCodeAction({
+      canCreateMissingBladeViews,
       collectPhpLaravelViewTargets,
-      isLaravelFrameworkActive,
       readTestFileIfExists,
       workspaceRoot,
     }),
     [
+      canCreateMissingBladeViews,
       collectPhpLaravelViewTargets,
-      isLaravelFrameworkActive,
       readTestFileIfExists,
       workspaceRoot,
     ],
