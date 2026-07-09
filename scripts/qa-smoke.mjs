@@ -205,6 +205,14 @@ const modeSteps = {
   ],
   projects: [
     commandStep(
+      "Real project scenario preflight",
+      "node",
+      projectQaPreflightArgs(),
+      {
+        timeoutMs: minutes(2),
+      },
+    ),
+    commandStep(
       "Real project provider smoke",
       "node",
       projectQaScenarioArgs(),
@@ -332,6 +340,10 @@ function projectQaScenarioArgs() {
     "--target-url",
     process.env.MOCKOR_EDITOR_QA_TARGET_URL || defaultProjectQaTargetUrl,
   ];
+}
+
+function projectQaPreflightArgs() {
+  return ["./scripts/qa-project-scenarios.mjs", "--all", "--preflight"];
 }
 
 function commandStep(name, command, args, options = {}) {

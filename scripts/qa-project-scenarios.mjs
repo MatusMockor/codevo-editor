@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_MS = 100;
+const DEFAULT_CDP_URL = "http://127.0.0.1:9222";
 
 const defaultPreflightFs = {
   exists(path) {
@@ -204,7 +205,7 @@ async function main() {
 
   if (!options.cdpUrl) {
     printHelp();
-    throw new Error("Pass --cdp-url, --print-snippet, --preflight, or --list.");
+    throw new Error(cdpEndpointGuidance(""));
   }
 
   const result = await runViaCdp(options.cdpUrl, {
@@ -562,10 +563,20 @@ async function runViaCdp(cdpUrl, options) {
   const target = selectCdpTarget(targets, options.targetUrl);
 
   if (!target.webSocketDebuggerUrl) {
-    throw new Error(`CDP target "${target.title ?? target.url}" has no webSocketDebuggerUrl.`);
+    throw new Error(
+      cdpEndpointGuidance(
+        cdpUrl,
+        `CDP target "${target.title ?? target.url}" has no webSocketDebuggerUrl.`,
+      ),
+    );
   }
 
-  const client = await CdpClient.connect(target.webSocketDebuggerUrl);
+  let client;
+  try {
+    client = await CdpClient.connect(target.webSocketDebuggerUrl);
+  } catch (error) {
+    throw new Error(cdpEndpointGuidance(cdpUrl, errorMessage(error)));
+  }
 
   try {
     const expression = `(${inPageRunnerSource()})(${JSON.stringify({
@@ -593,15 +604,31 @@ function assertWebSocketAvailable() {
     return;
   }
 
-  throw new Error("This Node runtime does not expose global WebSocket; use --print-snippet.");
+  throw new Error(
+    "This Node runtime does not expose global WebSocket. " +
+      "Run with a newer Node runtime or use --print-snippet in Tauri WebView DevTools.",
+  );
 }
 
 async function cdpTargets(cdpUrl) {
-  const endpoint = new URL("/json/list", normalizedCdpUrl(cdpUrl));
-  const response = await fetch(endpoint);
+  let endpoint;
+  try {
+    endpoint = new URL("/json/list", normalizedCdpUrl(cdpUrl));
+  } catch (error) {
+    throw new Error(cdpEndpointGuidance(cdpUrl, errorMessage(error)));
+  }
+
+  let response;
+  try {
+    response = await fetch(endpoint);
+  } catch (error) {
+    throw new Error(cdpEndpointGuidance(cdpUrl, errorMessage(error)));
+  }
 
   if (!response.ok) {
-    throw new Error(`Failed to read ${endpoint}: HTTP ${response.status}.`);
+    throw new Error(
+      cdpEndpointGuidance(cdpUrl, `Failed to read ${endpoint}: HTTP ${response.status}.`),
+    );
   }
 
   return await response.json();
@@ -619,7 +646,7 @@ function selectCdpTarget(targets, targetUrl) {
   const pages = targets.filter((target) => target.type === "page");
 
   if (pages.length === 0) {
-    throw new Error("No CDP page targets found.");
+    throw new Error("No CDP page targets found. Make sure the app window is open.");
   }
 
   if (!targetUrl) {
@@ -633,6 +660,31 @@ function selectCdpTarget(targets, targetUrl) {
   }
 
   throw new Error(`No CDP page URL contains "${targetUrl}".`);
+}
+
+function cdpEndpointGuidance(cdpUrl, detail = "") {
+  const endpoint = cdpUrl || DEFAULT_CDP_URL;
+  const endpointHint =
+    endpoint === DEFAULT_CDP_URL
+      ? `For smoke:projects, the default CDP endpoint is ${DEFAULT_CDP_URL}.`
+      : `For smoke:projects, set MOCKOR_EDITOR_QA_CDP_URL=${endpoint}.`;
+  const lines = [
+    detail || "CDP endpoint is missing.",
+    `Start the QA app with: npm run debug:qa`,
+    endpointHint,
+    `For direct runs, pass --cdp-url ${endpoint}.`,
+    "If CDP is not available, run with --print-snippet and paste the snippet into Tauri WebView DevTools.",
+  ];
+
+  return lines.join("\n");
+}
+
+function errorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 function formatCdpException(exceptionDetails) {
@@ -724,6 +776,7 @@ function isMainModule() {
 
 export {
   formatActual,
+  cdpEndpointGuidance,
   formatExpected,
   parseArgs,
   printPreflightResult,
@@ -1042,7 +1095,11 @@ function inPageRunnerSource() {
     const bridge = await waitFor(() => window.__codevoQa, waitMs, intervalMs);
 
     if (!bridge) {
-      throw new Error("window.__codevoQa is not installed. Start with npm run debug:qa or enable codevo.qaBridge.");
+      throw new Error(
+        "window.__codevoQa is not installed. Start with npm run debug:qa. " +
+          "For an already running dev app, enable the localStorage fallback with " +
+          "localStorage.setItem('codevo.qaBridge', '1') and reload.",
+      );
     }
 
     return bridge;

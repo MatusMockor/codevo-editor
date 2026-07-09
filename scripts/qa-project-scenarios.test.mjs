@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  cdpEndpointGuidance,
   formatActual,
   formatExpected,
   parseArgs,
@@ -68,6 +69,25 @@ describe("qa-project-scenarios CLI helpers", () => {
     expect(snippet).not.toContain(scenarios[2].id);
     expect(snippet).toContain('"occurrence":1');
     expect(snippet).toContain('"timeoutMs":1234');
+  });
+
+  it("prints snippet guidance for a missing QA bridge", () => {
+    const selected = selectScenarios(parseArgs(["--scenario", scenarios[0].id]));
+    const snippet = snippetFor(selected);
+
+    expect(snippet).toContain("window.__codevoQa is not installed");
+    expect(snippet).toContain("npm run debug:qa");
+    expect(snippet).toContain("localStorage.setItem('codevo.qaBridge', '1')");
+  });
+
+  it("formats CDP endpoint recovery guidance", () => {
+    const message = cdpEndpointGuidance("http://127.0.0.1:9333", "fetch failed");
+
+    expect(message).toContain("fetch failed");
+    expect(message).toContain("npm run debug:qa");
+    expect(message).toContain("MOCKOR_EDITOR_QA_CDP_URL=http://127.0.0.1:9333");
+    expect(message).toContain("--cdp-url http://127.0.0.1:9333");
+    expect(message).toContain("--print-snippet");
   });
 
   it("formats expected and actual report fields", () => {

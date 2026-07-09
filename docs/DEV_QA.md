@@ -69,12 +69,26 @@ npm run smoke:projects
 ```
 
 `smoke:projects` expects the app to already be running with `npm run debug:qa`
-and a reachable CDP endpoint. Override the defaults when needed:
+and a reachable CDP endpoint. It runs `--preflight` first so missing real
+project files or cursor-anchor drift are reported before CDP connection issues.
+Override the defaults when needed:
 
 ```sh
 MOCKOR_EDITOR_QA_CDP_URL=http://127.0.0.1:9222 \
 MOCKOR_EDITOR_QA_TARGET_URL=localhost:1420 \
 npm run smoke:projects
+```
+
+When CDP is missing or unreachable, start the app with `npm run debug:qa`, set
+`MOCKOR_EDITOR_QA_CDP_URL` if DevTools is listening somewhere other than
+`http://127.0.0.1:9222`, or use `--print-snippet` and paste the generated code
+into Tauri WebView DevTools. If the page is reachable but
+`window.__codevoQa` is missing, restart with `npm run debug:qa`; for an already
+running dev app, set the DEV-only fallback in the console:
+
+```js
+localStorage.setItem("codevo.qaBridge", "1");
+location.reload();
 ```
 
 `--all` runs every built-in scenario in order. To run a smaller deterministic
