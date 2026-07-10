@@ -131,4 +131,99 @@ class Example
     expect(actions).toEqual([]);
     expect(searchProjectSymbols).not.toHaveBeenCalled();
   });
+
+  it("collects a signature synchronization action for an existing method", async () => {
+    const source = `<?php
+class Example implements ExampleContract
+{
+    private function handle(int $value): bool
+    {
+        return false;
+    }
+}
+`;
+    const contractSource = `<?php
+interface ExampleContract
+{
+    public function handle(string $value = ''): void;
+}
+`;
+    const contract = parsePhpClassStructure(
+      contractSource,
+      "ExampleContract",
+    ).methods[0]!;
+    const collectPhpAbstractMembersToImplement = vi.fn(async () => ({
+      abstractMembers: new Map([
+        [
+          "handle",
+          {
+            declaringSource: contractSource,
+            declaringTypeName: "ExampleContract",
+            member: contract,
+          },
+        ],
+      ]),
+      conflictingNames: new Set<string>(),
+      satisfiedNames: new Set<string>(),
+    }));
+    const options = baseOptions({
+      collectPhpAbstractMembersToImplement,
+      range: {
+        end: source.indexOf("function"),
+        start: source.indexOf("function"),
+      },
+      source,
+      structure: parsePhpClassStructure(source),
+    });
+
+    const actions = await collectPhpWorkspaceCodeActions(options);
+
+    expect(actions?.map((action) => action.title)).toContain(
+      "Synchronize signature with ExampleContract::handle",
+    );
+    expect(actions?.map((action) => action.title)).not.toContain(
+      "Implement methods",
+    );
+  });
+
+  it("drops synchronization results when inherited collection changes roots", async () => {
+    const source = `<?php
+class Example implements ExampleContract
+{
+    private function handle(int $value): bool { return false; }
+}
+`;
+    const contractSource = `<?php
+interface ExampleContract { public function handle(string $value): void; }
+`;
+    const contract = parsePhpClassStructure(
+      contractSource,
+      "ExampleContract",
+    ).methods[0]!;
+    let active = true;
+    const options = baseOptions({
+      collectPhpAbstractMembersToImplement: vi.fn(async () => {
+        active = false;
+        return {
+          abstractMembers: new Map([
+            [
+              "handle",
+              {
+                declaringSource: contractSource,
+                declaringTypeName: "ExampleContract",
+                member: contract,
+              },
+            ],
+          ]),
+          conflictingNames: new Set<string>(),
+          satisfiedNames: new Set<string>(),
+        };
+      }),
+      isRequestedRootActive: vi.fn(() => active),
+      source,
+      structure: parsePhpClassStructure(source),
+    });
+
+    await expect(collectPhpWorkspaceCodeActions(options)).resolves.toBeNull();
+  });
 });

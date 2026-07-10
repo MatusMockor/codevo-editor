@@ -59057,6 +59057,83 @@ interface GreeterContract
     });
   });
 
+  it("offers signature synchronization without including method decorators or body in replacement edits", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    /** preserved */
+    #[Audit]
+    private function greet(int $name = 1): bool
+    {
+        return false;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public static function greet(string $name = ''): void;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const cursor = classSource.indexOf("function greet");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: cursor,
+      start: cursor,
+    });
+    const action = actions.find((candidate) =>
+      candidate.title.startsWith("Synchronize signature with"),
+    );
+
+    expect(action?.title).toBe(
+      "Synchronize signature with GreeterContract::greet",
+    );
+    expect(action?.edits.some((edit) => edit.text.includes("#[Audit]"))).toBe(
+      false,
+    );
+    expect(
+      action?.edits.some((edit) => edit.text.includes("return false")),
+    ).toBe(false);
+    expect(
+      action?.edits.some((edit) =>
+        edit.text.includes(
+          "public static function greet(string $name = 1): void",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("adds a use import for stub types that are not imported in the class", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
     const interfacePath = "/workspace/app/Contracts/GreeterContract.php";

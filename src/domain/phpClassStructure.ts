@@ -41,7 +41,15 @@ export interface PhpMethodPhpDoc {
   returnType: string | null;
 }
 
+export interface PhpMethodModifierRange {
+  endOffset: number;
+  name: (typeof MEMBER_MODIFIERS)[number];
+  startOffset: number;
+}
+
 export interface PhpMethodMember {
+  /** Offset of the opening body brace, or `null` for declaration-only methods. */
+  bodyStartOffset: number | null;
   /**
    * Character offset of the method's `function` keyword in the original source.
    * Code-gen that inserts text relative to a method (e.g. "Generate PHPDoc"
@@ -64,10 +72,14 @@ export interface PhpMethodMember {
    * `function` line, below the attributes).
    */
   memberStartOffset: number;
+  /** Exact source ranges for modifier keywords preceding `function`. */
+  modifierRanges: PhpMethodModifierRange[];
   name: string;
   parameters: PhpStructuredParameter[];
   phpDoc: PhpMethodPhpDoc | null;
   returnType: string | null;
+  /** Offset immediately after the meaningful signature, before body whitespace. */
+  signatureEndOffset: number;
   visibility: PhpVisibility;
 }
 
@@ -163,6 +175,44 @@ export function parsePhpClassStructure(
       name: declaration.name,
     },
   };
+}
+
+export function phpTopLevelTypeDeclarationNames(source: string): string[] {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?<![:\\$>A-Za-z0-9_])(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  const names: string[] = [];
+  const typeBodyRanges: Array<{ end: number; start: number }> = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const offset = match.index ?? 0;
+    const name = match[1];
+
+    if (
+      !name ||
+      typeBodyRanges.some(
+        (range) => offset > range.start && offset < range.end,
+      )
+    ) {
+      continue;
+    }
+
+    names.push(name);
+
+    const bodyStart = masked.indexOf("{", offset + match[0].length);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd !== null) {
+      typeBodyRanges.push({ end: bodyEnd, start: bodyStart });
+    }
+  }
+
+  return names;
 }
 
 function fallbackKind(source: string): PhpTypeKind | null {
@@ -320,11 +370,18 @@ function buildMethodMember(
   const parameters = parseStructuredParameters(
     source.slice(openParen + 1, closeParen),
   );
-  const returnType = parseReturnType(source, masked, closeParen + 1);
-  const modifiers = modifiersBefore(masked, declaration, functionOffset);
+  const parsedReturnType = parseReturnType(source, masked, closeParen + 1);
+  const modifierRanges = modifierRangesBefore(
+    masked,
+    declaration,
+    functionOffset,
+  );
+  const modifiers = new Set(modifierRanges.map((modifier) => modifier.name));
   const phpDoc = parseMethodPhpDoc(source, declaration, functionOffset);
+  const bodyStartOffset = methodBodyStartOffset(masked, closeParen + 1);
 
   return {
+    bodyStartOffset,
     declarationOffset: functionOffset,
     isAbstract: isInterface || modifiers.has("abstract"),
     isFinal: modifiers.has("final"),
@@ -335,10 +392,12 @@ function buildMethodMember(
       declaration,
       functionOffset,
     ),
+    modifierRanges,
     name,
     parameters,
     phpDoc,
-    returnType,
+    returnType: parsedReturnType.type,
+    signatureEndOffset: parsedReturnType.endOffset,
     visibility: visibilityFromModifiers(modifiers),
   };
 }
@@ -363,7 +422,12 @@ function memberStartOffset(
   functionOffset: number,
 ): number {
   const lowerBound = declaration.bodyStart;
-  let cursor = functionOffset;
+  const modifierRanges = modifierRangesFromMaskedTail(
+    masked,
+    declaration,
+    functionOffset,
+  );
+  let cursor = modifierRanges[0]?.startOffset ?? functionOffset;
 
   for (;;) {
     const previous = previousMemberToken(source, masked, lowerBound, cursor);
@@ -513,7 +577,7 @@ function parseReturnType(
   source: string,
   masked: string,
   afterParen: number,
-): string | null {
+): { endOffset: number; type: string | null } {
   let index = afterParen;
 
   while (index < masked.length && /\s/.test(masked[index] || "")) {
@@ -521,14 +585,27 @@ function parseReturnType(
   }
 
   if (masked[index] !== ":") {
-    return null;
+    return { endOffset: afterParen, type: null };
   }
 
   index += 1;
   const stop = findReturnTypeStop(masked, index);
   const returnType = source.slice(index, stop);
+  const trailingWhitespace = /\s*$/.exec(returnType)?.[0].length ?? 0;
 
-  return normalizeType(returnType);
+  return {
+    endOffset: stop - trailingWhitespace,
+    type: normalizeType(returnType),
+  };
+}
+
+function methodBodyStartOffset(
+  masked: string,
+  afterParen: number,
+): number | null {
+  const stop = findReturnTypeStop(masked, afterParen);
+
+  return masked[stop] === "{" ? stop : null;
 }
 
 // Finds where a return type ends, starting just after the `:`. A return type may
@@ -565,24 +642,56 @@ function findReturnTypeStop(masked: string, start: number): number {
   return masked.length;
 }
 
-function modifiersBefore(
+function modifierRangesBefore(
   masked: string,
   declaration: PhpTypeDeclaration,
   functionOffset: number,
-): Set<string> {
-  const limit = Math.max(declaration.bodyStart + 1, functionOffset - 256);
-  const region = masked.slice(limit, functionOffset);
-  const withoutAttributes = region.replace(/#\[[\s\S]*?\]/g, " ");
-  const tail = /([A-Za-z\s]*)$/.exec(withoutAttributes)?.[1] ?? "";
-  const modifiers = new Set<string>();
+): PhpMethodModifierRange[] {
+  return modifierRangesFromMaskedTail(masked, declaration, functionOffset);
+}
 
-  for (const token of tail.toLowerCase().split(/\s+/)) {
-    if ((MEMBER_MODIFIERS as readonly string[]).includes(token)) {
-      modifiers.add(token);
+function modifierRangesFromMaskedTail(
+  masked: string,
+  declaration: PhpTypeDeclaration,
+  functionOffset: number,
+): PhpMethodModifierRange[] {
+  const ranges: PhpMethodModifierRange[] = [];
+  let cursor = functionOffset;
+
+  for (;;) {
+    let tokenEnd = cursor;
+
+    while (
+      tokenEnd > declaration.bodyStart &&
+      /\s/.test(masked[tokenEnd - 1] || "")
+    ) {
+      tokenEnd -= 1;
     }
+
+    let tokenStart = tokenEnd;
+
+    while (
+      tokenStart > declaration.bodyStart &&
+      /[A-Za-z]/.test(masked[tokenStart - 1] || "")
+    ) {
+      tokenStart -= 1;
+    }
+
+    const name = masked.slice(tokenStart, tokenEnd).toLowerCase();
+
+    if (!(MEMBER_MODIFIERS as readonly string[]).includes(name)) {
+      break;
+    }
+
+    ranges.unshift({
+      endOffset: tokenEnd,
+      name: name as PhpMethodModifierRange["name"],
+      startOffset: tokenStart,
+    });
+    cursor = tokenStart;
   }
 
-  return modifiers;
+  return ranges;
 }
 
 function visibilityFromModifiers(modifiers: Set<string>): PhpVisibility {

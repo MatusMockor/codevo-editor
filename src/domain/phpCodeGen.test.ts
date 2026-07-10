@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpMethodSignatureKey,
   renderImplementMethodsStubs,
+  renderMethodSignature,
   renderMethodStub,
   renderOverrideMethodStub,
   renderOverrideMethodsStubs,
@@ -28,14 +30,17 @@ function method(
   overrides: Partial<PhpMethodMember> & { name: string },
 ): PhpMethodMember {
   return {
+    bodyStartOffset: null,
     declarationOffset: 0,
     isAbstract: true,
     isFinal: false,
     isStatic: false,
     memberStartOffset: 0,
+    modifierRanges: [],
     parameters: [],
     phpDoc: null,
     returnType: null,
+    signatureEndOffset: 0,
     visibility: "public",
     ...overrides,
   };
@@ -367,6 +372,42 @@ describe("renderMethodStub", () => {
 
     expect(stub).toContain("// TODO: Implement all().");
     expect(stub).not.toContain("throw new");
+  });
+});
+
+describe("method signature rendering", () => {
+  it("renders a reusable signature with static, reference, variadic and defaults", () => {
+    const member = method({
+      isStatic: true,
+      name: "find",
+      parameters: [
+        param({
+          defaultValue: "null",
+          isByRef: true,
+          isOptional: true,
+          isVariadic: true,
+          name: "$items",
+          type: "(A&B)|null",
+        }),
+      ],
+      returnType: "A|false",
+      visibility: "protected",
+    });
+
+    expect(renderMethodSignature(member)).toBe(
+      "protected static function find((A&B)|null &...$items = null): A|false",
+    );
+  });
+
+  it("builds stable semantic keys with caller-provided type normalization", () => {
+    const left = method({ name: "find", returnType: "Alias|null" });
+    const right = method({ name: "find", returnType: "\\Vendor\\Model|null" });
+    const normalize = (type: string) =>
+      type.replace("Alias", "Vendor\\Model").replace(/^\\/, "").toLowerCase();
+
+    expect(phpMethodSignatureKey(left, normalize)).toBe(
+      phpMethodSignatureKey(right, normalize),
+    );
   });
 });
 

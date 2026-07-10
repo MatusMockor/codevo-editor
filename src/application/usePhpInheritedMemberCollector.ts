@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { parsePhpClassStructure } from "../domain/phpClassStructure";
+import { phpMethodSignatureKey } from "../domain/phpCodeGen";
 import {
   phpExtendsClassName,
   phpSuperTypeReferences,
@@ -34,9 +35,11 @@ export function usePhpInheritedMemberCollector({
       isRequestedRootActive: () => boolean,
     ): Promise<{
       abstractMembers: Map<string, AbstractMemberToImplement>;
+      conflictingNames: Set<string>;
       satisfiedNames: Set<string>;
     } | null> => {
       const abstractMembers = new Map<string, AbstractMemberToImplement>();
+      const conflictingNames = new Set<string>();
       const satisfiedNames = new Set<string>();
       const visitedClassNames = new Set<string>();
 
@@ -88,9 +91,21 @@ export function usePhpInheritedMemberCollector({
               const memberKey = method.name.toLowerCase();
 
               if (method.isAbstract) {
-                if (!abstractMembers.has(memberKey)) {
+                const existing = abstractMembers.get(memberKey);
+
+                if (
+                  existing &&
+                  inheritedSignaturesDisagree(existing, content, method)
+                ) {
+                  conflictingNames.add(memberKey);
+                }
+
+                if (!existing) {
                   abstractMembers.set(memberKey, {
                     declaringSource: content,
+                    declaringTypeName:
+                      structure.typeDeclaration?.name ??
+                      shortPhpName(normalizedClassName),
                     member: method,
                   });
                 }
@@ -126,7 +141,7 @@ export function usePhpInheritedMemberCollector({
         }
       }
 
-      return { abstractMembers, satisfiedNames };
+      return { abstractMembers, conflictingNames, satisfiedNames };
     },
     [readNavigationFileContent, resolvePhpClassSourcePaths],
   );
@@ -199,6 +214,9 @@ export function usePhpInheritedMemberCollector({
 
               overridableMembers.set(memberKey, {
                 declaringSource: content,
+                declaringTypeName:
+                  structure.typeDeclaration?.name ??
+                  shortPhpName(normalizedClassName),
                 member: method,
               });
             }
@@ -249,3 +267,70 @@ function shortPhpName(className: string): string {
 
   return separator >= 0 ? normalized.slice(separator + 1) : normalized;
 }
+
+function inheritedSignaturesDisagree(
+  existing: AbstractMemberToImplement,
+  declaringSource: string,
+  member: AbstractMemberToImplement["member"],
+): boolean {
+  return (
+    phpMethodSignatureKey(
+      existing.member,
+      (type) => inheritedTypeComparisonKey(existing.declaringSource, type),
+      () => "<optional>",
+    ) !==
+    phpMethodSignatureKey(
+      member,
+      (type) => inheritedTypeComparisonKey(declaringSource, type),
+      () => "<optional>",
+    )
+  );
+}
+
+function inheritedTypeComparisonKey(source: string, type: string): string {
+  let resolved = type
+    .replace(/\\?[A-Za-z_][A-Za-z0-9_\\]*/g, (token) => {
+      if (PHP_BUILTIN_TYPE_NAMES.has(token.toLowerCase())) {
+        return token.toLowerCase();
+      }
+
+      return (resolvePhpClassName(source, token) ?? token)
+        .replace(/^\\+/, "")
+        .toLowerCase();
+    })
+    .replace(/\s+/g, "");
+
+  if (resolved.startsWith("?")) {
+    resolved = `${resolved.slice(1)}|null`;
+  }
+
+  if (/[()]/.test(resolved)) {
+    return resolved;
+  }
+
+  return resolved
+    .split("|")
+    .map((unionPart) => unionPart.split("&").sort().join("&"))
+    .sort()
+    .join("|");
+}
+
+const PHP_BUILTIN_TYPE_NAMES = new Set([
+  "array",
+  "bool",
+  "callable",
+  "false",
+  "float",
+  "int",
+  "iterable",
+  "mixed",
+  "never",
+  "null",
+  "object",
+  "parent",
+  "self",
+  "static",
+  "string",
+  "true",
+  "void",
+]);

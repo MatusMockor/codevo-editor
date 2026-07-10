@@ -24,15 +24,18 @@ function parameter(
 
 function method(overrides: Partial<PhpMethodMember> = {}): PhpMethodMember {
   return {
+    bodyStartOffset: null,
     declarationOffset: 0,
     isAbstract: false,
     isFinal: false,
     isStatic: false,
     memberStartOffset: 0,
+    modifierRanges: [],
     name: "doWork",
     parameters: [],
     phpDoc: null,
     returnType: null,
+    signatureEndOffset: 0,
     visibility: "public",
     ...overrides,
   };

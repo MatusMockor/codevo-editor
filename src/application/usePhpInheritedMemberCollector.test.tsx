@@ -157,6 +157,134 @@ interface BaseContract
     harness.unmount();
   });
 
+  it("preserves conflicts between inherited declarations with the same method name", async () => {
+    const childSource = `<?php
+namespace App;
+
+class Handler implements StringHandler, IntHandler
+{
+}
+`;
+    const options = makeOptions({
+      "App\\IntHandler": `<?php
+namespace App;
+interface IntHandler { public function handle(int $value): void; }
+`,
+      "App\\StringHandler": `<?php
+namespace App;
+interface StringHandler { public function handle(string $value): void; }
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.abstractMembers.get("handle")?.declaringTypeName).toBe(
+      "StringHandler",
+    );
+    expect(collected?.conflictingNames).toEqual(new Set(["handle"]));
+
+    harness.unmount();
+  });
+
+  it("does not mark alias-aware agreeing declarations as conflicting", async () => {
+    const childSource = `<?php
+namespace App;
+
+class Handler implements FirstHandler, SecondHandler
+{
+}
+`;
+    const options = makeOptions({
+      "App\\FirstHandler": `<?php
+namespace App;
+use Vendor\\Model as Payload;
+interface FirstHandler { public function handle(Payload $value): Payload; }
+`,
+      "App\\SecondHandler": `<?php
+namespace App;
+use Vendor\\Model;
+interface SecondHandler { public function handle(Model $value): Model; }
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.conflictingNames).toEqual(new Set());
+
+    harness.unmount();
+  });
+
+  it("does not conflict on nullable or reordered inherited unions", async () => {
+    const childSource = `<?php
+namespace App;
+class Handler implements FirstHandler, SecondHandler {}
+`;
+    const options = makeOptions({
+      "App\\FirstHandler": `<?php
+namespace App;
+interface FirstHandler { public function handle(?Payload $value): Payload|Failure|null; }
+`,
+      "App\\SecondHandler": `<?php
+namespace App;
+interface SecondHandler { public function handle(Payload|null $value): null|Failure|Payload; }
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.conflictingNames).toEqual(new Set());
+
+    harness.unmount();
+  });
+
+  it("keeps an agreeing abstract-class and interface chain unambiguous", async () => {
+    const childSource = `<?php
+namespace App;
+
+class Handler extends AbstractHandler
+{
+    public function handle(int $value): bool { return false; }
+}
+`;
+    const options = makeOptions({
+      "App\\AbstractHandler": `<?php
+namespace App;
+abstract class AbstractHandler implements HandlerContract
+{
+    abstract public function handle(string $value = ''): void;
+}
+`,
+      "App\\HandlerContract": `<?php
+namespace App;
+interface HandlerContract
+{
+    public function handle(string $value = ''): void;
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.abstractMembers.get("handle")?.declaringTypeName).toBe(
+      "AbstractHandler",
+    );
+    expect(collected?.conflictingNames).toEqual(new Set());
+
+    harness.unmount();
+  });
+
   it("collects overridable methods from the parent chain with inherited filtering", async () => {
     const childSource = `<?php
 

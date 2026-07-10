@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parsePhpClassStructure,
+  phpTopLevelTypeDeclarationNames,
   type PhpMethodMember,
   type PhpPropertyMember,
 } from "./phpClassStructure";
@@ -17,6 +18,30 @@ function methodNamed(
 
   return method;
 }
+
+describe("phpTopLevelTypeDeclarationNames", () => {
+  it("collects sibling classes, interfaces, traits and enums in source order", () => {
+    const source = `<?php
+interface First {}
+class Second
+{
+    public function declareNested(): void
+    {
+        class Nested {}
+    }
+}
+trait Third {}
+enum Fourth {}
+`;
+
+    expect(phpTopLevelTypeDeclarationNames(source)).toEqual([
+      "First",
+      "Second",
+      "Third",
+      "Fourth",
+    ]);
+  });
+});
 
 function propertyNamed(
   properties: readonly PhpPropertyMember[],
@@ -387,6 +412,63 @@ class Foo {
     expect(methodNamed(methods, "a").name).toBe("a");
     expect(methodNamed(methods, "a").visibility).toBe("public");
     expect(methodNamed(methods, "b").visibility).toBe("protected");
+  });
+
+  it("captures exact modifier, signature and body offsets", () => {
+    const source = `<?php
+class Foo
+{
+    #[Override]
+    protected static function run(
+        string $value
+    ): string
+    {
+        return $value;
+    }
+}
+`;
+    const method = methodNamed(parsePhpClassStructure(source).methods, "run");
+
+    expect(
+      method.modifierRanges.map((range) => ({
+        name: range.name,
+        text: source.slice(range.startOffset, range.endOffset),
+      })),
+    ).toEqual([
+      { name: "protected", text: "protected" },
+      { name: "static", text: "static" },
+    ]);
+    expect(source.slice(method.declarationOffset, method.signatureEndOffset)).toBe(
+      `function run(
+        string $value
+    ): string`,
+    );
+    expect(source[method.bodyStartOffset ?? -1]).toBe("{");
+  });
+
+  it("keeps modifiers separated from function by comments", () => {
+    const source = `<?php
+abstract class Foo
+{
+    abstract /* contract */ protected function required(): void;
+    final /* sealed */ public function sealed(): void {}
+    private /* helper */ static function hidden(): void {}
+}
+`;
+    const { methods } = parsePhpClassStructure(source);
+    const required = methodNamed(methods, "required");
+    const sealed = methodNamed(methods, "sealed");
+    const hidden = methodNamed(methods, "hidden");
+
+    expect(required.isAbstract).toBe(true);
+    expect(required.visibility).toBe("protected");
+    expect(sealed.isFinal).toBe(true);
+    expect(sealed.visibility).toBe("public");
+    expect(hidden.visibility).toBe("private");
+    expect(hidden.isStatic).toBe(true);
+    expect(source.slice(required.memberStartOffset, required.declarationOffset)).toContain(
+      "abstract /* contract */ protected ",
+    );
   });
 
   it("parses nullable, union, void, never, static and self return types", () => {

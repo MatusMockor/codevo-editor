@@ -17,6 +17,7 @@ import {
 import {
   phpImplementMethodsCodeAction,
   phpOverrideMethodsCodeAction,
+  phpSynchronizeInheritedMethodSignatureCodeAction,
   type PhpAbstractMembersCollector,
   type PhpOverridableParentMethodsCollector,
 } from "./phpInheritedMemberCodeActions";
@@ -125,6 +126,23 @@ export async function collectPhpWorkspaceCodeActions({
   const declaredMethodNames = new Set(
     structure.methods.map((method) => method.name.toLowerCase()),
   );
+
+  const synchronizeSignatureAction =
+    await phpSynchronizeInheritedMethodSignatureCodeAction(
+      source,
+      range,
+      structure,
+      collectPhpAbstractMembersToImplement,
+      isRequestedRootActive,
+    );
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (synchronizeSignatureAction) {
+    actions.push(synchronizeSignatureAction);
+  }
 
   const implementMethodsAction = await phpImplementMethodsCodeAction(
     source,

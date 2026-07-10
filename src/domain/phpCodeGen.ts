@@ -41,7 +41,7 @@ export function renderMethodStub(
   const indent = options.indent ?? DEFAULT_INDENT;
   const bodyStyle = options.bodyStyle ?? "throw";
 
-  const header = `${indent}${renderSignature(member)}`;
+  const header = `${indent}${renderMethodSignature(member)}`;
   const body = renderBody(member, bodyStyle, indent);
   const stub = [header, `${indent}{`, ...body, `${indent}}`].join("\n");
 
@@ -115,7 +115,7 @@ export function renderUseImports(fqns: string[]): string {
   return unique.map((fqn) => `use ${fqn};`).join("\n");
 }
 
-function renderSignature(member: PhpMethodMember): string {
+export function renderMethodSignature(member: PhpMethodMember): string {
   const staticKeyword = member.isStatic ? "static " : "";
   const params = member.parameters.map(renderParameter).join(", ");
   const returnSuffix = member.returnType ? `: ${member.returnType}` : "";
@@ -123,12 +123,36 @@ function renderSignature(member: PhpMethodMember): string {
   return `${member.visibility} ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
 }
 
-function renderOverrideSignature(member: PhpMethodMember): string {
-  const staticKeyword = member.isStatic ? "static " : "";
-  const params = member.parameters.map(renderParameter).join(", ");
-  const returnSuffix = member.returnType ? `: ${member.returnType}` : "";
+export function phpMethodSignatureKey(
+  member: PhpMethodMember,
+  normalizeType: (type: string) => string = normalizeTypeForComparison,
+  normalizeDefault: (value: string) => string = normalizeDefaultForComparison,
+): string {
+  const parameters = member.parameters.map((parameter) => ({
+    defaultValue: parameter.defaultValue
+      ? normalizeDefault(parameter.defaultValue)
+      : null,
+    isByRef: parameter.isByRef,
+    isOptional: parameter.isOptional,
+    isVariadic: parameter.isVariadic,
+    name: parameter.name,
+    type: parameter.type ? normalizeType(parameter.type) : null,
+  }));
 
-  return `${member.visibility} ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
+  return JSON.stringify({
+    isStatic: member.isStatic,
+    parameters,
+    returnType: member.returnType ? normalizeType(member.returnType) : null,
+    visibility: member.visibility,
+  });
+}
+
+function renderOverrideSignature(member: PhpMethodMember): string {
+  return renderMethodSignature(member);
+}
+
+function normalizeDefaultForComparison(value: string): string {
+  return value.replace(/\s+/g, "");
 }
 
 function renderOverrideBody(member: PhpMethodMember, indent: string): string[] {
