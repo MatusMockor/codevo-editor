@@ -175,15 +175,23 @@ export class TauriWorkspaceGateway
 
   replaceInPath(
     root: string,
-    _query: string,
-    _replacement: string,
-    _options?: TextSearchOptions,
-    _scopePath?: string,
+    query: string,
+    replacement: string,
+    options?: TextSearchOptions,
+    scopePath?: string,
   ): Promise<ReplaceInPathResult> {
-    this.trustedTarget(root);
-    throw new Error(
-      "Replace in Path is unavailable because this backend does not yet provide descriptor-scoped replacement.",
-    );
+    const rootTarget = this.trustedTarget(root);
+    const scopeTarget = scopePath ? this.trustedTarget(scopePath) : rootTarget;
+    if (scopeTarget.workspaceId !== rootTarget.workspaceId) {
+      return Promise.reject(new Error("Replace scope must belong to the selected workspace."));
+    }
+    return invoke<DescriptorReplaceResult>("workspace_replace_in_path", {
+      workspaceId: rootTarget.workspaceId,
+      relativePath: scopeTarget.relativePath,
+      query,
+      replacement,
+      options: options ?? null,
+    }).then((result) => mapReplaceResult(root, result));
   }
 
   writeTextFile(
@@ -245,6 +253,22 @@ type TrustedWorkspaceTarget = Record<string, unknown> & {
 type DescriptorFileEntry = Omit<FileEntry, "path"> & { relativePath: string };
 type DescriptorFileSearchResult = Omit<FileSearchResult, "path">;
 type DescriptorTextSearchResult = Omit<TextSearchResult, "path">;
+type DescriptorReplaceFile = Omit<ReplaceInPathResult["files"][number], "path">;
+type DescriptorReplaceFailure = { relativePath: string; message: string };
+type DescriptorReplaceResult =
+  | { status: "success"; files: DescriptorReplaceFile[]; totalReplacements: number }
+  | { status: "conflict"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; message: string }
+  | { status: "partial"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; errors: DescriptorReplaceFailure[]; message: string }
+  | { status: "error"; files: DescriptorReplaceFile[]; totalReplacements: number; errors: DescriptorReplaceFailure[]; message: string };
+
+function mapReplaceResult(root: string, result: DescriptorReplaceResult): ReplaceInPathResult {
+  const files = result.files.map((file) => ({ ...file, path: joinWorkspacePath(root, file.relativePath) }));
+  if (result.status === "success") return { ...result, files };
+  const mapFailures = (items: DescriptorReplaceFailure[]) => items.map((item) => ({ ...item, path: joinWorkspacePath(root, item.relativePath) }));
+  if (result.status === "conflict") return { ...result, files, conflicts: mapFailures(result.conflicts) };
+  if (result.status === "partial") return { ...result, files, conflicts: mapFailures(result.conflicts), errors: mapFailures(result.errors) };
+  return { ...result, files, errors: mapFailures(result.errors) };
+}
 
 function joinWorkspacePath(root: string, relativePath: string): string {
   const normalizedRoot = root.replace(/\/+$/, "");

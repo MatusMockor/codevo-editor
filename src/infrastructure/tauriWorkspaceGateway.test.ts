@@ -71,17 +71,16 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
-  it("fails replace-in-path closed while the trusted backend command is unavailable", () => {
-    expect(() =>
-      trustedGateway().replaceInPath(
+  it("maps descriptor-scoped replace payloads and presentation paths", async () => {
+    invoke.mockResolvedValue({ status: "partial", files: [{ relativePath: "src/a.ts", replacements: 1 }], totalReplacements: 1, conflicts: [{ relativePath: "src/b.ts", message: "changed" }], errors: [], message: "partial" });
+    await expect(trustedGateway().replaceInPath(
         "/selected/project",
         "before",
         "after",
         undefined,
         "/selected/project/src",
-      ),
-    ).toThrow("does not yet provide descriptor-scoped replacement");
-    expect(invoke).not.toHaveBeenCalled();
+      )).resolves.toMatchObject({ status: "partial", files: [{ path: "/selected/project/src/a.ts" }], conflicts: [{ path: "/selected/project/src/b.ts" }] });
+    expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", { workspaceId: "ws-1", relativePath: "src", query: "before", replacement: "after", options: null });
   });
 
   it("does not let background reads alter an explicit save revision", async () => {

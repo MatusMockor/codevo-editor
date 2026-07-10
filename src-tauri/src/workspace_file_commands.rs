@@ -309,6 +309,48 @@ pub struct DescriptorTextSearchResult {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceFileResult {
+    pub relative_path: String,
+    pub replacements: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceFileFailure {
+    pub relative_path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorkspaceReplaceResult {
+    Success {
+        files: Vec<ReplaceFileResult>,
+        total_replacements: u64,
+    },
+    Conflict {
+        files: Vec<ReplaceFileResult>,
+        total_replacements: u64,
+        conflicts: Vec<ReplaceFileFailure>,
+        message: String,
+    },
+    Partial {
+        files: Vec<ReplaceFileResult>,
+        total_replacements: u64,
+        conflicts: Vec<ReplaceFileFailure>,
+        errors: Vec<ReplaceFileFailure>,
+        message: String,
+    },
+    Error {
+        files: Vec<ReplaceFileResult>,
+        total_replacements: u64,
+        errors: Vec<ReplaceFileFailure>,
+        message: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum FileCommandResult {
     Success {
@@ -510,6 +552,162 @@ impl<'a> WorkspaceFileRepository<'a> {
             }
         }
         Ok(results)
+    }
+
+    pub fn replace_in_path(
+        &self,
+        id: &WorkspaceId,
+        scope: &Path,
+        query: &str,
+        replacement: &str,
+        options: &TextSearchOptions,
+    ) -> WorkspaceReplaceResult {
+        match self.replace_candidates(id, scope, query, replacement, options) {
+            Ok(result) => result,
+            Err(error) => WorkspaceReplaceResult::Error {
+                files: Vec::new(),
+                total_replacements: 0,
+                errors: Vec::new(),
+                message: error.to_string(),
+            },
+        }
+    }
+
+    fn replace_candidates(
+        &self,
+        id: &WorkspaceId,
+        scope: &Path,
+        query: &str,
+        replacement: &str,
+        options: &TextSearchOptions,
+    ) -> io::Result<WorkspaceReplaceResult> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(WorkspaceReplaceResult::Success {
+                files: Vec::new(),
+                total_replacements: 0,
+            });
+        }
+        if !scope.as_os_str().is_empty() {
+            validate_relative_path(scope)?;
+        }
+        let matcher = text_matcher(query, options)?;
+        let root = self.registry.clone_root(id)?;
+        let display_root = self.registry.descriptor(id)?.canonical_root_path;
+        let exact_file = open_regular(root.as_raw_fd(), scope, libc::O_RDONLY).is_ok();
+        let candidates = if exact_file {
+            vec![scope.to_path_buf()]
+        } else {
+            // Ask for one beyond the traversal ceiling so a bounded batch never
+            // silently reports success after changing only a prefix.
+            collect_files(&root, scope, 100_001, &display_root)?
+        };
+        if candidates.len() > 100_000 {
+            return Err(io::Error::other(
+                "workspace replacement exceeded the 100000-file safety limit before making changes",
+            ));
+        }
+        let masks = file_mask(options.file_mask.as_deref().unwrap_or(""), &display_root)?;
+        let mut files = Vec::new();
+        let mut conflicts = Vec::new();
+        let mut errors = Vec::new();
+        let mut total_replacements = 0u64;
+        for relative in candidates {
+            if !exact_file {
+                if let Some(mask) = &masks {
+                    let matched = mask.matcher.matched(&relative, false);
+                    if matched.is_ignore() || (mask.has_positive && !matched.is_whitelist()) {
+                        continue;
+                    }
+                }
+            }
+            let snapshot = match self.read_text(id, &relative) {
+                Ok(snapshot)
+                    if snapshot.content.len() <= 4 * 1024 * 1024
+                        && !snapshot.content.as_bytes().contains(&0) =>
+                {
+                    snapshot
+                }
+                Ok(_) => {
+                    errors.push(ReplaceFileFailure {
+                        relative_path: relative.to_string_lossy().into_owned(),
+                        message: "file is binary or exceeds the 4 MiB replacement limit".into(),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    errors.push(ReplaceFileFailure {
+                        relative_path: relative.to_string_lossy().into_owned(),
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let replacement_count = matcher.find_iter(&snapshot.content).count() as u64;
+            if replacement_count == 0 {
+                continue;
+            }
+            let updated = matcher
+                .replace_all(&snapshot.content, replacement)
+                .into_owned();
+            if updated == snapshot.content {
+                continue;
+            }
+            match self.save_text(id, &relative, &updated, &snapshot.revision) {
+                FileCommandResult::Success { .. } => {
+                    total_replacements += replacement_count;
+                    files.push(ReplaceFileResult {
+                        relative_path: relative.to_string_lossy().into_owned(),
+                        replacements: replacement_count,
+                    });
+                }
+                FileCommandResult::Conflict { message } => conflicts.push(ReplaceFileFailure {
+                    relative_path: relative.to_string_lossy().into_owned(),
+                    message,
+                }),
+                FileCommandResult::Partial { message, .. }
+                | FileCommandResult::Error { message } => errors.push(ReplaceFileFailure {
+                    relative_path: relative.to_string_lossy().into_owned(),
+                    message,
+                }),
+            }
+        }
+        if errors.is_empty() && conflicts.is_empty() {
+            return Ok(WorkspaceReplaceResult::Success {
+                files,
+                total_replacements,
+            });
+        }
+        if files.is_empty() && errors.is_empty() {
+            return Ok(WorkspaceReplaceResult::Conflict {
+                files,
+                total_replacements,
+                message: format!(
+                    "{} file(s) changed concurrently; no conflicting file was overwritten",
+                    conflicts.len()
+                ),
+                conflicts,
+            });
+        }
+        if files.is_empty() && conflicts.is_empty() {
+            return Ok(WorkspaceReplaceResult::Error {
+                files,
+                total_replacements,
+                message: format!("replacement failed in {} file(s)", errors.len()),
+                errors,
+            });
+        }
+        Ok(WorkspaceReplaceResult::Partial {
+            files,
+            total_replacements,
+            message: format!(
+                "replacement completed partially: {} conflict(s), {} error(s)",
+                conflicts.len(),
+                errors.len()
+            ),
+            conflicts,
+            errors,
+        })
     }
 
     pub fn save_text(
@@ -2323,5 +2521,200 @@ mod tests {
             )
         };
         assert_eq!(&buffer[..length as usize], value);
+    }
+
+    #[test]
+    fn replace_is_scoped_and_isolated_by_workspace_identity() {
+        let (registry_a, id_a, root_a) = fixture("replace-a");
+        let (registry_b, id_b, root_b) = fixture("replace-b");
+        for root in [&root_a, &root_b] {
+            fs::create_dir_all(root.join("src/nested")).unwrap();
+            fs::write(root.join("src/a.txt"), "Needle needle\n").unwrap();
+            fs::write(root.join("src/nested/b.txt"), "needle\n").unwrap();
+            fs::write(root.join("outside.txt"), "needle\n").unwrap();
+        }
+        let options = TextSearchOptions {
+            case_sensitive: false,
+            ..Default::default()
+        };
+        let result = WorkspaceFileRepository::new(&registry_a).replace_in_path(
+            &id_a,
+            Path::new("src"),
+            "needle",
+            "thread",
+            &options,
+        );
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 3,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read(root_a.join("src/a.txt")).unwrap(),
+            b"thread thread\n"
+        );
+        assert_eq!(fs::read(root_a.join("outside.txt")).unwrap(), b"needle\n");
+        assert_eq!(
+            fs::read(root_b.join("src/a.txt")).unwrap(),
+            b"Needle needle\n"
+        );
+        assert_eq!(
+            fs::read(root_b.join("src/nested/b.txt")).unwrap(),
+            b"needle\n"
+        );
+        assert_eq!(
+            WorkspaceFileRepository::new(&registry_b)
+                .read_text(&id_b, Path::new("src/a.txt"))
+                .unwrap()
+                .content,
+            "Needle needle\n"
+        );
+    }
+
+    #[test]
+    fn replace_exact_file_supports_regex_captures_and_ignores_wider_mask() {
+        use std::os::unix::fs::PermissionsExt;
+        let (registry, id, root) = fixture("replace-regex");
+        fs::write(root.join("a.txt"), "user-42 user42\n").unwrap();
+        fs::set_permissions(root.join("a.txt"), fs::Permissions::from_mode(0o640)).unwrap();
+        fs::write(root.join("b.txt"), "user-42\n").unwrap();
+        let options = TextSearchOptions {
+            case_sensitive: true,
+            whole_word: true,
+            is_regex: true,
+            file_mask: Some("*.php".into()),
+        };
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            r"user-(\d+)",
+            "member-$1",
+            &options,
+        );
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "member-42 user42\n"
+        );
+        assert_eq!(
+            fs::metadata(root.join("a.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "user-42\n");
+    }
+
+    #[test]
+    fn replace_honors_nested_gitignore_and_file_masks() {
+        let (registry, id, root) = fixture("replace-ignore");
+        fs::create_dir_all(root.join("src/generated")).unwrap();
+        fs::write(root.join("src/.gitignore"), "generated/\n").unwrap();
+        fs::write(root.join("src/a.php"), "needle").unwrap();
+        fs::write(root.join("src/a.txt"), "needle").unwrap();
+        fs::write(root.join("src/generated/a.php"), "needle").unwrap();
+        let options = TextSearchOptions {
+            file_mask: Some("*.php".into()),
+            ..Default::default()
+        };
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("src"),
+            "needle",
+            "thread",
+            &options,
+        );
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("src/a.php")).unwrap(),
+            "thread"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/a.txt")).unwrap(),
+            "needle"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/generated/a.php")).unwrap(),
+            "needle"
+        );
+    }
+
+    #[test]
+    fn replace_rejects_escape_and_symlink_scope() {
+        let (registry, id, root) = fixture("replace-reject");
+        let outside = root.with_extension("replace-outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("a.txt"), "needle").unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+        let repository = WorkspaceFileRepository::new(&registry);
+        assert!(matches!(
+            repository.replace_in_path(
+                &id,
+                Path::new("../a.txt"),
+                "needle",
+                "x",
+                &Default::default()
+            ),
+            WorkspaceReplaceResult::Error { .. }
+        ));
+        assert!(matches!(
+            repository.replace_in_path(&id, Path::new("link"), "needle", "x", &Default::default()),
+            WorkspaceReplaceResult::Error { .. }
+        ));
+        assert_eq!(fs::read_to_string(outside.join("a.txt")).unwrap(), "needle");
+    }
+
+    #[test]
+    fn replace_reports_concurrent_target_swap_as_conflict_without_overwrite() {
+        let (registry, id, root) = fixture("replace-conflict");
+        fs::write(root.join("a.txt"), "needle").unwrap();
+        install_hook("save-after-temp-create", move |_, parent, target, _| {
+            assert_eq!(unsafe { libc::unlinkat(parent, target.as_ptr(), 0) }, 0);
+            let fd = unsafe {
+                libc::openat(
+                    parent,
+                    target.as_ptr(),
+                    libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+                    0o600,
+                )
+            };
+            assert!(fd >= 0);
+            let mut replacement = unsafe { File::from_raw_fd(fd) };
+            replacement.write_all(b"concurrent").unwrap();
+        });
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            "needle",
+            "thread",
+            &Default::default(),
+        );
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Conflict {
+                total_replacements: 0,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "concurrent"
+        );
     }
 }

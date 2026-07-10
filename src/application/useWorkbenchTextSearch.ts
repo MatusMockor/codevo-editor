@@ -310,12 +310,16 @@ export function useWorkbenchTextSearch(
         }
 
         setMessage(
-          result.totalReplacements === 0
+          "message" in result
+            ? result.message
+            : result.totalReplacements === 0
             ? "No replacements made"
             : `Replaced ${result.totalReplacements} occurrence${result.totalReplacements === 1 ? "" : "s"} in ${result.files.length} file${result.files.length === 1 ? "" : "s"}`,
         );
         // Re-run the search so the results list matches what is now on disk.
-        setTextSearchRefreshToken((token) => token + 1);
+        if (result.files.length > 0) {
+          setTextSearchRefreshToken((token) => token + 1);
+        }
       } catch (error) {
         if (!isRequestedRootActive()) {
           return;

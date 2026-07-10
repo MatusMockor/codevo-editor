@@ -41,10 +41,23 @@ export interface ReplaceInPathFileResult {
  * Outcome of a Replace-in-Path run: the files actually changed plus the total
  * number of replacements applied. Files whose content was unchanged are omitted.
  */
-export interface ReplaceInPathResult {
+interface ReplaceInPathSuccessResult {
+  status?: "success";
   files: ReplaceInPathFileResult[];
   totalReplacements: number;
 }
+
+export interface ReplaceInPathFailure {
+  path: string;
+  relativePath: string;
+  message: string;
+}
+
+export type ReplaceInPathResult =
+  | ReplaceInPathSuccessResult
+  | { status: "conflict"; files: ReplaceInPathFileResult[]; totalReplacements: number; conflicts: ReplaceInPathFailure[]; message: string }
+  | { status: "partial"; files: ReplaceInPathFileResult[]; totalReplacements: number; conflicts: ReplaceInPathFailure[]; errors: ReplaceInPathFailure[]; message: string }
+  | { status: "error"; files: ReplaceInPathFileResult[]; totalReplacements: number; errors: ReplaceInPathFailure[]; message: string };
 
 /**
  * Find-in-Path filters. All-default ({@link defaultTextSearchOptions})

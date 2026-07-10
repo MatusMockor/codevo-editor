@@ -114,10 +114,7 @@ use php_symbols::{
 };
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
-use search::{
-    ReplaceInPathResult, RipgrepTextReplacer, RipgrepTextSearcher, TextReplacer, TextSearchOptions,
-    TextSearchResult, TextSearcher,
-};
+use search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
 use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
@@ -152,7 +149,7 @@ use workspace::{
 use workspace_file_commands::{
     DescriptorFileEntry, DescriptorFileSearchResult, DescriptorTextSearchResult, FileCommandResult,
     FileRevision, MutationResult, WorkspaceFileRepository as DescriptorFileRepository,
-    WorkspaceTextFile,
+    WorkspaceReplaceResult, WorkspaceTextFile,
 };
 use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
@@ -443,6 +440,25 @@ fn workspace_search_text(
             &options.unwrap_or_default(),
         )
         .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_replace_in_path(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+    query: String,
+    replacement: String,
+    options: Option<TextSearchOptions>,
+) -> WorkspaceReplaceResult {
+    DescriptorFileRepository::new(&registry).replace_in_path(
+        &workspace_id,
+        Path::new(&relative_path),
+        &query,
+        &replacement,
+        &options.unwrap_or_default(),
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -1775,34 +1791,6 @@ async fn search_text(
         let searcher = RipgrepTextSearcher;
         searcher
             .search(&PathBuf::from(root), &query, limit, &options)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn replace_in_path(
-    root: String,
-    query: String,
-    replacement: String,
-    options: Option<TextSearchOptions>,
-    scope_path: Option<String>,
-) -> Result<ReplaceInPathResult, String> {
-    // Replace-in-Path spawns ripgrep to find the matching files (respecting every
-    // Find-in-Path filter) and then rewrites each file's content off the main
-    // thread, so the WebView never stalls while many files are edited. The
-    // requested `root` is canonicalized and captured up front: every file it
-    // touches is verified to live inside that resolved root, so a replace can
-    // never escape - or leak into - another workspace tab. `scope_path`, when
-    // present, pins a single-file replace to exactly that file regardless of the
-    // user file mask.
-    let options = options.unwrap_or_default();
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root)?;
-        let scope = scope_path.map(PathBuf::from);
-        let replacer = RipgrepTextReplacer;
-        replacer
-            .replace(&root, &query, &replacement, &options, scope.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -7685,6 +7673,7 @@ pub fn run() {
             workspace_read_directory,
             workspace_search_files,
             workspace_search_text,
+            workspace_replace_in_path,
             workspace_save_text_file,
             workspace_create_text_file,
             workspace_create_directory,
@@ -7748,7 +7737,6 @@ pub fn run() {
             search_files,
             search_project_symbols,
             search_text,
-            replace_in_path,
             set_smart_mode,
             set_workspace_trust,
             stage_git_files,
