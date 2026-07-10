@@ -857,8 +857,14 @@ function installShikiThemes(
 export async function setupShikiTokenization(
   monaco: MonacoForShiki,
   theme: string,
+  options?: { shouldApply?(): boolean },
 ): Promise<void> {
   const highlighter = await createAppHighlighter();
+
+  if (options?.shouldApply && !options.shouldApply()) {
+    return;
+  }
+
   const registered = new Set(
     monaco.languages
       .getLanguages()
