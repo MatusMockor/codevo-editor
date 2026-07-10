@@ -516,6 +516,11 @@ $loop->probe;
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "DB::table('posts')"),
     ).resolves.toBeNull();
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$model->load('comments')"),
+    ).resolves.toBeNull();
     expect(phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
     expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
     expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();

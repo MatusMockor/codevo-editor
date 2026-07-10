@@ -8,7 +8,6 @@ import {
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentBuilderTerminalModelMethod,
   isLaravelEloquentModelBuilderFactoryMethod,
-  isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelResolvedModelTypeCandidate,
 } from "../domain/phpFrameworkLaravel";
@@ -33,6 +32,8 @@ import {
 } from "../domain/phpSemanticEngine";
 import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
 import { createPhpFrameworkDatabaseExpressionTypeAdapters } from "./phpFrameworkDatabaseExpressionTypeAdapters";
+import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
+import { createPhpFrameworkModelFluentExpressionTypeAdapters } from "./phpFrameworkModelFluentExpressionTypeAdapters";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
 import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -109,6 +110,10 @@ export function usePhpExpressionTypeResolver({
             isLaravelFrameworkActive,
           ),
         isLaravelFrameworkActive,
+        modelFluentExpressionTypeAdapter:
+          createPhpFrameworkModelFluentExpressionTypeAdapters(
+            isLaravelFrameworkActive,
+          ),
         phpClassHasLaravelDynamicWhere,
         phpClassHasLaravelLocalScope,
         resolvePhpClassPropertyOrRelationType,
@@ -418,7 +423,7 @@ export function usePhpExpressionTypeResolver({
 
         const strategyReceiverReturnType =
           expressionTypeStrategy.receiverMethodCallType({
-            methodCall,
+            methodName: methodCall.methodName,
             receiverType,
           });
 
@@ -472,9 +477,7 @@ interface PhpExpressionTypeStrategy {
   methodCallType: (
     context: PhpExpressionMethodCallStrategyContext,
   ) => Promise<string | null>;
-  receiverMethodCallType: (
-    context: PhpExpressionReceiverMethodCallStrategyContext,
-  ) => string | null;
+  receiverMethodCallType: PhpFrameworkModelFluentExpressionTypeAdapter["receiverMethodCallType"];
   staticCallType: (
     context: PhpExpressionStaticCallStrategyContext,
   ) => Promise<string | null>;
@@ -486,6 +489,7 @@ interface PhpExpressionTypeStrategy {
 interface PhpExpressionTypeStrategyOptions {
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   isLaravelFrameworkActive: boolean;
+  modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
   phpClassHasLaravelDynamicWhere: (
     className: string,
     methodName: string,
@@ -521,11 +525,6 @@ interface PhpExpressionMethodCallStrategyContext {
   source: string;
 }
 
-interface PhpExpressionReceiverMethodCallStrategyContext {
-  methodCall: PhpMethodCallExpression;
-  receiverType: string | null;
-}
-
 interface PhpExpressionStaticCallStrategyContext {
   className: string | null;
   staticCall: PhpStaticCallExpression;
@@ -534,6 +533,7 @@ interface PhpExpressionStaticCallStrategyContext {
 function createPhpExpressionTypeStrategy({
   databaseExpressionTypeAdapter,
   isLaravelFrameworkActive,
+  modelFluentExpressionTypeAdapter,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
@@ -541,7 +541,11 @@ function createPhpExpressionTypeStrategy({
   resolvePhpLaravelCollectionModelType,
 }: PhpExpressionTypeStrategyOptions): PhpExpressionTypeStrategy {
   if (!isLaravelFrameworkActive) {
-    return genericPhpExpressionTypeStrategy;
+    return {
+      ...genericPhpExpressionTypeStrategy,
+      receiverMethodCallType:
+        modelFluentExpressionTypeAdapter.receiverMethodCallType,
+    };
   }
 
   return {
@@ -754,16 +758,8 @@ function createPhpExpressionTypeStrategy({
 
       return null;
     },
-    receiverMethodCallType: ({ methodCall, receiverType }) => {
-      if (
-        receiverType &&
-        isLaravelEloquentModelFluentMethod(methodCall.methodName)
-      ) {
-        return receiverType;
-      }
-
-      return null;
-    },
+    receiverMethodCallType:
+      modelFluentExpressionTypeAdapter.receiverMethodCallType,
     staticCallType: async ({ className, staticCall }) => {
       if (
         className &&
