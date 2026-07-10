@@ -5,6 +5,7 @@ import type {
   PhpPropertyMember,
 } from "../domain/phpClassStructure";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
+import { planPhpConstructorPromotion } from "../domain/phpConstructorPromotion";
 import {
   generatedPhpDocHasContent,
   renderGeneratedPhpDoc,
@@ -15,7 +16,10 @@ import {
   indentLines,
   offsetToPosition,
 } from "../domain/phpInsertionPoint";
-import { zeroLengthPhpEditRange } from "./phpCodeActionEdits";
+import {
+  phpReplacementEdit,
+  zeroLengthPhpEditRange,
+} from "./phpCodeActionEdits";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
@@ -78,19 +82,19 @@ export function phpGenerateConstructorWithPromotionCodeAction(
   source: string,
   structure: PhpClassStructure,
 ): PhpCodeActionDescriptor | null {
-  const instanceProperties = structure.properties.filter(
-    (property) => !property.isStatic,
-  );
+  const plan = planPhpConstructorPromotion(source, structure);
 
-  if (instanceProperties.length === 0 || phpClassHasConstructor(structure)) {
+  if (!plan) {
     return null;
   }
 
-  return phpClassBodyInsertionAction(
-    source,
-    renderConstructor(instanceProperties, { promotion: true }),
-    "Generate constructor with promotion",
-  );
+  return {
+    edits: plan.edits.map((edit) =>
+      phpReplacementEdit(source, edit.start, edit.end, edit.text),
+    ),
+    kind: "refactor.rewrite",
+    title: "Generate constructor with promotion",
+  };
 }
 
 export function phpGeneratePhpDocCodeAction(

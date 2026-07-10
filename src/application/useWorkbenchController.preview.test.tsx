@@ -60367,7 +60367,7 @@ class Account
     expect(constructorText).toContain("$this->balance = $balance;");
   });
 
-  it("renders safe assignments for the legacy promoted constructor action on declared properties", async () => {
+  it("moves declared properties into a genuinely promoted constructor", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
 
@@ -60410,13 +60410,19 @@ class Account
       (action) => action.title === "Generate constructor with promotion",
     );
     expect(promotedAction).toBeDefined();
-    const promotedText = promotedAction?.edits[0]?.text ?? "";
-    expect(promotedText).toContain(
-      "public function __construct(string $name, int $balance)",
-    );
-    expect(promotedText).toContain("$this->name = $name;");
-    expect(promotedText).toContain("$this->balance = $balance;");
-    expect(promotedText).not.toContain("private string $name,");
+    expect(applyPhpDescriptorEdits(classSource, promotedAction!)).toBe(`<?php
+
+namespace App\\Models;
+
+class Account
+{
+
+    public function __construct(
+        private string $name,
+        private int $balance,
+    ) {}
+}
+`);
   });
 
   it("offers no promoted constructor action when the class already has a constructor", async () => {

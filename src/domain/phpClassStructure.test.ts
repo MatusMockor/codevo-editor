@@ -604,6 +604,48 @@ class Foo {
     expect(a.defaultValue).toBe("1");
   });
 
+  it("parses every member and shares the exact span of a comma declaration", () => {
+    const source = `<?php
+class Foo
+{
+    public int $a = 1, $b = make([1, 2], pair(3, 4));
+}
+`;
+
+    const { properties, propertyDeclarations, propertyParsingComplete } =
+      parsePhpClassStructure(source);
+    const a = propertyNamed(properties, "a");
+    const b = propertyNamed(properties, "b");
+    const declaration = propertyDeclarations[0];
+
+    expect(propertyParsingComplete).toBe(true);
+    expect(properties.map((property) => property.name)).toEqual(["a", "b"]);
+    expect(a.defaultValue).toBe("1");
+    expect(b.defaultValue).toBe("make([1, 2], pair(3, 4))");
+    expect(a.declaration).toBe(declaration);
+    expect(b.declaration).toBe(declaration);
+    expect(
+      source.slice(declaration?.startOffset, declaration?.endOffset),
+    ).toBe("public int $a = 1, $b = make([1, 2], pair(3, 4));");
+  });
+
+  it("binds a named parse result to that type's exact body", () => {
+    const source = `<?php
+class First {}
+class Second
+{
+    private string $value;
+}
+`;
+    const structure = parsePhpClassStructure(source, "Second");
+
+    expect(structure.typeDeclaration).toEqual({
+      bodyEndOffset: source.lastIndexOf("}"),
+      bodyStartOffset: source.indexOf("{", source.indexOf("class Second")),
+      name: "Second",
+    });
+  });
+
   it("captures fully-qualified return types", () => {
     const source = `<?php
       class Foo {

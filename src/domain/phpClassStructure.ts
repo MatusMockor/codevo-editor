@@ -77,6 +77,7 @@ export interface PhpPropertyPhpDoc {
 }
 
 export interface PhpPropertyMember {
+  declaration?: PhpPropertyDeclaration;
   defaultValue: string | null;
   isReadonly: boolean;
   isStatic: boolean;
@@ -86,10 +87,27 @@ export interface PhpPropertyMember {
   visibility: PhpVisibility;
 }
 
+export interface PhpPropertyDeclaration {
+  endOffset: number;
+  isComplete: boolean;
+  isSafeForPromotion: boolean;
+  isStatic: boolean;
+  startOffset: number;
+}
+
 export interface PhpClassStructure {
   kind: PhpTypeKind | null;
   methods: PhpMethodMember[];
+  propertyDeclarations: PhpPropertyDeclaration[];
+  propertyParsingComplete: boolean;
   properties: PhpPropertyMember[];
+  typeDeclaration: PhpTypeDeclarationIdentity | null;
+}
+
+export interface PhpTypeDeclarationIdentity {
+  bodyEndOffset: number;
+  bodyStartOffset: number;
+  name: string;
 }
 
 interface PhpTypeDeclaration {
@@ -97,6 +115,7 @@ interface PhpTypeDeclaration {
   bodyStart: number;
   isAbstract: boolean;
   kind: "class" | "interface" | "trait" | "enum";
+  name: string;
 }
 
 const MEMBER_MODIFIERS = [
@@ -117,16 +136,32 @@ export function parsePhpClassStructure(
   const declaration = locatePhpTypeDeclaration(masked, className);
 
   if (!declaration) {
-    return { kind: fallbackKind(source), methods: [], properties: [] };
+    return {
+      kind: fallbackKind(source),
+      methods: [],
+      properties: [],
+      propertyDeclarations: [],
+      propertyParsingComplete: true,
+      typeDeclaration: null,
+    };
   }
 
   const kind = resolveTypeKind(declaration);
   const isInterface = declaration.kind === "interface";
 
+  const parsedProperties = parsePhpProperties(source, masked, declaration);
+
   return {
     kind,
     methods: parsePhpMethods(source, masked, declaration, isInterface),
-    properties: parsePhpProperties(source, masked, declaration),
+    properties: parsedProperties.properties,
+    propertyDeclarations: parsedProperties.declarations,
+    propertyParsingComplete: parsedProperties.isComplete,
+    typeDeclaration: {
+      bodyEndOffset: declaration.bodyEnd,
+      bodyStartOffset: declaration.bodyStart,
+      name: declaration.name,
+    },
   };
 }
 
@@ -213,6 +248,7 @@ function buildTypeDeclaration(
     bodyStart,
     isAbstract,
     kind,
+    name,
   };
 }
 
@@ -602,8 +638,13 @@ function parsePhpProperties(
   source: string,
   masked: string,
   declaration: PhpTypeDeclaration,
-): PhpPropertyMember[] {
+): {
+  declarations: PhpPropertyDeclaration[];
+  isComplete: boolean;
+  properties: PhpPropertyMember[];
+} {
   const properties: PhpPropertyMember[] = [];
+  const declarations: PhpPropertyDeclaration[] = [];
   const pattern =
     /\b((?:(?:public|protected|private|readonly|static)\s+)+)((?:[\\?A-Za-z_][\\A-Za-z0-9_|&?\s]*?)?)\$([A-Za-z_][A-Za-z0-9_]*)/g;
   pattern.lastIndex = declaration.bodyStart;
@@ -619,44 +660,323 @@ function parsePhpProperties(
       continue;
     }
 
-    const member = buildPropertyMember(source, masked, declaration, match);
+    const parsed = buildPropertyDeclaration(source, masked, declaration, match);
 
-    if (member) {
-      properties.push(member);
+    if (!parsed) {
+      continue;
     }
+
+    declarations.push(parsed.declaration);
+    properties.push(...parsed.properties);
+    pattern.lastIndex = parsed.declaration.endOffset;
   }
 
-  return properties;
+  return {
+    declarations,
+    isComplete: allTopLevelPropertyVariablesOwned(
+      masked,
+      declaration,
+      declarations,
+    ),
+    properties,
+  };
 }
 
-function buildPropertyMember(
+function buildPropertyDeclaration(
   source: string,
   masked: string,
-  declaration: PhpTypeDeclaration,
+  typeDeclaration: PhpTypeDeclaration,
   match: RegExpExecArray,
-): PhpPropertyMember | null {
-  const name = match[3];
+): {
+  declaration: PhpPropertyDeclaration;
+  properties: PhpPropertyMember[];
+} | null {
+  const startOffset = match.index ?? 0;
+  const dollarOffset = startOffset + match[0].lastIndexOf("$");
+  const endOffset = propertyDeclarationEnd(masked, dollarOffset);
 
-  if (!name) {
+  if (endOffset === null) {
     return null;
   }
 
   const modifiers = (match[1] ?? "").toLowerCase();
-  const dollarOffset = (match.index ?? 0) + match[0].lastIndexOf("$");
-
-  return {
-    defaultValue: parsePropertyDefault(
-      source,
-      masked,
-      dollarOffset + 1 + name.length,
-    ),
-    isReadonly: /\breadonly\b/.test(modifiers),
+  const phpDoc = parsePropertyPhpDoc(source, typeDeclaration, startOffset);
+  const prelude = propertyDeclarationPrelude(
+    source,
+    masked,
+    typeDeclaration,
+    startOffset,
+  );
+  const declarators = splitTopLevelRanges(masked, dollarOffset, endOffset - 1);
+  const declaration: PhpPropertyDeclaration = {
+    endOffset,
+    isComplete: true,
+    isSafeForPromotion:
+      prelude.trim().length === 0 &&
+      phpDoc === null &&
+      !containsPhpComment(source.slice(startOffset, endOffset)) &&
+      hasOnlyHorizontalWhitespaceToLineEnd(source, endOffset),
     isStatic: /\bstatic\b/.test(modifiers),
-    name,
-    phpDoc: parsePropertyPhpDoc(source, declaration, match.index ?? 0),
+    startOffset,
+  };
+  const parsed = declarators.map((range) =>
+    parsePropertyDeclarator(source, masked, range.start, range.end),
+  );
+
+  if (parsed.some((property) => property === null)) {
+    declaration.isComplete = false;
+    declaration.isSafeForPromotion = false;
+    return { declaration, properties: [] };
+  }
+
+  const shared = {
+    declaration,
+    isReadonly: /\breadonly\b/.test(modifiers),
+    isStatic: declaration.isStatic,
+    phpDoc,
     type: normalizeType(match[2] ?? null),
     visibility: visibilityFromPropertyModifiers(modifiers),
   };
+
+  return {
+    declaration,
+    properties: parsed.map((property) => ({ ...shared, ...property! })),
+  };
+}
+
+function hasOnlyHorizontalWhitespaceToLineEnd(
+  source: string,
+  declarationEnd: number,
+): boolean {
+  const newlineOffset = source.indexOf("\n", declarationEnd);
+  const lineEnd = newlineOffset < 0 ? source.length : newlineOffset;
+
+  return /^[\t ]*\r?$/.test(source.slice(declarationEnd, lineEnd));
+}
+
+function containsPhpComment(source: string): boolean {
+  let quote: "'" | '"' | "`" | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+    const next = source[index + 1] || "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    const heredocStart = heredocOpening(source, index);
+
+    if (heredocStart) {
+      index = heredocLiteralEnd(source, index + heredocStart.length, heredocStart.terminator);
+      continue;
+    }
+
+    if (
+      (character === "/" && (next === "/" || next === "*")) ||
+      character === "#"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function heredocLiteralEnd(
+  source: string,
+  start: number,
+  terminator: string,
+): number {
+  for (let index = start; index < source.length; index += 1) {
+    const closingLength = heredocClosingLength(source, index, terminator);
+
+    if (closingLength > 0) {
+      return index + closingLength - 1;
+    }
+  }
+
+  return source.length - 1;
+}
+
+function propertyDeclarationEnd(masked: string, start: number): number | null {
+  let depth = 0;
+
+  for (let index = start; index < masked.length; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth === 0 && character === "{") {
+      return null;
+    }
+
+    if (depth === 0 && character === ";") {
+      return index + 1;
+    }
+  }
+
+  return null;
+}
+
+function splitTopLevelRanges(
+  masked: string,
+  start: number,
+  end: number,
+): Array<{ end: number; start: number }> {
+  const ranges: Array<{ end: number; start: number }> = [];
+  let rangeStart = start;
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      ranges.push({ end: index, start: rangeStart });
+      rangeStart = index + 1;
+    }
+  }
+
+  ranges.push({ end, start: rangeStart });
+  return ranges;
+}
+
+function parsePropertyDeclarator(
+  source: string,
+  masked: string,
+  start: number,
+  end: number,
+): { defaultValue: string | null; name: string } | null {
+  const segment = masked.slice(start, end);
+  const match = /^\s*\$([A-Za-z_][A-Za-z0-9_]*)\s*(?:=([\s\S]*))?$/.exec(segment);
+  const name = match?.[1];
+
+  if (!match || !name) {
+    return null;
+  }
+
+  const equalsOffset = topLevelEqualsOffset(masked, start, end);
+  const defaultValue =
+    equalsOffset === null ? null : source.slice(equalsOffset + 1, end).trim();
+
+  if (equalsOffset !== null && defaultValue?.length === 0) {
+    return null;
+  }
+
+  return { defaultValue, name };
+}
+
+function topLevelEqualsOffset(
+  masked: string,
+  start: number,
+  end: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "=" && depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function propertyDeclarationPrelude(
+  source: string,
+  masked: string,
+  declaration: PhpTypeDeclaration,
+  startOffset: number,
+): string {
+  let boundary = declaration.bodyStart + 1;
+  let braceDepth = 1;
+
+  for (let index = declaration.bodyStart + 1; index < startOffset; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "{") {
+      braceDepth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      braceDepth -= 1;
+      if (braceDepth === 1) boundary = index + 1;
+      continue;
+    }
+
+    if (character === ";" && braceDepth === 1) {
+      boundary = index + 1;
+    }
+  }
+
+  return source.slice(boundary, startOffset);
+}
+
+function allTopLevelPropertyVariablesOwned(
+  masked: string,
+  declaration: PhpTypeDeclaration,
+  declarations: readonly PhpPropertyDeclaration[],
+): boolean {
+  for (let index = declaration.bodyStart + 1; index < declaration.bodyEnd; index += 1) {
+    if (masked[index] !== "$" || !isTopLevelMember(masked, declaration, index)) {
+      continue;
+    }
+
+    const owner = declarations.find(
+      (candidate) => index >= candidate.startOffset && index < candidate.endOffset,
+    );
+
+    if (!owner || !owner.isComplete) {
+      return false;
+    }
+  }
+
+  return declarations.every((candidate) => candidate.isComplete);
 }
 
 function visibilityFromPropertyModifiers(modifiers: string): PhpVisibility {
@@ -669,55 +989,6 @@ function visibilityFromPropertyModifiers(modifiers: string): PhpVisibility {
   }
 
   return "public";
-}
-
-function parsePropertyDefault(
-  source: string,
-  masked: string,
-  afterName: number,
-): string | null {
-  let index = afterName;
-
-  while (index < masked.length && /\s/.test(masked[index] || "")) {
-    index += 1;
-  }
-
-  if (masked[index] !== "=") {
-    return null;
-  }
-
-  index += 1;
-  const stop = findStatementStop(masked, index);
-
-  return normalizeWhitespace(source.slice(index, stop)) || null;
-}
-
-function findStatementStop(masked: string, start: number): number {
-  let depth = 0;
-
-  for (let index = start; index < masked.length; index += 1) {
-    const character = masked[index] || "";
-
-    if (character === "(" || character === "[" || character === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (character === ")" || character === "]" || character === "}") {
-      if (depth === 0) {
-        return index;
-      }
-
-      depth -= 1;
-      continue;
-    }
-
-    if ((character === ";" || character === ",") && depth === 0) {
-      return index;
-    }
-  }
-
-  return masked.length;
 }
 
 function parsePropertyPhpDoc(
