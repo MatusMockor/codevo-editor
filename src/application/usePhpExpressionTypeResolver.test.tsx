@@ -511,6 +511,11 @@ $loop->probe;
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "Post::published()"),
     ).resolves.toBeNull();
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "DB::table('posts')"),
+    ).resolves.toBeNull();
     expect(phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
     expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
     expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();

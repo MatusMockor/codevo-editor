@@ -4,10 +4,6 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   isLaravelCollectionFluentMethod,
   isLaravelCollectionTerminalModelMethod,
-  isLaravelDatabaseConnectionType,
-  isLaravelDatabaseQueryBuilderFactoryMethod,
-  isLaravelDatabaseQueryBuilderFluentMethod,
-  isLaravelDatabaseQueryBuilderType,
   isLaravelEloquentBuilderCollectionMethod,
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentBuilderTerminalModelMethod,
@@ -35,8 +31,9 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
+import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
+import { createPhpFrameworkDatabaseExpressionTypeAdapters } from "./phpFrameworkDatabaseExpressionTypeAdapters";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
-import { laravelFacadeTargetClassName } from "./phpLaravelFacadeTargets";
 import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
@@ -107,6 +104,10 @@ export function usePhpExpressionTypeResolver({
   const expressionTypeStrategy = useMemo(
     () =>
       createPhpExpressionTypeStrategy({
+        databaseExpressionTypeAdapter:
+          createPhpFrameworkDatabaseExpressionTypeAdapters(
+            isLaravelFrameworkActive,
+          ),
         isLaravelFrameworkActive,
         phpClassHasLaravelDynamicWhere,
         phpClassHasLaravelLocalScope,
@@ -483,6 +484,7 @@ interface PhpExpressionTypeStrategy {
 }
 
 interface PhpExpressionTypeStrategyOptions {
+  databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   isLaravelFrameworkActive: boolean;
   phpClassHasLaravelDynamicWhere: (
     className: string,
@@ -530,6 +532,7 @@ interface PhpExpressionStaticCallStrategyContext {
 }
 
 function createPhpExpressionTypeStrategy({
+  databaseExpressionTypeAdapter,
   isLaravelFrameworkActive,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
@@ -697,20 +700,14 @@ function createPhpExpressionTypeStrategy({
         }
       }
 
-      if (isLaravelDatabaseQueryBuilderFactoryMethod(methodCall.methodName)) {
-        const receiverType = await resolveReceiverType();
+      const databaseMethodCallType =
+        await databaseExpressionTypeAdapter.methodCallType({
+          methodName: methodCall.methodName,
+          resolveReceiverType,
+        });
 
-        if (receiverType && isLaravelDatabaseConnectionType(receiverType)) {
-          return "Illuminate\\Database\\Query\\Builder";
-        }
-      }
-
-      if (isLaravelDatabaseQueryBuilderFluentMethod(methodCall.methodName)) {
-        const receiverType = await resolveReceiverType();
-
-        if (receiverType && isLaravelDatabaseQueryBuilderType(receiverType)) {
-          return "Illuminate\\Database\\Query\\Builder";
-        }
+      if (databaseMethodCallType) {
+        return databaseMethodCallType;
       }
 
       const localScopeModelType = await resolvePhpEloquentBuilderModelType(
@@ -768,11 +765,6 @@ function createPhpExpressionTypeStrategy({
       return null;
     },
     staticCallType: async ({ className, staticCall }) => {
-      const facadeTargetClassName = className
-        ? (laravelFacadeTargetClassName(className) ?? className)
-        : null;
-      const facadeOrClassName = facadeTargetClassName ?? className;
-
       if (
         className &&
         isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
@@ -784,12 +776,14 @@ function createPhpExpressionTypeStrategy({
         return "Illuminate\\Database\\Eloquent\\Builder";
       }
 
-      if (
-        facadeOrClassName &&
-        isLaravelDatabaseQueryBuilderFactoryMethod(staticCall.methodName) &&
-        isLaravelDatabaseConnectionType(facadeOrClassName)
-      ) {
-        return "Illuminate\\Database\\Query\\Builder";
+      const databaseStaticCallType =
+        databaseExpressionTypeAdapter.staticCallType({
+          className,
+          methodName: staticCall.methodName,
+        });
+
+      if (databaseStaticCallType) {
+        return databaseStaticCallType;
       }
 
       if (
