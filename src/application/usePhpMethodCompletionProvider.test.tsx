@@ -347,4 +347,64 @@ $comment->lo`;
 
     harness.unmount();
   });
+
+  it("keeps Laravel method completion adapters for boolean-only legacy callers", async () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\ReportController;
+
+Route::get('/reports', [ReportController::class, 'in']);
+`;
+    const relationSource = `<?php
+use App\\Models\\Comment;
+
+Comment::with('par')->first();
+`;
+    const accessSource = "<?php\n$comment->lo";
+    const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
+      async () => undefined,
+    );
+    const deps = makeDeps({
+      activePhpFrameworkProviders: [],
+      collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => [
+        method("parent"),
+      ]),
+      collectPhpMethodsForClass: vi.fn(async () => [method("index")]),
+      ensurePhpFrameworkSourceCollectionsLoaded,
+      frameworkRuntime: undefined,
+      isLaravelFrameworkActive: true,
+      resolvePhpLaravelRelationPathOwnerType: vi.fn(
+        async (className: string) => className,
+      ),
+      resolvePhpReceiverMethodCompletions: vi.fn(async () => [method("load")]),
+    });
+    const harness = renderHook(deps);
+
+    const routeCompletions = await harness
+      .api()
+      .providePhpMethodCompletions(
+        routeSource,
+        positionAfter(routeSource, "'in"),
+      );
+    const relationCompletions = await harness
+      .api()
+      .providePhpMethodCompletions(
+        relationSource,
+        positionAfter(relationSource, "with('par"),
+      );
+    const accessCompletions = await harness
+      .api()
+      .providePhpMethodCompletions(
+        accessSource,
+        positionAfter(accessSource, "$comment->lo"),
+      );
+
+    expect(routeCompletions.map(({ name }) => name)).toEqual(["index"]);
+    expect(relationCompletions.map(({ name }) => name)).toEqual(["parent"]);
+    expect(accessCompletions.map(({ name }) => name)).toEqual(["load"]);
+    expect(ensurePhpFrameworkSourceCollectionsLoaded).toHaveBeenCalledWith(
+      ROOT,
+    );
+
+    harness.unmount();
+  });
 });
