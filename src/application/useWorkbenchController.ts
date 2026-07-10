@@ -3909,6 +3909,7 @@ export function useWorkbenchController(
     gitDiffLoading,
     workspaceSettings,
     currentWorkspaceRootRef,
+    workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
     activeDocumentRef,
     documentsRef,
     openPathsRef,

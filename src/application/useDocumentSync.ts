@@ -174,9 +174,13 @@ export interface DocumentSync {
     path: string,
   ) => Promise<void>;
   isLanguageServerDocumentSynced: (path: string) => boolean;
-  syncSavedDocument: (document: EditorDocument) => Promise<void>;
+  syncSavedDocument: (
+    document: EditorDocument,
+    shouldEmit?: () => boolean,
+  ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
     document: EditorDocument,
+    shouldEmit?: () => boolean,
   ) => Promise<void>;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
   syncClosedJavaScriptTypeScriptDocument: (
@@ -761,7 +765,6 @@ export function useDocumentSync(
         documentSyncGenerationRef.current === requestedSyncGeneration &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
         isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId);
-
       if (!syncedDocumentPathsRef.current.has(syncKey)) {
         const document =
           activeDocumentRef.current?.path === path
@@ -962,7 +965,7 @@ export function useDocumentSync(
   );
 
   const syncSavedDocument = useCallback(
-    async (document: EditorDocument) => {
+    async (document: EditorDocument, shouldEmit: () => boolean = () => true) => {
       const rootPath = currentWorkspaceRootRef.current;
       const syncKey = rootPath
         ? languageServerDocumentSyncKey(rootPath, document.path)
@@ -992,16 +995,20 @@ export function useDocumentSync(
         documentSyncGenerationRef.current === requestedSyncGeneration &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
         isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId);
+      const isSavedContentCurrent = () =>
+        isRequestedSyncCurrent() &&
+        shouldEmit() &&
+        syncedDocumentContentRef.current[syncKey] === document.content;
 
       try {
         await flushPendingDocumentChange(document.path);
 
-        if (!isRequestedSyncCurrent()) {
+        if (!isSavedContentCurrent()) {
           return;
         }
 
         await enqueueDocumentSync(syncKey, async () => {
-          if (!isRequestedSyncCurrent()) {
+          if (!isSavedContentCurrent()) {
             return;
           }
 
@@ -1014,7 +1021,7 @@ export function useDocumentSync(
           );
         });
       } catch (error) {
-        if (!isRequestedSyncCurrent()) {
+        if (!isSavedContentCurrent()) {
           return;
         }
 
@@ -1033,7 +1040,7 @@ export function useDocumentSync(
   );
 
   const syncSavedJavaScriptTypeScriptDocument = useCallback(
-    async (document: EditorDocument) => {
+    async (document: EditorDocument, shouldEmit: () => boolean = () => true) => {
       const rootPath = currentWorkspaceRootRef.current;
       const syncKey = rootPath
         ? languageServerDocumentSyncKey(rootPath, document.path)
@@ -1076,16 +1083,21 @@ export function useDocumentSync(
           rootPath,
           requestedSessionId,
         );
+      const isSavedContentCurrent = () =>
+        isRequestedSessionCurrent() &&
+        shouldEmit() &&
+        javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] ===
+          document.content;
 
       try {
         await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
 
-        if (!isRequestedSessionCurrent()) {
+        if (!isSavedContentCurrent()) {
           return;
         }
 
         await enqueueJavaScriptTypeScriptDocumentSync(syncKey, async () => {
-          if (!isRequestedSessionCurrent()) {
+          if (!isSavedContentCurrent()) {
             return;
           }
 
@@ -1098,7 +1110,7 @@ export function useDocumentSync(
           );
         });
       } catch (error) {
-        if (!isRequestedSessionCurrent()) {
+        if (!isSavedContentCurrent()) {
           return;
         }
 

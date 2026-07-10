@@ -47,6 +47,16 @@ function editorDocument(
   };
 }
 
+function replaceLiveDocument(harness: Harness, document: EditorDocument): void {
+  harness.documentsRef.current = {
+    ...harness.documentsRef.current,
+    [document.path]: document,
+  };
+  if (harness.activeDocumentRef.current?.path === document.path) {
+    harness.activeDocumentRef.current = document;
+  }
+}
+
 function gitChangedFile(path: string): GitChangedFile {
   return {
     isStaged: false,
@@ -93,6 +103,7 @@ function createFakeWorkspaceFiles(
 interface Harness {
   lifecycle: () => DocumentLifecycle;
   rootRef: { current: string | null };
+  workspaceRequestTokenRef: { current: number };
   activeDocumentRef: { current: EditorDocument | null };
   documentsRef: { current: Record<string, EditorDocument> };
   openPathsRef: { current: string[] };
@@ -145,6 +156,7 @@ function renderLifecycle(
       ? overrides.activePath ?? null
       : activeDocument?.path ?? null;
   const rootRef: { current: string | null } = { current: ROOT };
+  const workspaceRequestTokenRef = { current: 1 };
   const activeDocumentRef: { current: EditorDocument | null } = {
     current: activeDocument,
   };
@@ -241,6 +253,7 @@ function renderLifecycle(
     gitDiffLoading: false,
     workspaceSettings: defaultWorkspaceSettings(),
     currentWorkspaceRootRef: rootRef,
+    workspaceRequestTokenRef,
     activeDocumentRef,
     documentsRef,
     openPathsRef,
@@ -299,6 +312,7 @@ function renderLifecycle(
       return captured.lifecycle;
     },
     rootRef,
+    workspaceRequestTokenRef,
     activeDocumentRef,
     documentsRef,
     openPathsRef,
@@ -478,6 +492,450 @@ describe("useDocumentLifecycle", () => {
 
       expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
       expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("restarts formatting with the latest content when typing occurs during format", async () => {
+      const firstFormat = createDeferred<string>();
+      const formattedContentForSave = vi
+        .fn<(document: EditorDocument) => Promise<string>>()
+        .mockImplementationOnce(() => firstFormat.promise)
+        .mockImplementation(async (document) => document.content);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      replaceLiveDocument(harness, { ...activeDocument, content: "latest" });
+
+      await act(async () => {
+        firstFormat.resolve("stale formatted");
+        await savePromise;
+      });
+
+      expect(formattedContentForSave).toHaveBeenCalledTimes(2);
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledTimes(1);
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "latest",
+      );
+      expect(harness.documentsRef.current[activeDocument.path].content).toBe(
+        "latest",
+      );
+      harness.unmount();
+    });
+
+    it("restarts when typing and undo restore the same content during an await", async () => {
+      const firstFormat = createDeferred<string>();
+      const formattedContentForSave = vi
+        .fn<(document: EditorDocument) => Promise<string>>()
+        .mockImplementationOnce(() => firstFormat.promise)
+        .mockImplementation(async (document) => document.content);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "unchanged bytes",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      replaceLiveDocument(harness, { ...activeDocument });
+
+      await act(async () => {
+        firstFormat.resolve("stale transform");
+        await savePromise;
+      });
+
+      expect(formattedContentForSave).toHaveBeenCalledTimes(2);
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "unchanged bytes",
+      );
+      harness.unmount();
+    });
+
+    it("restarts the full pipeline when typing occurs during organize imports", async () => {
+      const firstOrganize = createDeferred<string>();
+      const organizedImportsContentForSave = vi
+        .fn<
+          (
+            document: EditorDocument,
+            content: string,
+            root: string,
+          ) => Promise<string>
+        >()
+        .mockImplementationOnce(() => firstOrganize.promise)
+        .mockImplementation(async (_document, content) => content);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        organizedImportsContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => {
+        expect(organizedImportsContentForSave).toHaveBeenCalledTimes(1);
+      });
+      replaceLiveDocument(harness, { ...activeDocument, content: "latest" });
+
+      await act(async () => {
+        firstOrganize.resolve("stale organized");
+        await savePromise;
+      });
+
+      expect(harness.formattedContentForSave).toHaveBeenCalledTimes(2);
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "latest",
+      );
+      harness.unmount();
+    });
+
+    it("restarts the full pipeline when typing occurs during EditorConfig resolution", async () => {
+      const firstEditorConfig = createDeferred<{}>();
+      const resolveEditorConfigForFile = vi
+        .fn<() => Promise<{}>>()
+        .mockImplementationOnce(() => firstEditorConfig.promise)
+        .mockImplementation(async () => ({}));
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        resolveEditorConfigForFile,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => {
+        expect(resolveEditorConfigForFile).toHaveBeenCalledTimes(1);
+      });
+      replaceLiveDocument(harness, { ...activeDocument, content: "latest" });
+
+      await act(async () => {
+        firstEditorConfig.resolve({});
+        await savePromise;
+      });
+
+      expect(harness.formattedContentForSave).toHaveBeenCalledTimes(2);
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "latest",
+      );
+      harness.unmount();
+    });
+
+    it("acknowledges bytes written while preserving newer typing and dirty state", async () => {
+      const write = createDeferred<void>();
+      const writeTextFile = vi.fn(() => write.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave: vi.fn(async () => "formatted first"),
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      replaceLiveDocument(harness, {
+        ...activeDocument,
+        content: "typed during write",
+      });
+
+      await act(async () => {
+        write.resolve();
+        await savePromise;
+      });
+
+      const saved = harness.documentsRef.current[activeDocument.path];
+      expect(saved.content).toBe("typed during write");
+      expect(saved.savedContent).toBe("formatted first");
+      expect(saved.content).not.toBe(saved.savedContent);
+      expect(harness.activeDocumentRef.current).toEqual(saved);
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("serializes concurrent saves and coalesces queued requests to latest content", async () => {
+      const firstWrite = createDeferred<void>();
+      const secondWrite = createDeferred<void>();
+      const firstHistory = createDeferred<void>();
+      const events: string[] = [];
+      const writeTextFile = vi.fn(async (_path: string, content: string) => {
+        events.push(`start:${content}`);
+        if (content === "A") {
+          await firstWrite.promise;
+        } else {
+          await secondWrite.promise;
+        }
+        events.push(`finish:${content}`);
+      });
+      const recordSnapshot = vi.fn(
+        async (_root: string, _path: string, content: string) => {
+          if (content === "A") {
+            await firstHistory.promise;
+          }
+          return null;
+        },
+      );
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "A",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        localHistoryGateway: createFakeLocalHistoryGateway({ recordSnapshot }),
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let firstSave!: Promise<void>;
+      act(() => {
+        firstSave = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      replaceLiveDocument(harness, { ...activeDocument, content: "B" });
+      let secondSave!: Promise<void>;
+      act(() => {
+        secondSave = harness.lifecycle().saveActiveDocument();
+      });
+      replaceLiveDocument(harness, { ...activeDocument, content: "C" });
+      let autoSave!: Promise<void>;
+      act(() => {
+        autoSave = harness.lifecycle().saveActiveDocument();
+      });
+
+      secondWrite.resolve();
+      await Promise.resolve();
+      expect(writeTextFile).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(["start:A"]);
+
+      firstWrite.resolve();
+      await vi.waitFor(() => expect(recordSnapshot).toHaveBeenCalledTimes(1));
+      expect(writeTextFile).toHaveBeenCalledTimes(1);
+      firstHistory.resolve();
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        await Promise.all([firstSave, secondSave, autoSave]);
+      });
+
+      expect(events).toEqual(["start:A", "finish:A", "start:C", "finish:C"]);
+      expect(harness.documentsRef.current[activeDocument.path]).toEqual(
+        expect.objectContaining({ content: "C", savedContent: "C" }),
+      );
+      expect(recordSnapshot).toHaveBeenNthCalledWith(
+        1,
+        ROOT,
+        "src/User.php",
+        "A",
+      );
+      expect(recordSnapshot).toHaveBeenNthCalledWith(
+        2,
+        ROOT,
+        "src/User.php",
+        "C",
+      );
+      expect(harness.syncSavedDocument).toHaveBeenCalledTimes(1);
+      expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "C" }),
+        expect.any(Function),
+      );
+      harness.unmount();
+    });
+
+    it("drops old-instance didSave when close and reopen occur during sync flush", async () => {
+      const flush = createDeferred<void>();
+      const downstreamDidSave = vi.fn();
+      const syncSavedDocument = vi.fn(
+        async (
+          document: EditorDocument,
+          shouldEmit: (() => boolean) | undefined,
+        ) => {
+          await flush.promise;
+          if (shouldEmit?.()) {
+            downstreamDidSave(document);
+          }
+        },
+      );
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "old instance",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        syncSavedDocument,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(syncSavedDocument).toHaveBeenCalledTimes(1));
+      act(() => harness.lifecycle().closeDocument(activeDocument.path));
+      const reopened = editorDocument(activeDocument.path, "reopened", "reopened");
+      harness.documentsRef.current = { [reopened.path]: reopened };
+      harness.activeDocumentRef.current = reopened;
+
+      await act(async () => {
+        flush.resolve();
+        await savePromise;
+      });
+
+      expect(downstreamDidSave).not.toHaveBeenCalled();
+      expect(harness.syncSavedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
+      expect(harness.setMessage).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[reopened.path]).toBe(reopened);
+      harness.unmount();
+    });
+
+    it("does not apply a write completion to a closed and reopened same path", async () => {
+      const write = createDeferred<void>();
+      const writeTextFile = vi.fn(() => write.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "old instance",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      act(() => harness.lifecycle().closeDocument(activeDocument.path));
+      const reopened = editorDocument(
+        activeDocument.path,
+        "reopened",
+        "reopened",
+      );
+      harness.documentsRef.current = { [reopened.path]: reopened };
+      harness.activeDocumentRef.current = reopened;
+
+      await act(async () => {
+        write.resolve();
+        await savePromise;
+      });
+
+      expect(harness.documentsRef.current[reopened.path]).toBe(reopened);
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.setMessage).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("does not apply a write completion after a workspace A-B-A switch", async () => {
+      const write = createDeferred<void>();
+      const writeTextFile = vi.fn(() => write.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "workspace A",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      harness.rootRef.current = "/workspace-b";
+      harness.workspaceRequestTokenRef.current += 1;
+      harness.rootRef.current = ROOT;
+      harness.workspaceRequestTokenRef.current += 1;
+
+      await act(async () => {
+        write.resolve();
+        await savePromise;
+      });
+
+      expect(harness.documentsRef.current[activeDocument.path]).toBe(
+        activeDocument,
+      );
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.setMessage).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("preserves edits to the saved document after it becomes inactive", async () => {
+      const write = createDeferred<void>();
+      const writeTextFile = vi.fn(() => write.promise);
+      const first = editorDocument(`${ROOT}/src/A.php`, "first", "saved");
+      const second = editorDocument(`${ROOT}/src/B.php`, "second");
+      const harness = renderLifecycle({
+        activeDocument: first,
+        documents: { [first.path]: first, [second.path]: second },
+        openPaths: [first.path, second.path],
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      harness.activeDocumentRef.current = second;
+      replaceLiveDocument(harness, { ...first, content: "inactive edit" });
+
+      await act(async () => {
+        write.resolve();
+        await savePromise;
+      });
+
+      expect(harness.documentsRef.current[first.path]).toEqual(
+        expect.objectContaining({
+          content: "inactive edit",
+          savedContent: "first",
+        }),
+      );
+      expect(harness.activeDocumentRef.current).toBe(second);
       harness.unmount();
     });
 

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/even
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -53,6 +54,7 @@ export interface DocumentLifecycleDependencies {
   workspaceSettings: WorkspaceSettings;
 
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  workspaceRequestTokenRef: MutableRefObject<number>;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
   openPathsRef: MutableRefObject<string[]>;
@@ -98,9 +100,13 @@ export interface DocumentLifecycleDependencies {
   ) => Promise<ResolvedEditorConfig>;
 
   // LSP document sync (from useDocumentSync).
-  syncSavedDocument: (document: EditorDocument) => Promise<void>;
+  syncSavedDocument: (
+    document: EditorDocument,
+    shouldEmit?: () => boolean,
+  ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
     document: EditorDocument,
+    shouldEmit?: () => boolean,
   ) => Promise<void>;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
   syncClosedJavaScriptTypeScriptDocument: (
@@ -144,6 +150,18 @@ export interface DocumentLifecycle {
   closeActiveSurface: () => void;
 }
 
+interface DocumentSaveIdentity {
+  documentEpoch: number;
+  path: string;
+  requestedRoot: string;
+  workspaceRequestToken: number;
+}
+
+interface DocumentSaveQueueEntry {
+  pending: DocumentSaveIdentity | null;
+  promise: Promise<void>;
+}
+
 /**
  * Save/close document lifecycle (region P of the workbench controller
  * decomposition). Owns the save flow (format-on-save + organize-imports +
@@ -167,6 +185,7 @@ export function useDocumentLifecycle(
     gitDiffLoading,
     workspaceSettings,
     currentWorkspaceRootRef,
+    workspaceRequestTokenRef,
     activeDocumentRef,
     documentsRef,
     openPathsRef,
@@ -204,6 +223,8 @@ export function useDocumentLifecycle(
     reportError,
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
+  const documentEpochByPathRef = useRef<Record<string, number>>({});
+  const saveQueueByPathRef = useRef<Record<string, DocumentSaveQueueEntry>>({});
 
   // Records a Local History snapshot for a saved document, scoped to the
   // workspace root captured by the caller. Best-effort: a snapshot failure must
@@ -235,135 +256,203 @@ export function useDocumentLifecycle(
     [localHistoryGateway],
   );
 
-  const saveActiveDocument = useCallback(async () => {
-    const documentToFormat = activeDocumentRef.current;
-    if (!documentToFormat || documentToFormat.readOnly) {
-      return;
-    }
+  const performDocumentSave = useCallback(async (identity: DocumentSaveIdentity) => {
+    const {
+      documentEpoch,
+      path,
+      requestedRoot,
+      workspaceRequestToken,
+    } = identity;
+    const currentDocumentForSave = (): EditorDocument | null => {
+      if (
+        workspaceRequestTokenRef.current !== workspaceRequestToken ||
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) ||
+        (documentEpochByPathRef.current[path] ?? 0) !== documentEpoch
+      ) {
+        return null;
+      }
 
-    const requestedRoot = workspaceRoot;
-    if (!requestedRoot) {
-      return;
-    }
+      return documentsRef.current[path] ?? null;
+    };
 
     try {
-      const formattedContent = await formattedContentForSave(
-        documentToFormat,
-        requestedRoot,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      let documentToFormat = currentDocumentForSave();
+      if (!documentToFormat || documentToFormat.readOnly) {
         return;
       }
 
-      // Optimize imports AFTER formatting and AFTER the root re-check, on the
-      // formatted content, so the two save-time fixers compose (format then
-      // organize imports) and never act on a stale or cross-tab document. PHP
-      // uses a synchronous reorganizer; this is a no-op for any other language.
-      const phpOptimizedContent = optimizedImportsContentForSave(
-        documentToFormat,
-        formattedContent,
-      );
-
-      // JavaScript/TypeScript organize-imports goes through the language server
-      // (`source.organizeImports`). It is async, so it is given the upfront
-      // requested root (which it uses for every LSP call and re-checks after its
-      // await), and the workspace root is re-checked again here before writing.
-      // It is a no-op for non-JS/TS documents.
-      const contentToSave = await organizedImportsContentForSave(
-        documentToFormat,
-        phpOptimizedContent,
-        requestedRoot,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      // EditorConfig on-save transforms (trim trailing whitespace, insert final
-      // newline, normalize EOL) run LAST so they compose over the formatted +
-      // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
-      // saved document's own path through the per-workspace cascade. A no-op when
-      // no `.editorconfig` enables any on-save behaviour.
-      const editorConfigForSave = await resolveEditorConfigForFile(
-        requestedRoot,
-        documentToFormat.path,
-      );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const editorConfiguredContent = applyEditorConfigOnSave(
-        contentToSave,
-        editorConfigForSave,
-      );
-
-      const documentToSave: EditorDocument = {
-        ...documentToFormat,
-        content: editorConfiguredContent,
-      };
-      const savedDocument: EditorDocument = {
-        ...documentToSave,
-        savedContent: documentToSave.content,
-      };
-
-      await workspaceFiles.writeTextFile(
-        documentToSave.path,
-        documentToSave.content,
-      );
-      filePrefetchCacheRef.current.invalidate(documentToSave.path);
-      // Capture a Local History snapshot of the just-saved content, scoped to
-      // the workspace root that was active when the save began. The gateway
-      // dedupes identical content and the storage is per-workspace, so this is
-      // a no-op when nothing changed and never leaks across tabs.
-      void captureLocalHistorySnapshot(
-        requestedRoot,
-        documentToSave.path,
-        documentToSave.content,
-      );
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      if (documentsRef.current[documentToSave.path]) {
-        documentsRef.current = {
-          ...documentsRef.current,
-          [documentToSave.path]: {
-            ...documentsRef.current[documentToSave.path],
-            content: documentToSave.content,
-            savedContent: documentToSave.content,
-          },
-        };
-      }
-      if (activeDocumentRef.current?.path === documentToSave.path) {
-        activeDocumentRef.current = savedDocument;
-      }
-
-      setDocuments((current) => {
-        const existing = current[documentToSave.path];
-
-        if (!existing) {
-          return current;
+      while (true) {
+        const startingContent = documentToFormat.content;
+        const formattedContent = await formattedContentForSave(
+          documentToFormat,
+          requestedRoot,
+        );
+        let liveDocument = currentDocumentForSave();
+        if (!liveDocument) {
+          return;
+        }
+        if (liveDocument !== documentToFormat) {
+          documentToFormat = liveDocument;
+          continue;
         }
 
-        return {
-          ...current,
-          [documentToSave.path]: {
-            ...existing,
-            content: documentToSave.content,
-            savedContent: documentToSave.content,
-          },
+        // Optimize imports AFTER formatting on the captured document snapshot.
+        // Any edit observed at an async boundary restarts the whole pipeline.
+        const phpOptimizedContent = optimizedImportsContentForSave(
+          documentToFormat,
+          formattedContent,
+        );
+
+        // JavaScript/TypeScript organize-imports goes through the language server
+        // (`source.organizeImports`). It is async, so it is given the upfront
+        // requested root (which it uses for every LSP call and re-checks after its
+        // await), and the workspace root is re-checked again here before writing.
+        // It is a no-op for non-JS/TS documents.
+        const contentToSave = await organizedImportsContentForSave(
+          documentToFormat,
+          phpOptimizedContent,
+          requestedRoot,
+        );
+        liveDocument = currentDocumentForSave();
+        if (!liveDocument) {
+          return;
+        }
+        if (liveDocument !== documentToFormat) {
+          documentToFormat = liveDocument;
+          continue;
+        }
+
+        // EditorConfig on-save transforms (trim trailing whitespace, insert final
+        // newline, normalize EOL) run LAST so they compose over the formatted +
+        // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
+        // saved document's own path through the per-workspace cascade. A no-op when
+        // no `.editorconfig` enables any on-save behaviour.
+        const editorConfigForSave = await resolveEditorConfigForFile(
+          requestedRoot,
+          documentToFormat.path,
+        );
+        liveDocument = currentDocumentForSave();
+        if (!liveDocument) {
+          return;
+        }
+        if (liveDocument !== documentToFormat) {
+          documentToFormat = liveDocument;
+          continue;
+        }
+
+        const editorConfiguredContent = applyEditorConfigOnSave(
+          contentToSave,
+          editorConfigForSave,
+        );
+
+        const documentToSave: EditorDocument = {
+          ...documentToFormat,
+          content: editorConfiguredContent,
         };
-      });
-      await syncSavedDocument(documentToSave);
-      await syncSavedJavaScriptTypeScriptDocument(documentToSave);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+
+        await workspaceFiles.writeTextFile(
+          documentToSave.path,
+          documentToSave.content,
+        );
+        liveDocument = currentDocumentForSave();
+        if (!liveDocument) {
+          return;
+        }
+
+        const acknowledgedDocument: EditorDocument = {
+          ...liveDocument,
+          content:
+            liveDocument === documentToFormat &&
+            liveDocument.content === startingContent
+              ? documentToSave.content
+              : liveDocument.content,
+          savedContent: documentToSave.content,
+        };
+        if (!currentDocumentForSave()) {
+          return;
+        }
+        documentsRef.current = {
+          ...documentsRef.current,
+          [documentToSave.path]: acknowledgedDocument,
+        };
+        if (!currentDocumentForSave()) {
+          return;
+        }
+        if (activeDocumentRef.current?.path === documentToSave.path) {
+          activeDocumentRef.current = acknowledgedDocument;
+        }
+
+        if (!currentDocumentForSave()) {
+          return;
+        }
+        setDocuments((current) => {
+          if (!currentDocumentForSave()) {
+            return current;
+          }
+
+          const existing = current[documentToSave.path];
+          if (!existing) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [documentToSave.path]: {
+              ...existing,
+              content:
+                existing === documentToFormat &&
+                existing.content === startingContent
+                  ? documentToSave.content
+                  : existing.content,
+              savedContent: documentToSave.content,
+            },
+          };
+        });
+
+        if (!currentDocumentForSave()) {
+          return;
+        }
+        filePrefetchCacheRef.current.invalidate(documentToSave.path);
+
+        if (!currentDocumentForSave()) {
+          return;
+        }
+        await captureLocalHistorySnapshot(
+          requestedRoot,
+          documentToSave.path,
+          documentToSave.content,
+        );
+
+        const isWrittenDocumentCurrent = () =>
+          currentDocumentForSave()?.content === documentToSave.content;
+        if (!isWrittenDocumentCurrent()) {
+          return;
+        }
+        await syncSavedDocument(documentToSave, isWrittenDocumentCurrent);
+
+        if (!isWrittenDocumentCurrent()) {
+          return;
+        }
+        await syncSavedJavaScriptTypeScriptDocument(
+          documentToSave,
+          isWrittenDocumentCurrent,
+        );
+
+        if (!isWrittenDocumentCurrent()) {
+          return;
+        }
+
+        setMessage(`Saved ${documentToSave.name}`);
+        return;
+      }
+    } catch (error) {
+      if (!currentDocumentForSave()) {
         return;
       }
 
-      setMessage(`Saved ${documentToSave.name}`);
-    } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
@@ -378,7 +467,50 @@ export function useDocumentLifecycle(
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     workspaceFiles,
+    workspaceRequestTokenRef,
+  ]);
+
+  const saveActiveDocument = useCallback(async () => {
+    const document = activeDocumentRef.current;
+    if (!document || document.readOnly || !workspaceRoot) {
+      return;
+    }
+
+    const identity: DocumentSaveIdentity = {
+      documentEpoch: documentEpochByPathRef.current[document.path] ?? 0,
+      path: document.path,
+      requestedRoot: workspaceRoot,
+      workspaceRequestToken: workspaceRequestTokenRef.current,
+    };
+    const existingQueue = saveQueueByPathRef.current[identity.path];
+    if (existingQueue) {
+      existingQueue.pending = identity;
+      return existingQueue.promise;
+    }
+
+    const queue: DocumentSaveQueueEntry = {
+      pending: identity,
+      promise: Promise.resolve(),
+    };
+    saveQueueByPathRef.current[identity.path] = queue;
+    queue.promise = (async () => {
+      while (queue.pending) {
+        const pending = queue.pending;
+        queue.pending = null;
+        await performDocumentSave(pending);
+      }
+    })().finally(() => {
+      if (saveQueueByPathRef.current[identity.path] === queue) {
+        delete saveQueueByPathRef.current[identity.path];
+      }
+    });
+
+    return queue.promise;
+  }, [
+    activeDocumentRef,
+    performDocumentSave,
     workspaceRoot,
+    workspaceRequestTokenRef,
   ]);
 
   useEffect(() => {
@@ -423,6 +555,8 @@ export function useDocumentLifecycle(
       }
 
       if (document) {
+        documentEpochByPathRef.current[path] =
+          (documentEpochByPathRef.current[path] ?? 0) + 1;
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
         clearPhpLocalDiagnosticsForPath(path);

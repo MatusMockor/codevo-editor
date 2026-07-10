@@ -547,6 +547,32 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     );
   });
 
+  it("emits a newer didChange but suppresses stale didSave after the flush", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const savedDocument = phpDocument({ content: "saved bytes" });
+    const newerDocument = phpDocument({ content: "typed later" });
+    const events: string[] = [];
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(
+      async (_root, document) => {
+        events.push(`didChange:${document.text}`);
+      },
+    );
+    vi.mocked(harness.phpGateway.didSave).mockImplementation(
+      async (_root, document) => {
+        events.push(`didSave:${document.text}`);
+      },
+    );
+
+    await api().syncOpenDocument(savedDocument);
+    api().scheduleDocumentChange(newerDocument);
+    await api().syncSavedDocument(savedDocument, () => true);
+    await flushMicrotasks();
+
+    expect(events).toEqual(["didChange:typed later"]);
+    expect(harness.phpGateway.didSave).not.toHaveBeenCalled();
+  });
+
   it("closes a document, sends didClose, and clears its synced state", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);
