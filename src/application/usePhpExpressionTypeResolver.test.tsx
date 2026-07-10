@@ -181,6 +181,31 @@ describe("usePhpExpressionTypeResolver", () => {
     harness.unmount();
   });
 
+  it("keeps failed factory and receiver fluent probes distinct", async () => {
+    const calls: Array<[string, number | undefined]> = [];
+    const resolvePhpEloquentBuilderModelType = vi.fn(
+      async (_source, _position, expression, depth) => {
+        calls.push([expression, depth]);
+
+        return expression === "$unknown" ? "App\\Models\\Post" : null;
+      },
+    );
+    const harness = renderHook(
+      makeOptions({ resolvePhpEloquentBuilderModelType }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$unknown->newQuery()"),
+    ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
+    expect(calls).toEqual([
+      ["$unknown->newQuery()", 1],
+      ["$unknown", 1],
+    ]);
+    harness.unmount();
+  });
+
   it("resolves builder terminal and collection methods from the builder model", async () => {
     const resolvePhpEloquentBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
@@ -206,6 +231,26 @@ describe("usePhpExpressionTypeResolver", () => {
       "$builder",
       1,
     );
+    harness.unmount();
+  });
+
+  it("resolves static terminals before static builder transitions", async () => {
+    const options = makeOptions();
+    const harness = renderHook(options);
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        SOURCE,
+        POSITION,
+        "Post::updateOrCreate([])",
+      ),
+    ).resolves.toBe("App\\Models\\Post");
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "Post::query()"),
+    ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
+    expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
     harness.unmount();
   });
 

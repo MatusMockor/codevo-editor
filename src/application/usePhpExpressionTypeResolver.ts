@@ -3,12 +3,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   isLaravelCollectionFluentMethod,
-  isLaravelCollectionTerminalModelMethod,
   isLaravelEloquentBuilderCollectionMethod,
-  isLaravelEloquentBuilderFluentMethod,
-  isLaravelEloquentBuilderTerminalModelMethod,
-  isLaravelEloquentModelBuilderFactoryMethod,
-  isLaravelEloquentStaticBuilderMethod,
   phpLaravelResolvedModelTypeCandidate,
 } from "../domain/phpFrameworkLaravel";
 import {
@@ -35,6 +30,8 @@ import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFramewo
 import { phpFrameworkBuilderMagicExpressionTypeAdapters } from "./phpFrameworkBuilderMagicExpressionTypeAdapters";
 import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
 import { createPhpFrameworkModelFluentExpressionTypeAdapters } from "./phpFrameworkModelFluentExpressionTypeAdapters";
+import type { PhpFrameworkModelBuilderTransitionExpressionTypeAdapter } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapter";
+import { createPhpFrameworkModelBuilderTransitionExpressionTypeAdapters } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapters";
 import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
 import { createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapters";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
@@ -123,6 +120,10 @@ export function usePhpExpressionTypeResolver({
         isLaravelFrameworkActive,
         modelFluentExpressionTypeAdapter:
           createPhpFrameworkModelFluentExpressionTypeAdapters(
+            isLaravelFrameworkActive,
+          ),
+        modelBuilderTransitionExpressionTypeAdapter:
+          createPhpFrameworkModelBuilderTransitionExpressionTypeAdapters(
             isLaravelFrameworkActive,
           ),
         queryCallbackVariableExpressionTypeAdapter:
@@ -506,6 +507,7 @@ interface PhpExpressionTypeStrategyOptions {
   builderMagicExpressionTypeAdapter: PhpFrameworkBuilderMagicExpressionTypeAdapter;
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   isLaravelFrameworkActive: boolean;
+  modelBuilderTransitionExpressionTypeAdapter: PhpFrameworkModelBuilderTransitionExpressionTypeAdapter;
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
   queryCallbackVariableExpressionTypeAdapter: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter;
   resolvePhpClassPropertyOrRelationType: (
@@ -536,6 +538,7 @@ function createPhpExpressionTypeStrategy({
   builderMagicExpressionTypeAdapter,
   databaseExpressionTypeAdapter,
   isLaravelFrameworkActive,
+  modelBuilderTransitionExpressionTypeAdapter,
   modelFluentExpressionTypeAdapter,
   queryCallbackVariableExpressionTypeAdapter,
   resolvePhpClassPropertyOrRelationType,
@@ -561,150 +564,121 @@ function createPhpExpressionTypeStrategy({
       resolveReceiverType,
       source,
     }) => {
-      if (isLaravelCollectionTerminalModelMethod(methodCall.methodName)) {
-        const collectionPropertyAccess = phpPropertyAccessExpression(
-          methodCall.receiverExpression,
-        );
-        const collectionPropertyReceiverType = collectionPropertyAccess
-          ? await resolvePhpExpressionType(
+      const modelBuilderTransitionMethodCallType =
+        await modelBuilderTransitionExpressionTypeAdapter.methodCallType({
+          methodName: methodCall.methodName,
+          resolveCollectionTerminalModelType: async () => {
+            const collectionPropertyAccess = phpPropertyAccessExpression(
+              methodCall.receiverExpression,
+            );
+            const collectionPropertyReceiverType = collectionPropertyAccess
+              ? await resolvePhpExpressionType(
+                  source,
+                  position,
+                  collectionPropertyAccess.receiverExpression,
+                  depth + 1,
+                )
+              : null;
+            const collectionRelationModelType =
+              collectionPropertyReceiverType && collectionPropertyAccess
+                ? await resolvePhpClassPropertyOrRelationType(
+                    collectionPropertyReceiverType,
+                    collectionPropertyAccess.propertyName,
+                    true,
+                  )
+                : null;
+
+            if (collectionRelationModelType) {
+              return collectionRelationModelType;
+            }
+
+            return resolvePhpLaravelCollectionModelType(
               source,
               position,
-              collectionPropertyAccess.receiverExpression,
+              methodCall.receiverExpression,
               depth + 1,
-            )
-          : null;
-        const collectionRelationModelType =
-          collectionPropertyReceiverType && collectionPropertyAccess
-            ? await resolvePhpClassPropertyOrRelationType(
-                collectionPropertyReceiverType,
-                collectionPropertyAccess.propertyName,
-                true,
-              )
-            : null;
-
-        if (collectionRelationModelType) {
-          return collectionRelationModelType;
-        }
-
-        const modelType = await resolvePhpLaravelCollectionModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
-
-        if (modelType) {
-          return modelType;
-        }
-      }
-
-      if (isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)) {
-        const modelType = await resolvePhpEloquentBuilderModelType(
-          source,
-          position,
-          expression,
-          depth + 1,
-        );
-
-        if (modelType) {
-          return "Illuminate\\Database\\Eloquent\\Builder";
-        }
-      }
-
-      if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
-        let relationExpression = methodCall.receiverExpression;
-        let relationCall = phpMethodCallExpression(relationExpression);
-
-        while (
-          relationCall &&
-          (isLaravelEloquentBuilderCollectionMethod(relationCall.methodName) ||
-            isLaravelCollectionFluentMethod(relationCall.methodName))
-        ) {
-          relationExpression = relationCall.receiverExpression;
-          relationCall = phpMethodCallExpression(relationExpression);
-        }
-
-        const relationPropertyAccess =
-          phpPropertyAccessExpression(relationExpression);
-        const relationReceiverType = relationCall
-          ? await resolvePhpExpressionType(
+            );
+          },
+          resolveModelFactoryModelType: () =>
+            resolvePhpEloquentBuilderModelType(
               source,
               position,
-              relationCall.receiverExpression,
+              expression,
               depth + 1,
-            )
-          : relationPropertyAccess
-            ? await resolvePhpExpressionType(
-                source,
-                position,
-                relationPropertyAccess.receiverExpression,
-                depth + 1,
-              )
-            : null;
-        const relationMemberName =
-          relationCall?.methodName ?? relationPropertyAccess?.propertyName ?? null;
-        const relationModelType =
-          relationReceiverType && relationMemberName
-            ? await resolvePhpClassPropertyOrRelationType(
-                relationReceiverType,
-                relationMemberName,
-                true,
-              )
-            : null;
+            ),
+          resolveBuilderTerminalModelType: async () => {
+            let relationExpression = methodCall.receiverExpression;
+            let relationCall = phpMethodCallExpression(relationExpression);
 
-        if (relationModelType) {
-          return relationModelType;
-        }
+            while (
+              relationCall &&
+              (isLaravelEloquentBuilderCollectionMethod(
+                relationCall.methodName,
+              ) || isLaravelCollectionFluentMethod(relationCall.methodName))
+            ) {
+              relationExpression = relationCall.receiverExpression;
+              relationCall = phpMethodCallExpression(relationExpression);
+            }
 
-        const modelType = await resolvePhpEloquentBuilderModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
+            const relationPropertyAccess =
+              phpPropertyAccessExpression(relationExpression);
+            const relationReceiverType = relationCall
+              ? await resolvePhpExpressionType(
+                  source,
+                  position,
+                  relationCall.receiverExpression,
+                  depth + 1,
+                )
+              : relationPropertyAccess
+                ? await resolvePhpExpressionType(
+                    source,
+                    position,
+                    relationPropertyAccess.receiverExpression,
+                    depth + 1,
+                  )
+                : null;
+            const relationMemberName =
+              relationCall?.methodName ??
+              relationPropertyAccess?.propertyName ??
+              null;
+            const relationModelType =
+              relationReceiverType && relationMemberName
+                ? await resolvePhpClassPropertyOrRelationType(
+                    relationReceiverType,
+                    relationMemberName,
+                    true,
+                  )
+                : null;
 
-        if (modelType) {
-          return modelType;
-        }
-      }
+            if (relationModelType) {
+              return relationModelType;
+            }
 
-      if (isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)) {
-        const modelType = await resolvePhpEloquentBuilderModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
+            return resolvePhpEloquentBuilderModelType(
+              source,
+              position,
+              methodCall.receiverExpression,
+              depth + 1,
+            );
+          },
+          resolveBuilderModelType: () =>
+            resolvePhpEloquentBuilderModelType(
+              source,
+              position,
+              methodCall.receiverExpression,
+              depth + 1,
+            ),
+          resolveCollectionModelType: () =>
+            resolvePhpLaravelCollectionModelType(
+              source,
+              position,
+              methodCall.receiverExpression,
+              depth + 1,
+            ),
+        });
 
-        if (modelType) {
-          return "Illuminate\\Database\\Eloquent\\Collection";
-        }
-      }
-
-      if (isLaravelCollectionFluentMethod(methodCall.methodName)) {
-        const modelType = await resolvePhpLaravelCollectionModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
-
-        if (modelType) {
-          return "Illuminate\\Database\\Eloquent\\Collection";
-        }
-      }
-
-      if (isLaravelEloquentBuilderFluentMethod(methodCall.methodName)) {
-        const modelType = await resolvePhpEloquentBuilderModelType(
-          source,
-          position,
-          methodCall.receiverExpression,
-          depth + 1,
-        );
-
-        if (modelType) {
-          return "Illuminate\\Database\\Eloquent\\Builder";
-        }
+      if (modelBuilderTransitionMethodCallType) {
+        return modelBuilderTransitionMethodCallType;
       }
 
       const databaseMethodCallType =
@@ -745,15 +719,14 @@ function createPhpExpressionTypeStrategy({
     receiverMethodCallType:
       modelFluentExpressionTypeAdapter.receiverMethodCallType,
     staticCallType: async ({ className, staticCall }) => {
-      if (
-        className &&
-        isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
-      ) {
-        return className;
-      }
+      const modelBuilderTransitionStaticCallType =
+        await modelBuilderTransitionExpressionTypeAdapter.staticCallType({
+          className,
+          methodName: staticCall.methodName,
+        });
 
-      if (className && isLaravelEloquentStaticBuilderMethod(staticCall.methodName)) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
+      if (modelBuilderTransitionStaticCallType) {
+        return modelBuilderTransitionStaticCallType;
       }
 
       const databaseStaticCallType =
