@@ -209,6 +209,7 @@ export interface EditorDocument {
   content: string;
   savedContent: string;
   language: string;
+  revision?: WorkspaceFileRevision | null;
   readOnly?: boolean;
 }
 
@@ -225,8 +226,88 @@ export interface WorkspaceFileGateway {
   deletePath(path: string): Promise<void>;
   readDirectory(path: string): Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
+  readTextFileSnapshot?(path: string): Promise<WorkspaceTextFileSnapshot>;
   renamePath(from: string, to: string): Promise<void>;
-  writeTextFile(path: string, content: string): Promise<void>;
+  writeTextFile(
+    path: string,
+    content: string,
+    expectedRevision?: WorkspaceFileRevision,
+  ): Promise<WorkspaceWriteResult | void>;
+}
+
+export interface WorkspaceTextFileSnapshot {
+  content: string;
+  revision: WorkspaceFileRevision | null;
+}
+
+export async function readWorkspaceTextFileSnapshot(
+  gateway: WorkspaceFileGateway,
+  path: string,
+): Promise<WorkspaceTextFileSnapshot> {
+  if (gateway.readTextFileSnapshot) {
+    return gateway.readTextFileSnapshot(path);
+  }
+
+  return { content: await gateway.readTextFile(path), revision: null };
+}
+
+export type WorkspaceWriteResult =
+  | { status: "success"; revision: WorkspaceFileRevision | null }
+  | { status: "conflict"; message: string }
+  | { status: "partial"; message: string; revision: WorkspaceFileRevision | null }
+  | { status: "error"; message: string };
+
+export interface WorkspaceFileRevision {
+  device: number;
+  inode: number;
+  size: number;
+  modifiedSeconds: number;
+  modifiedNanoseconds: number;
+  contentHash: number;
+}
+
+export type WorkspaceMutationResult =
+  | { status: "success" }
+  | { status: "partial"; message: string }
+  | { status: "error"; message: string };
+
+export function requireWorkspaceWriteSuccess(
+  result: WorkspaceWriteResult | void,
+  operation: string,
+): WorkspaceFileRevision | null {
+  if (!result) {
+    return null;
+  }
+
+  if (result.status === "success") {
+    return result.revision;
+  }
+
+  throw new Error(`${operation} failed: ${result.message}`);
+}
+
+export async function createWorkspaceTextFileWithContent(
+  gateway: WorkspaceFileGateway,
+  path: string,
+  content: string,
+): Promise<WorkspaceFileRevision | null> {
+  await gateway.createTextFile(path);
+  if (!gateway.readTextFileSnapshot) {
+    return requireWorkspaceWriteSuccess(
+      await gateway.writeTextFile(path, content),
+      "Create file",
+    );
+  }
+
+  const created = await readWorkspaceTextFileSnapshot(gateway, path);
+  if (!created.revision) {
+    throw new Error("The created file has no trusted revision and cannot be saved.");
+  }
+
+  return requireWorkspaceWriteSuccess(
+    await gateway.writeTextFile(path, content, created.revision ?? undefined),
+    "Create file",
+  );
 }
 
 export interface WorkspaceDetectionGateway {

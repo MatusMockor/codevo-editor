@@ -130,6 +130,7 @@ interface Harness {
   setMessage: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
+  rerender: (overrides: Partial<DocumentLifecycleDependencies>) => void;
   unmount: () => void;
 }
 
@@ -339,6 +340,12 @@ function renderLifecycle(
     setMessage,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    rerender: (nextOverrides) => {
+      Object.assign(deps, nextOverrides);
+      act(() => {
+        root.render(<HarnessComponent />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -349,6 +356,232 @@ function renderLifecycle(
 
 describe("useDocumentLifecycle", () => {
   describe("saveActiveDocument", () => {
+    it("publishes an authoritative disk snapshot on a typed revision conflict and blocks stale retry", async () => {
+      const loadedRevision = revision(1);
+      const diskRevision = revision(2);
+      const document = {
+        ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),
+        revision: loadedRevision,
+      };
+      let conflicted = false;
+      const detectSaveConflict = vi.fn(() => {
+        conflicted = true;
+      });
+      const workspaceFiles = createFakeWorkspaceFiles({
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: "disk",
+          revision: diskRevision,
+        })),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      });
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        detectSaveConflict,
+        hasExternalFileConflict: () => conflicted,
+        workspaceFiles,
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await harness.lifecycle().saveActiveDocument();
+      });
+
+      expect(workspaceFiles.writeTextFile).toHaveBeenCalledOnce();
+      expect(workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        document.path,
+        "editor",
+        loadedRevision,
+      );
+      expect(detectSaveConflict).toHaveBeenCalledWith(ROOT, document, {
+        content: "disk",
+        revision: diskRevision,
+      });
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("publishes a retryable unreadable conflict when the save-conflict snapshot fails", async () => {
+      const document = {
+        ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),
+        revision: revision(1),
+      };
+      let conflicted = false;
+      const detectSaveConflict = vi.fn(() => { conflicted = true; });
+      const workspaceFiles = createFakeWorkspaceFiles({
+        readTextFileSnapshot: vi.fn(async () => { throw new Error("unreadable"); }),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      });
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        detectSaveConflict,
+        hasExternalFileConflict: () => conflicted,
+        workspaceFiles,
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await harness.lifecycle().saveActiveDocument();
+      });
+
+      expect(detectSaveConflict).toHaveBeenCalledWith(ROOT, document, null);
+      expect(workspaceFiles.writeTextFile).toHaveBeenCalledOnce();
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.setMessage).toHaveBeenCalledWith(
+        "The file changed on disk. Review the conflict before saving.",
+      );
+      harness.unmount();
+    });
+
+    it("uses the current save-conflict callback after dependency replacement", async () => {
+      const document = {
+        ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),
+        revision: revision(1),
+      };
+      const staleDetectSaveConflict = vi.fn();
+      const currentDetectSaveConflict = vi.fn();
+      const workspaceFiles = createFakeWorkspaceFiles({
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: "disk",
+          revision: revision(2),
+        })),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      });
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        detectSaveConflict: staleDetectSaveConflict,
+        workspaceFiles,
+      });
+      harness.rerender({ detectSaveConflict: currentDetectSaveConflict });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+
+      expect(staleDetectSaveConflict).not.toHaveBeenCalled();
+      expect(currentDetectSaveConflict).toHaveBeenCalledWith(
+        ROOT,
+        document,
+        { content: "disk", revision: revision(2) },
+      );
+      harness.unmount();
+    });
+
+    it("keeps a partial write dirty but advances revision for a consistent retry", async () => {
+      const oldRevision = revision(1);
+      const partialRevision = revision(2);
+      const finalRevision = revision(3);
+      const document = {
+        ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),
+        revision: oldRevision,
+      };
+      const writeTextFile = vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: "partial" as const,
+          message: "directory sync failed",
+          revision: partialRevision,
+        })
+        .mockResolvedValueOnce({
+          status: "success" as const,
+          revision: finalRevision,
+        });
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+      expect(harness.documentsRef.current[document.path].savedContent).toBe("baseline");
+      expect(harness.documentsRef.current[document.path].revision).toEqual(partialRevision);
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+      expect(writeTextFile).toHaveBeenNthCalledWith(
+        2,
+        document.path,
+        "editor",
+        partialRevision,
+      );
+      expect(harness.documentsRef.current[document.path].savedContent).toBe("editor");
+      expect(harness.documentsRef.current[document.path].revision).toEqual(finalRevision);
+      expect(harness.syncSavedDocument).toHaveBeenCalledOnce();
+      harness.unmount();
+    });
+
+    it("aborts with zero writes when a conflict arrives during preparation", async () => {
+      const formatting = createDeferred<string>();
+      let conflicted = false;
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave: vi.fn(() => formatting.promise),
+        hasExternalFileConflict: () => conflicted,
+      });
+
+      let save!: Promise<void>;
+      act(() => { save = harness.lifecycle().saveActiveDocument(); });
+      conflicted = true;
+      await act(async () => { formatting.resolve("formatted"); await save; });
+
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.setMessage).toHaveBeenCalledWith(
+        "Resolve the external file conflict before saving.",
+      );
+      harness.unmount();
+    });
+
+    it("does not acknowledge or sync when a conflict arrives during the write", async () => {
+      const write = createDeferred<void>();
+      let conflicted = false;
+      const writeTextFile = vi.fn(() => write.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        hasExternalFileConflict: () => conflicted,
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let save!: Promise<void>;
+      act(() => { save = harness.lifecycle().saveActiveDocument(); });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledTimes(1));
+      conflicted = true;
+      await act(async () => { write.resolve(); await save; });
+
+      expect(harness.documentsRef.current[activeDocument.path].savedContent).toBe(
+        "saved",
+      );
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
+      harness.unmount();
+    });
     it("composes format + organize-imports + editorconfig, writes, snapshots, syncs, and clears dirty", async () => {
       const activeDocument = editorDocument(
         `${ROOT}/src/User.php`,
@@ -986,6 +1219,26 @@ describe("useDocumentLifecycle", () => {
   });
 
   describe("closeDocument", () => {
+    it("clears external conflict state only after close is confirmed", () => {
+      const dirty = editorDocument(`${ROOT}/src/A.php`, "edited", "saved");
+      const clearExternalFileConflict = vi.fn();
+      const confirm = vi.fn(() => false);
+      const harness = renderLifecycle({
+        activeDocument: dirty,
+        documents: { [dirty.path]: dirty },
+        openPaths: [dirty.path],
+        hasExternalFileConflict: () => true,
+        clearExternalFileConflict,
+        prompter: { confirm, prompt: vi.fn() } as unknown as DocumentLifecycleDependencies["prompter"],
+      });
+
+      act(() => harness.lifecycle().closeDocument(dirty.path));
+      expect(clearExternalFileConflict).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+      act(() => harness.lifecycle().closeDocument(dirty.path));
+      expect(clearExternalFileConflict).toHaveBeenCalledWith(ROOT, dirty.path);
+      harness.unmount();
+    });
     it("syncs the close, clears diagnostics, removes the tab, and reselects the neighbor", async () => {
       const first = editorDocument(`${ROOT}/src/A.php`);
       const second = editorDocument(`${ROOT}/src/B.php`);
@@ -1364,3 +1617,14 @@ describe("useDocumentLifecycle", () => {
     });
   });
 });
+
+function revision(contentHash: number) {
+  return {
+    device: 1,
+    inode: 2,
+    size: 3,
+    modifiedSeconds: 4,
+    modifiedNanoseconds: 5,
+    contentHash,
+  };
+}

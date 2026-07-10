@@ -151,6 +151,14 @@ import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
+import {
+  disposeWorkspaceModels,
+  modelMatchesWorkspacePath,
+  modelPath,
+  registerWorkspaceIdentityDescriptor,
+  type WorkspaceIdentityDescriptor,
+  workspaceModelUri,
+} from "./phpMonacoDocumentContext";
 
 interface ChangePreviewState {
   anchorLineNumber: number;
@@ -240,6 +248,7 @@ interface EditorSurfaceProps {
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   userSnippets?: readonly UserSnippet[];
   workspaceRoot?: string | null;
+  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
   onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
@@ -374,6 +383,7 @@ function EditorSurfaceComponent({
   phpLanguageServerWorkspaceEditGateway,
   userSnippets = EMPTY_USER_SNIPPETS,
   workspaceRoot = null,
+  workspaceIdentityDescriptor = null,
   onCloseActiveTab,
   onCursorPositionChange,
   onEditorMenuCommandRunnerChange,
@@ -596,6 +606,39 @@ function EditorSurfaceComponent({
     workspaceRootRef.current = workspaceRoot;
   }, [workspaceRoot]);
 
+  const workspaceIdentityRegistration = useMemo(() => {
+    if (
+      !workspaceIdentityDescriptor ||
+      !workspaceRoot ||
+      !workspaceIdentityDescriptor.policy ||
+      (!workspaceIdentityDescriptor.selectedPath &&
+        !workspaceIdentityDescriptor.canonicalRoot)
+    ) {
+      return null;
+    }
+
+    return {
+      root: workspaceRoot,
+      unregister: registerWorkspaceIdentityDescriptor(
+        workspaceIdentityDescriptor,
+        workspaceRoot,
+      ),
+    };
+  }, [workspaceIdentityDescriptor, workspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    return () => {
+      if (monacoApi) {
+        disposeWorkspaceModels(monacoApi, workspaceRoot);
+      }
+      workspaceIdentityRegistration?.unregister();
+    };
+  }, [monacoApi, workspaceIdentityRegistration, workspaceRoot]);
+
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
   // changes. The cyclic-expand-word (hippie) session is dropped for the same
@@ -659,6 +702,7 @@ function EditorSurfaceComponent({
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptValidationEnabled,
     monacoApi,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 
@@ -802,7 +846,7 @@ function EditorSurfaceComponent({
     const model = editorApi.getModel();
     const position = editorApi.getPosition();
 
-    if (!model || !position || modelPath(model) !== activeDocument.path) {
+    if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -833,6 +877,7 @@ function EditorSurfaceComponent({
     editorApi,
     phpIdeReadinessVersion,
     providePhpMethodCompletions,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -849,7 +894,7 @@ function EditorSurfaceComponent({
     const runner: EditorMenuCommandRunner = (command) => {
       const model = editorApi.getModel();
 
-      if (!model || modelPath(model) !== targetPath) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
         return;
       }
 
@@ -866,7 +911,7 @@ function EditorSurfaceComponent({
     return () => {
       onEditorMenuCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange]);
+  }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange, workspaceRoot]);
 
   useEffect(() => {
     if (!onEditorSurfaceCommandRunnerChange) {
@@ -882,7 +927,7 @@ function EditorSurfaceComponent({
     const runner: EditorSurfaceCommandRunner = (commandId) => {
       const model = editorApi.getModel();
 
-      if (!model || modelPath(model) !== targetPath) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
         return;
       }
 
@@ -895,7 +940,7 @@ function EditorSurfaceComponent({
     return () => {
       onEditorSurfaceCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange]);
+  }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange, workspaceRoot]);
 
   useEditorSurfaceLanguageProviderRegistration({
     dependencies: {
@@ -903,6 +948,7 @@ function EditorSurfaceComponent({
       monacoApi,
       refreshGateway: languageServerRefreshGateway,
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
+      workspaceIdentityDescriptor,
       workspaceRoot,
     },
     refs: {
@@ -954,6 +1000,7 @@ function EditorSurfaceComponent({
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getUserSnippets: () => userSnippetsRef.current,
+        getWorkspaceIdentityDescriptor: () => workspaceIdentityDescriptor,
         getWorkspaceRoot: () => workspaceRoot,
         limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -1065,7 +1112,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -1088,7 +1135,7 @@ function EditorSurfaceComponent({
           : monacoApi.editor.EndOfLineSequence.LF,
       );
     }
-  }, [activeDocument, editorApi, editorConfig, monacoApi]);
+  }, [activeDocument, editorApi, editorConfig, monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -1135,14 +1182,14 @@ function EditorSurfaceComponent({
     // Only warm the model that actually backs the requested document. During a
     // switch the editor can still hold the previous model for a frame; warming
     // it would tokenize the wrong file, so we wait for the next effect run.
-    if (!model || modelPath(model) !== requestedPath) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, requestedPath)) {
       return;
     }
 
     tokenizer.start(model as unknown as BackgroundTokenizableModel);
 
     return () => tokenizer.stop();
-  }, [activeDocument, editorApi, largeSmartDocumentPolicy]);
+  }, [activeDocument, editorApi, largeSmartDocumentPolicy, workspaceRoot]);
 
   // Permanent teardown so a disposed surface leaves no pending idle slice.
   useEffect(() => {
@@ -1245,7 +1292,7 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
 
-      if (!model || !position || modelPath(model) !== activeDocumentPath) {
+      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
         return;
       }
 
@@ -1268,7 +1315,7 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [activeDocument?.language, activeDocument?.path, editorApi]);
+  }, [activeDocument?.language, activeDocument?.path, editorApi, workspaceRoot]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1294,7 +1341,7 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
 
-      if (!model || !position || modelPath(model) !== activeDocument.path) {
+      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
         return;
       }
 
@@ -1340,7 +1387,7 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [activeDocument, editorApi, monacoApi]);
+  }, [activeDocument, editorApi, monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
@@ -1925,7 +1972,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -1945,7 +1992,7 @@ function EditorSurfaceComponent({
     // the per-tab stale guard) plus changeHunks, so the path covers file
     // switches and changeHunks covers actual hunk changes. Mirrors the
     // bookmark / diagnostic-overview / gutter path-gated effects.
-  }, [activeDocument?.path, changeHunks, editorApi, monacoApi]);
+  }, [activeDocument?.path, changeHunks, editorApi, monacoApi, workspaceRoot]);
 
   // Renders a bookmark marker in the lines-decorations margin plus an overview
   // ruler tick for each bookmarked line of the active document. The stale-guard
@@ -1959,7 +2006,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -1980,7 +2027,13 @@ function EditorSurfaceComponent({
     // not re-run this effect every keystroke. The body reads only the path (for
     // the per-tab stale guard) plus bookmarkedLineNumbers, so the path covers
     // file switches and bookmarkedLineNumbers covers bookmark toggles.
-  }, [activeDocument?.path, bookmarkedLineNumbers, editorApi, monacoApi]);
+  }, [
+    activeDocument?.path,
+    bookmarkedLineNumbers,
+    editorApi,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   // Git blame annotations (PhpStorm "Annotate with Git Blame"). When enabled for
   // the active document, fetch per-line blame off the parent gateway and render
@@ -1996,7 +2049,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -2032,7 +2085,7 @@ function EditorSurfaceComponent({
 
         if (
           !currentModel ||
-          modelPath(currentModel) !== requestedPath ||
+          !modelMatchesProject(currentModel, workspaceRoot, requestedPath) ||
           activeDocumentRef.current?.path !== requestedPath
         ) {
           return;
@@ -2060,7 +2113,13 @@ function EditorSurfaceComponent({
     // typing does not refetch blame every keystroke; a file switch or a toggle
     // re-runs it. Blame is anchored to committed lines and need not track live
     // edits between toggles.
-  }, [activeDocument?.path, editorApi, gitBlameEnabled, monacoApi]);
+  }, [
+    activeDocument?.path,
+    editorApi,
+    gitBlameEnabled,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!changePreview) {
@@ -2153,7 +2212,7 @@ function EditorSurfaceComponent({
           };
         });
 
-        const model = modelForPath(monacoApi, path);
+        const model = modelForPath(monacoApi, workspaceRoot, path);
 
         if (model) {
           monacoApi.editor.setModelMarkers(model, "php-syntax", [
@@ -2211,7 +2270,7 @@ function EditorSurfaceComponent({
             [path]: inspectionDiagnostics.length,
           };
         });
-        const model = modelForPath(monacoApi, path);
+        const model = modelForPath(monacoApi, workspaceRoot, path);
 
         if (model) {
           monacoApi.editor.setModelMarkers(model, "php-syntax", [
@@ -2235,7 +2294,12 @@ function EditorSurfaceComponent({
         }
       }
     },
-    [monacoApi, onLocalPhpDiagnosticsChange, phpSyntaxDiagnosticsGateway],
+    [
+      monacoApi,
+      onLocalPhpDiagnosticsChange,
+      phpSyntaxDiagnosticsGateway,
+      workspaceRoot,
+    ],
   );
 
   useEffect(() => {
@@ -2245,7 +2309,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -2266,7 +2330,7 @@ function EditorSurfaceComponent({
       );
       implementationGutterDecoratedPathRef.current = null;
     }
-  }, [activeDocument, editorApi, monacoApi]);
+  }, [activeDocument, editorApi, monacoApi, workspaceRoot]);
 
   // The debounced full-file parse + decoration replace. Driven by the shared
   // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
@@ -2282,7 +2346,7 @@ function EditorSurfaceComponent({
 
     const liveModel = editorApi.getModel();
 
-    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
       return;
     }
 
@@ -2318,7 +2382,7 @@ function EditorSurfaceComponent({
       })),
     );
     implementationGutterDecoratedPathRef.current = phpEditTick.path;
-  }, [editorApi, monacoApi, phpEditTick]);
+  }, [editorApi, monacoApi, phpEditTick, workspaceRoot]);
 
   // Renders the green "run test" play glyph on the Right glyph-margin lane for
   // each parsed test target in the active PHP test file. Gated to PHP test
@@ -2333,7 +2397,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -2355,7 +2419,13 @@ function EditorSurfaceComponent({
       );
       testGutterDecoratedPathRef.current = null;
     }
-  }, [activeDocument, editorApi, isActiveDocumentPhpTest, monacoApi]);
+  }, [
+    activeDocument,
+    editorApi,
+    isActiveDocumentPhpTest,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   // The debounced test-gutter parse + decoration replace, driven by the shared
   // `phpEditTick`. Re-applies the `isActiveDocumentPhpTest` gate (the tick only
@@ -2368,7 +2438,7 @@ function EditorSurfaceComponent({
 
     const liveModel = editorApi.getModel();
 
-    if (!liveModel || modelPath(liveModel) !== phpEditTick.path) {
+    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
       return;
     }
 
@@ -2404,7 +2474,13 @@ function EditorSurfaceComponent({
       })),
     );
     testGutterDecoratedPathRef.current = phpEditTick.path;
-  }, [editorApi, isActiveDocumentPhpTest, monacoApi, phpEditTick]);
+  }, [
+    editorApi,
+    isActiveDocumentPhpTest,
+    monacoApi,
+    phpEditTick,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -2507,7 +2583,7 @@ function EditorSurfaceComponent({
     const syncActiveModelContent = () => {
       const model = editorApi.getModel();
 
-      if (!model || modelPath(model) !== activeDocument.path) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
         return;
       }
 
@@ -2525,7 +2601,7 @@ function EditorSurfaceComponent({
     });
 
     return () => modelChangeDisposable.dispose();
-  }, [activeDocument, editorApi]);
+  }, [activeDocument, editorApi, workspaceRoot]);
 
   useEffect(() => {
     if (
@@ -2546,7 +2622,7 @@ function EditorSurfaceComponent({
 
       const model = editorApi.getModel();
 
-      if (!model || modelPath(model) !== activeDocument.path) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
         return;
       }
 
@@ -2581,6 +2657,7 @@ function EditorSurfaceComponent({
     applyLocalPhpDiagnostics,
     editorApi,
     largeSmartDocumentPolicy,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -2603,7 +2680,7 @@ function EditorSurfaceComponent({
     monacoApi.editor.getModels().forEach((model) => {
       const path = modelPath(model);
 
-      if (!path) {
+      if (!path || !modelMatchesProject(model, workspaceRoot, path)) {
         return;
       }
 
@@ -2636,7 +2713,33 @@ function EditorSurfaceComponent({
     // that already has diagnostics still gets its markers (handled by the
     // newly-seen-path branch above); real diagnostic changes are covered by the
     // `languageServerDiagnosticsByPath` dependency and the per-path diff.
-  }, [activeDocument?.path, languageServerDiagnosticsByPath, monacoApi]);
+  }, [
+    activeDocument?.path,
+    languageServerDiagnosticsByPath,
+    monacoApi,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!monacoApi || !workspaceRoot) {
+      return;
+    }
+
+    const departingRoot = workspaceRoot;
+
+    return () => {
+      monacoApi.editor.getModels().forEach((model) => {
+        const path = modelPath(model);
+
+        if (!path || !modelMatchesWorkspacePath(model, departingRoot, path)) {
+          return;
+        }
+
+        monacoApi.editor.setModelMarkers(model, "php-language-server", []);
+        monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+      });
+    };
+  }, [monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!activeDocument || activeDocument.language !== "php" || !monacoApi) {
@@ -2646,7 +2749,9 @@ function EditorSurfaceComponent({
     const emitVisibleLocalPhpDiagnostics = () => {
       const model = monacoApi.editor
         .getModels()
-        .find((candidate) => modelPath(candidate) === activeDocument.path);
+        .find((candidate) =>
+          modelMatchesProject(candidate, workspaceRoot, activeDocument.path),
+        );
 
       if (!model) {
         return;
@@ -2685,7 +2790,7 @@ function EditorSurfaceComponent({
             .some(
               (model) =>
                 model.uri.toString() === uri.toString() &&
-                modelPath(model) === activeDocument.path,
+                modelMatchesProject(model, workspaceRoot, activeDocument.path),
             ),
         )
       ) {
@@ -2704,6 +2809,7 @@ function EditorSurfaceComponent({
     activeDocument?.path,
     monacoApi,
     onLocalPhpDiagnosticsChange,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -2720,6 +2826,10 @@ function EditorSurfaceComponent({
     const openPaths = new Set(
       monacoApi.editor
         .getModels()
+        .filter((model) => {
+          const path = modelPath(model);
+          return Boolean(path && modelMatchesProject(model, workspaceRoot, path));
+        })
         .map((model) => modelPath(model))
         .filter((path): path is string => path !== null),
     );
@@ -2748,6 +2858,7 @@ function EditorSurfaceComponent({
     onLocalPhpDiagnosticsChange,
     phpInspectionDiagnosticCountsByPath,
     syntaxDiagnosticsByPath,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -2808,13 +2919,19 @@ function EditorSurfaceComponent({
     monacoApi.editor.getModels().forEach((model) => {
       const path = modelPath(model);
 
-      if (!path || keepAlivePaths.has(path)) {
+      if (!path || !modelMatchesProject(model, workspaceRoot, path) || keepAlivePaths.has(path)) {
         return;
       }
 
       model.dispose();
     });
-  }, [activeDocument, monacoApi, navigationHistoryPaths, openDocumentPaths]);
+  }, [
+    activeDocument,
+    monacoApi,
+    navigationHistoryPaths,
+    openDocumentPaths,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -2823,7 +2940,7 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || modelPath(model) !== activeDocument.path) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
       return;
     }
 
@@ -2923,7 +3040,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const model = modelForPath(monacoApi, activeDocument.path);
+    const model = modelForPath(monacoApi, workspaceRoot, activeDocument.path);
 
     if (!model) {
       return;
@@ -2949,7 +3066,12 @@ function EditorSurfaceComponent({
       delete next[activeDocument.path];
       return next;
     });
-  }, [activeDocument, largeSmartDocumentPolicy, monacoApi]);
+  }, [
+    activeDocument,
+    largeSmartDocumentPolicy,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   // The debounced PHP syntax validation, driven by the shared `phpEditTick` (one
   // 160ms timer per edit for all PHP gutter/diagnostics consumers). The `active`
@@ -3178,7 +3300,12 @@ function EditorSurfaceComponent({
         onChange={handleEditorChange}
         onMount={handleMount}
         options={editorOptions}
-        path={activeDocument ? activeDocument.path : PLACEHOLDER_PATH}
+        path={
+          activeDocument && workspaceRoot
+            ? workspaceModelUri(workspaceRoot, activeDocument.path) ??
+              activeDocument.path
+            : PLACEHOLDER_PATH
+        }
         theme={monacoTheme}
         value={activeDocument ? activeDocument.content : ""}
       />
@@ -3336,6 +3463,7 @@ interface SurroundWithRequest {
   // Absolute path of the document the request was captured on. The apply path
   // re-checks it against the live model so a wrap can never land on another tab.
   path: string;
+  modelUri: string;
   selection: {
     endColumn: number;
     endLineNumber: number;
@@ -3374,6 +3502,7 @@ function surroundWithRequestFromEditor(
     eol: model.getEOL(),
     indent,
     indentUnit: indentUnitFromModel(model),
+    modelUri: model.uri.toString(),
     path,
     selection: {
       endColumn: range.endColumn,
@@ -3758,7 +3887,11 @@ function applySurroundWith(
 
   // The picker may outlive a tab switch; never apply a wrap captured on one
   // document to a different one that is now active in this reused surface.
-  if (!model || modelPath(model) !== request.path) {
+  if (
+    !model ||
+    model.uri.toString() !== request.modelUri ||
+    modelPath(model) !== request.path
+  ) {
     return;
   }
 
@@ -4760,23 +4893,22 @@ function pruneClosedPaths<Value>(
 
 function modelForPath(
   monaco: typeof Monaco,
+  workspaceRoot: string | null,
   path: string,
 ): Monaco.editor.ITextModel | null {
   return monaco.editor
     .getModels()
-    .find((model) => modelPath(model) === path) ?? null;
+    .find((model) => modelMatchesProject(model, workspaceRoot, path)) ?? null;
 }
 
-function modelPath(model: Monaco.editor.ITextModel): string | null {
-  if (model.uri.fsPath) {
-    return model.uri.fsPath;
-  }
-
-  if (model.uri.path) {
-    return decodeURIComponent(model.uri.path);
-  }
-
-  return null;
+function modelMatchesProject(
+  model: Monaco.editor.ITextModel,
+  workspaceRoot: string | null,
+  path: string,
+): boolean {
+  return workspaceRoot
+    ? modelMatchesWorkspacePath(model, workspaceRoot, path)
+    : modelPath(model) === path;
 }
 
 function breadcrumbFeaturesGateway(

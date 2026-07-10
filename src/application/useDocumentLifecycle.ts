@@ -19,7 +19,11 @@ import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
-import { isDirty, workspaceRelativePath } from "../domain/workspace";
+import {
+  isDirty,
+  readWorkspaceTextFileSnapshot,
+  workspaceRelativePath,
+} from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { planDocumentClose } from "./documentCloseLifecycle";
@@ -137,6 +141,13 @@ export interface DocumentLifecycleDependencies {
     source: string,
     error: unknown,
   ) => void;
+  hasExternalFileConflict?: (rootPath: string | null, path: string) => boolean;
+  clearExternalFileConflict?: (rootPath: string | null, path: string) => void;
+  detectSaveConflict?: (
+    rootPath: string,
+    document: EditorDocument,
+    disk: Awaited<ReturnType<typeof readWorkspaceTextFileSnapshot>> | null,
+  ) => void;
 }
 
 export interface DocumentLifecycle {
@@ -222,6 +233,9 @@ export function useDocumentLifecycle(
     gitChangeForDiffDocumentPath,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    hasExternalFileConflict = () => false,
+    clearExternalFileConflict = () => {},
+    detectSaveConflict = () => {},
   } = dependencies;
   const documentEpochByPathRef = useRef<Record<string, number>>({});
   const saveQueueByPathRef = useRef<Record<string, DocumentSaveQueueEntry>>({});
@@ -283,6 +297,10 @@ export function useDocumentLifecycle(
       if (!documentToFormat || documentToFormat.readOnly) {
         return;
       }
+      if (hasExternalFileConflict(requestedRoot, path)) {
+        setMessage("Resolve the external file conflict before saving.");
+        return;
+      }
 
       while (true) {
         const startingContent = documentToFormat.content;
@@ -292,6 +310,10 @@ export function useDocumentLifecycle(
         );
         let liveDocument = currentDocumentForSave();
         if (!liveDocument) {
+          return;
+        }
+        if (hasExternalFileConflict(requestedRoot, path)) {
+          setMessage("Resolve the external file conflict before saving.");
           return;
         }
         if (liveDocument !== documentToFormat) {
@@ -320,6 +342,10 @@ export function useDocumentLifecycle(
         if (!liveDocument) {
           return;
         }
+        if (hasExternalFileConflict(requestedRoot, path)) {
+          setMessage("Resolve the external file conflict before saving.");
+          return;
+        }
         if (liveDocument !== documentToFormat) {
           documentToFormat = liveDocument;
           continue;
@@ -338,6 +364,10 @@ export function useDocumentLifecycle(
         if (!liveDocument) {
           return;
         }
+        if (hasExternalFileConflict(requestedRoot, path)) {
+          setMessage("Resolve the external file conflict before saving.");
+          return;
+        }
         if (liveDocument !== documentToFormat) {
           documentToFormat = liveDocument;
           continue;
@@ -353,12 +383,76 @@ export function useDocumentLifecycle(
           content: editorConfiguredContent,
         };
 
-        await workspaceFiles.writeTextFile(
-          documentToSave.path,
-          documentToSave.content,
-        );
+        if (hasExternalFileConflict(requestedRoot, path)) {
+          setMessage("Resolve the external file conflict before saving.");
+          return;
+        }
+
+        const writeResult = documentToFormat.revision
+          ? await workspaceFiles.writeTextFile(
+              documentToSave.path,
+              documentToSave.content,
+              documentToFormat.revision,
+            )
+          : await workspaceFiles.writeTextFile(
+              documentToSave.path,
+              documentToSave.content,
+            );
+        if (writeResult?.status === "conflict") {
+          let disk: Awaited<ReturnType<typeof readWorkspaceTextFileSnapshot>> | null = null;
+          try {
+            disk = await readWorkspaceTextFileSnapshot(
+              workspaceFiles,
+              documentToSave.path,
+            );
+          } catch {
+            // The conflict remains guarded and can retry the authoritative read.
+          }
+          const conflictedDocument = currentDocumentForSave();
+          if (conflictedDocument) {
+            detectSaveConflict(requestedRoot, conflictedDocument, disk);
+          }
+          setMessage("The file changed on disk. Review the conflict before saving.");
+          return;
+        }
+        if (writeResult?.status === "error") {
+          throw new Error(writeResult.message);
+        }
+        if (writeResult?.status === "partial") {
+          const partiallyWrittenDocument = currentDocumentForSave();
+          if (partiallyWrittenDocument) {
+            const recoveredDocument = {
+              ...partiallyWrittenDocument,
+              revision: writeResult.revision,
+            };
+            documentsRef.current = {
+              ...documentsRef.current,
+              [documentToSave.path]: recoveredDocument,
+            };
+            if (activeDocumentRef.current?.path === documentToSave.path) {
+              activeDocumentRef.current = recoveredDocument;
+            }
+            setDocuments((current) => {
+              const existing = current[documentToSave.path];
+              if (!existing || !currentDocumentForSave()) {
+                return current;
+              }
+              return {
+                ...current,
+                [documentToSave.path]: {
+                  ...existing,
+                  revision: writeResult.revision,
+                },
+              };
+            });
+          }
+          throw new Error(`The file was saved, but durability could not be confirmed: ${writeResult.message}`);
+        }
         liveDocument = currentDocumentForSave();
         if (!liveDocument) {
+          return;
+        }
+        if (hasExternalFileConflict(requestedRoot, path)) {
           return;
         }
 
@@ -370,6 +464,10 @@ export function useDocumentLifecycle(
               ? documentToSave.content
               : liveDocument.content,
           savedContent: documentToSave.content,
+          revision:
+            writeResult?.status === "success"
+              ? writeResult.revision
+              : liveDocument.revision,
         };
         if (!currentDocumentForSave()) {
           return;
@@ -408,6 +506,10 @@ export function useDocumentLifecycle(
                   ? documentToSave.content
                   : existing.content,
               savedContent: documentToSave.content,
+              revision:
+                writeResult?.status === "success"
+                  ? writeResult.revision
+                  : existing.revision,
             },
           };
         });
@@ -458,16 +560,20 @@ export function useDocumentLifecycle(
   }, [
     captureLocalHistorySnapshot,
     activeDocumentRef,
+    detectSaveConflict,
     documentsRef,
     formattedContentForSave,
     optimizedImportsContentForSave,
     organizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
     resolveEditorConfigForFile,
+    setDocuments,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     workspaceFiles,
     workspaceRequestTokenRef,
+    hasExternalFileConflict,
+    setMessage,
   ]);
 
   const saveActiveDocument = useCallback(async () => {
@@ -548,8 +654,12 @@ export function useDocumentLifecycle(
 
       if (
         document &&
-        isDirty(document) &&
-        !prompter.confirm("Discard changes?")
+        (isDirty(document) || hasExternalFileConflict(workspaceRoot, path)) &&
+        !prompter.confirm(
+          hasExternalFileConflict(workspaceRoot, path)
+            ? "Close file with an unresolved external conflict?"
+            : "Discard changes?",
+        )
       ) {
         return;
       }
@@ -560,6 +670,7 @@ export function useDocumentLifecycle(
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
         clearPhpLocalDiagnosticsForPath(path);
+        clearExternalFileConflict(workspaceRoot, path);
       }
 
       if (externallyRemovedRoot) {
@@ -612,6 +723,9 @@ export function useDocumentLifecycle(
       openPathsRef,
       previewPathRef,
       prompter,
+      hasExternalFileConflict,
+      clearExternalFileConflict,
+      workspaceRoot,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
     ],

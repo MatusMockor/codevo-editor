@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import {
   registerLanguageServerMonacoProviders,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import type {
   LanguageServerCompletionList,
   LanguageServerCodeAction,
@@ -6810,6 +6812,9 @@ function store($request): void
 
   it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
     const registered = createRegisteredProviders();
+    (registered.monaco.Uri as typeof registered.monaco.Uri & {
+      parse: typeof URI.parse;
+    }).parse = URI.parse;
     const gateway = featuresGateway();
     const providePhpCodeActions = vi.fn(async () => [
       {
@@ -6855,19 +6860,16 @@ function store($request): void
     expect(extractInterface).toBeDefined();
     const edits = extractInterface?.edit?.edits ?? [];
     // First: the file-create resource edit (newResource, no oldResource).
+    const scopedResource = URI.parse(
+      workspaceModelUri("/project", "/project/src/GreeterInterface.php")!,
+    );
     expect(edits[0]).toEqual({
-      newResource: {
-        fsPath: "/project/src/GreeterInterface.php",
-        path: "/project/src/GreeterInterface.php",
-      },
+      newResource: scopedResource,
       options: { ignoreIfExists: true },
     });
     // Second: the content insertion into the new file's model.
     expect(edits[1]).toEqual({
-      resource: {
-        fsPath: "/project/src/GreeterInterface.php",
-        path: "/project/src/GreeterInterface.php",
-      },
+      resource: scopedResource,
       textEdit: {
         range: expect.objectContaining({
           endColumn: 1,

@@ -1,6 +1,7 @@
 export interface ExternalFileSnapshot {
   content: string;
   path: string;
+  revision?: import("./workspace").WorkspaceFileRevision | null;
 }
 
 export interface ModifiedExternalFileConflictInput {
@@ -21,10 +22,19 @@ export interface RenamedExternalFileConflictInput {
   disk: ExternalFileSnapshot;
 }
 
+export interface UnreadableExternalFileConflictInput {
+  kind: "unreadable";
+  attemptedKind: "modified" | "renamed";
+  attemptedPath: string;
+  baseline: ExternalFileSnapshot;
+  disk: null;
+}
+
 export type ExternalFileConflictInput =
   | ModifiedExternalFileConflictInput
   | DeletedExternalFileConflictInput
-  | RenamedExternalFileConflictInput;
+  | RenamedExternalFileConflictInput
+  | UnreadableExternalFileConflictInput;
 
 export type ExternalFileConflict = ExternalFileConflictInput & {
   id: number;
@@ -40,7 +50,8 @@ export type ExternalFileConflictResolutionAction =
   | "followRename"
   | "overwrite"
   | "recreate"
-  | "reload";
+  | "reload"
+  | "retryRead";
 
 export type ExternalFileConflictAction =
   | "compare"
@@ -218,9 +229,10 @@ function queueDetectedConflict(
 }
 
 export function documentNeedsAttention(
-  state: ExternalFileConflictState,
+  dirty: boolean,
+  hasConflict: boolean,
 ): boolean {
-  return state.conflict !== null;
+  return dirty || hasConflict;
 }
 
 export function externalFileConflictRef(
@@ -232,6 +244,15 @@ export function externalFileConflictRef(
 export function externalFileConflictLabels(
   conflict: ExternalFileConflict,
 ): ExternalFileConflictLabels {
+  if (conflict.kind === "unreadable") {
+    return {
+      title: "File could not be read",
+      detail: `The external ${conflict.attemptedKind} event could not be verified. Retry the disk read before saving.`,
+      baseline: `Editor: ${conflict.baseline.path}`,
+      disk: `Disk: unable to read ${conflict.attemptedPath}`,
+    };
+  }
+
   if (conflict.kind === "deleted") {
     return {
       title: "File deleted on disk",
@@ -266,6 +287,12 @@ export function externalFileConflictActions(
     label: "Compare",
     tone: "default",
   };
+
+  if (conflict.kind === "unreadable") {
+    return [
+      { action: "retryRead", label: "Retry Read", tone: "primary" },
+    ];
+  }
 
   if (conflict.kind === "deleted") {
     return [

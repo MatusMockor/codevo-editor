@@ -4,6 +4,8 @@ import { useCallback, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
+import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { isDirty } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
@@ -22,6 +24,9 @@ export interface WorkbenchCloseLifecycleDependencies {
 
   appSettingsRef: MutableRefObject<AppSettings>;
   workspaceStateCacheRef: MutableRefObject<Record<string, CachedWorkspaceDirtyState>>;
+  workspaceIdentityByRootRef: MutableRefObject<
+    Record<string, WorkspaceIdentityDescriptor>
+  >;
   editorConfigCacheRef: MutableRefObject<
     Record<string, Record<string, EditorConfigFile | null>>
   >;
@@ -42,6 +47,9 @@ export interface WorkbenchCloseLifecycleDependencies {
   stopProjectRuntimes: (rootPath?: string) => Promise<void>;
   forgetLanguageServerRuntimeStatuses: (rootPath: string) => void;
   forgetLatencyTrackerForRoot: (rootPath: string) => void;
+  unregisterWorkspace: (workspaceId: string) => Promise<void>;
+  clearExternalFileConflictsForRoot: (rootPath: string) => void;
+  workspaceHasExternalFileConflicts: (rootPath: string) => boolean;
   openWorkspacePath: (
     path: string,
     options?: OpenWorkspacePathOptions,
@@ -64,6 +72,7 @@ export function useWorkbenchCloseLifecycle(
     dirtyCount,
     appSettingsRef,
     workspaceStateCacheRef,
+    workspaceIdentityByRootRef,
     editorConfigCacheRef,
     openWorkspaceRequestPathRef,
     openWorkspaceRequestTokenRef,
@@ -77,6 +86,9 @@ export function useWorkbenchCloseLifecycle(
     stopProjectRuntimes,
     forgetLanguageServerRuntimeStatuses,
     forgetLatencyTrackerForRoot,
+    unregisterWorkspace,
+    clearExternalFileConflictsForRoot,
+    workspaceHasExternalFileConflicts,
     openWorkspacePath,
     clearActiveWorkspace,
     reportError,
@@ -88,6 +100,21 @@ export function useWorkbenchCloseLifecycle(
       delete workspaceStateCacheRef.current[targetRootPath];
       delete editorConfigCacheRef.current[tabPath];
       delete editorConfigCacheRef.current[targetRootPath];
+      clearExternalFileConflictsForRoot(targetRootPath);
+
+      const identityDescriptor =
+        workspaceIdentityByRootRef.current[tabPath] ??
+        workspaceIdentityByRootRef.current[targetRootPath] ??
+        null;
+      if (identityDescriptor) {
+        delete workspaceIdentityByRootRef.current[identityDescriptor.selectedPath];
+        delete workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot];
+        try {
+          await unregisterWorkspace(identityDescriptor.workspaceId);
+        } catch (error) {
+          reportError("Workspace", error);
+        }
+      }
 
       forgetLatencyTrackerForRoot(targetRootPath);
       forgetLanguageServerRuntimeStatuses(targetRootPath);
@@ -101,11 +128,15 @@ export function useWorkbenchCloseLifecycle(
     [
       closeSyncedJavaScriptTypeScriptDocumentsForRoot,
       closeSyncedLanguageServerDocumentsForRoot,
+      clearExternalFileConflictsForRoot,
       editorConfigCacheRef,
       forgetLanguageServerRuntimeStatuses,
       forgetLatencyTrackerForRoot,
       stopProjectRuntimes,
       workspaceStateCacheRef,
+      workspaceIdentityByRootRef,
+      unregisterWorkspace,
+      reportError,
     ],
   );
 
@@ -138,7 +169,10 @@ export function useWorkbenchCloseLifecycle(
       if (!closingActiveWorkspace) {
         if (
           cachedWorkspaceState &&
-          cachedWorkspaceHasDirtyDocuments(cachedWorkspaceState) &&
+          documentNeedsAttention(
+            cachedWorkspaceHasDirtyDocuments(cachedWorkspaceState),
+            workspaceHasExternalFileConflicts(targetRootPath),
+          ) &&
           !prompter.confirm("Close workspace and discard unsaved changes?")
         ) {
           return;
@@ -149,8 +183,6 @@ export function useWorkbenchCloseLifecycle(
             ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
             : currentSettings.recentWorkspacePath;
 
-        await disposeWorkspaceTabResources(tabPath, targetRootPath);
-
         try {
           await persistAppSettings({
             ...currentSettings,
@@ -159,7 +191,9 @@ export function useWorkbenchCloseLifecycle(
           });
         } catch (error) {
           reportError("Settings", error);
+          return;
         }
+        await disposeWorkspaceTabResources(tabPath, targetRootPath);
         return;
       }
 
@@ -179,8 +213,6 @@ export function useWorkbenchCloseLifecycle(
         nextTabs[nextTabs.length - 1] ??
         null;
 
-      await disposeWorkspaceTabResources(tabPath, targetRootPath);
-
       try {
         await persistAppSettings({
           ...currentSettings,
@@ -191,6 +223,8 @@ export function useWorkbenchCloseLifecycle(
         reportError("Settings", error);
         return;
       }
+
+      await disposeWorkspaceTabResources(tabPath, targetRootPath);
 
       if (nextPath) {
         await openWorkspacePath(nextPath, { cachePreviousWorkspace: false });
@@ -215,6 +249,7 @@ export function useWorkbenchCloseLifecycle(
       reportError,
       workspaceRoot,
       workspaceStateCacheRef,
+      workspaceHasExternalFileConflicts,
     ],
   );
 

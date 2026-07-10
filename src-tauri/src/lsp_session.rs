@@ -3836,13 +3836,15 @@ mod tests {
             recent[0].method,
             format!("method/{}", super::RECENT_REQUESTS_CAPACITY + 4)
         );
-        assert_eq!(recent[0].latency_ms, (super::RECENT_REQUESTS_CAPACITY + 4) as u64);
+        assert_eq!(
+            recent[0].latency_ms,
+            (super::RECENT_REQUESTS_CAPACITY + 4) as u64
+        );
     }
 
     #[test]
     fn stderr_tail_coalesces_line_split_across_reads() {
-        let tail: super::StderrTail =
-            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
 
         // A single logical line arriving in two read() chunks must stay one line.
         super::append_stderr_tail(&tail, "PHP Fatal err");
@@ -3856,8 +3858,7 @@ mod tests {
 
     #[test]
     fn stderr_tail_trailing_newline_does_not_add_phantom_line() {
-        let tail: super::StderrTail =
-            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
 
         super::append_stderr_tail(&tail, "one\ntwo\n");
 
@@ -3869,8 +3870,7 @@ mod tests {
 
     #[test]
     fn stderr_tail_caps_unterminated_line_to_bound() {
-        let tail: super::StderrTail =
-            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
 
         // A runtime that never emits a newline must not grow pending without
         // bound: the line is truncated at STDERR_LINE_MAX_BYTES.
@@ -3884,8 +3884,7 @@ mod tests {
 
     #[test]
     fn stderr_tail_surfaces_pending_partial_line() {
-        let tail: super::StderrTail =
-            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
 
         // A crash banner without a trailing newline must still be visible.
         super::append_stderr_tail(&tail, "Segmentation fault");
@@ -3898,10 +3897,8 @@ mod tests {
 
     #[test]
     fn restart_clears_request_telemetry_per_root() {
-        let recent: super::RecentRequests =
-            Arc::new(Mutex::new(std::collections::VecDeque::new()));
-        let tail: super::StderrTail =
-            Arc::new(Mutex::new(super::StderrTailBuffer::default()));
+        let recent: super::RecentRequests = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
         super::record_recent_request(
             &recent,
             super::RecentLspRequest {
@@ -8014,10 +8011,7 @@ mod tests {
             *self.recorded_pid.lock().expect("recorded pid") = Some(process_group_id);
 
             let stdin = child.stdin.take().expect("real handshake process stdin");
-            let stdout = child
-                .stdout
-                .take()
-                .expect("real handshake process stdout");
+            let stdout = child.stdout.take().expect("real handshake process stdout");
 
             Ok(SpawnedServer {
                 stderr: None,
@@ -8828,7 +8822,9 @@ mod tests {
                 "restart/stop storm must finish inside the watchdog timeout (possible deadlock)",
             );
         }
-        restart_handle.join().expect("restart thread must not panic");
+        restart_handle
+            .join()
+            .expect("restart thread must not panic");
         stop_handle.join().expect("stop thread must not panic");
 
         assert!(

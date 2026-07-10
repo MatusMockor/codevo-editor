@@ -413,7 +413,12 @@ mod tests {
 
     #[test]
     fn running_runtime_without_probe_value_reports_no_stats() {
-        let php = FakeSource::new(LanguageRuntimeKind::Phpactor, "PHPactor", running_status(), Some(7));
+        let php = FakeSource::new(
+            LanguageRuntimeKind::Phpactor,
+            "PHPactor",
+            running_status(),
+            Some(7),
+        );
         let probe = MapProbe {
             samples: HashMap::new(),
         };
@@ -467,7 +472,10 @@ mod tests {
         assert!(!runtime.recent_requests[1].success);
         assert_eq!(
             runtime.stderr_tail,
-            vec!["PHP Fatal error: ...".to_string(), "Stack trace:".to_string()]
+            vec![
+                "PHP Fatal error: ...".to_string(),
+                "Stack trace:".to_string()
+            ]
         );
     }
 

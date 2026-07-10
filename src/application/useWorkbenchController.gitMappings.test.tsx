@@ -242,6 +242,11 @@ function buildDependencies({
   };
   const stoppedStatus: LanguageServerRuntimeStatus = { kind: "stopped" };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
+    identity: {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    },
     detection: {
       detectWorkspace: vi.fn(async (path) => ({
         javaScriptTypeScript: null,

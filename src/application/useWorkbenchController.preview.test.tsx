@@ -20,6 +20,7 @@ import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
   useWorkbenchController,
+  withWorkspaceIdentityLease,
   type PhpCodeActionDescriptor,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
@@ -64144,7 +64145,6 @@ interface GreeterContract
       warnings: 1,
     });
 
-    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
     await act(async () => {
       publishFileChange?.({
         kind: "deleted",
@@ -64156,6 +64156,9 @@ interface GreeterContract
     });
 
     expect(getWorkbench().openDocuments).toHaveLength(1);
+    expect(getWorkbench().externalFileConflictState.conflict?.kind).toBe(
+      "deleted",
+    );
 
     await act(async () => {
       publishFileChange?.({
@@ -67438,6 +67441,175 @@ class PostRepository
     });
   });
 
+  it("keeps the active workspace unchanged when the trusted picker is cancelled", async () => {
+    const openFromPicker = vi.fn(async () => ({ status: "cancelled" as const }));
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker,
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+
+    expect(openFromPicker).toHaveBeenCalledOnce();
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().workspaceIdentityDescriptor).toBeNull();
+    expect(getWorkbench().workspaceIdentityStatus).toBe("legacyCompatibility");
+  });
+
+  it("opens, caches, and restores separate trusted descriptors across project tabs", async () => {
+    const descriptorA = {
+      workspaceId: "ws-a",
+      selectedPath: "/link/a",
+      canonicalRoot: "/real/a",
+      caseSensitive: null,
+      unicodeNormalizationPolicy: "unknown" as const,
+      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+    };
+    const descriptorB = {
+      workspaceId: "ws-b",
+      selectedPath: "/workspace-b",
+      canonicalRoot: "/workspace-b",
+      caseSensitive: true,
+      unicodeNormalizationPolicy: "preserved" as const,
+      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+    };
+    const openFromPicker = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "opened", descriptor: descriptorA })
+      .mockResolvedValueOnce({ status: "opened", descriptor: descriptorB });
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker,
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(descriptorA.selectedPath);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorA);
+    expect(getWorkbench().workspaceTabs).toEqual([
+      descriptorA.selectedPath,
+      descriptorB.selectedPath,
+    ]);
+  });
+
+  it("releases an unadopted descriptor when workspace opening throws", async () => {
+    const unregister = vi.fn(async () => undefined);
+    const descriptor = {
+      workspaceId: "ws-failed",
+      selectedPath: "/failed",
+      canonicalRoot: "/failed",
+      caseSensitive: true,
+      unicodeNormalizationPolicy: "preserved" as const,
+      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+    };
+
+    await expect(
+      withWorkspaceIdentityLease(descriptor, unregister, async () => {
+        throw new Error("open failed");
+      }),
+    ).rejects.toThrow("open failed");
+    expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-failed");
+  });
+
+  it("releases a picker descriptor when its open is superseded before adoption", async () => {
+    const firstSettings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn((path: string) =>
+        path === "/workspace-a"
+          ? firstSettings.promise
+          : Promise.resolve(defaultWorkspaceSettings()),
+      ),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const descriptorA = trustedDescriptor("ws-a", "/workspace-a");
+    const descriptorB = trustedDescriptor("ws-b", "/workspace-b");
+    const unregister = vi.fn(async () => undefined);
+    const openFromPicker = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "opened", descriptor: descriptorA })
+      .mockResolvedValueOnce({ status: "opened", descriptor: descriptorB });
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker,
+        unregister,
+      },
+    });
+
+    let firstOpen!: Promise<void>;
+    await act(async () => {
+      firstOpen = getWorkbench().openWorkspace();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+    await act(async () => {
+      firstSettings.resolve(defaultWorkspaceSettings());
+      await firstOpen;
+    });
+
+    expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-a");
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+  });
+
+  it("replaces a cached descriptor with a fresh picker identity exactly once", async () => {
+    const oldDescriptor = trustedDescriptor("ws-old", "/workspace");
+    const freshDescriptor = trustedDescriptor("ws-fresh", "/workspace");
+    const unregister = vi.fn(async () => undefined);
+    const openFromPicker = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "opened", descriptor: oldDescriptor })
+      .mockResolvedValueOnce({ status: "opened", descriptor: freshDescriptor });
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker,
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspace();
+    });
+    await vi.waitFor(() => {
+      expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-old");
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(freshDescriptor);
+    expect(unregister).not.toHaveBeenCalledWith("ws-fresh");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace");
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(freshDescriptor);
+    expect(unregister).toHaveBeenCalledTimes(1);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
@@ -67468,6 +67640,7 @@ class PostRepository
     workspaceDetectionGateway,
     workspaceDescriptor,
     workspaceFileChangeGateway,
+    workspaceIdentityGateway,
     workspaceFiles,
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
@@ -67516,6 +67689,7 @@ class PostRepository
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
+    workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
     workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
@@ -67552,6 +67726,7 @@ class PostRepository
       workspaceDetectionGateway,
       workspaceDescriptor,
       workspaceFileChangeGateway,
+      workspaceIdentityGateway,
       workspaceFiles,
       workspaceRuntimeLifecycleGateway,
       workspaceSettings,
@@ -67958,6 +68133,7 @@ function createControllerDependencies({
   workspaceDetectionGateway,
   workspaceDescriptor,
   workspaceFileChangeGateway,
+  workspaceIdentityGateway,
   workspaceFiles,
   workspaceRuntimeLifecycleGateway,
   workspaceSettings,
@@ -68006,6 +68182,7 @@ function createControllerDependencies({
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
+  workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
   workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
@@ -68018,6 +68195,11 @@ function createControllerDependencies({
     didSave: vi.fn(async () => undefined),
   };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
+    identity: workspaceIdentityGateway ?? {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    },
     detection:
       workspaceDetectionGateway ?? {
         detectWorkspace: vi.fn(async (path) => ({
@@ -68336,6 +68518,20 @@ function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
     message: "TypeScript language server is ready.",
     provider: "typeScriptLanguageServer",
     status: "ready",
+  };
+}
+
+function trustedDescriptor(workspaceId: string, root: string) {
+  return {
+    workspaceId,
+    selectedPath: root,
+    canonicalRoot: root,
+    caseSensitive: true,
+    unicodeNormalizationPolicy: "preserved" as const,
+    policy: {
+      caseSensitive: true as const,
+      unicodeNormalization: "none" as const,
+    },
   };
 }
 

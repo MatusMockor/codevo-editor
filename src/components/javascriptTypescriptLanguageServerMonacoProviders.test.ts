@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import type {
   LanguageServerFeaturesGateway,
   LanguageServerRange,
@@ -17,6 +18,7 @@ import {
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
+import { workspaceModelUri } from "./phpMonacoDocumentContext";
 
 const JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES = [
   "javascript",
@@ -392,6 +394,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
+        applyWorkspaceEdit: vi.fn(async () => undefined),
         featuresGateway: gateway,
         getWorkspaceRoot: () => activeRoot,
       }),
@@ -4932,6 +4935,91 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(rename).toEqual({ edits: [] });
   });
 
+  it("applies a rename only to the originating scoped model for overlapping roots", async () => {
+    const monaco = createMonaco();
+    const path = "/project/packages/app/src/user.ts";
+    const parentModel = textModel();
+    const nestedModel = textModel();
+    parentModel.uri = URI.parse(workspaceModelUri("/project", path)! as string) as never;
+    nestedModel.uri = URI.parse(
+      workspaceModelUri("/project/packages/app", path)! as string,
+    ) as never;
+    monaco.editor.getModels.mockReturnValue([parentModel, nestedModel]);
+    const gateway = featuresGateway({
+      rename: workspaceEdit(`file://${path}`, "NestedRename"),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit: vi.fn(async () => undefined),
+        featuresGateway: gateway,
+        getActiveDocument: () => ({ ...document(), path }),
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          rootPath: "/project/packages/app",
+        }),
+        getWorkspaceRoot: () => "/project/packages/app",
+      }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock
+      .calls[0][1];
+
+    await renameProvider.provideRenameEdits(
+      nestedModel,
+      { column: 4, lineNumber: 1 },
+      "Account",
+    );
+
+    expect(nestedModel.pushEditOperations).toHaveBeenCalledOnce();
+    expect(parentModel.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("scopes inlay-hint label navigation to the originating nested root", async () => {
+    const monaco = createMonaco();
+    (monaco.Uri as typeof monaco.Uri & { parse: typeof URI.parse }).parse =
+      URI.parse;
+    const rootPath = "/project/packages/app";
+    const path = `${rootPath}/src/user.ts`;
+    const nestedModel = textModel();
+    nestedModel.uri = URI.parse(workspaceModelUri(rootPath, path)! as string) as never;
+    const gateway = featuresGateway({
+      inlayHints: [
+        {
+          kind: 2,
+          label: [
+            {
+              label: "user",
+              location: { range: range(0, 0, 0, 4), uri: `file://${path}` },
+            },
+          ],
+          paddingLeft: false,
+          paddingRight: false,
+          position: { character: 4, line: 0 },
+          tooltip: null,
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveDocument: () => ({ ...document(), path }),
+        getRuntimeStatus: () => ({ ...runningStatus(), rootPath }),
+        getWorkspaceRoot: () => rootPath,
+      }),
+    );
+    const provider = (monaco.languages.registerInlayHintsProvider as any).mock
+      .calls[0][1];
+    const hints = await provider.provideInlayHints(
+      nestedModel,
+      new monaco.Range(1, 1, 1, 10),
+    );
+
+    expect(hints.hints[0].label[0].location.uri.toString()).toBe(
+      workspaceModelUri(rootPath, path),
+    );
+  });
+
   it("persists edit-bearing TypeScript code actions through the workspace applier", async () => {
     const monaco = createMonaco();
     const model = textModel();
@@ -5004,6 +5092,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
   it("maps TypeScript workspace edit file operations through Monaco and the workspace applier", async () => {
     const monaco = createMonaco();
+    (monaco.Uri as typeof monaco.Uri & { parse: typeof URI.parse }).parse =
+      URI.parse;
     const model = textModel();
     const codeActionEdit = {
       changes: {},

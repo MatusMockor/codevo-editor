@@ -3,6 +3,9 @@ import type { NavigationRequest } from "../application/navigationRequest";
 import type { PhpCodeActionRange } from "../application/phpCodeActionTypes";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { TemplateLanguageMonacoProviderContext } from "./templateLanguageMonacoTypes";
+import {
+  modelMatchesWorkspacePath,
+} from "./phpMonacoDocumentContext";
 
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
@@ -23,11 +26,11 @@ export function activeTemplateDocumentContext(
     return null;
   }
 
-  const path = modelPath(model);
-
-  if (!path || path !== activeDocument.path) {
+  if (!modelMatchesWorkspacePath(model, rootPath, activeDocument.path)) {
     return null;
   }
+
+  const path = activeDocument.path;
 
   return { activeDocument, path, rootPath };
 }
@@ -77,7 +80,7 @@ export function templateDefinitionNavigationRequest(
         return false;
       }
 
-      if (modelPath(model) !== path) {
+      if (!modelMatchesWorkspacePath(model, rootPath, path)) {
         return false;
       }
 
@@ -143,20 +146,6 @@ export function templateReplaceRange(
     end.lineNumber,
     end.column,
   );
-}
-
-function modelPath(model: MonacoModel): string | null {
-  const uri = model.uri;
-
-  if (uri.fsPath) {
-    return uri.fsPath;
-  }
-
-  if (uri.path) {
-    return decodeURIComponent(uri.path);
-  }
-
-  return null;
 }
 
 function modelVersion(model: MonacoModel): number | null {

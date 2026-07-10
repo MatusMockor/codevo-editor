@@ -9,7 +9,10 @@ import {
 import type { LocalHistoryDiff, LocalHistoryGateway, LocalHistoryVersion } from "../domain/localHistory";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
-import { workspaceRelativePath } from "../domain/workspace";
+import {
+  requireWorkspaceWriteSuccess,
+  workspaceRelativePath,
+} from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 /**
@@ -299,24 +302,38 @@ export function useLocalHistory(
           return;
         }
 
-        // Snapshot the pre-revert content (best-effort) so the revert can be
-        // undone from history too.
         const preRevertContent = currentLocalHistoryContent();
-        if (preRevertContent !== null && preRevertContent !== versionContent) {
-          await captureLocalHistorySnapshot(
-            requestedRoot,
-            absolutePath,
-            preRevertContent,
-          );
+        const existingDocument = documentsRef.current[absolutePath];
+        if (!existingDocument?.revision && workspaceFiles.readTextFileSnapshot) {
+          throw new Error("Reload the file before restoring Local History.");
         }
-
-        await workspaceFiles.writeTextFile(absolutePath, versionContent);
+        const writeResult = existingDocument?.revision
+          ? await workspaceFiles.writeTextFile(
+              absolutePath,
+              versionContent,
+              existingDocument.revision,
+            )
+          : await workspaceFiles.writeTextFile(absolutePath, versionContent);
+        const revision = requireWorkspaceWriteSuccess(
+          writeResult,
+          "Restore Local History",
+        );
         filePrefetchCacheRef.current.invalidate(absolutePath);
 
         if (
           !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
         ) {
           return;
+        }
+
+        // Record history only after the typed write reports success. The old
+        // content is still captured so the revert remains undoable.
+        if (preRevertContent !== null && preRevertContent !== versionContent) {
+          await captureLocalHistorySnapshot(
+            requestedRoot,
+            absolutePath,
+            preRevertContent,
+          );
         }
 
         // Record the reverted content as the newest version too, so the file's
@@ -346,6 +363,7 @@ export function useLocalHistory(
               ...existing,
               content: versionContent,
               savedContent: versionContent,
+              revision,
             },
           };
         });

@@ -44,6 +44,13 @@ import {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  modelMatchesWorkspacePath,
+  modelPath,
+  registerWorkspaceIdentityDescriptor,
+  toWorkspaceMonacoUri,
+  type WorkspaceIdentityDescriptor,
+} from "./phpMonacoDocumentContext";
+import {
   normalizeUserSnippets,
   snippetCompletionSuggestions,
   type UserSnippet,
@@ -77,7 +84,7 @@ type MonacoEventEmitter<T> = {
   fire(event: T): void;
 };
 type WorkspaceEditContext = {
-  path: string;
+  path: string | null;
   versionId: number | undefined;
 };
 type StoredLanguageServerPayloadRequest = {
@@ -254,6 +261,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
    */
   getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
+  getWorkspaceIdentityDescriptor?(): WorkspaceIdentityDescriptor | null;
   limitNavigationResultsToOpenModels?: boolean;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
@@ -298,6 +306,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
+  const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
+
+  if (identityDescriptor) {
+    disposables.push({
+      dispose: registerWorkspaceIdentityDescriptor(
+        identityDescriptor,
+        context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
+      ),
+    });
+  }
   const documentHighlightTracker =
     createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -2382,7 +2400,7 @@ function featureRequestContext(
     !rootPath ||
     !activeDocument ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
-    modelPath(model) !== activeDocument.path
+    !modelMatchesWorkspacePath(model, rootPath, activeDocument.path)
   ) {
     return null;
   }
@@ -2430,7 +2448,7 @@ function documentRequestContext(
     !rootPath ||
     !activeDocument ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
-    modelPath(model) !== activeDocument.path
+    !modelMatchesWorkspacePath(model, rootPath, activeDocument.path)
   ) {
     return null;
   }
@@ -2972,7 +2990,7 @@ function toShowReferencesArguments(
 
   return [
     typeof uri === "string"
-      ? languageServerUriToMonacoUri(monaco, uri)
+      ? languageServerUriToMonacoUri(monaco, rootPath, uri)
       : uri,
     toMonacoPositionLike(position),
     Array.isArray(locations)
@@ -2986,10 +3004,20 @@ function toShowReferencesArguments(
   ];
 }
 
-function languageServerUriToMonacoUri(monaco: MonacoApi, uri: string): unknown {
+function languageServerUriToMonacoUri(
+  monaco: MonacoApi,
+  rootPath: string | undefined,
+  uri: string,
+): unknown {
   const path = pathFromLanguageServerUri(uri);
 
-  return path ? monaco.Uri.file(path) : uri;
+  if (!path) {
+    return uri;
+  }
+
+  return rootPath
+    ? toWorkspaceMonacoUri(monaco, rootPath, path) ?? uri
+    : monaco.Uri.file(path);
 }
 
 function toMonacoPositionLike(position: unknown): unknown {
@@ -3084,7 +3112,13 @@ function toMonacoLocations(
       return [];
     }
 
-    const uri = monaco.Uri.file(path);
+    const uri = rootPath
+      ? toWorkspaceMonacoUri(monaco, rootPath, path)
+      : monaco.Uri.file(path);
+
+    if (!uri) {
+      return [];
+    }
 
     if (limitToOpenModels && !monaco.editor.getModel(uri)) {
       return [];
@@ -3125,7 +3159,11 @@ function toMonacoWorkspaceEdit(
       return [];
     }
 
-    const resource = monaco.Uri.file(path);
+    const resource = toWorkspaceMonacoUri(monaco, rootPath, path);
+
+    if (!resource) {
+      return [];
+    }
     const editVersionId = workspaceEditVersionId(canonicalEdit, uri);
     const versionId =
       typeof editVersionId === "number"
@@ -3158,11 +3196,14 @@ function toMonacoWorkspaceFileEdit(
   if (operation.kind === "create") {
     const path = pathFromLanguageServerUri(operation.uri);
     const options = toMonacoWorkspaceFileEditOptions(operation.options);
+    const resource = path
+      ? toWorkspaceMonacoUri(monaco, rootPath, path)
+      : null;
 
-    return path
+    return resource
       ? [
           {
-            newResource: monaco.Uri.file(path),
+            newResource: resource,
             ...(options ? { options } : {}),
           },
         ]
@@ -3173,12 +3214,18 @@ function toMonacoWorkspaceFileEdit(
     const oldPath = pathFromLanguageServerUri(operation.oldUri);
     const newPath = pathFromLanguageServerUri(operation.newUri);
     const options = toMonacoWorkspaceFileEditOptions(operation.options);
+    const oldResource = oldPath
+      ? toWorkspaceMonacoUri(monaco, rootPath, oldPath)
+      : null;
+    const newResource = newPath
+      ? toWorkspaceMonacoUri(monaco, rootPath, newPath)
+      : null;
 
-    return oldPath && newPath
+    return oldResource && newResource
       ? [
           {
-            newResource: monaco.Uri.file(newPath),
-            oldResource: monaco.Uri.file(oldPath),
+            newResource,
+            oldResource,
             ...(options ? { options } : {}),
           },
         ]
@@ -3187,11 +3234,14 @@ function toMonacoWorkspaceFileEdit(
 
   const path = pathFromLanguageServerUri(operation.uri);
   const options = toMonacoWorkspaceFileEditOptions(operation.options);
+  const resource = path
+    ? toWorkspaceMonacoUri(monaco, rootPath, path)
+    : null;
 
-  return path
+  return resource
     ? [
         {
-          oldResource: monaco.Uri.file(path),
+          oldResource: resource,
           ...(options ? { options } : {}),
         },
       ]
@@ -3526,7 +3576,7 @@ function toMonacoInlayHintLabel(
 
   return label.map((part) => {
     const [location] = part.location
-      ? toMonacoLocations(monaco, [part.location])
+      ? toMonacoLocations(monaco, [part.location], rootPath)
       : [];
 
     return {
@@ -3590,12 +3640,17 @@ interface StagedOpenModelEdit {
 function stageWorkspaceEditForOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
 ): StagedOpenModelEdit[] {
   const modelsByPath = new Map(
     monaco.editor.getModels().flatMap((model) => {
       const path = modelPath(model);
 
-      return path ? [[canonicalWorkspaceEditPath(path), model] as const] : [];
+      if (!path || !modelMatchesWorkspacePath(model, rootPath, path)) {
+        return [];
+      }
+
+      return [[canonicalWorkspaceEditPath(path), model] as const];
     }),
   );
 
@@ -3669,7 +3724,7 @@ async function applyWorkspaceEditWithOpenModels(
     return;
   }
 
-  const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit);
+  const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit, rootPath);
   let commitResult: WorkspaceEditOpenModelCommitResult | undefined;
   const applyOpenModels = () => {
     if (commitResult) {
@@ -3732,7 +3787,11 @@ async function flushPendingDocumentChangesForWorkspaceEditEvent(
   event: LanguageServerWorkspaceEditEvent,
 ): Promise<boolean> {
   const scopedEdit = workspaceEditForRoot(event.edit, event.rootPath);
-  const editedOpenPaths = openModelPathsForWorkspaceEdit(monaco, scopedEdit);
+  const editedOpenPaths = openModelPathsForWorkspaceEdit(
+    monaco,
+    scopedEdit,
+    event.rootPath,
+  );
 
   await Promise.all(
     editedOpenPaths.map((path) => context.flushPendingDocumentChange(path)),
@@ -3818,6 +3877,7 @@ function isRefreshEventActive(
 function openModelPathsForWorkspaceEdit(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
 ): string[] {
   const editPaths = new Set(
     Object.keys(edit.changes).flatMap((uri) => {
@@ -3832,7 +3892,11 @@ function openModelPathsForWorkspaceEdit(
     .flatMap((model) => {
       const path = modelPath(model);
 
-      return path && editPaths.has(path) ? [path] : [];
+      return path &&
+        editPaths.has(path) &&
+        modelMatchesWorkspacePath(model, rootPath, path)
+        ? [path]
+        : [];
     });
 }
 
@@ -4177,10 +4241,6 @@ function monacoCompletionKindFromLspKind(
     default:
       return monaco.languages.CompletionItemKind.Text;
   }
-}
-
-function modelPath(model: MonacoModel): string {
-  return model.uri.fsPath || model.uri.path;
 }
 
 function isJavaScriptTypeScriptDocument(document: EditorDocument): boolean {

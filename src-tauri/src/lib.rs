@@ -31,7 +31,10 @@ mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
+#[cfg(target_os = "macos")]
+mod workspace_file_commands;
 pub mod workspace_file_watcher;
+mod workspace_registry;
 mod workspace_runtime;
 
 use git::{
@@ -128,6 +131,8 @@ use std::{
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+#[cfg(target_os = "macos")]
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
 use terminal_session::{
@@ -143,7 +148,14 @@ use workspace::{
     apply_text_edits_to_files, FileEntry, FileSearchResult, LocalWorkspaceFileRepository,
     WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
 };
+#[cfg(target_os = "macos")]
+use workspace_file_commands::{
+    DescriptorFileEntry, DescriptorFileSearchResult, DescriptorTextSearchResult, FileCommandResult,
+    FileRevision, MutationResult, WorkspaceFileRepository as DescriptorFileRepository,
+    WorkspaceTextFile,
+};
 use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
+use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
 };
@@ -181,14 +193,6 @@ struct WorkspaceIndexClearResult {
     database_path: String,
     root_path: String,
     status: &'static str,
-}
-
-#[tauri::command]
-fn create_directory(path: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .create_directory(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -284,6 +288,10 @@ fn enumerate_monospace_font_families() -> Vec<String> {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
+        registry.clear();
+    }
     if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
         index_lifecycle.cancel_all();
     }
@@ -309,19 +317,207 @@ fn shutdown_runtime_processes(app: &AppHandle) {
     }
 }
 
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+enum NativeWorkspaceOpenResult {
+    Opened {
+        descriptor: ManagedWorkspaceDescriptor,
+    },
+    Cancelled,
+}
+
+#[cfg(target_os = "macos")]
 #[tauri::command]
-fn create_text_file(path: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .create_text_file(&PathBuf::from(path))
+async fn open_workspace_from_picker(
+    app: AppHandle,
+    registry: State<'_, WorkspaceRegistry>,
+) -> Result<NativeWorkspaceOpenResult, String> {
+    let Some(selected_root) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(NativeWorkspaceOpenResult::Cancelled);
+    };
+    let selected_root = selected_root
+        .into_path()
+        .map_err(|error| format!("Selected folder is not a local filesystem path: {error}"))?;
+    let descriptor = registry
+        .register(selected_root)
+        .map_err(|error| error.to_string())?;
+    Ok(NativeWorkspaceOpenResult::Opened { descriptor })
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn open_workspace_from_picker(
+    _app: AppHandle,
+    _registry: State<'_, WorkspaceRegistry>,
+) -> Result<NativeWorkspaceOpenResult, String> {
+    Err("Native workspace selection is supported only on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn unregister_workspace(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+) -> Result<(), String> {
+    registry
+        .unregister(&workspace_id)
         .map_err(|error| error.to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn delete_path(path: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .delete_path(&PathBuf::from(path))
+fn unregister_workspace(
+    _registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+) -> Result<(), String> {
+    WorkspaceRegistry::new()
+        .unregister(&workspace_id)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_workspace_descriptor(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+) -> Result<ManagedWorkspaceDescriptor, String> {
+    registry
+        .descriptor(&workspace_id)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_read_text_file(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> Result<WorkspaceTextFile, String> {
+    DescriptorFileRepository::new(&registry)
+        .read_text(&workspace_id, Path::new(&relative_path))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_read_directory(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> Result<Vec<DescriptorFileEntry>, String> {
+    DescriptorFileRepository::new(&registry)
+        .read_directory(&workspace_id, Path::new(&relative_path))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_search_files(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+    query: String,
+    limit: usize,
+) -> Result<Vec<DescriptorFileSearchResult>, String> {
+    DescriptorFileRepository::new(&registry)
+        .search_files(&workspace_id, Path::new(&relative_path), &query, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_search_text(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+    query: String,
+    limit: usize,
+    options: Option<TextSearchOptions>,
+) -> Result<Vec<DescriptorTextSearchResult>, String> {
+    DescriptorFileRepository::new(&registry)
+        .search_text(
+            &workspace_id,
+            Path::new(&relative_path),
+            &query,
+            limit,
+            &options.unwrap_or_default(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_save_text_file(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+    content: String,
+    expected_revision: FileRevision,
+) -> FileCommandResult {
+    DescriptorFileRepository::new(&registry).save_text(
+        &workspace_id,
+        Path::new(&relative_path),
+        &content,
+        &expected_revision,
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_create_text_file(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> MutationResult {
+    DescriptorFileRepository::new(&registry).create_file(&workspace_id, Path::new(&relative_path))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_create_directory(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> MutationResult {
+    DescriptorFileRepository::new(&registry)
+        .create_directory(&workspace_id, Path::new(&relative_path))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_delete_path(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> MutationResult {
+    DescriptorFileRepository::new(&registry).delete(&workspace_id, Path::new(&relative_path))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn workspace_rename_path(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    from_relative_path: String,
+    to_relative_path: String,
+    overwrite: bool,
+) -> MutationResult {
+    DescriptorFileRepository::new(&registry).rename(
+        &workspace_id,
+        Path::new(&from_relative_path),
+        Path::new(&to_relative_path),
+        overwrite,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn get_workspace_descriptor(
+    _registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+) -> Result<ManagedWorkspaceDescriptor, String> {
+    WorkspaceRegistry::new()
+        .descriptor(&workspace_id)
         .map_err(|error| error.to_string())
 }
 
@@ -1548,14 +1744,6 @@ async fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn rename_path(from: String, to: String) -> Result<(), String> {
-    let repository = LocalWorkspaceFileRepository;
-    repository
-        .rename_path(&PathBuf::from(from), &PathBuf::from(to))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 async fn search_files(
     root: String,
     query: String,
@@ -2522,9 +2710,7 @@ fn open_language_runtime_log(
     };
 
     if log.trim().is_empty() {
-        log = format!(
-            "No {runtime_label} log has been captured for this workspace yet.\n"
-        );
+        log = format!("No {runtime_label} log has been captured for this workspace yet.\n");
     }
 
     let log_dir = app
@@ -4973,19 +5159,6 @@ async fn javascript_typescript_text_document_signature_help(
 }
 
 #[tauri::command]
-async fn write_text_file(path: String, content: String) -> Result<(), String> {
-    // Every save writes to disk; keep the write off the main thread so the
-    // WebView never stalls while persisting a document.
-    run_blocking_command(move || {
-        let repository = LocalWorkspaceFileRepository;
-        repository
-            .write_text_file(&PathBuf::from(path), &content)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
 async fn apply_workspace_edit(
     root_path: String,
     edit: LanguageServerWorkspaceEdit,
@@ -5253,7 +5426,7 @@ mod tests {
         parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
         search_files, stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git,
         stash_pop_git, switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server, write_text_file,
+        workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -6345,47 +6518,6 @@ mod tests {
             .status()
             .expect("run git");
         assert!(status.success(), "git {args:?} failed");
-    }
-
-    #[test]
-    fn write_text_file_persists_contents_off_thread() {
-        let root = temp_workspace("write-off-thread");
-        let file = root.join("notes.txt");
-
-        tauri::async_runtime::block_on(write_text_file(
-            path_string(&file),
-            "off-thread save".to_string(),
-        ))
-        .expect("write result");
-
-        assert_eq!(
-            fs::read_to_string(&file).expect("written file"),
-            "off-thread save"
-        );
-    }
-
-    #[test]
-    fn write_text_file_handles_concurrent_saves_off_thread() {
-        let root = temp_workspace("write-concurrent");
-        let first = root.join("first.txt");
-        let second = root.join("second.txt");
-
-        let first_task =
-            tauri::async_runtime::spawn(write_text_file(path_string(&first), "first".to_string()));
-        let second_task = tauri::async_runtime::spawn(write_text_file(
-            path_string(&second),
-            "second".to_string(),
-        ));
-
-        tauri::async_runtime::block_on(first_task)
-            .expect("first join")
-            .expect("first write");
-        tauri::async_runtime::block_on(second_task)
-            .expect("second join")
-            .expect("second write");
-
-        assert_eq!(fs::read_to_string(&first).expect("first"), "first");
-        assert_eq!(fs::read_to_string(&second).expect("second"), "second");
     }
 
     #[test]
@@ -7532,6 +7664,7 @@ pub fn run() {
         .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
         .manage(TerminalSupervisor::new())
+        .manage(WorkspaceRegistry::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -7542,12 +7675,21 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             clear_workspace_index,
-            create_directory,
-            create_text_file,
-            delete_path,
             apply_workspace_edit,
             commit_git_changes,
             install_managed_phpactor,
+            open_workspace_from_picker,
+            unregister_workspace,
+            get_workspace_descriptor,
+            workspace_read_text_file,
+            workspace_read_directory,
+            workspace_search_files,
+            workspace_search_text,
+            workspace_save_text_file,
+            workspace_create_text_file,
+            workspace_create_directory,
+            workspace_delete_path,
+            workspace_rename_path,
             detect_git_repositories,
             detect_php_tools,
             detect_workspace,
@@ -7601,7 +7743,6 @@ pub fn run() {
             read_directory,
             read_text_file,
             remove_workspace_index_file,
-            rename_path,
             resize_terminal_session,
             revert_git_files,
             search_files,
@@ -7726,8 +7867,7 @@ pub fn run() {
             workspace_did_rename_files,
             upsert_workspace_index_file,
             workspace_symbols,
-            write_terminal_input,
-            write_text_file
+            write_terminal_input
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))

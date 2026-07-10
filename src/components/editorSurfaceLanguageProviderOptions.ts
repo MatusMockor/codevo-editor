@@ -28,6 +28,7 @@ import type {
   PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
+import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
 
 type CallbackRef<T extends (...args: never[]) => unknown> = MutableRefObject<T>;
 type PositionProvider<T> = (
@@ -45,6 +46,7 @@ export interface EditorSurfaceLanguageProviderOptionsDependencies {
   refreshGateway?: LanguageServerRefreshGateway;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot: string | null;
+  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
 export interface EditorSurfaceLanguageProviderRegistrationRefs {
@@ -122,6 +124,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     refreshGateway,
     workspaceEditGateway,
     workspaceRoot,
+    workspaceIdentityDescriptor,
   } = dependencies;
   const {
     activeDocumentRef,
@@ -168,6 +171,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     getRuntimeStatus: () => runtimeStatusRef.current,
     getUserSnippets: () => userSnippetsRef.current,
     getWorkspaceRoot: () => workspaceRoot,
+    getWorkspaceIdentityDescriptor: () => workspaceIdentityDescriptor ?? null,
     isDocumentSynced: (rootPath, path) =>
       workspaceRootKeysEqual(rootPath, workspaceRoot) &&
       Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),

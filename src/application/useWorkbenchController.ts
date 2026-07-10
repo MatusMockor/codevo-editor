@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -67,6 +66,7 @@ import {
   workspaceSessionsEqual,
 } from "./documentSessionState";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
+import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigationState } from "./useWorkbenchNavigationState";
@@ -123,6 +123,10 @@ import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
+import type {
+  WorkspaceIdentityDescriptor,
+  WorkspaceIdentityGateway,
+} from "../infrastructure/tauriWorkspaceIdentityGateway";
 
 export type {
   PhpCodeActionDescriptor,
@@ -206,6 +210,7 @@ import {
   animationFrameDiagnosticsFlushScheduler,
   type DiagnosticsFlushScheduler,
 } from "../domain/diagnosticsCoalescer";
+import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
   fileUriFromPath,
@@ -342,6 +347,7 @@ import {
   type LatencyTracker,
 } from "../domain/latencyTracker";
 import {
+  createWorkspaceTextFileWithContent,
   detectLanguage,
   getFileName,
   getParentPath,
@@ -368,6 +374,7 @@ export interface WorkbenchWorkspaceGateways {
   fileChanges: WorkspaceFileChangeGateway;
   fileSearch: FileSearchGateway;
   files: WorkspaceFileGateway;
+  identity: WorkspaceIdentityGateway;
   phpTools: PhpToolGateway;
   projectSymbols: ProjectSymbolSearchGateway;
   textSearch: TextSearchGateway;
@@ -384,7 +391,9 @@ export interface WorkbenchControllerOptions {
 }
 
 interface OpenWorkspacePathOptions {
+  adoptIdentity?: () => void;
   cachePreviousWorkspace?: boolean;
+  identityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
 interface OpenWorkspaceFileRequest {
@@ -408,6 +417,7 @@ interface CachedWorkspaceWorkbenchState {
   recentFiles: RecentFileEntry[];
   recentLocations: RecentLocation[];
   sidebarView: SidebarView;
+  workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
 
 const FONT_ZOOM_IN_EVENT = "mockor-editor-font-zoom-in";
@@ -478,6 +488,8 @@ export function useWorkbenchController(
     textSearch,
   } = workspaceGateways;
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
+    useState<WorkspaceIdentityDescriptor | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
@@ -883,6 +895,16 @@ export function useWorkbenchController(
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
   >({});
+  const workspaceIdentityByRootRef = useRef<
+    Record<string, WorkspaceIdentityDescriptor>
+  >({});
+  const clearExternalFileConflictsForRootRef = useRef<(root: string) => void>(
+    () => {},
+  );
+  const workspaceHasExternalFileConflictsRef = useRef<
+    (root: string) => boolean
+  >(() => false);
+  const workspaceFileChangeSubscriptionGenerationRef = useRef(0);
   // Per-workspace `.editorconfig` cache. Keyed by workspace root, then by the
   // absolute directory whose `.editorconfig` was read. `null` records a
   // confirmed absence so a missing file is read at most once per session. This
@@ -973,9 +995,6 @@ export function useWorkbenchController(
         .filter((document): document is EditorDocument => Boolean(document)),
     [documents, openDocumentPaths],
   );
-  const dirtyCount = openDocuments.filter(
-    (document) => !document.readOnly && isDirty(document),
-  ).length;
   const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
     (document) =>
       isJavaScriptTypeScriptLanguageServerDocument(document) &&
@@ -1512,6 +1531,7 @@ export function useWorkbenchController(
         recentFiles,
         recentLocations,
         sidebarView,
+        workspaceIdentityDescriptor,
       };
     },
     [
@@ -1531,6 +1551,7 @@ export function useWorkbenchController(
       recentFiles,
       recentLocations,
       sidebarView,
+      workspaceIdentityDescriptor,
     ],
   );
 
@@ -1572,6 +1593,7 @@ export function useWorkbenchController(
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
+      setWorkspaceIdentityDescriptor(cached.workspaceIdentityDescriptor);
       restoreHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
       setBottomPanelView(cached.bottomPanelView);
@@ -2327,6 +2349,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    workspaceIdentityByRootRef.current = {};
     editorConfigCacheRef.current = {};
     resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
@@ -2341,6 +2364,7 @@ export function useWorkbenchController(
     openFileRequestTokenRef.current += 1;
     resetActiveEditorPosition();
     setWorkspaceRoot(null);
+    setWorkspaceIdentityDescriptor(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
     setPhpTools(null);
@@ -2651,6 +2675,10 @@ export function useWorkbenchController(
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
       const previousRootPath = currentWorkspaceRootRef.current;
       const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
+      const identityDescriptor =
+        options.identityDescriptor ??
+        cachedWorkspaceState?.workspaceIdentityDescriptor ??
+        null;
       const switchingWorkspace =
         previousRootPath &&
         !workspaceRootKeysEqual(previousRootPath, path);
@@ -2700,7 +2728,37 @@ export function useWorkbenchController(
         return;
       }
 
+      if (options.identityDescriptor) {
+        const previousIdentity =
+          workspaceIdentityByRootRef.current[path] ??
+          cachedWorkspaceState?.workspaceIdentityDescriptor ??
+          null;
+        options.adoptIdentity?.();
+        if (cachedWorkspaceState) {
+          cachedWorkspaceState.workspaceIdentityDescriptor =
+            options.identityDescriptor;
+        }
+        if (
+          previousIdentity &&
+          previousIdentity.workspaceId !== options.identityDescriptor.workspaceId
+        ) {
+          removeWorkspaceIdentityMappings(
+            workspaceIdentityByRootRef.current,
+            previousIdentity,
+          );
+          void workspaceGateways.identity
+            .unregister(previousIdentity.workspaceId)
+            .catch((error) => reportError("Workspace", error));
+        }
+      }
+
       setWorkspaceRoot(path);
+      setWorkspaceIdentityDescriptor(identityDescriptor);
+      if (identityDescriptor) {
+        workspaceIdentityByRootRef.current[path] = identityDescriptor;
+        workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] =
+          identityDescriptor;
+      }
       currentWorkspaceRootRef.current = path;
       lastLanguageServerCrashRef.current = null;
       restoreLanguageServerDiagnosticsForRoot(path);
@@ -3055,18 +3113,21 @@ export function useWorkbenchController(
   );
 
   const openWorkspace = useCallback(async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Open workspace",
-    });
-
-    if (typeof selected !== "string") {
+    const result = await workspaceGateways.identity.openFromPicker();
+    if (result.status === "cancelled") {
       return;
     }
 
-    await openWorkspacePath(selected);
-  }, [openWorkspacePath]);
+    await withWorkspaceIdentityLease(
+      result.descriptor,
+      (workspaceId) => workspaceGateways.identity.unregister(workspaceId),
+      (adoptIdentity) =>
+        openWorkspacePath(result.descriptor.selectedPath, {
+          adoptIdentity,
+          identityDescriptor: result.descriptor,
+        }),
+    );
+  }, [openWorkspacePath, workspaceGateways.identity]);
 
   const openWorkspaceRoot = useCallback(
     async (path: string): Promise<boolean> => {
@@ -3088,32 +3149,22 @@ export function useWorkbenchController(
     [openWorkspacePath, workspaceRoot],
   );
 
-  const {
-    closeApplicationWindow,
-    closeWorkspaceTab,
-    quitApplication,
-  } = useWorkbenchCloseLifecycle({
-    workspaceRoot,
-    dirtyCount,
-    appSettingsRef,
-    workspaceStateCacheRef,
-    editorConfigCacheRef,
-    openWorkspaceRequestPathRef,
-    openWorkspaceRequestTokenRef,
-    openFileRequestTokenRef,
-    gitDiffRequestTokenRef,
-    editorGitBaselineRequestTokenRef,
-    prompter,
-    persistAppSettings,
-    closeSyncedLanguageServerDocumentsForRoot,
-    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-    stopProjectRuntimes,
-    forgetLanguageServerRuntimeStatuses,
-    forgetLatencyTrackerForRoot,
-    openWorkspacePath,
-    clearActiveWorkspace,
-    reportError,
-  });
+  useEffect(
+    () => () => {
+      const workspaceIds = new Set(
+        Object.values(workspaceIdentityByRootRef.current).map(
+          (descriptor) => descriptor.workspaceId,
+        ),
+      );
+      workspaceIdentityByRootRef.current = {};
+      for (const workspaceId of workspaceIds) {
+        void workspaceGateways.identity
+          .unregister(workspaceId)
+          .catch((error) => reportError("Workspace", error));
+      }
+    },
+    [reportError, workspaceGateways.identity],
+  );
 
   const refreshDirectory = useCallback(
     async (path: string) => {
@@ -3892,6 +3943,64 @@ export function useWorkbenchController(
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
   });
 
+  const externalFileConflicts = useExternalFileConflictLifecycle({
+    activeDocumentRef,
+    activePath,
+    currentWorkspaceRootRef,
+    documentsRef,
+    openPathsRef,
+    setActivePath,
+    setDocuments,
+    setOpenPaths,
+    workspaceFiles,
+    workspaceRoot,
+  });
+  clearExternalFileConflictsForRootRef.current = externalFileConflicts.clearRoot;
+  workspaceHasExternalFileConflictsRef.current =
+    externalFileConflicts.hasConflictsForRoot;
+  const dirtyCount = openDocuments.filter(
+    (document) =>
+      !document.readOnly &&
+      documentNeedsAttention(
+        isDirty(document),
+        externalFileConflicts.hasConflict(workspaceRoot, document.path),
+      ),
+  ).length;
+
+  const {
+    closeApplicationWindow,
+    closeWorkspaceTab,
+    quitApplication,
+  } = useWorkbenchCloseLifecycle({
+    workspaceRoot,
+    dirtyCount,
+    appSettingsRef,
+    workspaceStateCacheRef,
+    workspaceIdentityByRootRef,
+    editorConfigCacheRef,
+    openWorkspaceRequestPathRef,
+    openWorkspaceRequestTokenRef,
+    openFileRequestTokenRef,
+    gitDiffRequestTokenRef,
+    editorGitBaselineRequestTokenRef,
+    prompter,
+    persistAppSettings,
+    closeSyncedLanguageServerDocumentsForRoot,
+    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    stopProjectRuntimes,
+    forgetLanguageServerRuntimeStatuses,
+    forgetLatencyTrackerForRoot,
+    unregisterWorkspace: (workspaceId) =>
+      workspaceGateways.identity.unregister(workspaceId),
+    clearExternalFileConflictsForRoot: (root) =>
+      clearExternalFileConflictsForRootRef.current(root),
+    workspaceHasExternalFileConflicts: (root) =>
+      workspaceHasExternalFileConflictsRef.current(root),
+    openWorkspacePath,
+    clearActiveWorkspace,
+    reportError,
+  });
+
   const {
     captureLocalHistorySnapshot,
     saveActiveDocument,
@@ -3946,6 +4055,9 @@ export function useWorkbenchController(
     gitChangeForDiffDocumentPath,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    hasExternalFileConflict: externalFileConflicts.hasConflict,
+    clearExternalFileConflict: externalFileConflicts.clearConflict,
+    detectSaveConflict: externalFileConflicts.detectSaveConflict,
   });
 
   const setStatusBarItemVisibility = useCallback(
@@ -4205,7 +4317,11 @@ export function useWorkbenchController(
         return;
       }
 
-      await workspaceFiles.writeTextFile(testPath, renderPhpTestSkeleton(plan));
+      await createWorkspaceTextFileWithContent(
+        workspaceFiles,
+        testPath,
+        renderPhpTestSkeleton(plan),
+      );
 
       if (!isRequestedRootActive()) {
         return;
@@ -4282,8 +4398,13 @@ export function useWorkbenchController(
         {
           fileExists: async (path) =>
             (await readTestFileIfExists(path)) !== null,
-          writeFile: (path, content) =>
-            workspaceFiles.writeTextFile(path, content),
+          writeFile: async (path, content) => {
+            await createWorkspaceTextFileWithContent(
+              workspaceFiles,
+              path,
+              content,
+            );
+          },
         },
       );
 
@@ -7052,6 +7173,16 @@ export function useWorkbenchController(
     let active = true;
     let unsubscribe: WorkspaceFileChangeUnsubscribeFn | null = null;
     const subscriptionRoot = workspaceRoot;
+    const generation =
+      workspaceFileChangeSubscriptionGenerationRef.current + 1;
+    workspaceFileChangeSubscriptionGenerationRef.current = generation;
+    const isCurrentSubscription = () =>
+      active &&
+      workspaceFileChangeSubscriptionGenerationRef.current === generation &&
+      workspaceRootKeysEqual(
+        currentWorkspaceRootRef.current,
+        subscriptionRoot,
+      );
 
     if (!subscriptionRoot) {
       return () => {
@@ -7077,11 +7208,28 @@ export function useWorkbenchController(
 
     workspaceFileChangeGateway
       .subscribeFileChanges((event) => {
-        if (!active) {
+        if (!isCurrentSubscription()) {
           return;
         }
 
-        handleWorkspaceFileChange(event);
+        void externalFileConflicts.handleFileChange(event).then((consumed) => {
+          if (!isCurrentSubscription()) {
+            return;
+          }
+          if (
+            consumed &&
+            (event.kind === "deleted" || event.kind === "renamed")
+          ) {
+            const removedPath =
+              event.kind === "renamed" ? event.previousPath : event.path;
+            if (removedPath) {
+              markExternallyRemovedDocumentPath(event.rootPath, removedPath);
+            }
+          }
+          if (!consumed) {
+            handleWorkspaceFileChange(event);
+          }
+        });
       })
       .then((dispose) => {
         if (!active) {
@@ -7107,10 +7255,13 @@ export function useWorkbenchController(
 
     return () => {
       active = false;
+      workspaceFileChangeSubscriptionGenerationRef.current += 1;
       unsubscribe?.();
     };
   }, [
     handleWorkspaceFileChange,
+    externalFileConflicts.handleFileChange,
+    markExternallyRemovedDocumentPath,
     reportError,
     workspaceFileChangeGateway,
     workspaceRoot,
@@ -7589,6 +7740,10 @@ export function useWorkbenchController(
     commands: commandRegistry.list(),
     diagnosticsSummary,
     dirtyCount,
+    externalFileConflictCount: externalFileConflicts.conflictCount,
+    externalFileConflictState: externalFileConflicts.activeState,
+    handleExternalFileConflictAction: externalFileConflicts.action,
+    closeExternalFileCompare: externalFileConflicts.closeCompare,
     entriesByDirectory,
     expandedDirectories,
     expandedPhpFilePaths,
@@ -7851,6 +8006,10 @@ export function useWorkbenchController(
     openTextSearchResult,
     sidebarView,
     workspaceDescriptor,
+    workspaceIdentityDescriptor,
+    workspaceIdentityStatus: workspaceIdentityDescriptor
+      ? "trusted"
+      : "legacyCompatibility",
     workspaceRoot,
     workspaceTabs: appSettings.workspaceTabs,
     workspaceSettings,
@@ -8239,6 +8398,35 @@ function workspaceTabsWithPath(tabs: string[], path: string): string[] {
   }
 
   return [...tabs, path];
+}
+
+function removeWorkspaceIdentityMappings(
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+  descriptor: WorkspaceIdentityDescriptor,
+): void {
+  for (const [root, registered] of Object.entries(identities)) {
+    if (registered.workspaceId !== descriptor.workspaceId) {
+      continue;
+    }
+    delete identities[root];
+  }
+}
+
+export async function withWorkspaceIdentityLease(
+  descriptor: WorkspaceIdentityDescriptor,
+  unregister: (workspaceId: string) => Promise<void>,
+  useLease: (adopt: () => void) => Promise<void>,
+): Promise<void> {
+  let adopted = false;
+  try {
+    await useLease(() => {
+      adopted = true;
+    });
+  } finally {
+    if (!adopted) {
+      await unregister(descriptor.workspaceId);
+    }
+  }
 }
 
 function workspaceTabPathForPath(

@@ -21,6 +21,7 @@ interface ExternalFileConflictBarProps {
   conflict: ExternalFileConflict;
   error?: string | null;
   onAction(action: ExternalFileConflictAction): void;
+  disabledActions?: readonly ExternalFileConflictAction[];
 }
 
 export function ExternalFileConflictBar({
@@ -28,6 +29,7 @@ export function ExternalFileConflictBar({
   conflict,
   error = null,
   onAction,
+  disabledActions = [],
 }: ExternalFileConflictBarProps) {
   const labels = externalFileConflictLabels(conflict);
   const actions = externalFileConflictActions(conflict);
@@ -59,10 +61,14 @@ export function ExternalFileConflictBar({
             <button
               aria-busy={isBusy || undefined}
               className={`external-file-conflict-action external-file-conflict-action-${tone}`}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || disabledActions.includes(action)}
               key={action}
               onClick={() => onAction(action)}
-              title={label}
+              title={
+                disabledActions.includes(action)
+                  ? `${label} unavailable until revision-aware saving is supported`
+                  : label
+              }
               type="button"
             >
               {actionIcon(action)}
@@ -80,7 +86,7 @@ function actionIcon(action: ExternalFileConflictAction): ReactNode {
     return <GitCompareArrows aria-hidden="true" size={14} />;
   }
 
-  if (action === "reload") {
+  if (action === "reload" || action === "retryRead") {
     return <RefreshCw aria-hidden="true" size={14} />;
   }
 

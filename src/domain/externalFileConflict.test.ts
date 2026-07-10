@@ -11,6 +11,12 @@ import {
 } from "./externalFileConflict";
 
 describe("external file conflict", () => {
+  it("requires attention for either dirty content or an external conflict", () => {
+    expect(documentNeedsAttention(true, false)).toBe(true);
+    expect(documentNeedsAttention(false, true)).toBe(true);
+    expect(documentNeedsAttention(false, false)).toBe(false);
+  });
+
   it("creates modified conflicts with monotonic identities and revisions", () => {
     let state = detect(createExternalFileConflictState(), modified());
     expect(state.conflict).toMatchObject({ id: 1, revision: 1 });
@@ -64,6 +70,25 @@ describe("external file conflict", () => {
     expect(externalFileConflictLabels(renamedConflict).detail).toContain(
       "/project/renamed.txt",
     );
+  });
+
+  it("offers only Retry Read for an unreadable external change", () => {
+    const conflict = requireConflict(
+      detect(createExternalFileConflictState(), {
+        kind: "unreadable",
+        attemptedKind: "renamed",
+        attemptedPath: "/project/renamed.txt",
+        baseline: baseline(),
+        disk: null,
+      }),
+    );
+
+    expect(externalFileConflictLabels(conflict).title).toBe(
+      "File could not be read",
+    );
+    expect(externalFileConflictActions(conflict)).toEqual([
+      { action: "retryRead", label: "Retry Read", tone: "primary" },
+    ]);
   });
 
   it("tracks compare and resolution transitions without changing revision", () => {
@@ -153,7 +178,7 @@ describe("external file conflict", () => {
       status: "attention",
       conflict: { id: 1, revision: 3, disk: { content: "disk v4" } },
     });
-    expect(documentNeedsAttention(state)).toBe(true);
+    expect(documentNeedsAttention(false, state.conflict !== null)).toBe(true);
   });
 
   it("surfaces a queued detection deterministically after action failure", () => {
@@ -183,7 +208,7 @@ describe("external file conflict", () => {
     state = resolveCurrent(state);
 
     expect(state.status).toBe("idle");
-    expect(documentNeedsAttention(state)).toBe(false);
+    expect(documentNeedsAttention(false, state.conflict !== null)).toBe(false);
   });
 });
 

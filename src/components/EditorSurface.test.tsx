@@ -3,6 +3,7 @@
 import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import type {
   EditorPosition,
   LanguageServerDocumentSymbol,
@@ -19,6 +20,7 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorSurface } from "./EditorSurface";
+import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import {
   type EditorQaDefinitionRequest,
   type EditorQaOpenWorkspaceFileRequest,
@@ -6597,6 +6599,97 @@ class Foo
 
     expect(closingModel.dispose).toHaveBeenCalledTimes(1);
     expect(remainingModel.dispose).not.toHaveBeenCalled();
+  });
+
+  it("cleans and repaints scoped markers and decorations on a same-path root switch", async () => {
+    const path = "/workspace/packages/app/src/shared.ts";
+    const document: EditorDocument = {
+      content: "const shared = 1;\n",
+      language: "typescript",
+      name: "shared.ts",
+      path,
+      savedContent: "const shared = 1;\n",
+    };
+    const parentModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => document.content),
+      uri: URI.parse(workspaceModelUri("/workspace", path)!),
+    } as never as FakeModel;
+    const nestedRoot = "/workspace/packages/app";
+    const nestedModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => document.content),
+      uri: URI.parse(workspaceModelUri(nestedRoot, path)!),
+    } as never as FakeModel;
+    const monaco = createMonaco(parentModel);
+    monaco.editor.getModels = vi.fn(() => [parentModel, nestedModel]);
+    const editor = createEditor(parentModel);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const diagnostics = {
+      [path]: [
+        {
+          character: 0,
+          endCharacter: 5,
+          endLine: 0,
+          line: 0,
+          message: "shared warning",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+    const renderWithRoot = async (workspaceRoot: string) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            bookmarkedLineNumbers={[1]}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            keymap={defaultKeymapSettings()}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot={workspaceRoot}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWithRoot("/workspace");
+    monaco.editor.setModelMarkers.mockClear();
+    editor.getModel.mockReturnValue(nestedModel);
+    await renderWithRoot(nestedRoot);
+
+    expect(parentModel.dispose).toHaveBeenCalledOnce();
+    expect(monaco.editor.setModelMarkers).toHaveBeenCalledWith(
+      nestedModel,
+      "php-language-server",
+      expect.arrayContaining([expect.objectContaining({ message: "shared warning" })]),
+    );
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
   it("never disposes the active document's model", async () => {

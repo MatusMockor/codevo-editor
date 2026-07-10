@@ -11,6 +11,7 @@ import type { EditorRevealTarget } from "../domain/languageServerFeatures";
 import {
   defaultTextSearchOptions,
   getFileName,
+  readWorkspaceTextFileSnapshot,
   type EditorDocument,
   type FileEntry,
   type TextSearchGateway,
@@ -160,10 +161,13 @@ export function useWorkbenchTextSearch(
           continue;
         }
 
-        let refreshedContent: string;
+        let refreshedSnapshot;
 
         try {
-          refreshedContent = await workspaceFiles.readTextFile(path);
+          refreshedSnapshot = await readWorkspaceTextFileSnapshot(
+            workspaceFiles,
+            path,
+          );
         } catch {
           continue;
         }
@@ -185,8 +189,9 @@ export function useWorkbenchTextSearch(
 
         const refreshedDocument: EditorDocument = {
           ...latestDocument,
-          content: refreshedContent,
-          savedContent: refreshedContent,
+          content: refreshedSnapshot.content,
+          savedContent: refreshedSnapshot.content,
+          revision: refreshedSnapshot.revision,
         };
 
         documentsRef.current = {
@@ -211,8 +216,9 @@ export function useWorkbenchTextSearch(
             ...current,
             [path]: {
               ...currentDocument,
-              content: refreshedContent,
-              savedContent: refreshedContent,
+              content: refreshedSnapshot.content,
+              savedContent: refreshedSnapshot.content,
+              revision: refreshedSnapshot.revision,
             },
           };
         });

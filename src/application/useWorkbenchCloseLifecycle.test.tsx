@@ -104,6 +104,7 @@ function renderLifecycle(
   const dependencies: WorkbenchCloseLifecycleDependencies = {
     appSettingsRef,
     clearActiveWorkspace: vi.fn(async () => undefined),
+    clearExternalFileConflictsForRoot: vi.fn(),
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
     closeSyncedLanguageServerDocumentsForRoot,
     dirtyCount: 0,
@@ -122,6 +123,9 @@ function renderLifecycle(
     stopProjectRuntimes,
     workspaceRoot: WORKSPACE_B,
     workspaceStateCacheRef,
+    workspaceIdentityByRootRef: { current: {} },
+    unregisterWorkspace: vi.fn(async () => undefined),
+    workspaceHasExternalFileConflicts: vi.fn(() => false),
     ...overrides,
   };
 
@@ -154,6 +158,84 @@ function renderLifecycle(
 }
 
 describe("useWorkbenchCloseLifecycle", () => {
+  it("unregisters the opaque identity when its workspace tab closes", async () => {
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const descriptor = {
+      workspaceId: "ws-a",
+      selectedPath: WORKSPACE_A,
+      canonicalRoot: "/real/workspace-a",
+      caseSensitive: null,
+      unicodeNormalizationPolicy: "unknown" as const,
+      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+    };
+    const harness = renderLifecycle({
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [WORKSPACE_A]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a");
+  });
+
+  it("keeps descriptor and resources alive when settings persistence fails", async () => {
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const clearExternalFileConflictsForRoot = vi.fn();
+    const descriptor = {
+      workspaceId: "ws-a",
+      selectedPath: WORKSPACE_A,
+      canonicalRoot: "/real/workspace-a",
+      caseSensitive: true,
+      unicodeNormalizationPolicy: "preserved" as const,
+      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+    };
+    const identities = { [WORKSPACE_A]: descriptor };
+    const harness = renderLifecycle({
+      clearExternalFileConflictsForRoot,
+      persistAppSettings: vi.fn(async () => {
+        throw new Error("settings failed");
+      }),
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: { current: identities },
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = { documents: {} };
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(unregisterWorkspace).not.toHaveBeenCalled();
+    expect(clearExternalFileConflictsForRoot).not.toHaveBeenCalled();
+    expect(identities[WORKSPACE_A]).toBe(descriptor);
+    expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeDefined();
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+  });
+
+  it("prompts for a conflict-only inactive workspace and preserves it when declined", async () => {
+    const harness = renderLifecycle({
+      workspaceHasExternalFileConflicts: vi.fn((root) => root === WORKSPACE_A),
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = { documents: {} };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+  });
+
   it("keeps an inactive dirty workspace tab when discard is declined", async () => {
     const harness = renderLifecycle();
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {

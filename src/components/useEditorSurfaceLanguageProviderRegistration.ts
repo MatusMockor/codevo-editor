@@ -10,6 +10,7 @@ import {
   createEditorSurfaceLanguageProviderOptions,
   type EditorSurfaceLanguageProviderRegistrationRefs,
 } from "./editorSurfaceLanguageProviderOptions";
+import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
 
 export interface EditorSurfaceLanguageProviderRegistrationDependencies {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -17,6 +18,7 @@ export interface EditorSurfaceLanguageProviderRegistrationDependencies {
   refreshGateway?: LanguageServerRefreshGateway;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot: string | null;
+  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
 export type { EditorSurfaceLanguageProviderRegistrationRefs };
@@ -33,6 +35,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     monacoApi,
     refreshGateway,
     workspaceEditGateway,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   } = dependencies;
   const {
@@ -77,6 +80,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
           featuresGateway,
           refreshGateway,
           workspaceEditGateway,
+          workspaceIdentityDescriptor,
           workspaceRoot,
         },
         refs,
@@ -116,6 +120,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     runtimeStatusRef,
     userSnippetsRef,
     workspaceEditGateway,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 }

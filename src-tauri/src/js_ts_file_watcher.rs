@@ -414,7 +414,10 @@ mod tests {
                     WorkspaceWatchEventKind::Modified,
                     "/workspace/package-lock.json",
                 ),
-                event(WorkspaceWatchEventKind::Modified, "/workspace/pnpm-lock.yaml"),
+                event(
+                    WorkspaceWatchEventKind::Modified,
+                    "/workspace/pnpm-lock.yaml",
+                ),
                 event(WorkspaceWatchEventKind::Modified, "/workspace/yarn.lock"),
                 event(WorkspaceWatchEventKind::Modified, "/workspace/bun.lockb"),
             ],

@@ -61,6 +61,17 @@ describe("ExternalFileConflictBar", () => {
     ]);
   });
 
+  it("offers only Retry Read for an unreadable conflict", async () => {
+    const onAction = vi.fn();
+    await renderBar(unreadableConflict(), { onAction });
+
+    expect(host.textContent).toContain("File could not be read");
+    expect(buttonLabels()).toEqual(["Retry Read"]);
+    expect(host.textContent).not.toContain("Compare");
+    await act(async () => button("Retry Read").click());
+    expect(onAction).toHaveBeenCalledWith("retryRead");
+  });
+
   it("disables every action and exposes progress while resolving", async () => {
     await renderBar(modifiedConflict(), { busyAction: "reload" });
 
@@ -130,6 +141,18 @@ function modifiedConflict(): ExternalFileConflict {
     kind: "modified",
     baseline: { path: "/project/note.txt", content: "editor" },
     disk: { path: "/project/note.txt", content: "disk" },
+  };
+}
+
+function unreadableConflict(): ExternalFileConflict {
+  return {
+    id: 4,
+    revision: 1,
+    kind: "unreadable",
+    attemptedKind: "modified",
+    attemptedPath: "/project/note.txt",
+    baseline: { path: "/project/note.txt", content: "editor draft" },
+    disk: null,
   };
 }
 

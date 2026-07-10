@@ -22,6 +22,8 @@ import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
+import { ExternalFileConflictBar } from "./components/ExternalFileConflictBar";
+import { ExternalFileCompareDialog } from "./components/ExternalFileCompareDialog";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
 import { GitBranchPanel } from "./components/GitBranchPanel";
 import { GitStashPanel } from "./components/GitStashPanel";
@@ -124,12 +126,14 @@ import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
 import { TauriRuntimeObservabilityGateway } from "./infrastructure/tauriRuntimeObservabilityGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
+import { TauriWorkspaceIdentityGateway } from "./infrastructure/tauriWorkspaceIdentityGateway";
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import "./App.css";
 
-const workspaceGateway = new TauriWorkspaceGateway();
+const workspaceIdentityGateway = new TauriWorkspaceIdentityGateway();
+const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
 const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
@@ -137,6 +141,7 @@ const workspaceGateways = {
   fileChanges: workspaceFileChangeGateway,
   fileSearch: workspaceGateway,
   files: workspaceGateway,
+  identity: workspaceIdentityGateway,
   phpTools: workspaceGateway,
   projectSymbols: projectSymbolSearchGateway,
   textSearch: workspaceGateway,
@@ -1226,6 +1231,19 @@ function App() {
           onPin={workbench.pinDocument}
           previewPath={workbench.previewPath}
         />
+        {workbench.externalFileConflictState.conflict ? (
+          <ExternalFileConflictBar
+            busyAction={
+              workbench.externalFileConflictState.status === "resolving"
+                ? workbench.externalFileConflictState.action
+                : null
+            }
+            conflict={workbench.externalFileConflictState.conflict}
+            disabledActions={["overwrite", "recreate"]}
+            error={workbench.externalFileConflictState.error}
+            onAction={workbench.handleExternalFileConflictAction}
+          />
+        ) : null}
         {shouldShowGitDiff ? (
           <ErrorBoundary
             title="Could not render this diff"
@@ -1371,6 +1389,7 @@ function App() {
             }
             userSnippets={workbench.appSettings.userSnippets}
             workspaceRoot={workbench.workspaceRoot}
+            workspaceIdentityDescriptor={workbench.workspaceIdentityDescriptor}
           />
         )}
         {workbench.bottomPanelVisible ? (
@@ -1621,6 +1640,20 @@ function App() {
         versions={workbench.localHistoryVersions}
         versionsLoading={workbench.localHistoryLoading}
       />
+
+      {workbench.externalFileConflictState.conflict && workbench.activeDocument ? (
+        <ExternalFileCompareDialog
+          conflict={workbench.externalFileConflictState.conflict}
+          editorFontFamily={workbench.appSettings.editorFontFamily}
+          editorFontLigatures={workbench.appSettings.editorFontLigatures}
+          editorFontSize={workbench.appSettings.editorFontSize}
+          isOpen={workbench.externalFileConflictState.compareOpen}
+          language={workbench.activeDocument.language}
+          liveLocalContent={workbench.activeDocument.content}
+          monacoTheme={monacoTheme}
+          onClose={workbench.closeExternalFileCompare}
+        />
+      ) : null}
 
       <GitStashPanel
         diff={workbench.gitStashDiff}

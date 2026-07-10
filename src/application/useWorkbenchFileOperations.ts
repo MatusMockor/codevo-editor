@@ -20,6 +20,7 @@ import {
   getFileName,
   getParentPath,
   joinWorkspacePath,
+  readWorkspaceTextFileSnapshot,
   workspaceRelativePath,
   type EditorDocument,
   type FileEntry,
@@ -765,10 +766,13 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      let refreshedContent: string;
+      let refreshedSnapshot;
 
       try {
-        refreshedContent = await workspaceFiles.readTextFile(path);
+        refreshedSnapshot = await readWorkspaceTextFileSnapshot(
+          workspaceFiles,
+          path,
+        );
       } catch {
         return;
       }
@@ -785,8 +789,9 @@ export function useWorkbenchFileOperations(
 
       const refreshedDocument: EditorDocument = {
         ...latestDocument,
-        content: refreshedContent,
-        savedContent: refreshedContent,
+        content: refreshedSnapshot.content,
+        savedContent: refreshedSnapshot.content,
+        revision: refreshedSnapshot.revision,
       };
 
       documentsRef.current = {
@@ -808,8 +813,9 @@ export function useWorkbenchFileOperations(
           ...current,
           [path]: {
             ...currentDocument,
-            content: refreshedContent,
-            savedContent: refreshedContent,
+            content: refreshedSnapshot.content,
+            savedContent: refreshedSnapshot.content,
+            revision: refreshedSnapshot.revision,
           },
         };
       });

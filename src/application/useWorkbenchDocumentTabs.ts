@@ -18,6 +18,7 @@ import type { AppSettings } from "../domain/settings";
 import {
   detectLanguage,
   getFileName,
+  readWorkspaceTextFileSnapshot,
   type EditorDocument,
   type FileEntry,
   type WorkspaceFileGateway,
@@ -491,9 +492,14 @@ export function useWorkbenchDocumentTabs(
           setIsOpeningFile(true);
         }
 
-        const content = hasUsablePrefetchedContent
-          ? prefetchedContent
-          : await workspaceFiles.readTextFile(entry.path);
+        const snapshot =
+          hasUsablePrefetchedContent && !workspaceFiles.readTextFileSnapshot
+            ? { content: prefetchedContent, revision: null }
+            : await readWorkspaceTextFileSnapshot(workspaceFiles, entry.path);
+        const content =
+          hasUsablePrefetchedContent && prefetchedContent === snapshot.content
+            ? prefetchedContent
+            : snapshot.content;
 
         if (
           openFileRequestTokenRef.current !== requestToken ||
@@ -521,6 +527,7 @@ export function useWorkbenchDocumentTabs(
           content,
           savedContent: content,
           language: detectLanguage(entry.path),
+          revision: snapshot.revision,
           readOnly: options.readOnly === true ? true : undefined,
         };
 

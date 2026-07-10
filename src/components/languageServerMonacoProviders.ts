@@ -92,10 +92,14 @@ import {
   isLargeActivePhpDocument,
   isPhpDocumentContextActive,
   isStoredLanguageServerPayloadActive,
+  modelMatchesWorkspacePath,
   modelPath,
   modelSource,
   offsetAtMonacoPosition,
+  registerWorkspaceIdentityDescriptor,
   runningRuntimeSessionIdForRoot,
+  toWorkspaceMonacoUri,
+  type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 
 export type {
@@ -195,6 +199,7 @@ interface ApplyPhpCodeActionNewFilePayload {
   edits: PhpCodeActionTextEdit[];
   newFile: PhpCodeActionNewFile;
   sourcePath: string | null;
+  sourceModelUri: string;
   versionId: number | undefined;
 }
 
@@ -272,6 +277,7 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
 export interface LanguageServerMonacoProviderContext
   extends TemplateLanguageMonacoProviderContext,
     PhpFrameworkMonacoProviderContext {
+  getWorkspaceIdentityDescriptor?(): WorkspaceIdentityDescriptor | null;
   /**
    * Persists a PHP code action's new file (e.g. "Extract interface" writes a
    * sibling `<Class>Interface.php`) to DISK and opens it in a tab. When wired,
@@ -385,6 +391,13 @@ export function registerLanguageServerMonacoProviders(
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
   const registry = monaco.languages as Partial<typeof monaco.languages>;
+  const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
+  const unregisterWorkspaceIdentity = identityDescriptor
+    ? registerWorkspaceIdentityDescriptor(
+        identityDescriptor,
+        context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
+      )
+    : () => undefined;
   const documentHighlightTracker =
     createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
@@ -886,6 +899,7 @@ export function registerLanguageServerMonacoProviders(
       semanticTokens.dispose();
       rangeSemanticTokens.dispose();
       templateLanguageProviders.dispose();
+      unregisterWorkspaceIdentity();
     },
   };
 }
@@ -2172,7 +2186,14 @@ function toPhpCodeAction(
 
   return {
     edit: {
-      edits: [...newFileEdits(monaco, descriptor.newFile), ...documentEdits],
+      edits: [
+        ...newFileEdits(
+          monaco,
+          context.getWorkspaceRoot?.() ?? null,
+          descriptor.newFile,
+        ),
+        ...documentEdits,
+      ],
     },
     isPreferred: descriptor.isPreferred,
     kind: descriptor.kind ?? "quickfix",
@@ -2196,6 +2217,7 @@ function applyPhpCodeActionNewFileCommand(
         edits,
         newFile,
         sourcePath: modelPath(model),
+        sourceModelUri: model.uri.toString(),
         versionId:
           typeof model.getVersionId === "function"
             ? model.getVersionId()
@@ -2213,7 +2235,7 @@ function applyPhpCodeActionDocumentEdits(
 ): void {
   const model = monaco.editor
     .getModels()
-    .find((candidate) => modelPath(candidate) === payload.sourcePath);
+    .find((candidate) => candidate.uri.toString() === payload.sourceModelUri);
 
   if (!model || payload.edits.length === 0) {
     return;
@@ -2251,15 +2273,20 @@ function applyPhpCodeActionDocumentEdits(
  */
 function newFileEdits(
   monaco: MonacoApi,
+  rootPath: string | null,
   newFile: PhpCodeActionNewFile | undefined,
 ): Array<
   Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
 > {
-  if (!newFile) {
+  if (!newFile || !rootPath) {
     return [];
   }
 
-  const resource = monaco.Uri.file(newFile.path);
+  const resource = toWorkspaceMonacoUri(monaco, rootPath, newFile.path);
+
+  if (!resource) {
+    return [];
+  }
 
   return [
     {
@@ -3113,7 +3140,7 @@ function toMonacoFileUri(
     return null;
   }
 
-  return monaco.Uri.file(path);
+  return toWorkspaceMonacoUri(monaco, rootPath, path);
 }
 
 function toMonacoCommandPosition(
@@ -3156,7 +3183,11 @@ function toMonacoWorkspaceEdit(
         return [];
       }
 
-      const resource = monaco.Uri.file(path);
+      const resource = toWorkspaceMonacoUri(monaco, rootPath, path);
+
+      if (!resource) {
+        return [];
+      }
       const versionId = context.path === path ? context.versionId : undefined;
 
       return edits.map((textEdit) => ({
@@ -3180,7 +3211,11 @@ function toMonacoLocation(
     return [];
   }
 
-  const uri = monaco.Uri.file(path);
+  const uri = toWorkspaceMonacoUri(monaco, rootPath, path);
+
+  if (!uri) {
+    return [];
+  }
 
   if (limitToOpenModels && !monaco.editor.getModel(uri)) {
     return [];
@@ -3454,12 +3489,17 @@ interface StagedOpenModelEdit {
 function stageWorkspaceEditForOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
 ): StagedOpenModelEdit[] {
   const modelsByPath = new Map(
     monaco.editor.getModels().flatMap((model) => {
       const path = modelPath(model);
 
-      return path ? [[canonicalWorkspaceEditPath(path), model] as const] : [];
+      if (!path || !modelMatchesWorkspacePath(model, rootPath, path)) {
+        return [];
+      }
+
+      return [[canonicalWorkspaceEditPath(path), model] as const];
     }),
   );
 
@@ -3527,7 +3567,7 @@ async function applyWorkspaceEditWithOpenModels(
   rootPath: string,
 ): Promise<void> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
-  const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit);
+  const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit, rootPath);
   let commitResult: WorkspaceEditOpenModelCommitResult | undefined;
   const applyOpenModels = () => {
     if (commitResult) {

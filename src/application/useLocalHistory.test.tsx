@@ -337,6 +337,40 @@ describe("useLocalHistory", () => {
     harness.unmount();
   });
 
+  it.each(["conflict", "partial", "error"] as const)(
+    "does not apply, sync, report success, or record history on a %s write result",
+    async (status) => {
+      const writeTextFile = vi.fn(async () => {
+        if (status === "partial") {
+          return { status, message: `${status} result`, revision: null };
+        }
+
+        return { status, message: `${status} result` };
+      });
+      const harness = renderLocalHistory({
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      await act(async () => {
+        await harness.panel().openLocalHistory();
+        await harness.panel().revertLocalHistoryVersion("v1");
+      });
+
+      expect(harness.captureLocalHistorySnapshot).not.toHaveBeenCalled();
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.syncSavedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
+      expect(harness.setMessage).not.toHaveBeenCalledWith(
+        "Reverted to selected local history version",
+      );
+      expect(harness.reportErrorForActiveWorkspaceRoot).toHaveBeenCalledWith(
+        ROOT,
+        "Local History",
+        expect.any(Error),
+      );
+      harness.unmount();
+    },
+  );
+
   it("does nothing when there is no active document", async () => {
     const listVersions = vi.fn(async () => []);
     const harness = renderLocalHistory({
