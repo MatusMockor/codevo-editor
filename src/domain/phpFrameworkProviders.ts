@@ -76,6 +76,10 @@ export interface PhpFrameworkContainerBindingsContext {
   source: string;
 }
 
+export interface PhpFrameworkContainerBindingPathContext {
+  path: string;
+}
+
 export interface PhpFrameworkSourceContext {
   workspaceSources?: readonly string[];
 }
@@ -768,6 +772,9 @@ export interface PhpFrameworkProvider {
     containerBindingsFromSource?: (
       context: PhpFrameworkContainerBindingsContext,
     ) => PhpFrameworkContainerBinding[];
+    isContainerBindingCandidatePath?: (
+      context: PhpFrameworkContainerBindingPathContext,
+    ) => boolean;
   };
 }
 
@@ -787,6 +794,7 @@ export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
 export type PhpFrameworkProviderCapability =
   | "authorizationAbilities"
   | "config"
+  | "containerBindingsFromSource"
   | "dispatch"
   | "env"
   | "lattePresenterLinkIntelligence"
@@ -1897,6 +1905,11 @@ function phpFrameworkProvidersSupportCapability(
       );
     case "config":
       return providers.some((provider) => provider.config !== undefined);
+    case "containerBindingsFromSource":
+      return providers.some(
+        (provider) =>
+          provider.semantics?.containerBindingsFromSource !== undefined,
+      );
     case "dispatch":
       return providers.some((provider) => provider.dispatch !== undefined);
     case "env":
@@ -2044,6 +2057,25 @@ export function phpFrameworkContainerBindingsFromSource(
   return providers.flatMap(
     (provider) =>
       provider.semantics?.containerBindingsFromSource?.({ source }) ?? [],
+  );
+}
+
+export function phpFrameworkSupportsContainerBindingsFromSource(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportCapability(
+    providers,
+    "containerBindingsFromSource",
+  );
+}
+
+export function isPhpFrameworkContainerBindingCandidatePath(
+  path: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.semantics?.isContainerBindingCandidatePath?.({ path }) === true,
   );
 }
 

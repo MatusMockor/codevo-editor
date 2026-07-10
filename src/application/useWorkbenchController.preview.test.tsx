@@ -32929,6 +32929,10 @@ class CommentController
       "$comment->for",
       "$comment->arc",
     );
+    const unrelatedControllerSource = controllerSource.replace(
+      "$comment->for",
+      "$comment->for ",
+    );
     const eloquentProviderSource = `<?php
 namespace App\\Providers;
 
@@ -33036,26 +33040,31 @@ class ArchivedComment
 
       return `<?php\n// ${path}\n`;
     });
+    const searchText = vi.fn(async (_root, query) =>
+      query === "CommentRepositoryInterface::class"
+        ? [
+            {
+              column: 26,
+              lineNumber: 11,
+              lineText:
+                "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
+              path: providerPath,
+              relativePath: "app/Providers/AppServiceProvider.php",
+            },
+          ]
+        : [],
+    );
+    const bindingSearchCount = () =>
+      searchText.mock.calls.filter(
+        ([, query]) => query === "CommentRepositoryInterface::class",
+      ).length;
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
       },
       readTextFile,
-      searchText: vi.fn(async (_root, query) =>
-        query === "CommentRepositoryInterface::class"
-          ? [
-              {
-                column: 26,
-                lineNumber: 11,
-                lineText:
-                  "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
-                path: providerPath,
-                relativePath: "app/Providers/AppServiceProvider.php",
-              },
-            ]
-          : [],
-      ),
+      searchText,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
@@ -33081,6 +33090,25 @@ class ArchivedComment
         returnType: "bool",
       },
     ]);
+    expect(bindingSearchCount()).toBe(1);
+
+    act(() => {
+      getWorkbench().updateActiveDocument(unrelatedControllerSource);
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        unrelatedControllerSource,
+        positionAfter(unrelatedControllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+    expect(bindingSearchCount()).toBe(1);
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -33117,6 +33145,247 @@ class ArchivedComment
         returnType: "void",
       },
     ]);
+    expect(bindingSearchCount()).toBe(2);
+  });
+
+  it("invalidates a cached Laravel binding miss only for relevant external PHP changes", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    let bindingFileExists = false;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const interfacePath = "/workspace/app/Contracts/CommentStoreContract.php";
+    const repositoryPath = "/workspace/app/Storage/DatabaseCommentStore.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const bindingPath = "/workspace/src/Bindings.php";
+    const unrelatedPath = "/workspace/src/Unrelated.php";
+    const unreadablePath = "/workspace/src/Unreadable.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentStoreContract;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentStoreContract $commentStore,
+    ) {}
+
+    public function show(): void
+    {
+        $comment = $this->commentStore->findOrFail(1);
+        $comment->for
+    }
+}
+`;
+    const bindingSource = `<?php
+namespace App\\Support;
+
+use App\\Contracts\\CommentStoreContract;
+use App\\Storage\\DatabaseCommentStore;
+
+app()->bind(CommentStoreContract::class, DatabaseCommentStore::class);
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === interfacePath) {
+        return `<?php
+namespace App\\Contracts;
+
+interface CommentStoreContract {}
+`;
+      }
+
+      if (path === repositoryPath) {
+        return `<?php
+namespace App\\Storage;
+
+use App\\Contracts\\CommentStoreContract;
+use App\\Models\\Comment;
+
+class DatabaseCommentStore implements CommentStoreContract
+{
+    public function findOrFail(int $id): Comment {}
+}
+`;
+      }
+
+      if (path === commentPath) {
+        return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function forceDelete(): bool {}
+}
+`;
+      }
+
+      if (path === bindingPath && bindingFileExists) {
+        return bindingSource;
+      }
+
+      if (path === unrelatedPath) {
+        return `<?php
+use App\\Contracts\\CommentStoreContract;
+
+final class Unrelated
+{
+    public const CONTRACT = CommentStoreContract::class;
+}
+`;
+      }
+
+      if (path === unreadablePath) {
+        throw new Error("transient external read failure");
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const searchText = vi.fn(async (_root, query) => {
+      if (query !== "CommentStoreContract::class") {
+        return [];
+      }
+
+      if (!bindingFileExists) {
+        return [
+          {
+            column: 29,
+            lineNumber: 6,
+            lineText: "    public const CONTRACT = CommentStoreContract::class;",
+            path: unrelatedPath,
+            relativePath: "src/Unrelated.php",
+          },
+        ];
+      }
+
+      return [
+        {
+          column: 13,
+          lineNumber: 7,
+          lineText:
+            "app()->bind(CommentStoreContract::class, DatabaseCommentStore::class);",
+          path: bindingPath,
+          relativePath: "src/Bindings.php",
+        },
+      ];
+    });
+    const bindingSearchCount = () =>
+      searchText.mock.calls.filter(
+        ([, query]) => query === "CommentStoreContract::class",
+      ).length;
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([]);
+    expect(bindingSearchCount()).toBe(1);
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: unrelatedPath,
+        relativePath: "src/Unrelated.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([]);
+    expect(bindingSearchCount()).toBe(1);
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "modified",
+        path: unreadablePath,
+        relativePath: "src/Unreadable.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([]);
+    expect(bindingSearchCount()).toBe(2);
+
+    bindingFileExists = true;
+    await act(async () => {
+      publishFileChange?.({
+        kind: "created",
+        path: bindingPath,
+        relativePath: "src/Bindings.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+    expect(bindingSearchCount()).toBe(3);
+
+    bindingFileExists = false;
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: bindingPath,
+        relativePath: "src/Bindings.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+    await getWorkbench().providePhpMethodCompletions(
+      controllerSource,
+      positionAfter(controllerSource, "$comment->for"),
+    );
+    expect(bindingSearchCount()).toBe(4);
   });
 
   it("keeps Laravel repository completions stable during container binding warm-up", async () => {

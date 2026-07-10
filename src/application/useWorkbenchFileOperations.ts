@@ -93,6 +93,9 @@ export interface WorkbenchFileOperationsDependencies {
     rootPath: string,
     path: string,
   ) => void;
+  invalidatePhpFrameworkBindingsForFileChange: (
+    event: WorkspaceFileChangeEvent,
+  ) => void;
   markExternallyRemovedDocumentPath: (rootPath: string, path: string) => void;
   notifyJavaScriptTypeScriptFileCreated: (path: string) => Promise<void>;
   notifyJavaScriptTypeScriptFileDeleted: (path: string) => Promise<void>;
@@ -175,6 +178,7 @@ export function useWorkbenchFileOperations(
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
     invalidateNeonConfigForPath,
+    invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
@@ -831,6 +835,7 @@ export function useWorkbenchFileOperations(
       }
 
       queueWorkspaceGitStatusRefresh(requestedRoot);
+      invalidatePhpFrameworkBindingsForFileChange(event);
 
       invalidatePhpFrameworkSourcePath(requestedRoot, event.path);
       invalidateBladeComponentNamesForPath(requestedRoot, event.path);
@@ -880,6 +885,7 @@ export function useWorkbenchFileOperations(
       invalidateBladeComponentNamesForPath,
       invalidateBladeViewDataEntriesForPath,
       invalidateNeonConfigForPath,
+      invalidatePhpFrameworkBindingsForFileChange,
       invalidatePhpFrameworkSourcePath,
       queueWorkspaceDirectoryRefresh,
       queueWorkspaceGitStatusRefresh,

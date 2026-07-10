@@ -4,11 +4,13 @@ import {
   frameworkProfileForProject,
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
+  isPhpFrameworkContainerBindingCandidatePath,
   isNettePhpProject,
   phpFrameworkAuthorizationAbilityDefinitionsFromSource,
   phpFrameworkAuthorizationAbilitySearchQueries,
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
+  phpFrameworkSupportsContainerBindingsFromSource,
   phpFrameworkConfigLiteralTarget,
   phpFrameworkDispatchTargetAt,
   phpFrameworkEventListenerMapFromSource,
@@ -1776,6 +1778,49 @@ Route::model('user', AdminUser::class);
       expect(netteRegistry.providerSignature).toBe("nette");
       expect(netteRegistry.supports("routes")).toBe(false);
       expect(netteRegistry.supportsTargetCollection("routes")).toBe(false);
+    });
+
+    it("reports container binding source ownership only for Laravel", () => {
+      const laravelRegistry = createPhpFrameworkProviderCapabilityRegistry([
+        phpLaravelFrameworkProvider,
+      ]);
+      const netteRegistry = createPhpFrameworkProviderCapabilityRegistry([
+        phpNetteFrameworkProvider,
+      ]);
+      const genericRegistry = createPhpFrameworkProviderCapabilityRegistry([]);
+
+      expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(true);
+      expect(netteRegistry.supports("containerBindingsFromSource")).toBe(false);
+      expect(genericRegistry.supports("containerBindingsFromSource")).toBe(false);
+      expect(
+        phpFrameworkSupportsContainerBindingsFromSource([
+          phpLaravelFrameworkProvider,
+        ]),
+      ).toBe(true);
+      expect(
+        phpFrameworkSupportsContainerBindingsFromSource([
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(false);
+      expect(phpFrameworkSupportsContainerBindingsFromSource([])).toBe(false);
+      expect(
+        isPhpFrameworkContainerBindingCandidatePath(
+          "/workspace/app/Providers/AppServiceProvider.php",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe(true);
+      expect(
+        isPhpFrameworkContainerBindingCandidatePath(
+          "/workspace/app/Providers/AppServiceProvider.php",
+          [phpNetteFrameworkProvider],
+        ),
+      ).toBe(false);
+      expect(
+        isPhpFrameworkContainerBindingCandidatePath(
+          "/workspace/app/Services/Unrelated.php",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe(false);
     });
 
     it("stays a safe no-op for providers without the routes capability", () => {

@@ -122,6 +122,15 @@ const laravelViewDataSearchQueries: readonly string[] = [
   "compact(",
 ];
 
+function isLaravelContainerBindingCandidatePath(path: string): boolean {
+  const normalizedPath = path.split("\\").join("/").toLowerCase();
+
+  return (
+    /(?:^|\/)app\/providers\/[^/]+\.php$/.test(normalizedPath) ||
+    /(?:^|\/)bootstrap\/app\.php$/.test(normalizedPath)
+  );
+}
+
 export function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
   if (php.packageName === "laravel/laravel") {
     return true;
@@ -341,6 +350,8 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       phpLaravelContainerExpressionClassName(expression),
     containerBindingsFromSource: ({ source }) =>
       phpLaravelContainerBindingsFromSource(source),
+    isContainerBindingCandidatePath: ({ path }) =>
+      isLaravelContainerBindingCandidatePath(path),
   },
 };
 

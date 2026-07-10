@@ -262,6 +262,7 @@ import {
   cachedLanguageServerRuntimeStatusForRoot,
 } from "../domain/languageServerRuntimeStatusCache";
 import {
+  type WorkspaceFileChangeEvent,
   type WorkspaceFileChangeGateway,
   type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
@@ -289,6 +290,8 @@ import {
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
 import {
+  isPhpFrameworkContainerBindingCandidatePath,
+  phpFrameworkContainerBindingsFromSource,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -479,6 +482,7 @@ export function useWorkbenchController(
     useState<WorkspaceDescriptor | null>(null);
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
   const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
+  const invalidatePhpFrameworkBindingCacheRef = useRef<() => void>(() => {});
   const resetPhpLaravelMorphMapModelTypeCacheRef = useRef<() => void>(() => {});
   // One detection pass per workspace: the active provider set and the exclusive
   // profile ("laravel" | "nette" | "generic") are derived from the same result,
@@ -4064,7 +4068,19 @@ export function useWorkbenchController(
 
       pinDocument(activeDocument.path);
       if (activeDocument.language === "php") {
-        phpFrameworkBindingCacheRef.current = {};
+        if (
+          phpFrameworkRuntimeContext.supports("containerBindingsFromSource") &&
+          (phpFrameworkContainerBindingsFromSource(
+            activeDocument.content,
+            activePhpFrameworkProviders,
+          ).length > 0 ||
+            phpFrameworkContainerBindingsFromSource(
+              content,
+              activePhpFrameworkProviders,
+            ).length > 0)
+        ) {
+          invalidatePhpFrameworkBindingCacheRef.current();
+        }
         resetPhpLaravelMorphMapModelTypeCacheRef.current();
         updateLocalPhpDiagnostics(
           activeDocument.path,
@@ -4092,7 +4108,12 @@ export function useWorkbenchController(
         };
       });
     },
-    [activeDocument, pinDocument, updateLocalPhpDiagnostics],
+    [
+      activeDocument,
+      activePhpFrameworkProviders,
+      pinDocument,
+      updateLocalPhpDiagnostics,
+    ],
   );
 
   const revertActiveEditorChangeHunk = useCallback(
@@ -4693,6 +4714,9 @@ export function useWorkbenchController(
   });
 
   const {
+    currentPhpFrameworkBindingCacheGeneration,
+    invalidatePhpFrameworkBindingCache,
+    isPhpFrameworkBindingSearchCandidatePath,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
     resolvePhpDeclaredType,
@@ -4713,6 +4737,101 @@ export function useWorkbenchController(
     workspaceDescriptor,
     workspaceRoot,
   });
+  invalidatePhpFrameworkBindingCacheRef.current =
+    invalidatePhpFrameworkBindingCache;
+
+  const invalidatePhpFrameworkBindingsForFileChange = useCallback(
+    (event: WorkspaceFileChangeEvent): void => {
+      if (
+        !phpFrameworkRuntimeContext.supports("containerBindingsFromSource") ||
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          event.rootPath,
+        ) ||
+        event.fileKind === "directory"
+      ) {
+        return;
+      }
+
+      const eventPaths = [event.path, event.previousPath].filter(
+        (path): path is string => Boolean(path),
+      );
+      const knownCandidateChanged = eventPaths.some(
+        (path) =>
+          detectLanguage(path) === "php" &&
+          (isPhpFrameworkBindingSearchCandidatePath(path) ||
+            isPhpFrameworkContainerBindingCandidatePath(
+              path,
+              activePhpFrameworkProviders,
+            )),
+      );
+
+      if (knownCandidateChanged) {
+        invalidatePhpFrameworkBindingCacheRef.current();
+        return;
+      }
+
+      if (
+        (event.kind !== "created" &&
+          event.kind !== "modified" &&
+          event.kind !== "renamed") ||
+        detectLanguage(event.path) !== "php"
+      ) {
+        return;
+      }
+
+      const requestedRoot = event.rootPath;
+      const requestedGeneration =
+        currentPhpFrameworkBindingCacheGeneration();
+      const invalidateIfCurrent = (): void => {
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
+          currentPhpFrameworkBindingCacheGeneration() !== requestedGeneration
+        ) {
+          return;
+        }
+
+        invalidatePhpFrameworkBindingCacheRef.current();
+      };
+
+      void workspaceFiles
+        .readTextFile(event.path)
+        .then((source) => {
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            ) ||
+            currentPhpFrameworkBindingCacheGeneration() !== requestedGeneration
+          ) {
+            return;
+          }
+
+          if (
+            phpFrameworkContainerBindingsFromSource(
+              source,
+              activePhpFrameworkProviders,
+            ).length === 0
+          ) {
+            return;
+          }
+
+          invalidateIfCurrent();
+        })
+        .catch(() => invalidateIfCurrent());
+    },
+    [
+      activePhpFrameworkProviders,
+      currentPhpFrameworkBindingCacheGeneration,
+      currentWorkspaceRootRef,
+      isPhpFrameworkBindingSearchCandidatePath,
+      phpFrameworkRuntimeContext,
+      workspaceFiles,
+    ],
+  );
 
   const {
     resetPhpLaravelMorphMapModelTypeCache,
@@ -5424,7 +5543,7 @@ export function useWorkbenchController(
   resetPhpFrameworkCachesRef.current = () => {
     phpClassSourcePathCacheRef.current = {};
     resetPhpClassMemberCacheRef.current();
-    phpFrameworkBindingCacheRef.current = {};
+    invalidatePhpFrameworkBindingCache();
     resetPhpLaravelMorphMapModelTypeCache();
     invalidateFrameworkTargetCache();
     resetPhpFrameworkSourceRegistries();
@@ -5699,6 +5818,7 @@ export function useWorkbenchController(
     invalidateBladeComponentNamesForPath,
     invalidateBladeViewDataEntriesForPath,
     invalidateNeonConfigForPath,
+    invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,

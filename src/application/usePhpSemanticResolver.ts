@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import {
   phpClassPathCandidates,
@@ -11,6 +11,8 @@ import {
 import { phpDeclaredTypeCandidate } from "../domain/phpTypeAnalysis";
 import {
   phpFrameworkContainerBindingsFromSource,
+  phpFrameworkProviderSignature,
+  phpFrameworkSupportsContainerBindingsFromSource,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
@@ -52,6 +54,56 @@ export function usePhpSemanticResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpSemanticResolverOptions) {
+  const phpFrameworkBindingInFlightRef = useRef<
+    Record<string, Promise<string | null>>
+  >({});
+  const phpFrameworkBindingSearchPathKeysRef = useRef<Set<string>>(new Set());
+  const phpFrameworkBindingCacheGenerationRef = useRef(0);
+  const providerSignature = phpFrameworkProviderSignature(
+    activePhpFrameworkProviders,
+  );
+  const phpFrameworkBindingCacheOwnerRef = useRef({
+    providerSignature,
+    workspaceRoot,
+  });
+
+  if (
+    phpFrameworkBindingCacheOwnerRef.current.providerSignature !==
+      providerSignature ||
+    !workspaceRootKeysEqual(
+      phpFrameworkBindingCacheOwnerRef.current.workspaceRoot,
+      workspaceRoot,
+    )
+  ) {
+    phpFrameworkBindingCacheOwnerRef.current = {
+      providerSignature,
+      workspaceRoot,
+    };
+    phpFrameworkBindingCacheGenerationRef.current += 1;
+    phpFrameworkBindingCacheRef.current = {};
+    phpFrameworkBindingInFlightRef.current = {};
+    phpFrameworkBindingSearchPathKeysRef.current = new Set();
+  }
+
+  const invalidatePhpFrameworkBindingCache = useCallback((): void => {
+    phpFrameworkBindingCacheGenerationRef.current += 1;
+    phpFrameworkBindingCacheRef.current = {};
+    phpFrameworkBindingInFlightRef.current = {};
+  }, [phpFrameworkBindingCacheRef]);
+
+  const currentPhpFrameworkBindingCacheGeneration = useCallback(
+    (): number => phpFrameworkBindingCacheGenerationRef.current,
+    [],
+  );
+
+  const isPhpFrameworkBindingSearchCandidatePath = useCallback(
+    (path: string): boolean =>
+      phpFrameworkBindingSearchPathKeysRef.current.has(
+        phpFrameworkBindingPathKey(path),
+      ),
+    [],
+  );
+
   const resolvePhpClassReference = useCallback(
     (source: string, className: string): string | null => {
       const classReference = className.trim();
@@ -176,11 +228,16 @@ export function usePhpSemanticResolver({
   const resolvePhpFrameworkBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
       const requestedRoot = workspaceRoot;
+      const requestedGeneration =
+        phpFrameworkBindingCacheGenerationRef.current;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        phpFrameworkBindingCacheGenerationRef.current === requestedGeneration;
 
       if (
-        !activePhpFrameworkProviders.length ||
+        !phpFrameworkSupportsContainerBindingsFromSource(
+          activePhpFrameworkProviders,
+        ) ||
         !requestedRoot ||
         !isRequestedRootActive()
       ) {
@@ -204,83 +261,111 @@ export function usePhpSemanticResolver({
         return phpFrameworkBindingCacheRef.current[cacheKey] ?? null;
       }
 
-      let concreteClassName: string | null = null;
-      const shortName = shortPhpName(normalizedClassName);
-      const results = await textSearch.searchText(
-        requestedRoot,
-        `${shortName}::class`,
-        200,
-      );
+      const inFlightLookup = phpFrameworkBindingInFlightRef.current[cacheKey];
 
-      if (!isRequestedRootActive()) {
-        return null;
+      if (inFlightLookup) {
+        return inFlightLookup;
       }
 
-      const visitedPaths = new Set<string>();
+      const lookup = (async (): Promise<string | null> => {
+        let concreteClassName: string | null = null;
+        let candidateReadFailed = false;
+        const shortName = shortPhpName(normalizedClassName);
+        const results = await textSearch.searchText(
+          requestedRoot,
+          `${shortName}::class`,
+          200,
+        );
 
-      for (const result of results) {
         if (!isRequestedRootActive()) {
           return null;
         }
 
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
-        }
+        const visitedPaths = new Set<string>();
 
-        visitedPaths.add(result.path);
-
-        try {
-          const content = await readNavigationFileContent(result.path);
-
+        for (const result of results) {
           if (!isRequestedRootActive()) {
             return null;
           }
 
-          for (const binding of phpFrameworkContainerBindingsFromSource(
-            content,
-            activePhpFrameworkProviders,
-          )) {
-            const abstractClassName = resolvePhpClassReference(
-              content,
-              binding.abstractClassName,
-            );
-
-            if (abstractClassName?.toLowerCase() !== cacheKey) {
-              continue;
-            }
-
-            const resolvedConcreteClassName = resolvePhpClassReference(
-              content,
-              binding.concreteClassName,
-            );
-
-            if (resolvedConcreteClassName) {
-              concreteClassName = resolvedConcreteClassName;
-              break;
-            }
-          }
-        } catch {
-          if (!isRequestedRootActive()) {
-            return null;
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
           }
 
-          continue;
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            const bindings = phpFrameworkContainerBindingsFromSource(
+              content,
+              activePhpFrameworkProviders,
+            );
+
+            if (bindings.length > 0) {
+              phpFrameworkBindingSearchPathKeysRef.current.add(
+                phpFrameworkBindingPathKey(result.path),
+              );
+            }
+
+            for (const binding of bindings) {
+              const abstractClassName = resolvePhpClassReference(
+                content,
+                binding.abstractClassName,
+              );
+
+              if (abstractClassName?.toLowerCase() !== cacheKey) {
+                continue;
+              }
+
+              const resolvedConcreteClassName = resolvePhpClassReference(
+                content,
+                binding.concreteClassName,
+              );
+
+              if (resolvedConcreteClassName) {
+                concreteClassName = resolvedConcreteClassName;
+                break;
+              }
+            }
+          } catch {
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            candidateReadFailed = true;
+            continue;
+          }
+
+          if (concreteClassName) {
+            break;
+          }
         }
 
-        if (concreteClassName) {
-          break;
+        if (!isRequestedRootActive()) {
+          return null;
         }
-      }
 
-      if (!isRequestedRootActive()) {
-        return null;
-      }
+        if (!concreteClassName && candidateReadFailed) {
+          return null;
+        }
 
-      if (concreteClassName) {
         phpFrameworkBindingCacheRef.current[cacheKey] = concreteClassName;
-      }
+        return concreteClassName;
+      })();
+      phpFrameworkBindingInFlightRef.current[cacheKey] = lookup;
 
-      return concreteClassName;
+      try {
+        return await lookup;
+      } finally {
+        if (phpFrameworkBindingInFlightRef.current[cacheKey] === lookup) {
+          delete phpFrameworkBindingInFlightRef.current[cacheKey];
+        }
+      }
     },
     [
       activePhpFrameworkProviders,
@@ -523,6 +608,9 @@ export function usePhpSemanticResolver({
   );
 
   return {
+    currentPhpFrameworkBindingCacheGeneration,
+    invalidatePhpFrameworkBindingCache,
+    isPhpFrameworkBindingSearchCandidatePath,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
     resolvePhpDeclaredType,
@@ -535,6 +623,10 @@ export function usePhpSemanticResolver({
 
 function isPhpPath(path: string): boolean {
   return path.toLowerCase().endsWith(".php");
+}
+
+function phpFrameworkBindingPathKey(path: string): string {
+  return path.split("\\").join("/").toLowerCase();
 }
 
 function shortPhpName(className: string): string {
