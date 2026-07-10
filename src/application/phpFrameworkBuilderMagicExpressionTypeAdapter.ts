@@ -2,7 +2,8 @@ export interface PhpFrameworkBuilderMagicExpressionTypeAdapter {
   methodCallType(context: {
     methodName: string;
     resolveBuilderModelType: () => Promise<string | null>;
-    resolveReceiverModelTypeCandidate: () => Promise<string | null>;
+    resolveReceiverType: () => Promise<string | null>;
+    source: string;
   }): Promise<string | null>;
   staticCallType(context: {
     className: string | null;

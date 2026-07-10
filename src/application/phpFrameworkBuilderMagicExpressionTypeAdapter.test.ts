@@ -4,7 +4,7 @@ import { genericPhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrame
 describe("phpFrameworkBuilderMagicExpressionTypeAdapter", () => {
   it("keeps the generic implementation inert", async () => {
     const resolveBuilderModelType = vi.fn(async () => "App\\Models\\Post");
-    const resolveReceiverModelTypeCandidate = vi.fn(
+    const resolveReceiverType = vi.fn(
       async () => "App\\Models\\Post",
     );
 
@@ -12,7 +12,8 @@ describe("phpFrameworkBuilderMagicExpressionTypeAdapter", () => {
       genericPhpFrameworkBuilderMagicExpressionTypeAdapter.methodCallType({
         methodName: "published",
         resolveBuilderModelType,
-        resolveReceiverModelTypeCandidate,
+        resolveReceiverType,
+        source: "<?php\n",
       }),
     ).resolves.toBeNull();
     await expect(
@@ -23,6 +24,6 @@ describe("phpFrameworkBuilderMagicExpressionTypeAdapter", () => {
     ).resolves.toBeNull();
 
     expect(resolveBuilderModelType).not.toHaveBeenCalled();
-    expect(resolveReceiverModelTypeCandidate).not.toHaveBeenCalled();
+    expect(resolveReceiverType).not.toHaveBeenCalled();
   });
 });

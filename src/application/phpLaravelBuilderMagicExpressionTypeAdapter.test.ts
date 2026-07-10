@@ -22,10 +22,11 @@ describe("phpLaravelBuilderMagicExpressionTypeAdapter", () => {
           calls.push("builder");
           return "App\\Models\\Post";
         }),
-        resolveReceiverModelTypeCandidate: vi.fn(async () => {
+        resolveReceiverType: vi.fn(async () => {
           calls.push("receiver");
           return "App\\Models\\Post";
         }),
+        source: "<?php\n",
       }),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
     expect(calls).toEqual(["builder", "scope"]);
@@ -51,10 +52,11 @@ describe("phpLaravelBuilderMagicExpressionTypeAdapter", () => {
           calls.push("builder");
           return "App\\Models\\Builder";
         }),
-        resolveReceiverModelTypeCandidate: vi.fn(async () => {
+        resolveReceiverType: vi.fn(async () => {
           calls.push("receiver");
           return "App\\Models\\Receiver";
         }),
+        source: "<?php\n",
       }),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
     expect(calls).toEqual([
@@ -78,9 +80,10 @@ describe("phpLaravelBuilderMagicExpressionTypeAdapter", () => {
       adapter.methodCallType({
         methodName: "whereTitle",
         resolveBuilderModelType: vi.fn(async () => null),
-        resolveReceiverModelTypeCandidate: vi.fn(
+        resolveReceiverType: vi.fn(
           async () => "App\\Models\\Post",
         ),
+        source: "<?php\n",
       }),
     ).resolves.toBeNull();
     expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(

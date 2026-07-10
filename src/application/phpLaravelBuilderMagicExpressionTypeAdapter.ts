@@ -1,3 +1,4 @@
+import { phpLaravelResolvedModelTypeCandidate } from "../domain/phpFrameworkLaravel";
 import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
 
 export interface PhpLaravelBuilderMagicExpressionTypeAdapterOptions {
@@ -21,7 +22,8 @@ export function phpLaravelBuilderMagicExpressionTypeAdapter({
     methodCallType: async ({
       methodName,
       resolveBuilderModelType,
-      resolveReceiverModelTypeCandidate,
+      resolveReceiverType,
+      source,
     }) => {
       const builderModelType = await resolveBuilderModelType();
 
@@ -35,7 +37,10 @@ export function phpLaravelBuilderMagicExpressionTypeAdapter({
         }
       }
 
-      const receiverModelType = await resolveReceiverModelTypeCandidate();
+      const receiverModelType = phpLaravelResolvedModelTypeCandidate(
+        source,
+        await resolveReceiverType(),
+      );
 
       if (!receiverModelType) {
         return null;

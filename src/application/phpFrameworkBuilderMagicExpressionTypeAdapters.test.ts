@@ -6,7 +6,7 @@ describe("phpFrameworkBuilderMagicExpressionTypeAdapters", () => {
     const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
     const phpClassHasLaravelLocalScope = vi.fn(async () => true);
     const resolveBuilderModelType = vi.fn(async () => "App\\Models\\Post");
-    const resolveReceiverModelTypeCandidate = vi.fn(
+    const resolveReceiverType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const adapter = phpFrameworkBuilderMagicExpressionTypeAdapters(false, {
@@ -18,7 +18,8 @@ describe("phpFrameworkBuilderMagicExpressionTypeAdapters", () => {
       adapter.methodCallType({
         methodName: "published",
         resolveBuilderModelType,
-        resolveReceiverModelTypeCandidate,
+        resolveReceiverType,
+        source: "<?php\n",
       }),
     ).resolves.toBeNull();
     await expect(
@@ -29,7 +30,7 @@ describe("phpFrameworkBuilderMagicExpressionTypeAdapters", () => {
     ).resolves.toBeNull();
 
     expect(resolveBuilderModelType).not.toHaveBeenCalled();
-    expect(resolveReceiverModelTypeCandidate).not.toHaveBeenCalled();
+    expect(resolveReceiverType).not.toHaveBeenCalled();
     expect(phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
     expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
   });

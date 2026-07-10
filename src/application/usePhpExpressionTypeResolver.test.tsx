@@ -351,6 +351,74 @@ describe("usePhpExpressionTypeResolver", () => {
     },
   );
 
+  it("repeats property recovery probes for overlapping first candidates", async () => {
+    const calls: string[] = [];
+    const harness = renderHook(
+      makeOptions({
+        resolvePhpClassPropertyOrRelationType: vi.fn(
+          async (_className, _propertyName, includeCollectionRelations) => {
+            calls.push(`relation:${String(includeCollectionRelations)}`);
+            return null;
+          },
+        ),
+        resolvePhpEloquentBuilderModelType: vi.fn(async () => {
+          calls.push("builder");
+          return null;
+        }),
+        resolvePhpLaravelCollectionModelType: vi.fn(async () => {
+          calls.push("collection");
+          return null;
+        }),
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$model->comments->first()"),
+    ).resolves.toBeNull();
+    expect(calls).toEqual([
+      "relation:true",
+      "collection",
+      "relation:true",
+      "builder",
+      "builder",
+      "relation:undefined",
+    ]);
+    harness.unmount();
+  });
+
+  it("passes a nonzero depth plus exactly one to terminal recovery callbacks", async () => {
+    const calls: Array<[string, number | undefined]> = [];
+    const harness = renderHook(
+      makeOptions({
+        resolvePhpEloquentBuilderModelType: vi.fn(
+          async (_source, _position, expression, depth) => {
+            calls.push([expression, depth]);
+            return "App\\Models\\Post";
+          },
+        ),
+        resolvePhpLaravelCollectionModelType: vi.fn(
+          async (_source, _position, expression, depth) => {
+            calls.push([expression, depth]);
+            return null;
+          },
+        ),
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$builder->first()", 4),
+    ).resolves.toBe("App\\Models\\Post");
+    expect(calls).toEqual([
+      ["$builder", 5],
+      ["$builder", 5],
+    ]);
+    harness.unmount();
+  });
+
   it("resolves DB instances and facade table/where chains to Query Builder", async () => {
     const options = makeOptions();
     const harness = renderHook(options);
@@ -749,6 +817,77 @@ $loop->probe;
     expect(firstResolver).toHaveBeenCalled();
     expect(genericResolver).not.toHaveBeenCalled();
     expect(latestResolver).toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("uses the latest terminal recovery dependencies after a Laravel rerender", async () => {
+    const firstRelationResolver = vi.fn(async () => "App\\Models\\First");
+    const latestRelationResolver = vi.fn(async () => "App\\Models\\Latest");
+    const firstCollectionResolver = vi.fn(
+      async () => "App\\Models\\FirstCollection",
+    );
+    const latestCollectionResolver = vi.fn(
+      async () => "App\\Models\\LatestCollection",
+    );
+    const options = makeOptions({
+      resolvePhpClassPropertyOrRelationType: firstRelationResolver,
+      resolvePhpLaravelCollectionModelType: firstCollectionResolver,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        SOURCE,
+        POSITION,
+        "$model->comments->first()",
+      ),
+    ).resolves.toBe("App\\Models\\First");
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$collection->first()"),
+    ).resolves.toBe("App\\Models\\FirstCollection");
+
+    harness.rerender({
+      ...options,
+      resolvePhpClassPropertyOrRelationType: latestRelationResolver,
+      resolvePhpLaravelCollectionModelType: latestCollectionResolver,
+    });
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        SOURCE,
+        POSITION,
+        "$model->comments->first()",
+      ),
+    ).resolves.toBe("App\\Models\\Latest");
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$collection->first()"),
+    ).resolves.toBe("App\\Models\\LatestCollection");
+
+    expect(firstRelationResolver).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "comments",
+      true,
+    );
+    expect(latestRelationResolver).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "comments",
+      true,
+    );
+    expect(firstCollectionResolver).toHaveBeenCalledWith(
+      SOURCE,
+      POSITION,
+      "$collection",
+      1,
+    );
+    expect(latestCollectionResolver).toHaveBeenCalledWith(
+      SOURCE,
+      POSITION,
+      "$collection",
+      1,
+    );
     harness.unmount();
   });
 
