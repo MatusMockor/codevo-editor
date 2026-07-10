@@ -114,6 +114,28 @@ export function createWorkspaceRoot(
   );
 }
 
+/** Creates a root whose stable identity is derived from its canonical path. */
+export function createWorkspaceRootFromPath(
+  pathOrFileUri: string,
+  policy: WorkspacePathPolicy = DEFAULT_WORKSPACE_PATH_POLICY,
+): WorkspacePathResult<WorkspaceRootDescriptor> {
+  const canonicalRoot = createWorkspaceRoot(
+    "workspace-root",
+    pathOrFileUri,
+    policy,
+  );
+
+  if (!canonicalRoot.ok) {
+    return canonicalRoot;
+  }
+
+  return createWorkspaceRoot(
+    canonicalRoot.value.nativePath,
+    canonicalRoot.value.nativePath,
+    policy,
+  );
+}
+
 /** Parses an absolute local path and scopes its identity to the supplied root. */
 export function parseWorkspacePath(
   root: WorkspaceRootDescriptor,

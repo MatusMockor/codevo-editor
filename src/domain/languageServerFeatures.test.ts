@@ -3,10 +3,12 @@ import {
   canUseLanguageServerFeature,
   emptyLanguageServerCompletionList,
   pathFromLanguageServerUri,
+  workspacePathFromLanguageServerUri,
   toEditorPosition,
   toLanguageServerTextDocumentPosition,
 } from "./languageServerFeatures";
 import type { LanguageServerCapabilities } from "./languageServerRuntime";
+import { createWorkspaceRootFromPath } from "./workspacePath";
 
 describe("canUseLanguageServerFeature", () => {
   it("reads a feature flag from the provider capability registry", () => {
@@ -100,6 +102,37 @@ describe("pathFromLanguageServerUri", () => {
   it("returns null for unsupported URIs", () => {
     expect(pathFromLanguageServerUri("https://example.test/User.php")).toBeNull();
     expect(pathFromLanguageServerUri("not a uri")).toBeNull();
+  });
+
+  it.each([
+    "file://server/project/User.php",
+    "file:///project/bad%2Fname.php",
+    "file:///project/bad%00name.php",
+    "file:///project/bad%ZZname.php",
+  ])("rejects hostile file URI %s", (uri) => {
+    expect(pathFromLanguageServerUri(uri)).toBeNull();
+  });
+
+  it("canonicalizes localhost and encoded aliases", () => {
+    expect(pathFromLanguageServerUri("file://LOCALHOST/project/%55ser.php")).toBe(
+      "/project/User.php",
+    );
+  });
+
+  it("rejects local files outside a scoped workspace", () => {
+    const root = createWorkspaceRootFromPath("/project");
+
+    expect(root.ok).toBe(true);
+    if (!root.ok) {
+      throw new Error(root.error.message);
+    }
+
+    expect(
+      workspacePathFromLanguageServerUri(
+        root.value,
+        "file:///other/User.php",
+      ),
+    ).toBeNull();
   });
 });
 

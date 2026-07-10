@@ -1,4 +1,10 @@
 import type { LanguageServerCapabilities } from "./languageServerRuntime";
+import {
+  createWorkspaceRootFromPath,
+  parseWorkspacePath,
+  type WorkspacePath,
+  type WorkspaceRootDescriptor,
+} from "./workspacePath";
 
 export type LanguageServerFeature = keyof LanguageServerCapabilities;
 
@@ -573,17 +579,22 @@ export function toEditorPosition(
 }
 
 export function pathFromLanguageServerUri(uri: string): string | null {
-  try {
-    const parsed = new URL(uri);
+  const root = createWorkspaceRootFromPath("/");
 
-    if (parsed.protocol !== "file:") {
-      return null;
-    }
-
-    return decodeURIComponent(parsed.pathname);
-  } catch {
+  if (!root.ok) {
     return null;
   }
+
+  return workspacePathFromLanguageServerUri(root.value, uri)?.nativePath ?? null;
+}
+
+export function workspacePathFromLanguageServerUri(
+  root: WorkspaceRootDescriptor,
+  uri: string,
+): WorkspacePath | null {
+  const path = parseWorkspacePath(root, uri);
+
+  return path.ok ? path.value : null;
 }
 
 export function emptyLanguageServerCompletionList(): LanguageServerCompletionList {

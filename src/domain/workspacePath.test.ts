@@ -2,6 +2,7 @@ import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import { describe, expect, it } from "vitest";
 import {
   createWorkspaceRoot,
+  createWorkspaceRootFromPath,
   parseWorkspacePath,
   type WorkspacePath,
   type CaseInsensitiveWorkspacePathPolicy,
@@ -49,6 +50,18 @@ function path(
 }
 
 describe("workspace path identity", () => {
+  it("derives the same root identity from canonical path aliases", () => {
+    const nativeRoot = valueOf(createWorkspaceRootFromPath("/work/project/"));
+    const uriRoot = valueOf(
+      createWorkspaceRootFromPath("file://localhost/work/project"),
+    );
+
+    expect(nativeRoot).toEqual(uriRoot);
+    expect(path(nativeRoot, "/work/project/src/App.ts").key).toBe(
+      path(uriRoot, "file:///work/project/src/App.ts").key,
+    );
+  });
+
   it("canonicalizes native paths and derives every representation", () => {
     const descriptor = root(
       "project-a",
