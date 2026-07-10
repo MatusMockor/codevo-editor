@@ -21,7 +21,6 @@ import {
   phpClassStringCallExpression,
   phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
-  phpLaravelQueryCallbackContextForVariable,
   type PhpMethodCallExpression,
   type PhpStaticCallExpression,
   phpMethodCallExpression,
@@ -34,6 +33,8 @@ import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDa
 import { createPhpFrameworkDatabaseExpressionTypeAdapters } from "./phpFrameworkDatabaseExpressionTypeAdapters";
 import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
 import { createPhpFrameworkModelFluentExpressionTypeAdapters } from "./phpFrameworkModelFluentExpressionTypeAdapters";
+import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
+import { createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapters";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
 import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -112,6 +113,10 @@ export function usePhpExpressionTypeResolver({
         isLaravelFrameworkActive,
         modelFluentExpressionTypeAdapter:
           createPhpFrameworkModelFluentExpressionTypeAdapters(
+            isLaravelFrameworkActive,
+          ),
+        queryCallbackVariableExpressionTypeAdapter:
+          createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters(
             isLaravelFrameworkActive,
           ),
         phpClassHasLaravelDynamicWhere,
@@ -262,9 +267,14 @@ export function usePhpExpressionTypeResolver({
       }
 
       const strategyVariableType = await expressionTypeStrategy.variableType({
-        depth,
-        expression,
         position,
+        resolveBuilderModelType: () =>
+          resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            expression,
+            depth + 1,
+          ),
         source,
         variableName: variableMatch?.[1] ?? null,
       });
@@ -481,15 +491,14 @@ interface PhpExpressionTypeStrategy {
   staticCallType: (
     context: PhpExpressionStaticCallStrategyContext,
   ) => Promise<string | null>;
-  variableType: (
-    context: PhpExpressionVariableStrategyContext,
-  ) => Promise<string | null>;
+  variableType: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter["variableType"];
 }
 
 interface PhpExpressionTypeStrategyOptions {
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   isLaravelFrameworkActive: boolean;
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
+  queryCallbackVariableExpressionTypeAdapter: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter;
   phpClassHasLaravelDynamicWhere: (
     className: string,
     methodName: string,
@@ -505,14 +514,6 @@ interface PhpExpressionTypeStrategyOptions {
   ) => Promise<string | null>;
   resolvePhpEloquentBuilderModelType: PhpLaravelModelTypeResolver;
   resolvePhpLaravelCollectionModelType: PhpLaravelModelTypeResolver;
-}
-
-interface PhpExpressionVariableStrategyContext {
-  depth: number;
-  expression: string;
-  position: EditorPosition;
-  source: string;
-  variableName: string | null;
 }
 
 interface PhpExpressionMethodCallStrategyContext {
@@ -534,6 +535,7 @@ function createPhpExpressionTypeStrategy({
   databaseExpressionTypeAdapter,
   isLaravelFrameworkActive,
   modelFluentExpressionTypeAdapter,
+  queryCallbackVariableExpressionTypeAdapter,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
@@ -545,6 +547,7 @@ function createPhpExpressionTypeStrategy({
       ...genericPhpExpressionTypeStrategy,
       receiverMethodCallType:
         modelFluentExpressionTypeAdapter.receiverMethodCallType,
+      variableType: queryCallbackVariableExpressionTypeAdapter.variableType,
     };
   }
 
@@ -798,25 +801,7 @@ function createPhpExpressionTypeStrategy({
 
       return null;
     },
-    variableType: async ({ depth, expression, position, source, variableName }) => {
-      if (
-        !variableName ||
-        !phpLaravelQueryCallbackContextForVariable(source, position, variableName)
-      ) {
-        return null;
-      }
-
-      const callbackBuilderModelType = await resolvePhpEloquentBuilderModelType(
-        source,
-        position,
-        expression,
-        depth + 1,
-      );
-
-      return callbackBuilderModelType
-        ? "Illuminate\\Database\\Eloquent\\Builder"
-        : null;
-    },
+    variableType: queryCallbackVariableExpressionTypeAdapter.variableType,
   };
 }
 

@@ -452,6 +452,31 @@ Post::query()->whereHas('comments', function ($query): void {
     harness.unmount();
   });
 
+  it("does not resolve query callback models under an explicit generic runtime", async () => {
+    const source = `<?php
+Post::query()->whereHas('comments', function ($query): void {
+    $query->where('active', true);
+});
+`;
+    const position = positionAfter(source, "$query->where");
+    const resolvePhpEloquentBuilderModelType = vi.fn(
+      async () => "App\\Models\\Comment",
+    );
+    const harness = renderHook(
+      makeOptions({
+        frameworkRuntime: GENERIC_RUNTIME,
+        isLaravelFrameworkActive: true,
+        resolvePhpEloquentBuilderModelType,
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(source, position, "$query"),
+    ).resolves.toBeNull();
+    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("recurses through assignments", async () => {
     const source = `<?php
 $original = new Post();
