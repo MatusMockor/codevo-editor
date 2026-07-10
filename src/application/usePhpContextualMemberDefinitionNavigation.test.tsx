@@ -106,6 +106,13 @@ function renderHook(
 
   return {
     api,
+    rerender: (
+      dependencies: PhpContextualMemberDefinitionNavigationDependencies,
+    ) => {
+      act(() => {
+        root.render(<Harness dependencies={dependencies} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -225,6 +232,54 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
     harness.unmount();
   });
 
+  it("uses a replaced builder model resolver after rerendering relation navigation", async () => {
+    const initialResolver = vi.fn(async () => "App\\Models\\InitialPost");
+    const replacementResolver = vi.fn(async () =>
+      "App\\Models\\ReplacementPost",
+    );
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const resolvePhpLaravelRelationPathOwnerType = vi.fn(
+      async (ownerType: string) => ownerType,
+    );
+    const deps = makeDeps({
+      openDirectPhpMethodTarget,
+      resolvePhpEloquentBuilderModelType: initialResolver,
+      resolvePhpLaravelRelationPathOwnerType,
+    });
+    const harness = renderHook(deps);
+
+    harness.rerender({
+      ...deps,
+      resolvePhpEloquentBuilderModelType: replacementResolver,
+    });
+
+    const handled = await harness.api().goToPhpLaravelRelationStringDefinition({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: "$post",
+      relationName: "comments",
+    });
+
+    expect(handled).toBe(true);
+    expect(initialResolver).not.toHaveBeenCalled();
+    expect(replacementResolver).toHaveBeenCalledWith(
+      deps.activeDocument?.content,
+      deps.activeEditorPositionRef.current,
+      "$post",
+    );
+    expect(resolvePhpLaravelRelationPathOwnerType).toHaveBeenCalledWith(
+      "App\\Models\\ReplacementPost",
+      [],
+    );
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\ReplacementPost",
+      "comments",
+    );
+
+    harness.unmount();
+  });
+
   it("keeps Laravel method-call decisions inactive for a generic runtime", async () => {
     const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
     const openPhpMethodHintTarget = vi.fn(async () => true);
@@ -281,6 +336,118 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
       "where",
     );
     expect(openPhpLaravelDynamicWhereTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("preserves instance navigation precedence", async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      openDirectPhpMethodTarget: vi.fn(async (className, methodName) => {
+        calls.push(`direct:${className}:${methodName}`);
+        return false;
+      }),
+      openPhpLaravelDynamicWhereTarget: vi.fn(async (className, methodName) => {
+        calls.push(`dynamic:${className}:${methodName}`);
+        return true;
+      }),
+      openPhpMethodHintTarget: vi.fn(async () => {
+        calls.push("hint");
+        return false;
+      }),
+      resolvePhpEloquentBuilderModelType: vi.fn(async () =>
+        "App\\Models\\Post",
+      ),
+      resolvePhpExpressionType: vi.fn(async () =>
+        "App\\Http\\Requests\\StorePostRequest",
+      ),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpMethodCallDefinition({
+      kind: "methodCall",
+      methodName: "input",
+      receiverExpression: "$request",
+      variableName: "request",
+    });
+
+    expect(handled).toBe(false);
+    expect(calls).toEqual(["hint"]);
+
+    harness.unmount();
+  });
+
+  it("tries instance direct, builder scope, then dynamic where targets", async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      openDirectPhpMethodTarget: vi.fn(async (className, methodName) => {
+        calls.push(`direct:${className}:${methodName}`);
+        return false;
+      }),
+      openPhpLaravelDynamicWhereTarget: vi.fn(async (className, methodName) => {
+        calls.push(`dynamic:${className}:${methodName}`);
+        return true;
+      }),
+      resolvePhpEloquentBuilderModelType: vi.fn(async () =>
+        "App\\Models\\Post",
+      ),
+      resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpMethodCallDefinition({
+      kind: "methodCall",
+      methodName: "published",
+      receiverExpression: "$post",
+      variableName: "post",
+    });
+
+    expect(handled).toBe(true);
+    expect(calls).toEqual([
+      "direct:App\\Models\\Post:published",
+      "direct:App\\Models\\Post:scopePublished",
+      "dynamic:App\\Models\\Post:published",
+    ]);
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("preserves static navigation precedence through the Builder fallback", async () => {
+    const calls: string[] = [];
+    const openDirectPhpMethodTarget = vi.fn(
+      async (className: string, methodName: string) => {
+        calls.push(`direct:${className}:${methodName}`);
+        return className === "Illuminate\\Database\\Eloquent\\Builder";
+      },
+    );
+    const openPhpLaravelDynamicWhereTarget = vi.fn(
+      async (className: string, methodName: string) => {
+        calls.push(`dynamic:${className}:${methodName}`);
+        return false;
+      },
+    );
+    const deps = makeDeps({
+      openDirectPhpMethodTarget,
+      openPhpLaravelDynamicWhereTarget,
+      resolvePhpClassReference: vi.fn(() => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpStaticMethodCallDefinition({
+      className: "Post",
+      kind: "staticMethodCall",
+      methodName: "where",
+    });
+
+    expect(handled).toBe(true);
+    expect(calls).toEqual([
+      "direct:App\\Models\\Post:where",
+      "direct:App\\Models\\Post:scopeWhere",
+      "dynamic:App\\Models\\Post:where",
+      "direct:Illuminate\\Database\\Eloquent\\Builder:where",
+    ]);
+    expect(deps.setMessage).not.toHaveBeenCalled();
 
     harness.unmount();
   });
