@@ -16700,12 +16700,18 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
-  it("does not reapply JavaScript TypeScript workspace edits to already edited open Monaco models", async () => {
+  it("synchronizes JavaScript TypeScript edits already applied to open Monaco models", async () => {
     const openPath = "/workspace/src/User.ts";
     const closedPath = "/workspace/src/Helper.ts";
+    const openUri = "file://localhost/workspace/src/%55ser.ts";
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 31,
+    };
     const edit = {
       changes: {
-        [fileUriFromPath(openPath)]: [
+        [openUri]: [
           {
             newText: "let",
             range: {
@@ -16724,12 +16730,17 @@ describe("useWorkbenchController preview tabs", () => {
           },
         ],
       },
+      documentVersions: {
+        [openUri]: 1,
+      },
     };
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
       },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
       readTextFile: vi.fn(async (path: string) => {
         if (path === openPath) {
           return "const value = 1;\n";
@@ -16748,19 +16759,325 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
         edit,
         {
-          editedOpenPaths: [openPath],
+          applyOpenModels: () => ({
+            documents: [
+              { content: "let value = 1;\n", path: openPath, versionId: 8 },
+            ],
+            kind: "applied",
+          }),
+          openPaths: [openPath],
           rootPath: "/workspace",
         },
       );
     });
 
-    expect(getWorkbench().activeDocument?.content).toBe("const value = 1;\n");
+    expect(getWorkbench().activeDocument?.content).toBe("let value = 1;\n");
+    expect(getWorkbench().activeDocument?.savedContent).toBe("const value = 1;\n");
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
   });
 
-  it("applies PHP language server workspace edits without reapplying edited open documents", async () => {
+  it("keeps an inactive edited Monaco model authoritative and dirty when activated", async () => {
+    const inactivePath = "/workspace/src/Inactive.ts";
+    const activePath = "/workspace/src/Active.ts";
+    const originalContent = "export const value = 1;\n";
+    const editedContent = "export const value = 2;\n";
+    const applyOpenModels = vi.fn(() => ({
+      documents: [
+        { content: editedContent, path: inactivePath, versionId: 8 },
+      ],
+      kind: "applied" as const,
+    }));
+    const edit = {
+      changes: {
+        [fileUriFromPath(inactivePath)]: [
+          {
+            newText: "2",
+            range: {
+              end: { character: 22, line: 0 },
+              start: { character: 21, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === inactivePath ? originalContent : "export const active = true;\n",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(inactivePath, "Inactive.ts"));
+      await getWorkbench().openPinnedFile(fileEntry(activePath, "Active.ts"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          applyOpenModels,
+          openPaths: [inactivePath],
+          rootPath: "/workspace",
+        },
+      );
+      getWorkbench().setActivePath(inactivePath);
+    });
+
+    expect(getWorkbench().activeDocument).toEqual(
+      expect.objectContaining({
+        content: editedContent,
+        path: inactivePath,
+        savedContent: originalContent,
+      }),
+    );
+    expect(applyOpenModels).toHaveBeenCalledOnce();
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [inactivePath, activePath]);
+  });
+
+  it("rejects invalid staged open models before React, disk, or file operations", async () => {
+    const openPath = "/workspace/src/User.ts";
+    const closedPath = "/workspace/src/Helper.ts";
+    const originalContent = "export const value = 1;\n";
+    const edit = {
+      changes: {
+        [fileUriFromPath(openPath)]: [
+          {
+            newText: "2",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "helper",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.ts"),
+        },
+      ],
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => originalContent),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.ts"));
+    });
+
+    let decision;
+    await act(async () => {
+      decision = await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          applyOpenModels: () => ({
+            kind: "rejected",
+            path: openPath,
+            reason: "invalidOpenModelEdits",
+          }),
+          openPaths: [openPath],
+          rootPath: "/workspace",
+        },
+      );
+    });
+
+    expect(decision).toEqual({
+      kind: "rejected",
+      path: openPath,
+      reason: "invalidOpenModelEdits",
+    });
+    expect(getWorkbench().activeDocument?.content).toBe(originalContent);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { family: "JavaScript TypeScript", extension: "ts", overlap: false },
+    { family: "JavaScript TypeScript", extension: "ts", overlap: true },
+    { family: "PHP", extension: "php", overlap: false },
+    { family: "PHP", extension: "php", overlap: true },
+  ])(
+    "rejects controller-only $family document B before staged A commit (overlap: $overlap)",
+    async ({ extension, overlap }) => {
+      const stagedPath = `/workspace/src/A.${extension}`;
+      const controllerOnlyPath = `/workspace/src/B.${extension}`;
+      const source = "abc";
+      const invalidEdits = overlap
+        ? [
+            {
+              newText: "first",
+              range: {
+                end: { character: 2, line: 0 },
+                start: { character: 0, line: 0 },
+              },
+            },
+            {
+              newText: "second",
+              range: {
+                end: { character: 3, line: 0 },
+                start: { character: 1, line: 0 },
+              },
+            },
+          ]
+        : [
+            {
+              newText: "invalid",
+              range: {
+                end: { character: 9, line: 0 },
+                start: { character: 9, line: 0 },
+              },
+            },
+          ];
+      const edit = {
+        changes: {
+          [fileUriFromPath(stagedPath)]: [
+            {
+              newText: "A",
+              range: {
+                end: { character: 1, line: 0 },
+                start: { character: 0, line: 0 },
+              },
+            },
+          ],
+          [fileUriFromPath(controllerOnlyPath)]: invalidEdits,
+        },
+        fileOperations: [
+          {
+            kind: "create" as const,
+            uri: fileUriFromPath(`/workspace/src/Created.${extension}`),
+          },
+        ],
+      };
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async () => source),
+        ...(extension === "ts"
+          ? { workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor() }
+          : {}),
+      });
+      await flushAsyncTurns(24);
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(stagedPath, `A.${extension}`));
+        await getWorkbench().openPinnedFile(
+          fileEntry(controllerOnlyPath, `B.${extension}`),
+        );
+      });
+      const applyOpenModels = vi.fn(() => ({
+        documents: [
+          { content: "Abc", path: stagedPath, versionId: 8 },
+        ],
+        kind: "applied" as const,
+      }));
+
+      let decision;
+      await act(async () => {
+        decision =
+          extension === "ts"
+            ? await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+                edit,
+                {
+                  applyOpenModels,
+                  openPaths: [stagedPath],
+                  rootPath: "/workspace",
+                },
+              )
+            : await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+                applyOpenModels,
+                openPaths: [stagedPath],
+                rootPath: "/workspace",
+              });
+      });
+
+      expect(decision).toEqual({
+        kind: "rejected",
+        path: controllerOnlyPath,
+        reason: "invalidOpenModelEdits",
+      });
+      expect(applyOpenModels).not.toHaveBeenCalled();
+      expect(
+        getWorkbench().openDocuments.map(({ content, path }) => ({ content, path })),
+      ).toEqual(
+        expect.arrayContaining([
+          { content: source, path: stagedPath },
+          { content: source, path: controllerOnlyPath },
+        ]),
+      );
+      expect(
+        dependencies.workspaceGateways.files.applyWorkspaceEdit,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not synchronize an open-model result for another workspace root", async () => {
+    const openPath = "/workspace/src/User.ts";
+    const originalContent = "export const value = 1;\n";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => originalContent),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.ts"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        { changes: {} },
+        {
+          applyOpenModels: () => ({
+            documents: [
+              {
+                content: "export const value = 2;\n",
+                path: openPath,
+                versionId: 8,
+              },
+            ],
+            kind: "applied",
+          }),
+          openPaths: [openPath],
+          rootPath: "/other",
+        },
+      );
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe(originalContent);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("synchronizes PHP edits already applied to open Monaco models", async () => {
     const openPath = "/workspace/src/User.php";
     const closedPath = "/workspace/src/Helper.php";
     const edit = {
@@ -16805,20 +17122,46 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
-        editedOpenPaths: [openPath],
+        applyOpenModels: () => ({
+          documents: [
+            {
+              content: "<?php\nfinal class User {}\n",
+              path: openPath,
+              versionId: 43,
+            },
+          ],
+          kind: "applied",
+        }),
+        openPaths: [openPath],
         rootPath: "/workspace",
       });
     });
 
-    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nfinal class User {}\n",
+    );
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      "<?php\nclass User {}\n",
+    );
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
   });
 
-  it("does not apply stale versioned PHP workspace edits to open documents", async () => {
+  it("rejects a stale mixed PHP workspace edit before any mutation", async () => {
     const openPath = "/workspace/src/User.php";
+    const closedPath = "/workspace/src/Helper.php";
     const uri = fileUriFromPath(openPath);
+    const applyOpenModels = vi.fn(() => ({
+      documents: [
+        {
+          content: "<?php\nfinal class User {}\n",
+          path: openPath,
+          versionId: 43,
+        },
+      ],
+      kind: "applied" as const,
+    }));
     const edit = {
       changes: {
         [uri]: [
@@ -16830,10 +17173,25 @@ describe("useWorkbenchController preview tabs", () => {
             },
           },
         ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "<?php\nfinal class Helper {}\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
       },
       documentVersions: {
         [uri]: 0,
       },
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.php"),
+        },
+      ],
     };
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -16848,16 +17206,25 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns(24);
 
+    let decision;
     await act(async () => {
-      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+      decision = await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        applyOpenModels,
+        openPaths: [openPath],
         rootPath: "/workspace",
       });
     });
 
+    expect(decision).toEqual({
+      kind: "rejected",
+      path: openPath,
+      reason: "staleDocumentVersion",
+    });
     expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
+    expect(applyOpenModels).not.toHaveBeenCalled();
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
-    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+    ).not.toHaveBeenCalled();
   });
 
   it("filters PHP workspace edit file operations before applying closed files", async () => {
@@ -16937,7 +17304,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
-        editedOpenPaths: [openPath],
+        openPaths: [openPath],
         rootPath: "/workspace",
       });
     });
@@ -17016,6 +17383,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        openPaths: [],
         rootPath: "/workspace",
       });
     });
@@ -17104,6 +17472,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        openPaths: [],
         rootPath: "/workspace",
       });
     });
@@ -17134,9 +17503,12 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
-  it("does not apply stale versioned JavaScript TypeScript workspace edits to open documents", async () => {
+  it("rejects a stale mixed JavaScript TypeScript workspace edit before any mutation", async () => {
     const openPath = "/workspace/src/User.ts";
+    const closedPath = "/workspace/src/Helper.ts";
     const uri = fileUriFromPath(openPath);
+    const aliasUri = "file://localhost/workspace/src/%55ser.ts";
+    const applyOpenModels = vi.fn();
     const edit = {
       changes: {
         [uri]: [
@@ -17148,10 +17520,35 @@ describe("useWorkbenchController preview tabs", () => {
             },
           },
         ],
+        [aliasUri]: [
+          {
+            newText: "/* alias */\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "export const helper = true;\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
       },
       documentVersions: {
-        [uri]: 0,
+        [aliasUri]: 2,
+        [uri]: 1,
       },
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.ts"),
+        },
+      ],
     };
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -17167,19 +17564,28 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns(24);
 
+    let decision;
     await act(async () => {
-      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+      decision = await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
         edit,
         {
+          applyOpenModels,
+          openPaths: [openPath],
           rootPath: "/workspace",
         },
       );
     });
 
+    expect(decision).toEqual({
+      kind: "rejected",
+      path: openPath,
+      reason: "staleDocumentVersion",
+    });
     expect(getWorkbench().activeDocument?.content).toBe("const value = 1;\n");
+    expect(applyOpenModels).not.toHaveBeenCalled();
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
-    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+    ).not.toHaveBeenCalled();
   });
 
   it("filters JavaScript TypeScript workspace edits before applying closed files", async () => {
@@ -17281,7 +17687,7 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
         edit,
         {
-          editedOpenPaths: [openPath],
+          openPaths: [openPath],
           rootPath: "/workspace",
         },
       );
@@ -17363,6 +17769,7 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
         edit,
         {
+          openPaths: [],
           rootPath: "/workspace",
         },
       );
@@ -17449,6 +17856,7 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
         edit,
         {
+          openPaths: [],
           rootPath: "/workspace",
         },
       );

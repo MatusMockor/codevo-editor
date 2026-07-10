@@ -27,6 +27,7 @@ import type {
   PhpCodeActionRange,
   PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
 
 type CallbackRef<T extends (...args: never[]) => unknown> = MutableRefObject<T>;
 type PositionProvider<T> = (
@@ -55,7 +56,7 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
     (
       edit: LanguageServerWorkspaceEdit,
       context: PhpWorkspaceEditApplicationContext,
-    ) => Promise<void>
+    ) => Promise<WorkspaceEditApplicationDecision>
   >;
   bladeCodeActionsRef: CallbackRef<
     (

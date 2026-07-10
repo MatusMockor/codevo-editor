@@ -160,6 +160,20 @@ describe("workspace-scoped sync keys", () => {
       languageServerUriSyncKey("/workspace-b", uri),
     );
   });
+
+  it("uses the decoded canonical path for equivalent file URI version keys", () => {
+    expect(
+      languageServerUriSyncKey(
+        "/project",
+        "file:///project/src/User%20Service.ts",
+      ),
+    ).toBe(
+      languageServerUriSyncKey(
+        "/project/",
+        "file://localhost/project/src/User%20Service.ts",
+      ),
+    );
+  });
 });
 
 function document(

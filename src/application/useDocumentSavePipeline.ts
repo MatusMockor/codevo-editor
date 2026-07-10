@@ -23,7 +23,7 @@ import type {
   LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import { applyLanguageServerTextEdits } from "./useWorkspaceEditFileOperations";
+import { applyLanguageServerTextEdits } from "./languageServerTextEdits";
 
 export interface DocumentSavePipelineDependencies {
   workspaceSettingsRef: MutableRefObject<WorkspaceSettings>;

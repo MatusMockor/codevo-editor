@@ -129,6 +129,7 @@ import {
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
 import { useEditorSurfaceLanguageProviderRegistration } from "./useEditorSurfaceLanguageProviderRegistration";
 import {
   useEditorSurfaceFrameworkProviderRefs,
@@ -201,12 +202,12 @@ interface EditorSurfaceProps {
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
-  ): Promise<void>;
+  ): Promise<WorkspaceEditApplicationDecision>;
   applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyPhpLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: PhpWorkspaceEditApplicationContext,
-  ): Promise<void>;
+  ): Promise<WorkspaceEditApplicationDecision>;
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
   changeHunks: EditorChangeHunk[];
@@ -337,9 +338,11 @@ function EditorSurfaceComponent({
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
-  applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
+  applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => ({
+    kind: "accepted",
+  }),
   applyPhpCodeActionNewFile = async () => false,
-  applyPhpLanguageServerWorkspaceEdit = async () => undefined,
+  applyPhpLanguageServerWorkspaceEdit = async () => ({ kind: "accepted" }),
   clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,

@@ -56,7 +56,7 @@ describe("editor surface language provider options", () => {
     const inlayHintRange = { endLine: 3, startLine: 1 };
     const workspaceEdit = { changes: {} };
     const workspaceEditContext = {
-      editedOpenPaths: ["/workspace/app/Example.php"],
+      openPaths: ["/workspace/app/Example.php"],
       rootPath: "/workspace",
     };
     const newFile = {
@@ -81,7 +81,7 @@ describe("editor surface language provider options", () => {
     );
     await expect(
       options.applyWorkspaceEdit?.(workspaceEdit, workspaceEditContext),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ kind: "accepted" });
     options.clearLanguageServerDiagnosticsForPath?.(
       "/workspace/app/Example.php",
     );
@@ -315,7 +315,7 @@ function registrationRefs({
         async (
           _edit: LanguageServerWorkspaceEdit,
           _context: PhpWorkspaceEditApplicationContext,
-        ) => undefined,
+        ) => ({ kind: "accepted" as const }),
       ),
     ),
     bladeCodeActionsRef: ref(vi.fn(async () => codeActions)),

@@ -49,6 +49,18 @@ import {
   type UserSnippet,
 } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  canonicalWorkspaceEditDocumentVersion,
+  canonicalWorkspaceEditDocumentPath,
+  canonicalWorkspaceEditPath,
+  mergeAliasedWorkspaceEditDocumentChanges,
+} from "../domain/workspaceEditDocuments";
+import type {
+  WorkspaceEditApplicationContext,
+  WorkspaceEditApplicationDecision,
+  WorkspaceEditOpenModelCommitResult,
+} from "../application/workspaceEditApplication";
+import { validateStagedWorkspaceEditModels } from "../domain/workspaceEditModelValidation";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -97,15 +109,16 @@ const JAVASCRIPT_TYPESCRIPT_ON_TYPE_FORMATTING_TRIGGER_CHARACTERS = [
   "\n",
 ];
 
-export interface JavaScriptTypeScriptWorkspaceEditApplicationContext {
-  editedOpenPaths: string[];
-  rootPath: string;
-}
+export type JavaScriptTypeScriptWorkspaceEditApplicationContext =
+  WorkspaceEditApplicationContext;
 
 export type JavaScriptTypeScriptWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
-) => Promise<void> | void;
+) =>
+  | Promise<WorkspaceEditApplicationDecision | void>
+  | WorkspaceEditApplicationDecision
+  | void;
 
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
@@ -387,8 +400,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           return;
         }
 
-        if (payload.edit) {
-          await applyWorkspaceEditAfterMonacoEdit(
+        if (payload.edit && context.applyWorkspaceEdit) {
+          await applyWorkspaceEditWithOpenModels(
             monaco,
             context,
             payload.edit,
@@ -1948,6 +1961,7 @@ async function provideCodeActions(
       actions: actions.flatMap((action) =>
         toMonacoCodeAction(
           monaco,
+          Boolean(context.applyWorkspaceEdit),
           workspaceEditContext(model),
           request.rootPath,
           request.sessionId,
@@ -2008,6 +2022,7 @@ async function resolveCodeAction(
 
     const [mapped] = toMonacoCodeAction(
       monaco,
+      Boolean(context.applyWorkspaceEdit),
       backedAction.__workspaceEditContext ?? {
         path: "",
         versionId: undefined,
@@ -3095,10 +3110,11 @@ function toMonacoWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
 ): Monaco.languages.WorkspaceEdit {
-  const fileEdits = (edit.fileOperations ?? []).flatMap((operation) =>
+  const canonicalEdit = mergeAliasedWorkspaceEditDocumentChanges(edit);
+  const fileEdits = (canonicalEdit.fileOperations ?? []).flatMap((operation) =>
     toMonacoWorkspaceFileEdit(monaco, operation, rootPath),
   );
-  const textEdits = Object.entries(edit.changes).flatMap(([uri, edits]) => {
+  const textEdits = Object.entries(canonicalEdit.changes).flatMap(([uri, edits]) => {
     const path = pathFromLanguageServerUri(uri);
 
     if (!path) {
@@ -3110,7 +3126,7 @@ function toMonacoWorkspaceEdit(
     }
 
     const resource = monaco.Uri.file(path);
-    const editVersionId = workspaceEditVersionId(edit, uri);
+    const editVersionId = workspaceEditVersionId(canonicalEdit, uri);
     const versionId =
       typeof editVersionId === "number"
         ? editVersionId
@@ -3328,6 +3344,7 @@ function lspDiagnosticSeverity(
 
 function toMonacoCodeAction(
   monaco: MonacoApi,
+  appliesEditThroughWorkspaceApplier: boolean,
   editContext: WorkspaceEditContext,
   rootPath: string,
   sessionId: number,
@@ -3363,7 +3380,7 @@ function toMonacoCodeAction(
           },
         }
       : {}),
-    ...(action.edit
+    ...(action.edit && !appliesEditThroughWorkspaceApplier
       ? {
           edit: toMonacoWorkspaceEdit(
             monaco,
@@ -3562,40 +3579,81 @@ function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
   };
 }
 
-function applyWorkspaceEditToOpenModels(
+interface StagedOpenModelEdit {
+  content: string;
+  edits: LanguageServerTextEdit[];
+  model: MonacoModel;
+  path: string;
+  versionId: number;
+}
+
+function stageWorkspaceEditForOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
-): string[] {
-  const editedOpenPaths: string[] = [];
+): StagedOpenModelEdit[] {
   const modelsByPath = new Map(
-    monaco.editor.getModels().map((model) => [modelPath(model), model]),
+    monaco.editor.getModels().flatMap((model) => {
+      const path = modelPath(model);
+
+      return path ? [[canonicalWorkspaceEditPath(path), model] as const] : [];
+    }),
   );
 
-  Object.entries(edit.changes).forEach(([uri, edits]) => {
-    const path = pathFromLanguageServerUri(uri);
+  return Object.entries(edit.changes).flatMap(([uri, edits]) => {
+    const path = canonicalWorkspaceEditDocumentPath(uri);
     const model = path ? modelsByPath.get(path) : null;
 
     if (!path || !model || edits.length === 0) {
-      return;
+      return [];
     }
 
-    if (!isWorkspaceEditVersionCurrentForModel(edit, uri, model)) {
-      editedOpenPaths.push(path);
-      return;
-    }
+    return [{
+      content: model.getValue(),
+      edits,
+      model,
+      path,
+      versionId: model.getVersionId(),
+    }];
+  });
+}
 
-    model.pushEditOperations(
+function applyStagedOpenModelEdits(
+  monaco: MonacoApi,
+  stagedEdits: StagedOpenModelEdit[],
+): WorkspaceEditOpenModelCommitResult {
+  const validation = validateStagedWorkspaceEditModels(
+    stagedEdits,
+    monaco.editor.getModels(),
+    (model) => ({ content: model.getValue(), versionId: model.getVersionId() }),
+  );
+
+  if (validation.kind === "invalid") {
+    return {
+      kind: "rejected",
+      path: validation.path,
+      reason: "invalidOpenModelEdits",
+    };
+  }
+
+  for (const stagedEdit of stagedEdits) {
+    stagedEdit.model.pushEditOperations(
       [],
-      edits.map((textEdit) => ({
+      stagedEdit.edits.map((textEdit) => ({
         range: toMonacoRange(monaco, textEdit.range),
         text: textEdit.newText,
       })),
       () => null,
     );
-    editedOpenPaths.push(path);
-  });
+  }
 
-  return editedOpenPaths;
+  return {
+    documents: stagedEdits.map(({ model, path }) => ({
+      content: model.getValue(),
+      path,
+      versionId: model.getVersionId(),
+    })),
+    kind: "applied",
+  };
 }
 
 async function applyWorkspaceEditWithOpenModels(
@@ -3611,30 +3669,32 @@ async function applyWorkspaceEditWithOpenModels(
     return;
   }
 
-  const editedOpenPaths = applyWorkspaceEditToOpenModels(monaco, scopedEdit);
+  const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit);
+  let commitResult: WorkspaceEditOpenModelCommitResult | undefined;
+  const applyOpenModels = () => {
+    if (commitResult) {
+      return commitResult;
+    }
+
+    commitResult = applyStagedOpenModelEdits(monaco, stagedEdits);
+    return commitResult;
+  };
 
   if (!isStillActive()) {
     return;
   }
 
-  await context.applyWorkspaceEdit?.(scopedEdit, {
-    editedOpenPaths,
+  const decision = await context.applyWorkspaceEdit?.(scopedEdit, {
+    applyOpenModels,
+    openPaths: stagedEdits.map(({ path }) => path),
     rootPath,
   });
-}
 
-async function applyWorkspaceEditAfterMonacoEdit(
-  monaco: MonacoApi,
-  context: JavaScriptTypeScriptLanguageServerProviderContext,
-  edit: LanguageServerWorkspaceEdit,
-  rootPath: string,
-): Promise<void> {
-  const scopedEdit = workspaceEditForRoot(edit, rootPath);
+  if (decision?.kind === "rejected" || !isStillActive()) {
+    return;
+  }
 
-  await context.applyWorkspaceEdit?.(scopedEdit, {
-    editedOpenPaths: openModelPathsForWorkspaceEdit(monaco, scopedEdit),
-    rootPath,
-  });
+  applyOpenModels();
 }
 
 async function applyWorkspaceEditEvent(
@@ -3798,38 +3858,22 @@ function workspaceEditForRoot(
     isFileOperationInWorkspaceRoot(operation, rootPath),
   );
 
-  return {
+  return mergeAliasedWorkspaceEditDocumentChanges({
     ...(fileOperations.length > 0 ? { fileOperations } : {}),
     ...(Object.keys(documentVersions).length > 0
       ? { documentVersions }
       : {}),
     changes,
-  };
+  });
 }
 
 function workspaceEditVersionId(
   edit: LanguageServerWorkspaceEdit,
   uri: string,
 ): number | null | undefined {
-  return edit.documentVersions?.[uri];
-}
+  const version = canonicalWorkspaceEditDocumentVersion(edit, uri);
 
-function isWorkspaceEditVersionCurrentForModel(
-  edit: LanguageServerWorkspaceEdit,
-  uri: string,
-  model: MonacoModel,
-): boolean {
-  const versionId = workspaceEditVersionId(edit, uri);
-
-  if (typeof versionId !== "number") {
-    return true;
-  }
-
-  if (typeof model.getVersionId !== "function") {
-    return false;
-  }
-
-  return model.getVersionId() === versionId;
+  return version.kind === "versioned" ? version.version : undefined;
 }
 
 function isFileOperationInWorkspaceRoot(

@@ -1,4 +1,5 @@
 import type { EditorDocument } from "./workspace";
+import { canonicalWorkspaceEditDocumentPath } from "./workspaceEditDocuments";
 
 export interface LanguageServerTextDocument {
   path: string;
@@ -86,7 +87,12 @@ export function languageServerDocumentSyncKey(
 }
 
 export function languageServerUriSyncKey(rootPath: string, uri: string): string {
-  return [normalizedWorkspaceSyncPath(rootPath), uri].join(
+  const documentPath = canonicalWorkspaceEditDocumentPath(uri) ?? uri;
+
+  return [
+    normalizedWorkspaceSyncPath(rootPath),
+    normalizedWorkspaceSyncPath(documentPath),
+  ].join(
     WORKSPACE_SYNC_KEY_SEPARATOR,
   );
 }

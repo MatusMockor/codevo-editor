@@ -14,6 +14,7 @@ import type {
 import type { EditorDocument } from "../domain/workspace";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
+  type JavaScriptTypeScriptWorkspaceEditApplicationContext,
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 
@@ -4494,7 +4495,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
 
-  it("applies TypeScript command workspace edits through the workspace applier while keeping open models current", async () => {
+  it("accepts TypeScript workspace edits when Monaco and LSP versions diverge", async () => {
     const monaco = createMonaco();
     const model = textModel();
     const siblingRootModel = {
@@ -4513,8 +4514,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           "Ignored sibling root",
         ).changes,
       },
+      documentVersions: {
+        "file:///project/src/user.ts": 6,
+      },
     };
-    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const applyWorkspaceEdit = vi.fn(async () => {
+      expect(model.pushEditOperations).not.toHaveBeenCalled();
+    });
     const gateway = featuresGateway({
       executeCommandEdit: commandEdit,
     });
@@ -4561,15 +4567,234 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           ...workspaceEdit("file:///project/src/user.ts", "OpenEdit").changes,
           ...workspaceEdit("file:///project/src/helper.ts", "ClosedEdit").changes,
         },
+        documentVersions: {
+          "file:///project/src/user.ts": 6,
+        },
       },
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project",
       },
     );
   });
 
-  it("skips stale versioned TypeScript workspace edits for open models", async () => {
+  it("synchronizes authoritative Monaco ordering, CRLF content, and version in one undo boundary", async () => {
+    const monaco = createMonaco();
+    let content = "\r\nline";
+    let versionId = 11;
+    const model = {
+      ...textModel(),
+      getValue: vi.fn(() => content),
+      getVersionId: vi.fn(() => versionId),
+      pushEditOperations: vi.fn(
+        (_selections, edits: Array<{ text: string }>) => {
+          expect(edits.map(({ text }) => text)).toEqual(["X", "Y"]);
+          content = "XY\r\nline";
+          versionId += 1;
+        },
+      ),
+    };
+    const edit = {
+      changes: {
+        "file:///project/src/user.ts": [
+          {
+            newText: "X",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        "file://localhost/project/src/%75ser.ts": [
+          {
+            newText: "Y",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+      documentVersions: {
+        "file:///project/src/user.ts": 6,
+      },
+    };
+    let appliedSnapshots: ReturnType<
+      NonNullable<JavaScriptTypeScriptWorkspaceEditApplicationContext["applyOpenModels"]>
+    > = { documents: [], kind: "applied" };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        appliedSnapshots = context.applyOpenModels?.() ?? {
+          documents: [],
+          kind: "applied",
+        };
+        return { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, {
+      command: {
+        arguments: [],
+        command: "_typescript.organizeImports",
+        title: "Organize Imports",
+      },
+      path: "/project/src/user.ts",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+
+    expect(model.pushEditOperations).toHaveBeenCalledOnce();
+    expect(appliedSnapshots).toEqual({
+      documents: [
+        {
+          content: "XY\r\nline",
+          path: "/project/src/user.ts",
+          versionId: 12,
+        },
+      ],
+      kind: "applied",
+    });
+  });
+
+  it.each([
+    {
+      edits: [textEditAt("invalid", 0, 9, 0, 9)],
+      failure: "out-of-bounds range",
+    },
+    {
+      edits: [textEditAt("first", 0, 0, 0, 2), textEditAt("second", 0, 1, 0, 3)],
+      failure: "overlapping ranges",
+    },
+  ])("rejects all models before push when model B has $failure", async ({ edits }) => {
+    const monaco = createMonaco();
+    const modelA = stagedTextModel("/project/src/a.ts", "abc", 7);
+    const modelB = stagedTextModel("/project/src/b.ts", "abc", 7);
+    const edit = {
+      changes: {
+        "file:///project/src/a.ts": [textEditAt("A", 0, 0, 0, 1)],
+        "file:///project/src/b.ts": edits,
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        const commit = context.applyOpenModels?.();
+
+        return commit?.kind === "rejected"
+          ? commit
+          : { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([modelA, modelB]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, workspaceEditCommandPayload("/project/src/a.ts"));
+
+    expect(modelA.pushEditOperations).not.toHaveBeenCalled();
+    expect(modelB.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("rejects all models when model B drifts between staging and commit", async () => {
+    const monaco = createMonaco();
+    const modelA = stagedTextModel("/project/src/a.ts", "abc", 7);
+    const modelB = stagedTextModel("/project/src/b.ts", "abc", 7);
+    const edit = {
+      changes: {
+        "file:///project/src/a.ts": [textEditAt("A", 0, 0, 0, 1)],
+        "file:///project/src/b.ts": [textEditAt("B", 0, 0, 0, 1)],
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        modelB.setSnapshot("changed", 8);
+        const commit = context.applyOpenModels?.();
+
+        return commit?.kind === "rejected"
+          ? commit
+          : { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([modelA, modelB]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, workspaceEditCommandPayload("/project/src/a.ts"));
+
+    expect(modelA.pushEditOperations).not.toHaveBeenCalled();
+    expect(modelB.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("rejects all models when model B disappears between staging and commit", async () => {
+    const monaco = createMonaco();
+    const modelA = stagedTextModel("/project/src/a.ts", "abc", 7);
+    const modelB = stagedTextModel("/project/src/b.ts", "abc", 7);
+    const edit = {
+      changes: {
+        "file:///project/src/a.ts": [textEditAt("A", 0, 0, 0, 1)],
+        "file:///project/src/b.ts": [textEditAt("B", 0, 0, 0, 1)],
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        monaco.editor.getModels.mockReturnValue([modelA]);
+        const commit = context.applyOpenModels?.();
+
+        return commit?.kind === "rejected"
+          ? commit
+          : { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([modelA, modelB]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, workspaceEditCommandPayload("/project/src/a.ts"));
+
+    expect(modelA.pushEditOperations).not.toHaveBeenCalled();
+    expect(modelB.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate TypeScript models when the authoritative LSP version rejects an edit", async () => {
     const monaco = createMonaco();
     const model = textModel();
     const openUri = "file:///project/src/user.ts";
@@ -4581,10 +4806,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       },
       documentVersions: {
         [closedUri]: 3,
-        [openUri]: 6,
+        [openUri]: 7,
       },
     };
-    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "rejected" as const,
+      path: "/project/src/user.ts",
+      reason: "staleDocumentVersion" as const,
+    }));
     const gateway = featuresGateway({
       executeCommandEdit: commandEdit,
     });
@@ -4613,7 +4842,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(
       commandEdit,
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project",
       },
     );
@@ -4694,7 +4924,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       },
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project",
       },
     );
@@ -4751,18 +4982,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
     await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
 
-    expect(actions.actions[0].edit.edits).toEqual([
-      expect.objectContaining({
-        resource: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
-      }),
-      expect.objectContaining({
-        resource: {
-          fsPath: "/project/src/helper.ts",
-          path: "/project/src/helper.ts",
-        },
-      }),
-    ]);
-    expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(actions.actions[0].edit).toBeUndefined();
+    expect(model.pushEditOperations).toHaveBeenCalledOnce();
     expect(gateway.executeCommand).not.toHaveBeenCalled();
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(
       {
@@ -4774,7 +4995,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       },
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project",
       },
     );
@@ -4846,39 +5068,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       },
     );
 
-    expect(actions.actions[0].edit.edits).toEqual([
-      {
-        newResource: {
-          fsPath: "/project/src/created.ts",
-          path: "/project/src/created.ts",
-        },
-        options: { ignoreIfExists: true },
-      },
-      {
-        newResource: {
-          fsPath: "/project/src/NewName.ts",
-          path: "/project/src/NewName.ts",
-        },
-        oldResource: {
-          fsPath: "/project/src/OldName.ts",
-          path: "/project/src/OldName.ts",
-        },
-        options: { overwrite: true },
-      },
-      {
-        oldResource: {
-          fsPath: "/project/src/stale.ts",
-          path: "/project/src/stale.ts",
-        },
-        options: { ignoreIfNotExists: true, recursive: true },
-      },
-    ]);
+    expect(actions.actions[0].edit).toBeUndefined();
 
     const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
     await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
 
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(filteredEdit, {
-      editedOpenPaths: [],
+      applyOpenModels: expect.any(Function),
+      openPaths: [],
       rootPath: "/project",
     });
   });
@@ -5257,7 +5454,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       },
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project/",
       },
     );
@@ -5382,7 +5580,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(
       workspaceEdit("file:///project/src/user.ts", "Current"),
       {
-        editedOpenPaths: ["/project/src/user.ts"],
+        applyOpenModels: expect.any(Function),
+        openPaths: ["/project/src/user.ts"],
         rootPath: "/project",
       },
     );
@@ -5789,7 +5988,10 @@ function document(): EditorDocument {
 }
 
 function textModel() {
+  let value = "const user = account;";
+
   return {
+    getValue: vi.fn(() => value),
     getVersionId: vi.fn(() => 7),
     getValueInRange: vi.fn(() => "user"),
     getWordAtPosition: vi.fn(() => ({
@@ -5801,11 +6003,61 @@ function textModel() {
       endColumn: 5,
       startColumn: 1,
     })),
-    pushEditOperations: vi.fn(),
+    pushEditOperations: vi.fn(
+      (_selections, edits: Array<{ text: string }>) => {
+        value = edits[edits.length - 1]?.text ?? value;
+      },
+    ),
     uri: {
       fsPath: "/project/src/user.ts",
       path: "/project/src/user.ts",
     },
+  };
+}
+
+function stagedTextModel(path: string, initialContent: string, initialVersion: number) {
+  let content = initialContent;
+  let versionId = initialVersion;
+
+  return {
+    ...textModel(),
+    getValue: vi.fn(() => content),
+    getVersionId: vi.fn(() => versionId),
+    pushEditOperations: vi.fn(),
+    setSnapshot(nextContent: string, nextVersion: number) {
+      content = nextContent;
+      versionId = nextVersion;
+    },
+    uri: { fsPath: path, path },
+  };
+}
+
+function textEditAt(
+  newText: string,
+  startLine: number,
+  startCharacter: number,
+  endLine: number,
+  endCharacter: number,
+) {
+  return {
+    newText,
+    range: {
+      end: { character: endCharacter, line: endLine },
+      start: { character: startCharacter, line: startLine },
+    },
+  };
+}
+
+function workspaceEditCommandPayload(path: string) {
+  return {
+    command: {
+      arguments: [],
+      command: "_typescript.organizeImports",
+      title: "Organize Imports",
+    },
+    path,
+    rootPath: "/project",
+    sessionId: 1,
   };
 }
 
