@@ -1,8 +1,4 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
-import {
-  phpLaravelDynamicWhereCompletionsFromSource,
-  phpLaravelRelationPropertyCompletionsFromSource,
-} from "../domain/phpFrameworkLaravel";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpMixinClassNames,
@@ -27,6 +23,9 @@ import {
 } from "./usePhpLaravelRelationResolver";
 import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
+  createPhpFrameworkClassMemberCollectionProviderAdapters,
+} from "./phpFrameworkClassMemberCollectionProviderAdapters";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -107,15 +106,14 @@ export function usePhpClassMemberCollectors({
   const frameworkProviderSignature = frameworkRuntime
     ? phpFrameworkRuntimeProviderSignature(frameworkRuntime)
     : activePhpFrameworkProviderSignature;
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
   const memberCollectionStrategy = useMemo(
     () =>
-      createPhpClassMemberCollectionStrategy({
-        isLaravelFrameworkActive,
+      createPhpFrameworkClassMemberCollectionProviderAdapters({
+        frameworkRuntime,
+        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
         resolvePhpDeclaredType,
       }),
-    [isLaravelFrameworkActive, resolvePhpDeclaredType],
+    [frameworkRuntime, legacyIsLaravelFrameworkActive, resolvePhpDeclaredType],
   );
 
   const resetPhpClassMemberCache = useCallback((): void => {
@@ -678,65 +676,6 @@ export function usePhpClassMemberCollectors({
   };
 }
 
-interface PhpClassMemberCollectionStrategy {
-  canCollectLaravelMembers: boolean;
-  dynamicWhereMethods: (
-    context: PhpLaravelDynamicWhereMemberStrategyContext,
-  ) => PhpMethodCompletion[];
-  relationCompletions: (
-    context: PhpLaravelRelationMemberStrategyContext,
-  ) => PhpMethodCompletion[];
-}
-
-interface PhpClassMemberCollectionStrategyOptions {
-  isLaravelFrameworkActive: boolean;
-  resolvePhpDeclaredType: (source: string, typeName: string | null) => string | null;
-}
-
-interface PhpLaravelDynamicWhereMemberStrategyContext {
-  className: string;
-  options: { isStatic?: boolean };
-  source: string;
-}
-
-interface PhpLaravelRelationMemberStrategyContext {
-  className: string;
-  source: string;
-}
-
-function createPhpClassMemberCollectionStrategy({
-  isLaravelFrameworkActive,
-  resolvePhpDeclaredType,
-}: PhpClassMemberCollectionStrategyOptions): PhpClassMemberCollectionStrategy {
-  if (!isLaravelFrameworkActive) {
-    return genericPhpClassMemberCollectionStrategy;
-  }
-
-  return {
-    canCollectLaravelMembers: true,
-    dynamicWhereMethods: ({ className, options, source }) =>
-      phpLaravelDynamicWhereCompletionsFromSource(source, className, options),
-    relationCompletions: ({ className, source }) =>
-      phpLaravelRelationPropertyCompletionsFromSource(source, className).map(
-        (relation) => ({
-          ...relation,
-          returnType:
-            phpLooksLikeQualifiedClassName(relation.returnType) ||
-            phpIsBuiltinDeclaredType(relation.returnType)
-              ? phpNormalizedDeclaredTypeName(relation.returnType)
-              : resolvePhpDeclaredType(source, relation.returnType) ??
-                relation.returnType,
-        }),
-      ),
-  };
-}
-
-const genericPhpClassMemberCollectionStrategy: PhpClassMemberCollectionStrategy = {
-  canCollectLaravelMembers: false,
-  dynamicWhereMethods: () => [],
-  relationCompletions: () => [],
-};
-
 function phpClassMemberCacheKey(
   path: string,
   className: string,
@@ -763,41 +702,4 @@ function phpSourceSignature(source: string): string {
   }
 
   return `${source.length}:${hash >>> 0}`;
-}
-
-function phpLooksLikeQualifiedClassName(typeName: string | null): boolean {
-  return Boolean(phpNormalizedDeclaredTypeName(typeName)?.includes("\\"));
-}
-
-function phpNormalizedDeclaredTypeName(typeName: string | null): string | null {
-  return typeName?.trim().replace(/^\?/, "").replace(/^\\+/, "") || null;
-}
-
-function phpIsBuiltinDeclaredType(typeName: string | null): boolean {
-  const normalizedTypeName = phpNormalizedDeclaredTypeName(typeName)?.toLowerCase();
-
-  return Boolean(
-    normalizedTypeName &&
-      new Set([
-        "array",
-        "bool",
-        "boolean",
-        "callable",
-        "false",
-        "float",
-        "int",
-        "integer",
-        "iterable",
-        "mixed",
-        "never",
-        "null",
-        "object",
-        "resource",
-        "self",
-        "static",
-        "string",
-        "true",
-        "void",
-      ]).has(normalizedTypeName)
-  );
 }

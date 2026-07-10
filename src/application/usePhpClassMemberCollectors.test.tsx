@@ -238,6 +238,8 @@ class User
   });
 
   it("uses runtime Laravel state over the legacy boolean for dynamic where completions", async () => {
+    const readNavigationFileContent = vi.fn(async () => "");
+    const resolvePhpClassSourcePaths = vi.fn(async () => []);
     const harness = renderHook(
       makeOptions(
         {
@@ -253,6 +255,8 @@ class User
         {
           frameworkRuntime: GENERIC_RUNTIME,
           isLaravelFrameworkActive: true,
+          readNavigationFileContent,
+          resolvePhpClassSourcePaths,
         },
       ),
     );
@@ -263,6 +267,13 @@ class User
         { isStatic: true },
       ),
     ).resolves.toEqual([]);
+    await expect(
+      harness.api().collectPhpLaravelRelationCompletionsForClass(
+        "App\\Models\\User",
+      ),
+    ).resolves.toEqual([]);
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
 
     harness.unmount();
   });
