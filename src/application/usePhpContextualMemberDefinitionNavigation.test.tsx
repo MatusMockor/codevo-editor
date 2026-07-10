@@ -74,9 +74,7 @@ function makeDeps(
   };
 }
 
-function renderHook(
-  deps: PhpContextualMemberDefinitionNavigationDependencies,
-) {
+function renderHook(deps: PhpContextualMemberDefinitionNavigationDependencies) {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { api: PhpContextualMemberDefinitionNavigation | null } = {
@@ -190,7 +188,33 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
       resolvePhpLaravelRelationPathOwnerType: vi.fn(() => ownerType.promise),
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().goToPhpLaravelRelationStringDefinition({
+    const navigationPromise = harness
+      .api()
+      .goToPhpLaravelRelationStringDefinition({
+        className: "App\\Models\\Comment",
+        kind: "laravelRelationString",
+        methodName: "with",
+        receiverExpression: null,
+        relationName: "author",
+      });
+
+    currentWorkspaceRootRef.current = OTHER_ROOT;
+    ownerType.resolve("App\\Models\\Comment");
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("applies relation failure messages returned by the Laravel adapter", async () => {
+    const deps = makeDeps({
+      resolvePhpLaravelRelationPathOwnerType: vi.fn(async () => null),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelRelationStringDefinition({
       className: "App\\Models\\Comment",
       kind: "laravelRelationString",
       methodName: "with",
@@ -198,18 +222,17 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
       relationName: "author",
     });
 
-    currentWorkspaceRootRef.current = OTHER_ROOT;
-    ownerType.resolve("App\\Models\\Comment");
-
-    await expect(navigationPromise).resolves.toBe(false);
-    expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
+    expect(handled).toBe(false);
+    expect(deps.setMessage).toHaveBeenCalledWith(
+      "No typed target found for relation author.",
+    );
 
     harness.unmount();
   });
 
   it("uses runtime Laravel state over the legacy boolean for relation navigation", async () => {
-    const resolvePhpLaravelRelationPathOwnerType = vi.fn(async () =>
-      "App\\Models\\Comment",
+    const resolvePhpLaravelRelationPathOwnerType = vi.fn(
+      async () => "App\\Models\\Comment",
     );
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
@@ -234,8 +257,8 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
 
   it("uses a replaced builder model resolver after rerendering relation navigation", async () => {
     const initialResolver = vi.fn(async () => "App\\Models\\InitialPost");
-    const replacementResolver = vi.fn(async () =>
-      "App\\Models\\ReplacementPost",
+    const replacementResolver = vi.fn(
+      async () => "App\\Models\\ReplacementPost",
     );
     const openDirectPhpMethodTarget = vi.fn(async () => true);
     const resolvePhpLaravelRelationPathOwnerType = vi.fn(
@@ -283,8 +306,8 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
   it("keeps Laravel method-call decisions inactive for a generic runtime", async () => {
     const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
     const openPhpMethodHintTarget = vi.fn(async () => true);
-    const resolvePhpEloquentBuilderModelType = vi.fn(async () =>
-      "App\\Models\\Post",
+    const resolvePhpEloquentBuilderModelType = vi.fn(
+      async () => "App\\Models\\Post",
     );
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
@@ -355,11 +378,11 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
         calls.push("hint");
         return false;
       }),
-      resolvePhpEloquentBuilderModelType: vi.fn(async () =>
-        "App\\Models\\Post",
+      resolvePhpEloquentBuilderModelType: vi.fn(
+        async () => "App\\Models\\Post",
       ),
-      resolvePhpExpressionType: vi.fn(async () =>
-        "App\\Http\\Requests\\StorePostRequest",
+      resolvePhpExpressionType: vi.fn(
+        async () => "App\\Http\\Requests\\StorePostRequest",
       ),
     });
     const harness = renderHook(deps);
@@ -388,8 +411,8 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
         calls.push(`dynamic:${className}:${methodName}`);
         return true;
       }),
-      resolvePhpEloquentBuilderModelType: vi.fn(async () =>
-        "App\\Models\\Post",
+      resolvePhpEloquentBuilderModelType: vi.fn(
+        async () => "App\\Models\\Post",
       ),
       resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
     });
@@ -409,6 +432,40 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
       "dynamic:App\\Models\\Post:published",
     ]);
     expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("uses a replaced dynamic where opener after rerendering", async () => {
+    const initialOpener = vi.fn(async () => false);
+    const replacementOpener = vi.fn(async () => true);
+    const deps = makeDeps({
+      openPhpLaravelDynamicWhereTarget: initialOpener,
+      resolvePhpEloquentBuilderModelType: vi.fn(
+        async () => "App\\Models\\Post",
+      ),
+      resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+
+    harness.rerender({
+      ...deps,
+      openPhpLaravelDynamicWhereTarget: replacementOpener,
+    });
+
+    const handled = await harness.api().goToPhpMethodCallDefinition({
+      kind: "methodCall",
+      methodName: "whereTitle",
+      receiverExpression: "$post",
+      variableName: "post",
+    });
+
+    expect(handled).toBe(true);
+    expect(initialOpener).not.toHaveBeenCalled();
+    expect(replacementOpener).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "whereTitle",
+    );
 
     harness.unmount();
   });

@@ -4,29 +4,30 @@ import {
   type PhpFrameworkContextualMemberDefinitionNavigationAdapter,
 } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
 import {
-  phpLaravelContextualMemberDefinitionNavigationAdapter,
+  createPhpLaravelContextualMemberDefinitionNavigationAdapter,
+  type PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies,
 } from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
 
 export interface PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions {
   frameworkRuntime?: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   isLaravelFrameworkActive?: boolean;
+  laravelDependencies?: PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies;
 }
 
 export function createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
   frameworkRuntime,
   isLaravelFrameworkActive = false,
+  laravelDependencies,
 }: PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions): PhpFrameworkContextualMemberDefinitionNavigationAdapter {
-  if (frameworkRuntime) {
-    if (!frameworkRuntime.hasProvider("laravel")) {
-      return genericPhpFrameworkContextualMemberDefinitionNavigationAdapter;
-    }
+  const isLaravelActive = frameworkRuntime
+    ? frameworkRuntime.hasProvider("laravel")
+    : isLaravelFrameworkActive;
 
-    return phpLaravelContextualMemberDefinitionNavigationAdapter;
-  }
-
-  if (!isLaravelFrameworkActive) {
+  if (!isLaravelActive || !laravelDependencies) {
     return genericPhpFrameworkContextualMemberDefinitionNavigationAdapter;
   }
 
-  return phpLaravelContextualMemberDefinitionNavigationAdapter;
+  return createPhpLaravelContextualMemberDefinitionNavigationAdapter(
+    laravelDependencies,
+  );
 }
