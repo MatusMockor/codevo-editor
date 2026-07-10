@@ -426,6 +426,63 @@ describe("usePhpExpressionTypeResolver", () => {
     harness.unmount();
   });
 
+  it("uses only local scopes for a receiver model fallback", async () => {
+    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
+    const phpClassHasLaravelLocalScope = vi.fn(
+      async (className) => className === "App\\Models\\Post",
+    );
+    const resolvePhpEloquentBuilderModelType = vi.fn(async () => null);
+    const harness = renderHook(
+      makeOptions({
+        phpClassHasLaravelDynamicWhere,
+        phpClassHasLaravelLocalScope,
+        resolvePhpEloquentBuilderModelType,
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$model->published()"),
+    ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
+    expect(resolvePhpEloquentBuilderModelType).toHaveBeenCalledWith(
+      SOURCE,
+      POSITION,
+      "$model",
+      1,
+    );
+    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "published",
+    );
+    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not use dynamic where for a receiver model fallback", async () => {
+    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
+    const phpClassHasLaravelLocalScope = vi.fn(async () => false);
+    const harness = renderHook(
+      makeOptions({
+        phpClassHasLaravelDynamicWhere,
+        phpClassHasLaravelLocalScope,
+        resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "$model->whereTitle()"),
+    ).resolves.toBeNull();
+    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "whereTitle",
+    );
+    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("resolves query callback variables to Builder with incremented depth", async () => {
     const source = `<?php
 Post::query()->whereHas('comments', function ($query): void {
@@ -647,6 +704,41 @@ $loop->probe;
     expect(firstResolver).toHaveBeenCalled();
     expect(genericResolver).not.toHaveBeenCalled();
     expect(latestResolver).toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("uses the latest dynamic-where predicate after a predicate-only rerender", async () => {
+    const phpClassHasLaravelLocalScope = vi.fn(async () => false);
+    const firstDynamicWhere = vi.fn(async () => false);
+    const latestDynamicWhere = vi.fn(async () => true);
+    const options = makeOptions({
+      phpClassHasLaravelDynamicWhere: firstDynamicWhere,
+      phpClassHasLaravelLocalScope,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "Post::whereTitle()"),
+    ).resolves.toBeNull();
+
+    harness.rerender({
+      ...options,
+      phpClassHasLaravelDynamicWhere: latestDynamicWhere,
+    });
+    await expect(
+      harness
+        .api()
+        .resolvePhpExpressionType(SOURCE, POSITION, "Post::whereTitle()"),
+    ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
+
+    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledTimes(2);
+    expect(firstDynamicWhere).toHaveBeenCalledTimes(1);
+    expect(latestDynamicWhere).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "whereTitle",
+    );
     harness.unmount();
   });
 

@@ -31,6 +31,8 @@ import {
 } from "../domain/phpSemanticEngine";
 import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
 import { createPhpFrameworkDatabaseExpressionTypeAdapters } from "./phpFrameworkDatabaseExpressionTypeAdapters";
+import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
+import { phpFrameworkBuilderMagicExpressionTypeAdapters } from "./phpFrameworkBuilderMagicExpressionTypeAdapters";
 import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
 import { createPhpFrameworkModelFluentExpressionTypeAdapters } from "./phpFrameworkModelFluentExpressionTypeAdapters";
 import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
@@ -106,6 +108,14 @@ export function usePhpExpressionTypeResolver({
   const expressionTypeStrategy = useMemo(
     () =>
       createPhpExpressionTypeStrategy({
+        builderMagicExpressionTypeAdapter:
+          phpFrameworkBuilderMagicExpressionTypeAdapters(
+            isLaravelFrameworkActive,
+            {
+              phpClassHasLaravelDynamicWhere,
+              phpClassHasLaravelLocalScope,
+            },
+          ),
         databaseExpressionTypeAdapter:
           createPhpFrameworkDatabaseExpressionTypeAdapters(
             isLaravelFrameworkActive,
@@ -119,8 +129,6 @@ export function usePhpExpressionTypeResolver({
           createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters(
             isLaravelFrameworkActive,
           ),
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
         resolvePhpClassPropertyOrRelationType,
         resolvePhpEloquentBuilderModelType,
         resolvePhpLaravelCollectionModelType,
@@ -495,18 +503,11 @@ interface PhpExpressionTypeStrategy {
 }
 
 interface PhpExpressionTypeStrategyOptions {
+  builderMagicExpressionTypeAdapter: PhpFrameworkBuilderMagicExpressionTypeAdapter;
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   isLaravelFrameworkActive: boolean;
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
   queryCallbackVariableExpressionTypeAdapter: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter;
-  phpClassHasLaravelDynamicWhere: (
-    className: string,
-    methodName: string,
-  ) => Promise<boolean>;
-  phpClassHasLaravelLocalScope: (
-    className: string,
-    methodName: string,
-  ) => Promise<boolean>;
   resolvePhpClassPropertyOrRelationType: (
     className: string,
     propertyName: string,
@@ -532,12 +533,11 @@ interface PhpExpressionStaticCallStrategyContext {
 }
 
 function createPhpExpressionTypeStrategy({
+  builderMagicExpressionTypeAdapter,
   databaseExpressionTypeAdapter,
   isLaravelFrameworkActive,
   modelFluentExpressionTypeAdapter,
   queryCallbackVariableExpressionTypeAdapter,
-  phpClassHasLaravelDynamicWhere,
-  phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
   resolvePhpEloquentBuilderModelType,
   resolvePhpLaravelCollectionModelType,
@@ -717,46 +717,27 @@ function createPhpExpressionTypeStrategy({
         return databaseMethodCallType;
       }
 
-      const localScopeModelType = await resolvePhpEloquentBuilderModelType(
-        source,
-        position,
-        methodCall.receiverExpression,
-        depth + 1,
-      );
+      const builderMagicMethodCallType =
+        await builderMagicExpressionTypeAdapter.methodCallType({
+          methodName: methodCall.methodName,
+          resolveBuilderModelType: () =>
+            resolvePhpEloquentBuilderModelType(
+              source,
+              position,
+              methodCall.receiverExpression,
+              depth + 1,
+            ),
+          resolveReceiverModelTypeCandidate: async () => {
+            const receiverType = await resolveReceiverType();
 
-      if (
-        localScopeModelType &&
-        (await phpClassHasLaravelLocalScope(
-          localScopeModelType,
-          methodCall.methodName,
-        ))
-      ) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
-      }
+            return receiverType
+              ? phpLaravelResolvedModelTypeCandidate(source, receiverType)
+              : null;
+          },
+        });
 
-      if (
-        localScopeModelType &&
-        (await phpClassHasLaravelDynamicWhere(
-          localScopeModelType,
-          methodCall.methodName,
-        ))
-      ) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
-      }
-
-      const receiverType = await resolveReceiverType();
-      const receiverModelType = receiverType
-        ? phpLaravelResolvedModelTypeCandidate(source, receiverType)
-        : null;
-
-      if (
-        receiverModelType &&
-        (await phpClassHasLaravelLocalScope(
-          receiverModelType,
-          methodCall.methodName,
-        ))
-      ) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
+      if (builderMagicMethodCallType) {
+        return builderMagicMethodCallType;
       }
 
       return null;
@@ -785,18 +766,14 @@ function createPhpExpressionTypeStrategy({
         return databaseStaticCallType;
       }
 
-      if (
-        className &&
-        (await phpClassHasLaravelLocalScope(className, staticCall.methodName))
-      ) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
-      }
+      const builderMagicStaticCallType =
+        await builderMagicExpressionTypeAdapter.staticCallType({
+          className,
+          methodName: staticCall.methodName,
+        });
 
-      if (
-        className &&
-        (await phpClassHasLaravelDynamicWhere(className, staticCall.methodName))
-      ) {
-        return "Illuminate\\Database\\Eloquent\\Builder";
+      if (builderMagicStaticCallType) {
+        return builderMagicStaticCallType;
       }
 
       return null;
