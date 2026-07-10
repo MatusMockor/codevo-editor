@@ -17,10 +17,16 @@
  * the wrong place.
  */
 
+import { maskPhpSource as maskPhpStringsAndComments } from "./phpSourceMask";
+
 export interface ClassBodyInsertionPoint {
   needsLeadingBlankLine: boolean;
   needsTrailingBlankLine: boolean;
   offset: number;
+}
+
+export interface ClassBodySelector {
+  bodyStartOffset: number;
 }
 
 export interface UseImportInsertionPoint {
@@ -44,10 +50,10 @@ function classDeclarationPattern(): RegExp {
 
 export function findClassBodyInsertionOffset(
   source: string,
-  className?: string,
+  target?: string | ClassBodySelector,
 ): ClassBodyInsertionPoint | null {
   const masked = maskPhpStringsAndComments(source);
-  const body = locateClassBody(masked, className);
+  const body = locateClassBody(masked, target);
 
   if (!body) {
     return null;
@@ -111,10 +117,10 @@ const DEFAULT_MEMBER_INDENT = "    ";
  */
 export function detectClassMemberIndent(
   source: string,
-  className?: string,
+  target?: string | ClassBodySelector,
 ): string {
   const masked = maskPhpStringsAndComments(source);
-  const body = locateClassBody(masked, className);
+  const body = locateClassBody(masked, target);
 
   if (!body) {
     return DEFAULT_MEMBER_INDENT;
@@ -163,7 +169,6 @@ function firstMemberIndent(
 
   return null;
 }
-
 export function offsetToPosition(
   source: string,
   offset: number,
@@ -189,7 +194,7 @@ interface ClassBody {
 
 function locateClassBody(
   masked: string,
-  className: string | undefined,
+  target: string | ClassBodySelector | undefined,
 ): ClassBody | null {
   const pattern = classDeclarationPattern();
 
@@ -204,13 +209,16 @@ function locateClassBody(
       continue;
     }
 
-    if (className && name !== className) {
+    if (typeof target === "string" && name !== target) {
       continue;
     }
 
     const body = classBodyFromDeclaration(masked, match.index ?? 0, name);
 
-    if (body) {
+    if (
+      body &&
+      (typeof target !== "object" || body.bodyStart === target.bodyStartOffset)
+    ) {
       return body;
     }
   }
@@ -357,175 +365,4 @@ function matchingBraceOffset(masked: string, openOffset: number): number | null 
   }
 
   return null;
-}
-
-/**
- * Returns a copy of `source` where the bytes inside strings, comments,
- * heredoc/nowdoc bodies and `#[...]` attributes are replaced with spaces (and
- * newlines preserved), so braces/semicolons inside literals never confuse the
- * balanced scans above. Offsets in the masked string map 1:1 to the original.
- */
-function maskPhpStringsAndComments(source: string): string {
-  let output = "";
-  let quote: string | null = null;
-  let heredocTerminator: string | null = null;
-  let inLineComment = false;
-  let inBlockComment = false;
-  let attributeDepth = 0;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index] || "";
-    const next = source[index + 1] || "";
-
-    if (heredocTerminator !== null) {
-      const closing = heredocClosingLength(source, index, heredocTerminator);
-
-      if (closing > 0) {
-        output += " ".repeat(closing);
-        index += closing - 1;
-        heredocTerminator = null;
-        continue;
-      }
-
-      output += character === "\n" ? "\n" : " ";
-      continue;
-    }
-
-    if (attributeDepth > 0) {
-      if (character === "[") {
-        attributeDepth += 1;
-      }
-
-      if (character === "]") {
-        attributeDepth -= 1;
-      }
-
-      output += character === "\n" ? "\n" : " ";
-      continue;
-    }
-
-    if (inLineComment) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "\n") {
-        inLineComment = false;
-      }
-
-      continue;
-    }
-
-    if (inBlockComment) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "*" && next === "/") {
-        output += " ";
-        index += 1;
-        inBlockComment = false;
-      }
-
-      continue;
-    }
-
-    if (quote) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "\\" && quote !== "`") {
-        output += next === "\n" ? "\n" : " ";
-        index += 1;
-        continue;
-      }
-
-      if (character === quote) {
-        quote = null;
-      }
-
-      continue;
-    }
-
-    if (character === "#" && next === "[") {
-      output += "  ";
-      index += 1;
-      attributeDepth = 1;
-      continue;
-    }
-
-    if (character === "/" && next === "/") {
-      output += "  ";
-      index += 1;
-      inLineComment = true;
-      continue;
-    }
-
-    if (character === "#" && source[index - 1] !== "$") {
-      output += " ";
-      inLineComment = true;
-      continue;
-    }
-
-    if (character === "/" && next === "*") {
-      output += "  ";
-      index += 1;
-      inBlockComment = true;
-      continue;
-    }
-
-    const heredocStart = heredocOpening(source, index);
-
-    if (heredocStart) {
-      output += " ".repeat(heredocStart.length);
-      index += heredocStart.length - 1;
-      heredocTerminator = heredocStart.terminator;
-      continue;
-    }
-
-    if (character === "'" || character === '"' || character === "`") {
-      output += " ";
-      quote = character;
-      continue;
-    }
-
-    output += character;
-  }
-
-  return output;
-}
-
-function heredocOpening(
-  source: string,
-  index: number,
-): { length: number; terminator: string } | null {
-  if (source.slice(index, index + 3) !== "<<<") {
-    return null;
-  }
-
-  const match = /^<<<[ \t]*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\r?\n/.exec(
-    source.slice(index),
-  );
-  const terminator = match?.[2];
-
-  if (!match || !terminator) {
-    return null;
-  }
-
-  return { length: match[0].length, terminator };
-}
-
-function heredocClosingLength(
-  source: string,
-  index: number,
-  terminator: string,
-): number {
-  if (source[index - 1] !== "\n") {
-    return 0;
-  }
-
-  const match = new RegExp(`^[ \\t]*${terminator}\\b`).exec(source.slice(index));
-
-  if (!match) {
-    return 0;
-  }
-
-  const leadingWhitespace = match[0].length - terminator.length;
-
-  return leadingWhitespace + terminator.length;
 }

@@ -174,6 +174,24 @@ describe("findClassBodyInsertionOffset", () => {
     expect(result!.offset).toBe(source.lastIndexOf("}"));
   });
 
+  it("ignores closing tokens inside comments within closure attributes", () => {
+    const source = `<?php
+class Outer
+{
+    public function run(): void
+    {
+        $callback = #[Marker(/* ] } */ 1)] function (): void {
+            $this->missing();
+        };
+    }
+}
+`;
+    const result = findClassBodyInsertionOffset(source);
+
+    expect(result).not.toBeNull();
+    expect(result!.offset).toBe(source.lastIndexOf("}"));
+  });
+
   it("targets a specific class by name when several are present", () => {
     const source = [
       "<?php",

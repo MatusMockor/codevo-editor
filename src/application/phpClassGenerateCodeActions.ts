@@ -15,6 +15,7 @@ import {
   findClassBodyInsertionOffset,
   indentLines,
   offsetToPosition,
+  type ClassBodySelector,
 } from "../domain/phpInsertionPoint";
 import {
   phpReplacementEdit,
@@ -129,9 +130,9 @@ export function phpClassBodyInsertionAction(
   source: string,
   block: string,
   title: string,
-  className?: string,
+  target?: string | ClassBodySelector,
 ): PhpCodeActionDescriptor | null {
-  const insertionPoint = findClassBodyInsertionOffset(source, className);
+  const insertionPoint = findClassBodyInsertionOffset(source, target);
 
   if (!insertionPoint) {
     return null;
@@ -139,7 +140,7 @@ export function phpClassBodyInsertionAction(
 
   const indentedBlock = indentLines(
     block,
-    detectClassMemberIndent(source, className),
+    detectClassMemberIndent(source, target),
   );
   const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
   const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";

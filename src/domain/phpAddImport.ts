@@ -150,7 +150,7 @@ function classUseImports(source: string): ParsedTopLevelUse[] {
     const statementEnd = lineStart + (match[0].length - match[1].length);
     const lineEnd = lineEndAfter(source, statementEnd);
 
-    for (const parsed of parseClassUseBody(body)) {
+    for (const parsed of parsePhpClassUseBody(body)) {
       imports.push({ ...parsed, lineEnd, lineStart });
     }
   }
@@ -160,14 +160,47 @@ function classUseImports(source: string): ParsedTopLevelUse[] {
 
 type ParsedSymbol = Pick<ParsedTopLevelUse, "alias" | "fqn" | "sortKey">;
 
-function parseClassUseBody(body: string): ParsedSymbol[] {
-  if (body.includes("{")) {
-    return parseGroupedUse(body);
+export function parsePhpClassUseBody(body: string): ParsedSymbol[] {
+  return splitTopLevelUseClauses(body).flatMap((clause) =>
+    clause.includes("{")
+      ? parseGroupedUse(clause)
+      : nullableSymbol(parseSymbol(clause)),
+  );
+}
+
+function nullableSymbol(symbol: ParsedSymbol | null): ParsedSymbol[] {
+  return symbol ? [symbol] : [];
+}
+
+function splitTopLevelUseClauses(body: string): string[] {
+  const clauses: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index] || "";
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth > 0) {
+      continue;
+    }
+
+    clauses.push(body.slice(start, index).trim());
+    start = index + 1;
   }
 
-  const single = parseSymbol(body);
+  clauses.push(body.slice(start).trim());
 
-  return single ? [single] : [];
+  return clauses.filter((clause) => clause.length > 0);
 }
 
 function parseGroupedUse(body: string): ParsedSymbol[] {

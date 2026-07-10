@@ -1,10 +1,11 @@
 import {
-  detectMissingThisMember,
+  planPhpCreateFromUsage,
   phpClassDeclaresMember,
   renderCreateConstantStub,
   renderCreateMethodStub,
   renderCreatePropertyStub,
   type MissingThisMember,
+  type PhpCreateDeclarationIdentity,
 } from "../domain/phpCreateFromUsage";
 import { findClassBodyInsertionOffset } from "../domain/phpInsertionPoint";
 import { phpClassBodyInsertionAction } from "./phpClassGenerateCodeActions";
@@ -21,54 +22,89 @@ export function phpCreateFromUsageCodeAction(
   source: string,
   range: PhpCodeActionRange,
 ): PhpCodeActionDescriptor | null {
-  const member = detectMissingThisMember(source, range.start);
+  const plan = planPhpCreateFromUsage(source, range.start);
 
-  if (!member) {
+  if (!plan) {
     return null;
   }
 
-  if (member.target === "parent") {
-    return phpCreateParentMemberCodeAction(source, member);
+  if (plan.member.target === "parent") {
+    return phpCreateParentMemberCodeAction(
+      source,
+      plan.member,
+      plan.owner,
+      plan.sameFileParent,
+    );
   }
 
-  return phpCreateSelfMemberCodeAction(source, member);
+  return phpCreateSelfMemberCodeAction(source, plan.member, plan.owner);
 }
 
 function phpCreateSelfMemberCodeAction(
   source: string,
   member: MissingThisMember,
+  owner: PhpCreateDeclarationIdentity,
 ): PhpCodeActionDescriptor | null {
+  const insertionTarget = { bodyStartOffset: owner.bodyStartOffset };
+  const renderTarget = { kind: owner.kind, relationship: "self" } as const;
+
   if (member.kind === "constant") {
+    const stub = renderCreateConstantStub(member.name, {
+      indent: "",
+      target: renderTarget,
+    });
+
+    if (!stub) {
+      return null;
+    }
+
     return phpPreferredQuickfix(
       phpClassBodyInsertionAction(
         source,
-        renderCreateConstantStub(member.name, { indent: "" }),
+        stub,
         `Create constant '${member.name}'`,
+        insertionTarget,
       ),
     );
   }
 
   if (member.kind === "method") {
+    const stub = renderCreateMethodStub(member.name, member.argTypes ?? [], {
+      indent: "",
+      isStatic: member.isStatic,
+      target: renderTarget,
+    });
+
+    if (!stub) {
+      return null;
+    }
+
     return phpPreferredQuickfix(
       phpClassBodyInsertionAction(
         source,
-        renderCreateMethodStub(member.name, member.argTypes ?? [], {
-          indent: "",
-          isStatic: member.isStatic,
-        }),
+        stub,
         `Create method '${member.name}'`,
+        insertionTarget,
       ),
     );
+  }
+
+  const stub = renderCreatePropertyStub(member.name, {
+    indent: "",
+    target: renderTarget,
+    type: member.propertyType ?? null,
+  });
+
+  if (!stub) {
+    return null;
   }
 
   return phpPreferredQuickfix(
     phpClassBodyInsertionAction(
       source,
-      renderCreatePropertyStub(member.name, {
-        indent: "",
-        type: member.propertyType ?? null,
-      }),
+      stub,
       `Create property '${member.name}'`,
+      insertionTarget,
     ),
   );
 }
@@ -76,59 +112,83 @@ function phpCreateSelfMemberCodeAction(
 function phpCreateParentMemberCodeAction(
   source: string,
   member: MissingThisMember,
+  owner: PhpCreateDeclarationIdentity,
+  parent: PhpCreateDeclarationIdentity | undefined,
 ): PhpCodeActionDescriptor | null {
-  const parentName = member.parentClass;
-
-  if (!parentName) {
+  if (!parent) {
     return null;
   }
 
-  const parentShortName = phpShortClassName(parentName);
-  const insertion = findClassBodyInsertionOffset(source, parentShortName);
+  const parentName = parent.name;
+  const insertionTarget = { bodyStartOffset: parent.bodyStartOffset };
+  const insertion = findClassBodyInsertionOffset(source, insertionTarget);
 
   if (!insertion) {
     return null;
   }
 
   if (
-    phpClassDeclaresMember(source, member.name, member.kind, parentShortName)
+    phpClassDeclaresMember(source, member.name, member.kind, insertionTarget)
   ) {
     return null;
   }
 
   if (member.kind === "constant") {
+    const stub = renderCreateConstantStub(member.name, {
+      indent: "",
+      target: {
+        kind: parent.kind,
+        relationship: "parent",
+        typeContext:
+          owner.namespace === parent.namespace
+            ? "same-namespace"
+            : "external-namespace",
+      },
+    });
+
+    if (!stub) {
+      return null;
+    }
+
     return phpPreferredQuickfix(
       phpClassBodyInsertionAction(
         source,
-        renderCreateConstantStub(member.name, { indent: "" }),
-        `Create constant '${member.name}' in '${parentShortName}'`,
-        parentShortName,
+        stub,
+        `Create constant '${member.name}' in '${parentName}'`,
+        insertionTarget,
       ),
     );
   }
 
   if (member.kind === "method") {
+    const stub = renderCreateMethodStub(member.name, member.argTypes ?? [], {
+      indent: "",
+      isStatic: member.isStatic,
+      target: {
+        kind: parent.kind,
+        relationship: "parent",
+        typeContext:
+          owner.namespace === parent.namespace
+            ? "same-namespace"
+            : "external-namespace",
+      },
+    });
+
+    if (!stub) {
+      return null;
+    }
+
     return phpPreferredQuickfix(
       phpClassBodyInsertionAction(
         source,
-        renderCreateMethodStub(member.name, member.argTypes ?? [], {
-          indent: "",
-        }),
-        `Create method '${member.name}' in '${parentShortName}'`,
-        parentShortName,
+        stub,
+        `Create method '${member.name}' in '${parentName}'`,
+        insertionTarget,
       ),
     );
   }
 
   return null;
-}
-
-function phpShortClassName(reference: string): string {
-  const segments = reference
-    .split("\\")
-    .filter((segment) => segment.length > 0);
-
-  return segments[segments.length - 1] ?? reference;
 }
 
 export function phpPreferredQuickfix(

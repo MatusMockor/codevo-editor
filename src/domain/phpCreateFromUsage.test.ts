@@ -369,6 +369,129 @@ describe("detectMissingThisMember — parent:: cross-class members", () => {
 
     expect(detectMissingThisMember(source, offset)).toBeNull();
   });
+
+  it("uses the extends clause of the class containing the cursor", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Earlier extends WrongBase",
+      "{",
+      "}",
+      "",
+      "class Child extends RightBase",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "handle",
+      parentClass: "RightBase",
+      target: "parent",
+    });
+  });
+
+  it("does not borrow an earlier class's extends clause", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Earlier extends WrongBase",
+      "{",
+      "}",
+      "",
+      "class Orphan",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("does not treat an interface extends clause as a parent class", () => {
+    const source = [
+      "<?php",
+      "",
+      "interface ChildContract extends BaseContract",
+      "{",
+      "    public function run(): void;",
+      "",
+      "    public function invalid(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+});
+
+describe("detectMissingThisMember — multi-class cursor scope", () => {
+  it("does not let an earlier class member suppress creation", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Earlier",
+      "{",
+      "    private function handle(): void {}",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        $this->handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.lastIndexOf("$this->handle") + "$this->".length;
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "handle",
+    });
+  });
+
+  it("checks existing members on the class containing the cursor", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Earlier",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    private function handle(): void {}",
+      "",
+      "    public function run(): void",
+      "    {",
+      "        $this->handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.lastIndexOf("$this->handle") + "$this->".length;
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
 });
 
 describe("detectMissingThisMember — typed property inference on assignment", () => {
@@ -612,5 +735,107 @@ describe("renderCreatePropertyStub", () => {
         type: "int",
       }),
     ).toBe("  protected int $count;");
+  });
+});
+
+describe("create-from-usage target rendering", () => {
+  it("uses protected members for a same-file parent class", () => {
+    const target = { kind: "class", relationship: "parent" } as const;
+
+    expect(renderCreateMethodStub("handle", ["string"], { target })).toContain(
+      "protected function handle(string $arg0)",
+    );
+    expect(renderCreateConstantStub("LIMIT", { target })).toBe(
+      "    protected const LIMIT = null;",
+    );
+    expect(
+      renderCreateMethodStub("forced", [], {
+        target,
+        visibility: "private",
+      }),
+    ).toContain("protected function forced()");
+  });
+
+  it("uses public members for an ordinary external class", () => {
+    const target = { kind: "class", relationship: "external" } as const;
+
+    expect(renderCreateMethodStub("handle", [], { target })).toContain(
+      "public function handle()",
+    );
+    expect(renderCreatePropertyStub("value", { target, type: "string" })).toBe(
+      "    public string $value;",
+    );
+  });
+
+  it("renders legal interface methods and suppresses interface properties", () => {
+    const target = { kind: "interface", relationship: "external" } as const;
+
+    expect(renderCreateMethodStub("handle", ["string", null], { target })).toBe(
+      "    public function handle(string $arg0, $arg1);",
+    );
+    expect(renderCreatePropertyStub("value", { target })).toBeNull();
+  });
+
+  it.each(["readonly-class", "trait", "enum", "unsupported"] as const)(
+    "suppresses unsupported %s targets",
+    (kind) => {
+      const target = { kind, relationship: "external" } as const;
+
+      expect(renderCreateMethodStub("handle", [], { target })).toBeNull();
+      expect(renderCreatePropertyStub("value", { target })).toBeNull();
+      expect(renderCreateConstantStub("VALUE", { target })).toBeNull();
+    },
+  );
+
+  it("allows legal self members while suppressing unsafe properties", () => {
+    expect(
+      renderCreateMethodStub("run", [], {
+        target: { kind: "enum", relationship: "self" },
+      }),
+    ).toContain("private function run()");
+    expect(
+      renderCreatePropertyStub("value", {
+        target: { kind: "enum", relationship: "self" },
+        type: "string",
+      }),
+    ).toBeNull();
+    expect(
+      renderCreatePropertyStub("value", {
+        target: { kind: "readonly-class", relationship: "self" },
+      }),
+    ).toBeNull();
+    expect(
+      renderCreatePropertyStub("value", {
+        target: { kind: "readonly-class", relationship: "self" },
+        type: "string",
+      }),
+    ).toBe("    private string $value;");
+  });
+
+  it("keeps portable types and drops unresolved short types across namespaces", () => {
+    const target = {
+      kind: "class",
+      relationship: "external",
+    } as const;
+
+    expect(
+      renderCreateMethodStub("handle", ["string", "User", "\\App\\Dto\\Id"], {
+        target,
+      }),
+    ).toContain(
+      "public function handle(string $arg0, $arg1, \\App\\Dto\\Id $arg2)",
+    );
+    expect(renderCreatePropertyStub("user", { target, type: "User" })).toBe(
+      "    public $user;",
+    );
+    expect(
+      renderCreatePropertyStub("id", { target, type: "\\App\\Dto\\Id" }),
+    ).toBe("    public \\App\\Dto\\Id $id;");
+    expect(
+      renderCreatePropertyStub("user", {
+        target: { ...target, typeContext: "same-namespace" },
+        type: "User",
+      }),
+    ).toBe("    public User $user;");
   });
 });

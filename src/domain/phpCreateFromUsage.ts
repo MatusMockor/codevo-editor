@@ -2,6 +2,8 @@ import {
   parsePhpClassStructure,
   type PhpVisibility,
 } from "./phpClassStructure";
+import { parsePhpClassUseBody } from "./phpAddImport";
+import { maskPhpSource as maskPhpStringsAndComments } from "./phpSourceMask";
 
 /**
  * Pure detection + signature inference for the "Create method / property from
@@ -37,12 +39,49 @@ export type PhpMemberKind = "method" | "property" | "constant";
  */
 export type PhpCreateTarget = "self" | "parent";
 
+export type PhpCreateRenderRelationship = "self" | "parent" | "external";
+
+export type PhpCreateRenderTargetKind =
+  | "class"
+  | "interface"
+  | "readonly-class"
+  | "trait"
+  | "enum"
+  | "unsupported";
+
+export interface PhpCreateRenderTarget {
+  /** The declaration that will receive the generated member. */
+  kind: PhpCreateRenderTargetKind;
+  /** Controls the least visibility required by the usage site. */
+  relationship: PhpCreateRenderRelationship;
+  /**
+   * External relationships conservatively assume a namespace boundary. Set
+   * `same-namespace` only when the coordinator has proved otherwise.
+   */
+  typeContext?: "same-namespace" | "external-namespace";
+}
+
+export interface PhpCreateDeclarationIdentity {
+  bodyEndOffset: number;
+  bodyStartOffset: number;
+  kind: PhpCreateRenderTargetKind;
+  name: string;
+  namespace: string | null;
+}
+
+export interface PhpCreateFromUsagePlan {
+  member: MissingThisMember;
+  owner: PhpCreateDeclarationIdentity;
+  sameFileParent?: PhpCreateDeclarationIdentity;
+}
+
 export interface MissingThisMember {
   argTypes?: (string | null)[];
   /**
    * True when the usage is a static access (`self::` / `static::`) so the
-   * generated method must carry the `static` modifier. Absent / false for the
-   * instance `$this->` and `parent::` instance-method cases.
+   * generated method must carry the `static` modifier. Also true for a
+   * `parent::` invocation inside a static method. Absent / false for instance
+   * contexts.
    */
   isStatic?: boolean;
   kind: PhpMemberKind;
@@ -70,22 +109,29 @@ export interface MissingThisMember {
 export interface RenderCreateMethodOptions {
   indent?: string;
   isStatic?: boolean;
+  target?: PhpCreateRenderTarget;
   visibility?: PhpVisibility;
 }
 
 export interface RenderCreatePropertyOptions {
   indent?: string;
+  target?: PhpCreateRenderTarget;
   type?: string | null;
   visibility?: PhpVisibility;
 }
 
 export interface RenderCreateConstantOptions {
   indent?: string;
+  target?: PhpCreateRenderTarget;
   visibility?: PhpVisibility;
 }
 
 const DEFAULT_INDENT = "    ";
 const DEFAULT_VISIBILITY: PhpVisibility = "private";
+const DEFAULT_RENDER_TARGET: PhpCreateRenderTarget = {
+  kind: "class",
+  relationship: "self",
+};
 const THIS_ACCESS = "$this->";
 const SELF_ACCESS = "self::";
 const STATIC_ACCESS = "static::";
@@ -96,6 +142,13 @@ export function detectMissingThisMember(
   source: string,
   offset: number,
 ): MissingThisMember | null {
+  return planPhpCreateFromUsage(source, offset)?.member ?? null;
+}
+
+export function planPhpCreateFromUsage(
+  source: string,
+  offset: number,
+): PhpCreateFromUsagePlan | null {
   if (!isOffsetInRange(source, offset)) {
     return null;
   }
@@ -113,23 +166,61 @@ export function detectMissingThisMember(
     return null;
   }
 
-  if (access.receiver === "parent") {
-    return toMissingParentMember(source, masked, usage);
-  }
-
-  if (memberExists(source, usage.name, usage.kind)) {
+  if (isInsideAnonymousClass(masked, access.nameStart)) {
     return null;
   }
 
-  return toMissingMember(source, masked, usage, access.receiver);
+  const enclosingType = enclosingTypeDeclaration(masked, access.nameStart);
+
+  if (!enclosingType) {
+    return null;
+  }
+
+  if (access.receiver === "parent") {
+    const member = toMissingParentMember(
+      source,
+      masked,
+      usage,
+      enclosingType,
+      access.nameStart,
+    );
+
+    if (!member) {
+      return null;
+    }
+
+    const owner = declarationIdentity(enclosingType);
+    const sameFileParent = sameFileParentDeclaration(
+      masked,
+      member.parentClass ?? "",
+      enclosingType,
+    );
+
+    return { member, owner, ...(sameFileParent ? { sameFileParent } : {}) };
+  }
+
+  if (memberExists(source, usage.name, usage.kind, enclosingType.bodyStart)) {
+    return null;
+  }
+
+  return {
+    member: toMissingMember(source, masked, usage, access.receiver),
+    owner: declarationIdentity(enclosingType),
+  };
 }
 
 export function renderCreateConstantStub(
   name: string,
   options: RenderCreateConstantOptions = {},
-): string {
+): string | null {
+  const target = options.target ?? DEFAULT_RENDER_TARGET;
+
+  if (!supportsCreateTarget(target, "constant")) {
+    return null;
+  }
+
   const indent = options.indent ?? DEFAULT_INDENT;
-  const visibility = options.visibility ?? DEFAULT_VISIBILITY;
+  const visibility = renderVisibility(target, options.visibility);
 
   return `${indent}${visibility} const ${name} = null;`;
 }
@@ -138,11 +229,23 @@ export function renderCreateMethodStub(
   name: string,
   argTypes: (string | null)[],
   options: RenderCreateMethodOptions = {},
-): string {
+): string | null {
+  const target = options.target ?? DEFAULT_RENDER_TARGET;
+
+  if (!supportsCreateTarget(target, "method")) {
+    return null;
+  }
+
   const indent = options.indent ?? DEFAULT_INDENT;
-  const visibility = options.visibility ?? DEFAULT_VISIBILITY;
+  const visibility = renderVisibility(target, options.visibility);
   const staticModifier = options.isStatic ? "static " : "";
-  const params = argTypes.map(renderParameter).join(", ");
+  const params = argTypes
+    .map((type, index) => renderParameter(portableType(type, target), index))
+    .join(", ");
+
+  if (target.kind === "interface") {
+    return `${indent}public ${staticModifier}function ${name}(${params});`;
+  }
 
   return [
     `${indent}${visibility} ${staticModifier}function ${name}(${params})`,
@@ -154,10 +257,17 @@ export function renderCreateMethodStub(
 export function renderCreatePropertyStub(
   name: string,
   options: RenderCreatePropertyOptions = {},
-): string {
+): string | null {
+  const target = options.target ?? DEFAULT_RENDER_TARGET;
+  const type = portableType(options.type ?? null, target);
+
+  if (!supportsCreateTarget(target, "property", type)) {
+    return null;
+  }
+
   const indent = options.indent ?? DEFAULT_INDENT;
-  const visibility = options.visibility ?? DEFAULT_VISIBILITY;
-  const typePrefix = options.type ? `${options.type} ` : "";
+  const visibility = renderVisibility(target, options.visibility);
+  const typePrefix = type ? `${type} ` : "";
 
   return `${indent}${visibility} ${typePrefix}$${name};`;
 }
@@ -186,6 +296,16 @@ interface ReceiverToken {
   receiver: Receiver;
 }
 
+interface EnclosingTypeDeclaration {
+  bodyEnd: number;
+  bodyStart: number;
+  headerStart: number;
+  isReadonly: boolean;
+  kind: "class" | "interface" | "trait" | "enum";
+  name: string;
+  namespace: string | null;
+}
+
 // The recognised receiver prefixes, longest first so `static::` is matched
 // before any shorter prefix that could be its proper substring.
 const RECEIVER_TOKENS: ReceiverToken[] = [
@@ -200,6 +320,119 @@ function renderParameter(type: string | null, index: number): string {
 
   return `${typePrefix}$arg${index}`;
 }
+
+function supportsCreateTarget(
+  target: PhpCreateRenderTarget,
+  memberKind: PhpMemberKind,
+  propertyType: string | null = null,
+): boolean {
+  if (target.kind === "class") {
+    return true;
+  }
+
+  if (target.kind === "interface") {
+    return memberKind !== "property";
+  }
+
+  if (target.relationship !== "self") {
+    return false;
+  }
+
+  if (target.kind === "trait") {
+    return true;
+  }
+
+  if (target.kind === "enum") {
+    return memberKind !== "property";
+  }
+
+  if (target.kind === "readonly-class") {
+    return memberKind !== "property" || propertyType !== null;
+  }
+
+  return false;
+}
+
+function createVisibility(target: PhpCreateRenderTarget): PhpVisibility {
+  if (target.kind === "interface" || target.relationship === "external") {
+    return "public";
+  }
+
+  if (target.relationship === "parent") {
+    return "protected";
+  }
+
+  return DEFAULT_VISIBILITY;
+}
+
+function renderVisibility(
+  target: PhpCreateRenderTarget,
+  requested: PhpVisibility | undefined,
+): PhpVisibility {
+  if (target.kind !== "interface" && target.relationship === "self") {
+    return requested ?? DEFAULT_VISIBILITY;
+  }
+
+  return createVisibility(target);
+}
+
+function portableType(
+  type: string | null,
+  target: PhpCreateRenderTarget,
+): string | null {
+  if (!type || !crossesNamespaceBoundary(target)) {
+    return type;
+  }
+
+  const atoms = type.split(/([|&])/);
+
+  if (atoms.every(isPortableTypeAtom)) {
+    return type;
+  }
+
+  return null;
+}
+function crossesNamespaceBoundary(target: PhpCreateRenderTarget): boolean {
+  if (target.typeContext === "same-namespace") {
+    return false;
+  }
+
+  return (
+    target.typeContext === "external-namespace" ||
+    target.relationship === "external"
+  );
+}
+
+function isPortableTypeAtom(atom: string): boolean {
+  if (atom === "|" || atom === "&") {
+    return true;
+  }
+
+  const candidate = atom.trim().replace(/^\?/, "");
+
+  if (candidate.startsWith("\\")) {
+    return /^\\[A-Za-z_][A-Za-z0-9_\\]*$/.test(candidate);
+  }
+
+  return BUILTIN_TYPES.has(candidate.toLowerCase());
+}
+
+const BUILTIN_TYPES = new Set([
+  "array",
+  "bool",
+  "callable",
+  "false",
+  "float",
+  "int",
+  "iterable",
+  "mixed",
+  "never",
+  "null",
+  "object",
+  "string",
+  "true",
+  "void",
+]);
 
 function isOffsetInRange(source: string, offset: number): boolean {
   return Number.isInteger(offset) && offset >= 0 && offset <= source.length;
@@ -324,8 +557,9 @@ function usesScopeResolution(receiver: Receiver): boolean {
 
 /**
  * Whether a method synthesized for this receiver must carry the `static`
- * modifier. Only `self::method()` / `static::method()` create a static method;
- * `parent::method()` creates an instance method on the parent.
+ * modifier. `self::method()` / `static::method()` are always static. A
+ * `parent::method()` invocation inherits static context from its containing
+ * method.
  */
 function createsStaticMethod(receiver: Receiver): boolean {
   return receiver === "self" || receiver === "static";
@@ -380,8 +614,10 @@ function toMissingParentMember(
   source: string,
   masked: string,
   usage: MemberUsage,
+  enclosingType: EnclosingTypeDeclaration,
+  usageOffset: number,
 ): MissingThisMember | null {
-  const parentClass = enclosingExtendsClause(masked, source);
+  const parentClass = enclosingExtendsClause(masked, enclosingType);
 
   if (!parentClass) {
     return null;
@@ -396,6 +632,9 @@ function toMissingParentMember(
 
   return {
     argTypes: inferArgumentTypes(source, masked, usage),
+    ...(isStaticInvocationContext(masked, enclosingType, usageOffset)
+      ? { isStatic: true }
+      : {}),
     kind: "method",
     name: usage.name,
     parentClass,
@@ -403,21 +642,451 @@ function toMissingParentMember(
   };
 }
 
+interface ExecutableScope {
+  end: number;
+  isStatic: boolean;
+  start: number;
+}
+
+function isStaticInvocationContext(
+  masked: string,
+  declaration: EnclosingTypeDeclaration,
+  offset: number,
+): boolean {
+  const scopes = [
+    ...functionExecutableScopes(masked, declaration),
+    ...arrowExecutableScopes(masked, declaration),
+  ].filter((scope) => offset > scope.start && offset < scope.end);
+
+  return scopes.some((scope) => scope.isStatic);
+}
+
+function functionExecutableScopes(
+  masked: string,
+  declaration: EnclosingTypeDeclaration,
+): ExecutableScope[] {
+  const pattern = /\b(?:(static)\s+)?function\b[^\S\r\n]*&?[^\S\r\n]*(?:[A-Za-z_][A-Za-z0-9_]*\s*)?\(/g;
+  const scopes: ExecutableScope[] = [];
+  pattern.lastIndex = declaration.bodyStart + 1;
+
+  for (
+    let match = pattern.exec(masked);
+    match && (match.index ?? 0) < declaration.bodyEnd;
+    match = pattern.exec(masked)
+  ) {
+    const start = match.index ?? 0;
+    const openParen = masked.indexOf("(", start + match[0].length - 1);
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const bodyStart = executableBodyStart(masked, closeParen + 1);
+
+    if (bodyStart === null || bodyStart >= declaration.bodyEnd) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    scopes.push({ end: bodyEnd, isStatic: Boolean(match[1]), start });
+  }
+
+  return scopes;
+}
+
+function executableBodyStart(masked: string, start: number): number | null {
+  for (let index = start; index < masked.length; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "{") {
+      return index;
+    }
+
+    if (character === ";") {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function arrowExecutableScopes(
+  masked: string,
+  declaration: EnclosingTypeDeclaration,
+): ExecutableScope[] {
+  const pattern = /\b(?:(static)\s+)?fn\s*\(/g;
+  const scopes: ExecutableScope[] = [];
+  pattern.lastIndex = declaration.bodyStart + 1;
+
+  for (
+    let match = pattern.exec(masked);
+    match && (match.index ?? 0) < declaration.bodyEnd;
+    match = pattern.exec(masked)
+  ) {
+    const start = match.index ?? 0;
+    const openParen = masked.indexOf("(", start);
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const arrow = masked.indexOf("=>", closeParen + 1);
+
+    if (arrow < 0 || arrow >= declaration.bodyEnd) {
+      continue;
+    }
+
+    scopes.push({
+      end: arrowExpressionEnd(masked, arrow + 2),
+      isStatic: Boolean(match[1]),
+      start,
+    });
+  }
+
+  return scopes;
+}
+
+function arrowExpressionEnd(masked: string, start: number): number {
+  let depth = 0;
+
+  for (let index = start; index < masked.length; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      if (depth === 0) {
+        return index;
+      }
+
+      depth -= 1;
+      continue;
+    }
+
+    if (depth === 0 && (character === "," || character === ";")) {
+      return index;
+    }
+  }
+
+  return masked.length;
+}
+
 /**
- * Find the parent class reference from the enclosing class's `extends` clause.
- * Conservative: returns the FIRST `extends <Name>` found in the masked source.
- * A class has at most one parent, so this is unambiguous for the common case.
+ * Find the parent reference only in the declaration containing the usage. This
+ * must not fall back to an earlier class in a multi-class file.
  */
 function enclosingExtendsClause(
   masked: string,
-  _source: string,
+  declaration: EnclosingTypeDeclaration,
 ): string | null {
-  const match =
-    /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\s+extends\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/.exec(
-      masked,
-    );
+  if (declaration.kind !== "class") {
+    return null;
+  }
+
+  const header = masked.slice(declaration.headerStart, declaration.bodyStart);
+  const match = /\bextends\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/.exec(header);
 
   return match?.[1] ?? null;
+}
+
+function enclosingTypeDeclaration(
+  masked: string,
+  offset: number,
+): EnclosingTypeDeclaration | null {
+  const declarations = namedTypeDeclarations(masked);
+  let enclosing: EnclosingTypeDeclaration | null = null;
+
+  for (const declaration of declarations) {
+    if (
+      offset <= declaration.bodyStart ||
+      offset >= declaration.bodyEnd ||
+      (enclosing && declaration.bodyStart <= enclosing.bodyStart)
+    ) {
+      continue;
+    }
+
+    enclosing = declaration;
+  }
+
+  return enclosing;
+}
+
+function namedTypeDeclarations(masked: string): EnclosingTypeDeclaration[] {
+  const pattern =
+    /(?<![:\\$>A-Za-z0-9_])(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  const declarations: EnclosingTypeDeclaration[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const headerStart = match.index ?? 0;
+    const kind = match[1];
+    const name = match[2];
+
+    if (!isTypeDeclarationKind(kind) || !name) {
+      continue;
+    }
+
+    const bodyStart = masked.indexOf("{", headerStart + match[0].length);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    declarations.push({
+      bodyEnd,
+      bodyStart,
+      headerStart,
+      isReadonly: kind === "class" && /\breadonly\b/.test(match[0]),
+      kind,
+      name,
+      namespace: namespaceAtOffset(masked, headerStart),
+    });
+  }
+
+  return declarations;
+}
+
+function declarationIdentity(
+  declaration: EnclosingTypeDeclaration,
+): PhpCreateDeclarationIdentity {
+  return {
+    bodyEndOffset: declaration.bodyEnd,
+    bodyStartOffset: declaration.bodyStart,
+    kind: declaration.isReadonly ? "readonly-class" : declaration.kind,
+    name: declaration.name,
+    namespace: declaration.namespace,
+  };
+}
+
+function sameFileParentDeclaration(
+  masked: string,
+  parentReference: string,
+  owner: EnclosingTypeDeclaration,
+): PhpCreateDeclarationIdentity | null {
+  const expectedFqn = resolveDeclarationReference(
+    masked,
+    parentReference,
+    owner,
+  ).toLowerCase();
+  const declarations = namedTypeDeclarations(masked).filter(
+    (declaration) => declaration.kind === "class",
+  );
+  const exact = declarations.find(
+    (declaration) => declarationFqn(declaration).toLowerCase() === expectedFqn,
+  );
+
+  return exact ? declarationIdentity(exact) : null;
+}
+
+function resolveDeclarationReference(
+  masked: string,
+  reference: string,
+  owner: EnclosingTypeDeclaration,
+): string {
+  if (reference.startsWith("\\")) {
+    return reference.slice(1);
+  }
+
+  if (/^namespace\\/i.test(reference)) {
+    const relative = reference.replace(/^namespace\\/i, "");
+
+    return owner.namespace ? `${owner.namespace}\\${relative}` : relative;
+  }
+
+  const segments = reference.split("\\");
+  const firstSegment = segments[0] ?? reference;
+  const imported = importedClassReference(masked, firstSegment, owner);
+
+  if (imported) {
+    const suffix = segments.slice(1).join("\\");
+
+    return suffix ? `${imported}\\${suffix}` : imported;
+  }
+
+  return owner.namespace ? `${owner.namespace}\\${reference}` : reference;
+}
+
+function importedClassReference(
+  masked: string,
+  shortName: string,
+  owner: EnclosingTypeDeclaration,
+): string | null {
+  const pattern = /\buse\s+([^;]+);/gi;
+  const ownerDepth = braceDepthAt(masked, owner.headerStart);
+
+  for (const match of masked.matchAll(pattern)) {
+    const offset = match.index ?? 0;
+
+    if (
+      offset >= owner.headerStart ||
+      braceDepthAt(masked, offset) !== ownerDepth ||
+      namespaceAtOffset(masked, offset) !== owner.namespace
+    ) {
+      continue;
+    }
+
+    const body = match[1]?.trim() ?? "";
+
+    if (/^(?:function|const)\b/i.test(body)) {
+      continue;
+    }
+
+    const imported = parsePhpClassUseBody(body).find(
+      (symbol) => symbol.alias.toLowerCase() === shortName.toLowerCase(),
+    );
+
+    if (imported) {
+      return imported.fqn;
+    }
+  }
+
+  return null;
+}
+
+function braceDepthAt(masked: string, offset: number): number {
+  let depth = 0;
+
+  for (let index = 0; index < offset; index += 1) {
+    if (masked[index] === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (masked[index] === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth;
+}
+
+function declarationFqn(declaration: EnclosingTypeDeclaration): string {
+  return declaration.namespace
+    ? `${declaration.namespace}\\${declaration.name}`
+    : declaration.name;
+}
+
+function namespaceAtOffset(masked: string, offset: number): string | null {
+  const pattern = /\bnamespace\s+([^;{]+?)\s*([;{])/g;
+  let active: string | null = null;
+
+  for (const match of masked.matchAll(pattern)) {
+    const namespaceStart = match.index ?? 0;
+
+    if (namespaceStart >= offset) {
+      break;
+    }
+
+    const name = match[1]?.trim().replace(/^\\+/, "") || null;
+
+    if (match[2] === ";") {
+      active = name;
+      continue;
+    }
+
+    const bodyStart = namespaceStart + match[0].length - 1;
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd !== null && offset > bodyStart && offset < bodyEnd) {
+      return name;
+    }
+
+    active = null;
+  }
+
+  return active;
+}
+
+function isInsideAnonymousClass(masked: string, offset: number): boolean {
+  const pattern = /\bnew\s+class\b/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = match.index ?? 0;
+
+    if (start >= offset) {
+      break;
+    }
+
+    const bodyStart = anonymousClassBodyStart(
+      masked,
+      start + match[0].length,
+    );
+
+    if (bodyStart === null || bodyStart >= offset) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd !== null && offset < bodyEnd) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function anonymousClassBodyStart(masked: string, afterClass: number): number | null {
+  let index = skipWhitespace(masked, afterClass);
+
+  if (masked[index] === "(") {
+    const argumentsEnd = matchingPairOffset(masked, index, "(", ")");
+
+    if (argumentsEnd === null) {
+      return null;
+    }
+
+    index = argumentsEnd + 1;
+  }
+
+  for (; index < masked.length; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "{") {
+      return index;
+    }
+
+    if (character !== "(" && character !== "[") {
+      continue;
+    }
+
+    const close = character === "(" ? ")" : "]";
+    const nestedEnd = matchingPairOffset(masked, index, character, close);
+
+    if (nestedEnd === null) {
+      return null;
+    }
+
+    index = nestedEnd;
+  }
+
+  return null;
+}
+
+function isTypeDeclarationKind(
+  kind: string | undefined,
+): kind is EnclosingTypeDeclaration["kind"] {
+  return (
+    kind === "class" ||
+    kind === "interface" ||
+    kind === "trait" ||
+    kind === "enum"
+  );
 }
 
 /**
@@ -626,8 +1295,9 @@ function memberExists(
   source: string,
   name: string,
   kind: PhpMemberKind,
+  bodyStartOffset: number,
 ): boolean {
-  return phpClassDeclaresMember(source, name, kind);
+  return phpClassDeclaresMember(source, name, kind, { bodyStartOffset });
 }
 
 /**
@@ -644,13 +1314,26 @@ export function phpClassDeclaresMember(
   source: string,
   name: string,
   kind: PhpMemberKind,
-  className?: string,
+  target?: string | { bodyStartOffset: number },
 ): boolean {
-  if (kind === "constant") {
-    return constantExists(source, name, className);
+  if (typeof target === "object") {
+    const declarationSource = typeDeclarationSourceAtBody(
+      source,
+      target.bodyStartOffset,
+    );
+
+    if (!declarationSource) {
+      return false;
+    }
+
+    return phpClassDeclaresMember(declarationSource, name, kind);
   }
 
-  const structure = parsePhpClassStructure(source, className);
+  if (kind === "constant") {
+    return constantExists(source, name, target);
+  }
+
+  const structure = parsePhpClassStructure(source, target);
 
   if (kind === "method") {
     return structure.methods.some((method) => method.name === name);
@@ -660,7 +1343,37 @@ export function phpClassDeclaresMember(
     return true;
   }
 
-  return promotedConstructorPropertyExists(source, name, className);
+  return promotedConstructorPropertyExists(source, name, target);
+}
+
+function typeDeclarationSourceAtBody(
+  source: string,
+  expectedBodyStart: number,
+): string | null {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?<![:\\$>A-Za-z0-9_])(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const bodyStart = masked.indexOf(
+      "{",
+      (match.index ?? 0) + match[0].length,
+    );
+
+    if (bodyStart !== expectedBodyStart) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      return null;
+    }
+
+    return source.slice(match.index ?? 0, bodyEnd + 1);
+  }
+
+  return null;
 }
 
 /**
@@ -820,155 +1533,4 @@ function matchingPairOffset(
   }
 
   return null;
-}
-
-function maskPhpStringsAndComments(source: string): string {
-  let output = "";
-  let quote: string | null = null;
-  let heredocTerminator: string | null = null;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index] || "";
-    const next = source[index + 1] || "";
-
-    if (heredocTerminator !== null) {
-      const closing = heredocClosingLength(source, index, heredocTerminator);
-
-      if (closing > 0) {
-        output += " ".repeat(closing);
-        index += closing - 1;
-        heredocTerminator = null;
-        continue;
-      }
-
-      output += character === "\n" ? "\n" : " ";
-      continue;
-    }
-
-    if (inLineComment) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "\n") {
-        inLineComment = false;
-      }
-
-      continue;
-    }
-
-    if (inBlockComment) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "*" && next === "/") {
-        output += " ";
-        index += 1;
-        inBlockComment = false;
-      }
-
-      continue;
-    }
-
-    if (quote) {
-      output += character === "\n" ? "\n" : " ";
-
-      if (character === "\\" && quote !== "`") {
-        output += next === "\n" ? "\n" : " ";
-        index += 1;
-        continue;
-      }
-
-      if (character === quote) {
-        quote = null;
-      }
-
-      continue;
-    }
-
-    if (character === "/" && next === "/") {
-      output += "  ";
-      index += 1;
-      inLineComment = true;
-      continue;
-    }
-
-    if (character === "#" && next === "[") {
-      output += "  ";
-      index += 1;
-      inLineComment = true;
-      continue;
-    }
-
-    if (character === "#") {
-      output += " ";
-      inLineComment = true;
-      continue;
-    }
-
-    if (character === "/" && next === "*") {
-      output += "  ";
-      index += 1;
-      inBlockComment = true;
-      continue;
-    }
-
-    const heredocStart = heredocOpening(source, index);
-
-    if (heredocStart) {
-      output += " ".repeat(heredocStart.length);
-      index += heredocStart.length - 1;
-      heredocTerminator = heredocStart.terminator;
-      continue;
-    }
-
-    if (character === "'" || character === "\"" || character === "`") {
-      output += " ";
-      quote = character;
-      continue;
-    }
-
-    output += character;
-  }
-
-  return output;
-}
-
-function heredocOpening(
-  source: string,
-  index: number,
-): { length: number; terminator: string } | null {
-  if (source.slice(index, index + 3) !== "<<<") {
-    return null;
-  }
-
-  const match = /^<<<[ \t]*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*\r?\n/.exec(
-    source.slice(index),
-  );
-  const terminator = match?.[2];
-
-  if (!match || !terminator) {
-    return null;
-  }
-
-  return { length: match[0].length, terminator };
-}
-
-function heredocClosingLength(
-  source: string,
-  index: number,
-  terminator: string,
-): number {
-  if (source[index - 1] !== "\n") {
-    return 0;
-  }
-
-  const match = new RegExp(`^[ \\t]*${terminator}\\b`).exec(source.slice(index));
-
-  if (!match) {
-    return 0;
-  }
-
-  const leadingWhitespace = match[0].length - terminator.length;
-
-  return leadingWhitespace + terminator.length;
 }

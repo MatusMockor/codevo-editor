@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parsePhpClassUseBody,
   phpCurrentNamespace,
   phpShortNameIsImported,
   planPhpAddImport,
@@ -65,6 +66,23 @@ class Controller
 `;
 
     expect(phpShortNameIsImported(source, "SomeTrait")).toBe(false);
+  });
+});
+
+describe("parsePhpClassUseBody", () => {
+  it("expands grouped aliases", () => {
+    expect(parsePhpClassUseBody("Vendor\\{Package as V}")).toEqual([
+      expect.objectContaining({ alias: "V", fqn: "Vendor\\Package" }),
+    ]);
+  });
+
+  it("parses every comma-separated class import", () => {
+    expect(
+      parsePhpClassUseBody("Vendor\\Package as V, Other\\Type"),
+    ).toEqual([
+      expect.objectContaining({ alias: "V", fqn: "Vendor\\Package" }),
+      expect.objectContaining({ alias: "Type", fqn: "Other\\Type" }),
+    ]);
   });
 });
 

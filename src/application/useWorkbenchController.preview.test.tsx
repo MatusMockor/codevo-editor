@@ -62915,9 +62915,9 @@ class Child extends Base
       (action) => action.title === "Create constant 'DEFAULT_LABEL' in 'Base'",
     );
     expect(createConstant).toBeDefined();
-    expect(createConstant?.edits[0]?.text ?? "").toContain(
-      "private const DEFAULT_LABEL = null;",
-    );
+    const editText = createConstant?.edits[0]?.text ?? "";
+    expect(editText).toContain("protected const DEFAULT_LABEL = null;");
+    expect(editText).not.toContain("private const DEFAULT_LABEL = null;");
   });
 
   it("does not offer a parent:: action when the parent lives in another file", async () => {
