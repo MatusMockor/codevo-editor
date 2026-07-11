@@ -48,6 +48,7 @@ interface FakeModel {
   uri: {
     fsPath: string;
     path: string;
+    toString?: () => string;
   };
 }
 
@@ -327,6 +328,75 @@ describe("EditorSurface", () => {
         suggestOnTriggerCharacters: true,
       }),
     );
+  });
+
+  it("registers language-agnostic conflict actions and refreshes conflict decorations on edits", async () => {
+    const activeDocument: EditorDocument = {
+      content:
+        "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+      language: "plaintext",
+      name: "notes.txt",
+      path: "/workspace/notes.txt",
+      savedContent: "",
+    };
+    let modelValue = activeDocument.content;
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+        toString: () => "file:///workspace/notes.txt",
+      },
+    };
+    const editor = createEditor(model);
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledWith(
+      "*",
+      expect.any(Object),
+    );
+    expect(monaco.editor.addCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "mockor.acceptConflictMarker" }),
+    );
+    const decorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.className?.includes("conflict-marker-line"),
+        ),
+    );
+
+    expect(decorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            className: "conflict-marker-current",
+            isWholeLine: true,
+          }),
+        }),
+        expect.objectContaining({
+          options: expect.objectContaining({
+            className: "conflict-marker-incoming",
+            isWholeLine: true,
+          }),
+        }),
+      ]),
+    );
+
+    editor.deltaDecorations.mockClear();
+    modelValue = "resolved\n";
+
+    act(() => {
+      editor.modelContentChangeHandler?.({ changes: [{ text: "resolved" }] });
+    });
+
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
   it("opens Latte member suggestions while typing a member prefix", async () => {

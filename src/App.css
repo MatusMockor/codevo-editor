@@ -2196,6 +2196,31 @@ button {
   border-left-color: var(--change-deleted);
 }
 
+.monaco-editor .conflict-marker-current {
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+}
+
+.monaco-editor .conflict-marker-incoming {
+  background: color-mix(in srgb, var(--change-added) 13%, transparent);
+}
+
+.monaco-editor .conflict-marker-base {
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.monaco-editor .conflict-marker-line {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  font-weight: 600;
+}
+
+.monaco-editor .conflict-marker-line.conflict-marker-current {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+.monaco-editor .conflict-marker-line.conflict-marker-incoming {
+  background: color-mix(in srgb, var(--change-added) 20%, transparent);
+}
+
 .monaco-editor .implementation-gutter-glyph {
   position: relative;
   width: 18px !important;

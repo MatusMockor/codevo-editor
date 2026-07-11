@@ -130,6 +130,10 @@ import {
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
+import {
+  conflictMarkerDecorations,
+  registerConflictMarkerCodeActions,
+} from "../application/conflictMarkerCodeActions";
 import { useEditorSurfaceLanguageProviderRegistration } from "./useEditorSurfaceLanguageProviderRegistration";
 import {
   useEditorSurfaceFrameworkProviderRefs,
@@ -482,6 +486,7 @@ function EditorSurfaceComponent({
     isLanguageServerDocumentSynced,
   );
   const changeDecorationIdsRef = useRef<string[]>([]);
+  const conflictMarkerDecorationIdsRef = useRef<string[]>([]);
   // Tracks whether persistent column-selection mode is on so the toggle action
   // flips it. Per-editor state (one EditorSurface instance per tab), so it never
   // leaks between open project tabs.
@@ -1768,6 +1773,56 @@ function EditorSurfaceComponent({
     onToggleGitBlame,
     setSurroundWithRequest,
   ]);
+
+  useEffect(() => {
+    if (!editorApi || !monacoApi) {
+      return;
+    }
+
+    const disposables = registerConflictMarkerCodeActions(monacoApi, editorApi);
+
+    return () => {
+      disposables.forEach((disposable) => disposable.dispose());
+    };
+  }, [editorApi, monacoApi]);
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const refreshDecorations = () => {
+      const model = editorApi.getModel();
+      const document = activeDocumentRef.current;
+      const matchesActiveDocument =
+        model &&
+        document &&
+        modelMatchesProject(model, workspaceRootRef.current, document.path);
+      const decorations = matchesActiveDocument
+        ? conflictMarkerDecorations(model)
+        : [];
+
+      conflictMarkerDecorationIdsRef.current = editorApi.deltaDecorations(
+        conflictMarkerDecorationIdsRef.current,
+        decorations,
+      );
+    };
+
+    refreshDecorations();
+    const contentChangeDisposable =
+      editorApi.onDidChangeModelContent(refreshDecorations);
+    const modelChangeDisposable =
+      editorApi.onDidChangeModel(refreshDecorations);
+
+    return () => {
+      contentChangeDisposable.dispose();
+      modelChangeDisposable.dispose();
+      conflictMarkerDecorationIdsRef.current = editorApi.deltaDecorations(
+        conflictMarkerDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument?.path, editorApi]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi || !onCloseFloatingSurface) {
