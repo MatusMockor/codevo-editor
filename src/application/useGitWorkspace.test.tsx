@@ -186,6 +186,28 @@ describe("useGitWorkspace", () => {
     harness.unmount();
   });
 
+  it("reports a stage refusal through the Git error path", async () => {
+    const error = new Error(
+      "Cannot mark resolved while conflict markers remain in: conflict.txt.",
+    );
+    const stageFiles = vi.fn(async () => {
+      throw error;
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles }),
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitChanges([
+        changedFile("conflict.txt", { status: "conflicted" }),
+      ]);
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Git", error);
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
   it("ignores a stage request with no changes", async () => {
     const stageFiles = vi.fn(async () => status(ROOT));
     const harness = renderGitWorkspace({

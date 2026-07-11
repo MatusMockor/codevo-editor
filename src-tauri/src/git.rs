@@ -1,7 +1,7 @@
 use crate::ignore_matcher::is_default_ignored_name;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -508,6 +508,38 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
         for change in changes {
             safe_relative_path(&change.relative_path)?;
+        }
+
+        let unmerged = unmerged_relative_paths(&root)?;
+        let mut conflicts_with_markers = Vec::new();
+        for change in changes {
+            if change.status != GitChangeStatus::Conflicted
+                && !unmerged.contains(change.relative_path.as_str())
+            {
+                continue;
+            }
+
+            let content = match fs::read(root.join(&change.relative_path)) {
+                Ok(content) => content,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            if contains_conflict_marker_block(&String::from_utf8_lossy(&content)) {
+                conflicts_with_markers.push(change.relative_path.as_str());
+            }
+        }
+
+        if !conflicts_with_markers.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Cannot mark resolved while conflict markers remain in: {}.",
+                    conflicts_with_markers.join(", ")
+                ),
+            ));
+        }
+
+        for change in changes {
             run_git(&root, ["add", "--", change.relative_path.as_str()])?;
         }
 
@@ -1739,6 +1771,53 @@ fn git_change_status(status: &str) -> GitChangeStatus {
     GitChangeStatus::Modified
 }
 
+fn unmerged_relative_paths(root: &Path) -> io::Result<HashSet<String>> {
+    let output = git_output_vec(root, vec!["diff", "--name-only", "--diff-filter=U", "-z"])?;
+
+    Ok(output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+fn contains_conflict_marker_block(content: &str) -> bool {
+    let mut has_opening = false;
+    let mut has_separator = false;
+
+    for raw_line in content.split('\n') {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if is_conflict_marker_line(line, "<<<<<<<") {
+            has_opening = true;
+            has_separator = false;
+            continue;
+        }
+
+        if !has_opening {
+            continue;
+        }
+
+        if !has_separator && is_conflict_marker_line(line, "=======") {
+            has_separator = true;
+            continue;
+        }
+
+        if has_separator && is_conflict_marker_line(line, ">>>>>>>") {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_conflict_marker_line(line: &str, marker: &str) -> bool {
+    let Some(suffix) = line.strip_prefix(marker) else {
+        return false;
+    };
+
+    suffix.is_empty() || suffix.starts_with(' ')
+}
+
 fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
     run_git_vec(root, args.to_vec())
 }
@@ -2289,7 +2368,7 @@ mod tests {
         GitRepositoryGateway, DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH,
     };
     use std::{
-        fs,
+        fs, io,
         path::{Path, PathBuf},
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
@@ -3230,6 +3309,171 @@ mod tests {
     }
 
     #[test]
+    fn stage_refuses_conflicted_file_with_markers_without_resolving_index() {
+        let repo = conflicted_repo();
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+
+        let error = gateway
+            .stage(repo.path(), &[change])
+            .expect_err("conflict markers must block staging");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("conflict.txt"));
+        assert!(!repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+        assert!(repo
+            .git_output(["diff", "--cached", "--name-only", "--", "clean.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_refuses_unmerged_file_even_when_payload_status_is_stale() {
+        let repo = conflicted_repo();
+        let gateway = CommandGitRepositoryGateway;
+        let mut change = conflicted_change(&gateway, &repo, "conflict.txt");
+        change.status = GitChangeStatus::Modified;
+
+        let error = gateway
+            .stage(repo.path(), &[change])
+            .expect_err("unmerged index entries must block staging with markers");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("conflict.txt"));
+        assert!(!repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_marks_resolved_conflicted_file_without_markers() {
+        let repo = conflicted_repo();
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+        repo.write("conflict.txt", "resolved\n");
+
+        let status = gateway
+            .stage(repo.path(), &[change])
+            .expect("mark conflict resolved");
+
+        assert!(repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+        assert!(status.changes.iter().any(|change| {
+            change.relative_path == "conflict.txt"
+                && change.status == GitChangeStatus::Modified
+                && change.is_staged
+        }));
+    }
+
+    #[test]
+    fn stage_allows_conflicted_file_with_only_a_stray_marker_line() {
+        let repo = conflicted_repo();
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+        repo.write("conflict.txt", "resolved\n<<<<<<< stray text\n");
+
+        gateway
+            .stage(repo.path(), &[change])
+            .expect("a lone marker is not a conflict block");
+
+        assert!(repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_refuses_mixed_batch_without_partially_mutating_index() {
+        let repo = conflicted_repo();
+        let gateway = CommandGitRepositoryGateway;
+        repo.write("clean.txt", "changed\n");
+        let status = gateway.status(repo.path()).expect("status");
+        let changes = [
+            status
+                .changes
+                .iter()
+                .find(|change| change.relative_path == "clean.txt")
+                .expect("clean change")
+                .clone(),
+            status
+                .changes
+                .iter()
+                .find(|change| change.relative_path == "conflict.txt")
+                .expect("conflicted change")
+                .clone(),
+        ];
+
+        let error = gateway
+            .stage(repo.path(), &changes)
+            .expect_err("mixed batch must be atomic");
+
+        assert!(error.to_string().contains("conflict.txt"));
+        assert!(!repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+        assert!(repo
+            .git_output(["diff", "--cached", "--name-only", "--", "clean.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_does_not_check_markers_in_non_conflicted_file() {
+        let repo = branch_repo();
+        repo.write(
+            "markers.txt",
+            "<<<<<<< ours\none\n=======\ntwo\n>>>>>>> theirs\n",
+        );
+        let gateway = CommandGitRepositoryGateway;
+        let change = gateway
+            .status(repo.path())
+            .expect("status")
+            .changes
+            .into_iter()
+            .find(|change| change.relative_path == "markers.txt")
+            .expect("marker-like file");
+
+        let status = gateway
+            .stage(repo.path(), &[change])
+            .expect("stage non-conflicted marker text");
+
+        assert!(status
+            .changes
+            .iter()
+            .any(|change| { change.relative_path == "markers.txt" && change.is_staged }));
+    }
+
+    #[test]
+    fn stage_conflict_validation_is_isolated_to_requested_root() {
+        let repo_a = conflicted_repo();
+        let repo_b = branch_repo();
+        repo_b.write(
+            "markers.txt",
+            "<<<<<<< ours\none\n=======\ntwo\n>>>>>>> theirs\n",
+        );
+        let gateway = CommandGitRepositoryGateway;
+        let change_b = gateway
+            .status(repo_b.path())
+            .expect("repo B status")
+            .changes
+            .into_iter()
+            .find(|change| change.relative_path == "markers.txt")
+            .expect("repo B change");
+
+        gateway
+            .stage(repo_b.path(), &[change_b])
+            .expect("stage in repo B");
+
+        assert!(!repo_a
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+        assert_eq!(
+            repo_b.git_output(["diff", "--cached", "--name-only"]),
+            "markers.txt\n"
+        );
+    }
+
+    #[test]
     fn reverts_staged_added_files() {
         let repo = TestGitRepo::new();
         repo.run(["config", "user.email", "test@example.com"]);
@@ -3888,6 +4132,47 @@ mod tests {
         // `symbolic-ref` is idempotent whether or not `main` is already current.
         repo.run(["symbolic-ref", "HEAD", "refs/heads/main"]);
         repo
+    }
+
+    fn conflicted_repo() -> TestGitRepo {
+        let repo = branch_repo();
+        repo.write("conflict.txt", "base\n");
+        repo.write("clean.txt", "base\n");
+        repo.run(["add", "."]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("conflict.txt", "feature\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        repo.run(["checkout", "main"]);
+        repo.write("conflict.txt", "main\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "main"]);
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["merge", "feature"])
+            .output()
+            .expect("run conflicting merge");
+        assert!(!output.status.success(), "merge must conflict");
+        repo
+    }
+
+    fn conflicted_change(
+        gateway: &CommandGitRepositoryGateway,
+        repo: &TestGitRepo,
+        relative_path: &str,
+    ) -> GitChangedFile {
+        let change = gateway
+            .status(repo.path())
+            .expect("conflict status")
+            .changes
+            .into_iter()
+            .find(|change| change.relative_path == relative_path)
+            .expect("conflicted change");
+        assert_eq!(change.status, GitChangeStatus::Conflicted);
+        change
     }
 
     fn stash_repo() -> TestGitRepo {

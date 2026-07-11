@@ -819,6 +819,12 @@ function GitChangeRowComponent({
   onToggleChangeIncluded,
 }: GitChangeRowProps) {
   const statusTitle = gitStatusTitle(change.status);
+  const stageLabel =
+    change.status === "conflicted"
+      ? "Mark resolved"
+      : isIncluded
+        ? "Unstage"
+        : "Stage";
 
   return (
     <div
@@ -830,7 +836,7 @@ function GitChangeRowComponent({
         checked={isIncluded}
         className="git-change-checkbox"
         disabled={disabled}
-        label={`${isIncluded ? "Unstage" : "Stage"} ${change.relativePath}`}
+        label={`${stageLabel} ${change.relativePath}`}
         onChange={() => onToggleChangeIncluded(change)}
       />
       <button

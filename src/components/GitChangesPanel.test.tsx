@@ -332,6 +332,17 @@ describe("GitChangesPanel", () => {
     expect(groupLabel).not.toMatch(/Include|Exclude/);
   });
 
+  it("labels the stage action for a conflicted row as Mark resolved", async () => {
+    const conflict = gitChange("conflicted", "src/Conflict.php", false);
+    await renderPanel({ status: gitStatus([conflict]) });
+
+    const label = host
+      .querySelector<HTMLInputElement>(".git-change-checkbox input")
+      ?.getAttribute("aria-label");
+
+    expect(label).toBe("Mark resolved src/Conflict.php");
+  });
+
   it("does not open rows or collapse groups while a Git operation is running", async () => {
     const change = gitChange("modified", "src/User.php", true);
     const onOpenChange = vi.fn();
