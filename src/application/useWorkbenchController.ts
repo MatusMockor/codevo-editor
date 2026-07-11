@@ -317,6 +317,7 @@ import type {
 } from "../domain/projectSymbols";
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
+import { pushGitCommitMessageHistory } from "../domain/gitCommitMessageHistory";
 import {
   defaultAppSettings,
   defaultEditorFontSize,
@@ -3759,9 +3760,43 @@ export function useWorkbenchController(
     ],
   );
 
+  const recordGitCommitMessage = useCallback(
+    async (requestedRoot: string, commitMessage: string) => {
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        )
+      ) {
+        return;
+      }
+
+      const currentSettings = workspaceSettingsRef.current;
+      const gitCommitMessageHistory = pushGitCommitMessageHistory(
+        currentSettings.gitCommitMessageHistory,
+        commitMessage,
+      );
+
+      if (gitCommitMessageHistory === currentSettings.gitCommitMessageHistory) {
+        return;
+      }
+
+      try {
+        await persistWorkspaceSettings(requestedRoot, {
+          ...currentSettings,
+          gitCommitMessageHistory,
+        });
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
+      }
+    },
+    [persistWorkspaceSettings, reportErrorForActiveWorkspaceRoot],
+  );
+
   const {
     gitAmendEnabled,
     gitCommitMessage,
+    gitCommitMessageHistory,
     includedGitChangePaths,
     gitOperationLoading,
     setGitAmendEnabled,
@@ -3788,6 +3823,8 @@ export function useWorkbenchController(
     gitRepositoryMappings,
     gitRepositoryStatuses,
     applyRepositoryOperationStatuses,
+    gitCommitMessageHistory: workspaceSettings.gitCommitMessageHistory,
+    recordGitCommitMessage,
   });
 
   // PHP project tree + PHP file structure (outline) intelligence lives in a
@@ -7940,6 +7977,7 @@ export function useWorkbenchController(
     gitDiffLoading,
     gitDiffPreview,
     gitCommitMessage,
+    gitCommitMessageHistory,
     gitAmendEnabled,
     includedGitChangePaths,
     gitLoading,

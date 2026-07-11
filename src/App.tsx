@@ -1094,6 +1094,7 @@ function App() {
             activeChange={workbench.selectedGitChange}
             amendEnabled={workbench.gitAmendEnabled}
             commitMessage={workbench.gitCommitMessage}
+            commitMessageHistory={workbench.gitCommitMessageHistory}
             gitOperationLoading={workbench.gitOperationLoading}
             includedChangePaths={workbench.includedGitChangePaths}
             isLoading={workbench.gitLoading}

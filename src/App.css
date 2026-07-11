@@ -1528,7 +1528,77 @@ button {
   font: inherit;
   font-size: 12px;
   line-height: 1.45;
-  padding: 8px;
+  padding: 8px 32px 8px 8px;
+}
+
+.git-commit-message-field {
+  position: relative;
+}
+
+.git-commit-history {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+}
+
+.git-commit-history-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  padding: 3px;
+}
+
+.git-commit-history-button:hover,
+.git-commit-history-button[aria-expanded="true"] {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.git-commit-history-button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.git-commit-history-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.git-commit-history-list {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  max-height: 220px;
+  min-width: 220px;
+  outline: none;
+  overflow-y: auto;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: 26px;
+  width: min(320px, calc(100vw - 32px));
+  z-index: 20;
+}
+
+.git-commit-history-option {
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  overflow: hidden;
+  padding: 6px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-commit-history-option:hover,
+.git-commit-history-option.active {
+  background: var(--color-hover);
 }
 
 .git-commit-message:focus {

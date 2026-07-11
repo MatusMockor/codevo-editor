@@ -49,6 +49,7 @@ describe("settings defaults", () => {
       extraIgnorePatterns: [],
       formatOnPaste: false,
       formatOnSave: false,
+      gitCommitMessageHistory: [],
       gitDirectoryMappings: [],
       gitDirectoryMappingsAuto: true,
       intelligenceMode: "basic",
@@ -381,6 +382,7 @@ describe("normalizeWorkspaceSettings", () => {
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
       formatOnPaste: true,
       formatOnSave: true,
+      gitCommitMessageHistory: [],
       gitDirectoryMappings: [
         "",
         "workbench/lcsk/attendance",
@@ -868,6 +870,24 @@ describe("normalizeWorkspaceSession", () => {
       openPaths: ["/project/User.php"],
       sidebarView: "files",
     });
+  });
+});
+
+describe("workspace commit message history", () => {
+  it("defaults legacy workspace settings to empty history", () => {
+    expect(normalizeWorkspaceSettings({}).gitCommitMessageHistory).toEqual([]);
+  });
+
+  it("defensively normalizes persisted history", () => {
+    expect(
+      normalizeWorkspaceSettings({
+        gitCommitMessageHistory: [" first ", null, "", "first", "second"],
+      }).gitCommitMessageHistory,
+    ).toEqual(["first", "second"]);
+    expect(
+      normalizeWorkspaceSettings({ gitCommitMessageHistory: "broken" })
+        .gitCommitMessageHistory,
+    ).toEqual([]);
   });
 });
 

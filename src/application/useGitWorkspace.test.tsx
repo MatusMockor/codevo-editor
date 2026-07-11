@@ -461,9 +461,11 @@ describe("useGitWorkspace", () => {
     const commit = vi.fn(async () => committed);
     const push = vi.fn(async () => status(ROOT));
     const gitStatus = status(ROOT, [included, excluded]);
+    const recordGitCommitMessage = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ stageFiles, commit, push }),
       gitStatus,
+      recordGitCommitMessage,
     });
 
     act(() => {
@@ -483,6 +485,7 @@ describe("useGitWorkspace", () => {
     expect(harness.applyGitOperationStatus).toHaveBeenCalledWith(committed);
     expect(harness.workspace().gitCommitMessage).toBe("");
     expect(harness.workspace().includedGitChangePaths.size).toBe(0);
+    expect(recordGitCommitMessage).toHaveBeenCalledWith(ROOT, "first commit");
     harness.unmount();
   });
 
@@ -557,9 +560,11 @@ describe("useGitWorkspace", () => {
     const amend = vi.fn(async () => {
       throw error;
     });
+    const recordGitCommitMessage = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ amend }),
       gitStatus: status(ROOT, [included]),
+      recordGitCommitMessage,
     });
 
     act(() => {
@@ -572,6 +577,31 @@ describe("useGitWorkspace", () => {
 
     expect(harness.reportError).toHaveBeenCalledWith("Git", error);
     expect(harness.workspace().gitAmendEnabled).toBe(true);
+    expect(recordGitCommitMessage).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("records a successful amend message", async () => {
+    const included = changedFile("a.ts", { isStaged: true });
+    const recordGitCommitMessage = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway(),
+      gitStatus: status(ROOT, [included]),
+      recordGitCommitMessage,
+    });
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("amended subject");
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    await act(async () => {
+      await harness.workspace().amendGitChanges();
+    });
+
+    expect(recordGitCommitMessage).toHaveBeenCalledWith(
+      ROOT,
+      "amended subject",
+    );
     harness.unmount();
   });
 
@@ -605,12 +635,15 @@ describe("useGitWorkspace", () => {
     const included = changedFile("a.ts", { isStaged: true });
     const deferred = createDeferred<GitStatus>();
     const amend = vi.fn(() => deferred.promise);
+    const recordGitCommitMessage = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ amend }),
       gitStatus: status(ROOT, [included]),
+      recordGitCommitMessage,
     });
 
     act(() => {
+      harness.workspace().setGitCommitMessage("stale amend");
       harness.workspace().toggleGitChangeIncluded(included);
     });
     let amendPromise: Promise<void> | null = null;
@@ -625,6 +658,7 @@ describe("useGitWorkspace", () => {
 
     expect(harness.applyGitOperationStatus).not.toHaveBeenCalled();
     expect(harness.reportError).not.toHaveBeenCalled();
+    expect(recordGitCommitMessage).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -790,6 +824,22 @@ describe("useGitWorkspace", () => {
     harness.unmount();
   });
 
+  it("swaps commit message history with the active workspace", () => {
+    const harness = renderGitWorkspace({
+      gitCommitMessageHistory: ["workspace A"],
+    });
+
+    expect(harness.workspace().gitCommitMessageHistory).toEqual(["workspace A"]);
+    harness.rerender({
+      workspaceRoot: "/other",
+      gitStatus: status("/other", []),
+      gitCommitMessageHistory: ["workspace B"],
+    });
+    expect(harness.workspace().gitCommitMessageHistory).toEqual(["workspace B"]);
+    expect(harness.workspace().gitCommitMessageHistory).not.toContain("workspace A");
+    harness.unmount();
+  });
+
   const NESTED_ROOT = `${ROOT}/workbench/lcsk/x`;
 
   function nestedChangedFile(
@@ -839,6 +889,7 @@ describe("useGitWorkspace", () => {
     const primary = changedFile("app.php");
     const nested = nestedChangedFile("lib.php");
     const applyRepositoryOperationStatuses = vi.fn();
+    const recordGitCommitMessage = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ commit, stageFiles }),
       gitStatus: status(ROOT, [primary]),
@@ -861,6 +912,7 @@ describe("useGitWorkspace", () => {
         },
       ],
       applyRepositoryOperationStatuses,
+      recordGitCommitMessage,
     });
 
     act(() => {
@@ -886,6 +938,7 @@ describe("useGitWorkspace", () => {
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Committed to 2 repositories",
     );
+    expect(recordGitCommitMessage).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 

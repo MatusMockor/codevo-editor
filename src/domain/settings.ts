@@ -15,6 +15,7 @@ import {
   normalizeLargeSmartDocumentPolicy,
   type LargeSmartDocumentPolicy,
 } from "./largeDocumentPolicy";
+import { normalizeGitCommitMessageHistory } from "./gitCommitMessageHistory";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -147,6 +148,7 @@ export interface WorkspaceSettings {
   extraIgnorePatterns: string[];
   formatOnPaste: boolean;
   formatOnSave: boolean;
+  gitCommitMessageHistory: string[];
   /**
    * Git directory mappings (PhpStorm-style), each a repository directory
    * relative to the workspace root; `""` is the workspace root itself (main
@@ -314,6 +316,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     extraIgnorePatterns: [],
     formatOnPaste: false,
     formatOnSave: false,
+    gitCommitMessageHistory: [],
     gitDirectoryMappings: [],
     gitDirectoryMappingsAuto: true,
     intelligenceMode: "basic",
@@ -450,6 +453,9 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       defaults.formatOnPaste,
     ),
     formatOnSave: normalizeBoolean(value.formatOnSave, defaults.formatOnSave),
+    gitCommitMessageHistory: normalizeGitCommitMessageHistory(
+      value.gitCommitMessageHistory,
+    ),
     gitDirectoryMappings: gitDirectoryMappingPaths(
       normalizeGitDirectoryMappings(value.gitDirectoryMappings),
     ),

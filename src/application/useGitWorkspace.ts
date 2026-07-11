@@ -315,11 +315,17 @@ export interface GitWorkspaceDependencies {
   // shell can update the whole-map view. Optional: when omitted only the
   // primary status is published (through `applyGitOperationStatus`).
   applyRepositoryOperationStatuses?: (statuses: GitRepositoryStatus[]) => void;
+  gitCommitMessageHistory?: string[];
+  recordGitCommitMessage?: (
+    workspaceRoot: string,
+    message: string,
+  ) => void | Promise<void>;
 }
 
 export interface GitWorkspace {
   gitAmendEnabled: boolean;
   gitCommitMessage: string;
+  gitCommitMessageHistory: string[];
   includedGitChangePaths: Set<string>;
   gitOperationLoading: boolean;
   setGitAmendEnabled: Dispatch<SetStateAction<boolean>>;
@@ -360,6 +366,8 @@ export function useGitWorkspace(
     gitRepositoryMappings,
     gitRepositoryStatuses,
     applyRepositoryOperationStatuses,
+    gitCommitMessageHistory = [],
+    recordGitCommitMessage,
   } = dependencies;
 
   const mappings = gitRepositoryMappings ?? DEFAULT_GIT_REPOSITORY_MAPPINGS;
@@ -776,6 +784,12 @@ export function useGitWorkspace(
         }
 
         if (committed.length > 0) {
+          await recordGitCommitMessage?.(requestedRoot, message);
+
+          if (!isActiveRoot(requestedRoot)) {
+            return;
+          }
+
           publishStatuses(committed);
           setGitAmendEnabled(false);
           setIncludedGitChangePaths(new Set());
@@ -848,6 +862,7 @@ export function useGitWorkspace(
       reportError,
       setMessage,
       workspaceRoot,
+      recordGitCommitMessage,
     ],
   );
 
@@ -1037,6 +1052,7 @@ export function useGitWorkspace(
   return {
     gitAmendEnabled,
     gitCommitMessage,
+    gitCommitMessageHistory,
     includedGitChangePaths,
     gitOperationLoading,
     setGitAmendEnabled,

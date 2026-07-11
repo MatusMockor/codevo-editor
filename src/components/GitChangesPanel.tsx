@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -12,6 +12,7 @@ import {
   FileSymlink,
   FileWarning,
   GitBranch,
+  History,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -40,6 +41,7 @@ interface GitChangesPanelProps {
   activeChange: GitChangedFile | null;
   amendEnabled?: boolean;
   commitMessage: string;
+  commitMessageHistory?: string[];
   gitOperationLoading: boolean;
   includedChangePaths: Set<string>;
   isLoading: boolean;
@@ -145,6 +147,7 @@ function GitChangesPanelComponent({
   activeChange,
   amendEnabled = false,
   commitMessage,
+  commitMessageHistory = [],
   gitOperationLoading,
   includedChangePaths,
   isLoading,
@@ -296,6 +299,7 @@ function GitChangesPanelComponent({
           amendEnabled={amendEnabled}
           hasSelectedChanges={selectedChanges.length > 0}
           commitMessage={commitMessage}
+          commitMessageHistory={commitMessageHistory}
           disabled={gitOperationLoading}
           onCommit={onCommit}
           onAmend={onAmend ?? onCommit}
@@ -377,6 +381,7 @@ function GitChangesPanelComponent({
         amendEnabled={amendEnabled}
         hasSelectedChanges={singleSelectedChanges.length > 0}
         commitMessage={commitMessage}
+        commitMessageHistory={commitMessageHistory}
         disabled={gitOperationLoading}
         onCommit={onCommit}
         onAmend={onAmend ?? onCommit}
@@ -394,6 +399,7 @@ interface GitCommitFooterProps {
   amendEnabled: boolean;
   hasSelectedChanges: boolean;
   commitMessage: string;
+  commitMessageHistory: string[];
   disabled: boolean;
   onCommit(): void;
   onAmend(): void;
@@ -406,6 +412,7 @@ function GitCommitFooter({
   amendEnabled,
   hasSelectedChanges,
   commitMessage,
+  commitMessageHistory,
   disabled,
   onCommit,
   onAmend,
@@ -413,21 +420,157 @@ function GitCommitFooter({
   onCommitAndPush,
   onCommitMessageChange,
 }: GitCommitFooterProps) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [activeHistoryIndex, setActiveHistoryIndex] = useState(0);
+  const activeHistoryIndexRef = useRef(0);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyContainerRef = useRef<HTMLDivElement>(null);
+  const historyListRef = useRef<HTMLDivElement>(null);
   const canSubmit =
     hasSelectedChanges &&
     (amendEnabled || commitMessage.trim().length > 0) &&
     !disabled;
 
+  const closeHistory = (restoreFocus: boolean) => {
+    setHistoryOpen(false);
+
+    if (restoreFocus) {
+      historyButtonRef.current?.focus();
+    }
+  };
+
+  useEffect(() => {
+    if (!historyOpen) {
+      return;
+    }
+
+    historyListRef.current?.focus();
+  }, [historyOpen]);
+
+  useEffect(() => {
+    activeHistoryIndexRef.current = 0;
+    setActiveHistoryIndex(0);
+    setHistoryOpen(false);
+  }, [commitMessageHistory]);
+
+  useEffect(() => {
+    if (!historyOpen) {
+      return;
+    }
+
+    const dismissHistory = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        historyContainerRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+
+      closeHistory(false);
+    };
+
+    document.addEventListener("pointerdown", dismissHistory);
+
+    return () => document.removeEventListener("pointerdown", dismissHistory);
+  }, [historyOpen]);
+
+  const selectHistoryMessage = (message: string) => {
+    onCommitMessageChange(message);
+    closeHistory(true);
+  };
+
+  const handleHistoryKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeHistory(true);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      selectHistoryMessage(
+        commitMessageHistory[activeHistoryIndexRef.current],
+      );
+      return;
+    }
+
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+      return;
+    }
+
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      (activeHistoryIndexRef.current + direction +
+        commitMessageHistory.length) %
+      commitMessageHistory.length;
+    activeHistoryIndexRef.current = nextIndex;
+    setActiveHistoryIndex(nextIndex);
+  };
+
   return (
     <footer className="git-commit-footer">
-      <textarea
-        aria-label="Commit message"
-        className="git-commit-message"
-        disabled={disabled}
-        onInput={(event) => onCommitMessageChange(event.currentTarget.value)}
-        placeholder="Commit message"
-        value={commitMessage}
-      />
+      <div className="git-commit-message-field">
+        <textarea
+          aria-label="Commit message"
+          className="git-commit-message"
+          disabled={disabled}
+          onInput={(event) => onCommitMessageChange(event.currentTarget.value)}
+          placeholder="Commit message"
+          value={commitMessage}
+        />
+        {commitMessageHistory.length > 0 ? (
+          <div className="git-commit-history" ref={historyContainerRef}>
+            <button
+              aria-expanded={historyOpen}
+              aria-haspopup="listbox"
+              aria-label="Commit message history"
+              className="git-commit-history-button"
+              disabled={disabled}
+              onClick={() => {
+                activeHistoryIndexRef.current = 0;
+                setActiveHistoryIndex(0);
+                setHistoryOpen((current) => !current);
+              }}
+              ref={historyButtonRef}
+              type="button"
+            >
+              <History aria-hidden="true" size={14} />
+            </button>
+            {historyOpen ? (
+              <div
+                aria-activedescendant={`git-commit-history-${activeHistoryIndex}`}
+                aria-label="Commit message history"
+                className="git-commit-history-list"
+                onKeyDown={handleHistoryKeyDown}
+                ref={historyListRef}
+                role="listbox"
+                tabIndex={0}
+              >
+                {commitMessageHistory.map((message, index) => (
+                  <div
+                    aria-selected={index === activeHistoryIndex}
+                    className={
+                      index === activeHistoryIndex
+                        ? "git-commit-history-option active"
+                        : "git-commit-history-option"
+                    }
+                    id={`git-commit-history-${index}`}
+                    key={message}
+                    onClick={() => selectHistoryMessage(message)}
+                    role="option"
+                    title={message}
+                  >
+                    {message.split(/\r?\n/, 1)[0]}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       <ThemedCheckbox
         checked={amendEnabled}
         className="git-amend-toggle"

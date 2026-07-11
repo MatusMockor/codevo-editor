@@ -403,6 +403,129 @@ describe("GitChangesPanel", () => {
     expect(onCommitAndPush).toHaveBeenCalled();
   });
 
+  it("hides commit message history when it is empty", async () => {
+    await renderPanel({
+      commitMessageHistory: [],
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    expect(
+      host.querySelector('button[aria-label="Commit message history"]'),
+    ).toBeNull();
+  });
+
+  it("renders history most-recent-first and fills the textarea on selection", async () => {
+    const onCommitMessageChange = vi.fn();
+    await renderPanel({
+      commitMessageHistory: ["newest\nbody", "older"],
+      onCommitMessageChange,
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Commit message history"]',
+        )
+        ?.click();
+    });
+
+    const options = host.querySelectorAll<HTMLElement>('[role="option"]');
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toBe("newest");
+    expect(options[1].textContent).toBe("older");
+
+    act(() => options[0].click());
+    expect(onCommitMessageChange).toHaveBeenCalledWith("newest\nbody");
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("dismisses open history on a pointer press outside it", async () => {
+    await renderPanel({
+      commitMessageHistory: ["newest", "older"],
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const button = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Commit message history"]',
+    )!;
+
+    act(() => button.click());
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    act(() => {
+      host.querySelector("textarea")?.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true }),
+      );
+    });
+
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("closes open history when the history entries change", async () => {
+    const status = gitStatus([gitChange("modified", "src/User.php", true)]);
+    await renderPanel({
+      commitMessageHistory: ["newest", "middle", "oldest"],
+      status,
+    });
+
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Commit message history"]',
+        )
+        ?.click();
+    });
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+
+    await renderPanel({ commitMessageHistory: ["other workspace"], status });
+
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("supports keyboard navigation, selection, and dismissal", async () => {
+    const onCommitMessageChange = vi.fn();
+    await renderPanel({
+      commitMessageHistory: ["newest", "middle", "oldest"],
+      onCommitMessageChange,
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const button = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Commit message history"]',
+    )!;
+
+    act(() => button.click());
+    const listbox = host.querySelector<HTMLElement>('[role="listbox"]')!;
+    act(() => {
+      listbox.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+      listbox.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+    expect(onCommitMessageChange).toHaveBeenCalledWith("middle");
+
+    act(() => button.click());
+    act(() => {
+      const reopened = host.querySelector<HTMLElement>('[role="listbox"]')!;
+      reopened.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      );
+      reopened.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+    expect(onCommitMessageChange).toHaveBeenLastCalledWith("oldest");
+
+    act(() => button.click());
+    act(() => {
+      host.querySelector<HTMLElement>('[role="listbox"]')?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
   it("performs a plain commit on the next click after amend resets", async () => {
     const onAmend = vi.fn();
     const onCommit = vi.fn();
@@ -960,6 +1083,7 @@ describe("GitChangesPanel", () => {
           activeChange={props.activeChange ?? null}
           amendEnabled={props.amendEnabled ?? false}
           commitMessage={props.commitMessage ?? "feat: update"}
+          commitMessageHistory={props.commitMessageHistory ?? []}
           gitOperationLoading={props.gitOperationLoading ?? false}
           includedChangePaths={
             props.includedChangePaths ??
