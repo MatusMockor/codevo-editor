@@ -111,19 +111,27 @@ export function useWorkbenchNavigation(
 
   const openSearchResult = useCallback(
     async (result: FileSearchResult) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
       const opened = await openFile({
         kind: "file",
         name: result.name,
         path: result.path,
       });
 
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
       if (!opened) {
+        forgetRecentFile(result.path);
         return;
       }
 
       setQuickOpenOpen(false);
     },
-    [openFile],
+    [forgetRecentFile, openFile],
   );
 
   const openRecentFile = useCallback(

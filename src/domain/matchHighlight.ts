@@ -12,18 +12,9 @@ export function splitQueryHighlight(
     return [];
   }
 
-  const filenameStart = text.lastIndexOf("/") + 1;
-  const matchedIndexes = new Set<number>();
-  for (const token of tokens) {
-    const indexes =
-      matchTokenIndexes(text, token, filenameStart) ??
-      matchTokenIndexes(text, token, 0);
-    if (!indexes) {
-      return [];
-    }
-    for (const index of indexes) {
-      matchedIndexes.add(index);
-    }
+  const matchedIndexes = matchedQueryIndexes(text, tokens);
+  if (!matchedIndexes) {
+    return [];
   }
 
   const segments: QueryHighlightSegment[] = [];
@@ -46,6 +37,36 @@ export function splitQueryHighlight(
     highlighted: segmentHighlighted,
   });
   return segments;
+}
+
+export function matchesQuery(text: string, query: string): boolean {
+  const tokens = queryTokens(query);
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  return matchedQueryIndexes(text, tokens) !== null;
+}
+
+function matchedQueryIndexes(
+  text: string,
+  tokens: readonly string[],
+): Set<number> | null {
+  const filenameStart = text.lastIndexOf("/") + 1;
+  const matchedIndexes = new Set<number>();
+  for (const token of tokens) {
+    const indexes =
+      matchTokenIndexes(text, token, filenameStart) ??
+      matchTokenIndexes(text, token, 0);
+    if (!indexes) {
+      return null;
+    }
+    for (const index of indexes) {
+      matchedIndexes.add(index);
+    }
+  }
+
+  return matchedIndexes;
 }
 
 function matchTokenIndexes(

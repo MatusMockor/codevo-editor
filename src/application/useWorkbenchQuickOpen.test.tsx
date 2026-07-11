@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { createLatencyTracker } from "../domain/latencyTracker";
+import type { FileSearchResult } from "../domain/workspace";
 import {
   useWorkbenchQuickOpen,
   type WorkbenchQuickOpen,
@@ -21,6 +22,8 @@ function makeDeps(
     },
     latencyTrackerForRoot: () => createLatencyTracker(),
     reportError: vi.fn(),
+    activePath: null,
+    recentFiles: [],
     setMessage: vi.fn(),
     workspaceRoot: "/workspace",
     ...overrides,
@@ -92,5 +95,120 @@ describe("useWorkbenchQuickOpen", () => {
     expect(deps.setMessage).toHaveBeenCalledWith(null);
 
     harness.unmount();
+  });
+
+  it("updates merged results when a document is activated", async () => {
+    vi.useFakeTimers();
+    const backendResult: FileSearchResult = {
+      name: "UserModel.ts",
+      path: "/workspace/src/UserModel.ts",
+      relativePath: "src/UserModel.ts",
+    };
+    const deps = makeDeps({
+      fileSearch: { searchFiles: vi.fn(async () => [backendResult]) },
+    });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("user");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    harness.rerender({
+      ...deps,
+      activePath: "/workspace/src/UserController.ts",
+      recentFiles: [
+        { name: "UserController.ts", path: "/workspace/src/UserController.ts" },
+        { name: "UserService.ts", path: "/workspace/src/UserService.ts" },
+      ],
+    });
+
+    expect(harness.quickOpen().quickOpenResults.map((entry) => entry.path)).toEqual([
+      "/workspace/src/UserService.ts",
+      "/workspace/src/UserModel.ts",
+    ]);
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it("does not leak workspace A MRU entries into workspace B", async () => {
+    vi.useFakeTimers();
+    const depsA = makeDeps({
+      activePath: "/workspace-a/src/Active.ts",
+      recentFiles: [
+        { name: "Active.ts", path: "/workspace-a/src/Active.ts" },
+        { name: "OnlyA.ts", path: "/workspace-a/src/OnlyA.ts" },
+      ],
+      workspaceRoot: "/workspace-a",
+    });
+    const harness = renderQuickOpen(depsA);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    const depsB = makeDeps({
+      activePath: "/workspace-b/src/Active.ts",
+      recentFiles: [
+        { name: "Active.ts", path: "/workspace-b/src/Active.ts" },
+        { name: "OnlyB.ts", path: "/workspace-b/src/OnlyB.ts" },
+      ],
+      workspaceRoot: "/workspace-b",
+    });
+    harness.rerender(depsB);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(harness.quickOpen().quickOpenResults.map((entry) => entry.path)).toEqual([
+      "/workspace-b/src/OnlyB.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenResults).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "/workspace-a/src/OnlyA.ts" }),
+      ]),
+    );
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it("drops MRU results when the workspace is closed", async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps({
+      activePath: "/workspace/src/Active.ts",
+      recentFiles: [
+        { name: "Active.ts", path: "/workspace/src/Active.ts" },
+        { name: "Previous.ts", path: "/workspace/src/Previous.ts" },
+      ],
+    });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+    expect(harness.quickOpen().quickOpenResults).toHaveLength(1);
+
+    harness.rerender({
+      ...deps,
+      activePath: null,
+      recentFiles: [],
+      workspaceRoot: null,
+    });
+
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+
+    harness.unmount();
+    vi.useRealTimers();
   });
 });

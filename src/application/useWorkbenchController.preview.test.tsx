@@ -66430,6 +66430,52 @@ class PostRepository
     expect(getWorkbench().recentFilesSwitcherOpen).toBe(false);
   });
 
+  it("prunes a dead recent file when opening it from quick open fails", async () => {
+    let failReads = false;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (failReads && path.endsWith("a.ts")) {
+        throw new Error("file vanished");
+      }
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/a.ts", "a.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry("/workspace/b.ts", "b.ts"));
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).toContain(
+      "/workspace/a.ts",
+    );
+
+    act(() => {
+      getWorkbench().closeDocument("/workspace/a.ts");
+    });
+
+    failReads = true;
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "a.ts",
+        path: "/workspace/a.ts",
+        relativePath: "a.ts",
+      });
+    });
+
+    expect(getWorkbench().recentFiles.map((entry) => entry.path)).not.toContain(
+      "/workspace/a.ts",
+    );
+  });
+
   it("closes the recent files switcher when another overlay opens", async () => {
     const { getWorkbench } = renderController({
       appSettings: {

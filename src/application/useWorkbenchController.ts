@@ -1292,9 +1292,11 @@ export function useWorkbenchController(
     setQuickOpenOpen,
     setQuickOpenQuery,
   } = useWorkbenchQuickOpen({
+    activePath,
     fileSearch,
     latencyTrackerForRoot,
     reportError,
+    recentFiles,
     setMessage,
     workspaceRoot,
   });
