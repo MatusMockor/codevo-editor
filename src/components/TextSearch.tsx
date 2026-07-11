@@ -8,7 +8,8 @@ import {
   Search,
   WholeWord,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createReplacePreview } from "../domain/replacePreview";
 import type {
   TextSearchOptions,
   TextSearchResult,
@@ -115,6 +116,22 @@ export function TextSearch({
   results,
 }: TextSearchProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const previewPattern = typeof query === "string" ? query : "";
+  const computeReplacePreview = useMemo(
+    () =>
+      createReplacePreview({
+        pattern: previewPattern,
+        isRegex: options.isRegex,
+        caseSensitive: options.caseSensitive,
+        wholeWord: options.wholeWord,
+      }),
+    [
+      options.caseSensitive,
+      options.isRegex,
+      options.wholeWord,
+      previewPattern,
+    ],
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -293,6 +310,15 @@ export function TextSearch({
           ) : null}
           {results.map((result, index) => {
             const { before, match, after } = splitMatchHighlight(result);
+            const replacementPreview =
+              replacement && match
+                ? computeReplacePreview(
+                    match,
+                    result.lineText,
+                    replacement,
+                    result.matchStart ?? 0,
+                  )
+                : null;
             const isFirstOfFile =
               results.findIndex((other) => other.path === result.path) === index;
             const fileMatchCount =
@@ -322,7 +348,16 @@ export function TextSearch({
                     </strong>
                     <small className="text-search-preview">
                       {before}
-                      {match ? (
+                      {match && replacementPreview !== null ? (
+                        <>
+                          <del className="text-search-replaced-match">
+                            {match}
+                          </del>
+                          <ins className="text-search-replacement">
+                            {replacementPreview}
+                          </ins>
+                        </>
+                      ) : match ? (
                         <mark className="text-search-match">{match}</mark>
                       ) : null}
                       {after}

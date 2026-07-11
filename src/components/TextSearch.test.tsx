@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -105,6 +105,79 @@ describe("TextSearch", () => {
     const mark = host.querySelector("mark.text-search-match");
 
     expect(mark?.textContent).toBe("UserService");
+  });
+
+  it("renders a struck-through match followed by its replacement preview", () => {
+    renderTextSearch({
+      query: "query",
+      replacement: "answer",
+      results: [
+        result({
+          lineText: "before query after",
+          matchStart: 7,
+          matchEnd: 12,
+        }),
+      ],
+    });
+
+    expect(
+      host.querySelector(".text-search-replaced-match")?.textContent,
+    ).toBe("query");
+    expect(host.querySelector(".text-search-replacement")?.textContent).toBe(
+      "answer",
+    );
+  });
+
+  it("updates the inline preview as the replacement input changes", () => {
+    renderStatefulTextSearch({
+      query: "query",
+      replacement: "first",
+      results: [result({ lineText: "query", matchStart: 0, matchEnd: 5 })],
+    });
+
+    const input = host.querySelector<HTMLInputElement>(
+      '[aria-label="Replace with"]',
+    );
+
+    if (!input) {
+      throw new Error("replace input missing");
+    }
+
+    act(() => {
+      setReactInputValue(input, "second");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(host.querySelector(".text-search-replacement")?.textContent).toBe(
+      "second",
+    );
+  });
+
+  it("keeps the existing match highlight when replacement is empty", () => {
+    renderTextSearch({
+      query: "query",
+      replacement: "",
+      results: [result({ lineText: "query", matchStart: 0, matchEnd: 5 })],
+    });
+
+    expect(host.querySelector("mark.text-search-match")?.textContent).toBe(
+      "query",
+    );
+    expect(host.querySelector(".text-search-replaced-match")).toBeNull();
+    expect(host.querySelector(".text-search-replacement")).toBeNull();
+  });
+
+  it("shows the plain match when a replacement preview cannot be computed", () => {
+    renderTextSearch({
+      options: { ...defaultTextSearchOptions(), isRegex: true },
+      query: "\\p{Greek}+",
+      replacement: "letter",
+      results: [result({ lineText: "α", matchStart: 0, matchEnd: 1 })],
+    });
+
+    expect(host.querySelector("mark.text-search-match")?.textContent).toBe("α");
+    expect(host.querySelector(".text-search-replaced-match")).toBeNull();
+    expect(host.querySelector(".text-search-replacement")).toBeNull();
   });
 
   it("opens a result when it is clicked", () => {
@@ -256,6 +329,38 @@ describe("TextSearch", () => {
         />,
       );
     });
+  }
+
+  function renderStatefulTextSearch(
+    overrides: Partial<Parameters<typeof TextSearch>[0]> = {},
+  ) {
+    function StatefulTextSearch() {
+      const [replacement, setReplacement] = useState(
+        overrides.replacement ?? "",
+      );
+
+      return (
+        <TextSearch
+          isLoading={false}
+          isOpen
+          onChangeOptions={vi.fn()}
+          onChangeQuery={vi.fn()}
+          onChangeReplacement={setReplacement}
+          onClose={vi.fn()}
+          onOpen={vi.fn()}
+          onReplaceAll={vi.fn()}
+          onReplaceInFile={vi.fn()}
+          options={defaultTextSearchOptions()}
+          query="query"
+          replaceBusy={false}
+          results={[]}
+          {...overrides}
+          replacement={replacement}
+        />
+      );
+    }
+
+    act(() => root.render(<StatefulTextSearch />));
   }
 
   // React installs its own value setter on the input element, so assigning
