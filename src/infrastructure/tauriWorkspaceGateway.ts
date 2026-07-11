@@ -18,6 +18,7 @@ import type {
   WorkspaceWriteResult,
   WorkspaceFileRevision,
   WorkspaceMutationResult,
+  WorkspaceImageFile,
   WorkspaceTextFileSnapshot,
 } from "../domain/workspace";
 import type {
@@ -125,6 +126,11 @@ export class TauriWorkspaceGateway
     }
 
     return invoke<FileEntry[]>("read_directory", { path });
+  }
+
+  async readImageFile(path: string): Promise<WorkspaceImageFile> {
+    const target = this.trustedTarget(path);
+    return invoke<WorkspaceImageFile>("workspace_read_image_file", target);
   }
 
   readTextFile(path: string): Promise<string> {

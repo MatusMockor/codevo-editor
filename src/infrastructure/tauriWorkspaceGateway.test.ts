@@ -108,6 +108,24 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("reads image bytes only through a trusted workspace descriptor", async () => {
+    invoke.mockResolvedValue({ base64: "iVBORw==", byteLength: 4 });
+
+    await expect(
+      trustedGateway().readImageFile("/selected/project/assets/logo.png"),
+    ).resolves.toEqual({ base64: "iVBORw==", byteLength: 4 });
+    expect(invoke).toHaveBeenCalledWith("workspace_read_image_file", {
+      workspaceId: "ws-1",
+      relativePath: "assets/logo.png",
+    });
+
+    const untrusted = new TauriWorkspaceGateway({ descriptorForPath: () => null });
+    await expect(untrusted.readImageFile("/legacy/logo.png")).rejects.toThrow(
+      "Reopen it explicitly",
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps descriptorless reads compatible but rejects writes before invoke", async () => {
     invoke.mockResolvedValue("legacy");
     const gateway = new TauriWorkspaceGateway({

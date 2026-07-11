@@ -228,6 +228,18 @@ export interface EditorDocument {
   readOnly?: boolean;
 }
 
+export interface ImageTab {
+  path: string;
+  name: string;
+  dataUrl: string;
+  byteLength: number;
+}
+
+export interface WorkspaceImageFile {
+  base64: string;
+  byteLength: number;
+}
+
 export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";
 
 export interface WorkspaceFileGateway {
@@ -240,6 +252,7 @@ export interface WorkspaceFileGateway {
   createTextFile(path: string): Promise<void>;
   deletePath(path: string): Promise<void>;
   readDirectory(path: string): Promise<FileEntry[]>;
+  readImageFile?(path: string): Promise<WorkspaceImageFile>;
   readTextFile(path: string): Promise<string>;
   readTextFileSnapshot?(path: string): Promise<WorkspaceTextFileSnapshot>;
   renamePath(from: string, to: string): Promise<void>;

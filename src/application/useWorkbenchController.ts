@@ -366,6 +366,7 @@ import {
   visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
+  type ImageTab,
   type FileSearchGateway,
   type IntelligenceMode,
   type ManagedPhpactorInstallCompletionEvent,
@@ -661,6 +662,7 @@ export function useWorkbenchController(
   const [documents, setDocuments] = useState<Record<string, EditorDocument>>(
     {},
   );
+  const [imageTabs, setImageTabs] = useState<Record<string, ImageTab>>({});
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
@@ -878,6 +880,7 @@ export function useWorkbenchController(
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
+  const imageTabsRef = useRef<Record<string, ImageTab>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
     ReturnType<typeof setTimeout>[]
@@ -972,6 +975,7 @@ export function useWorkbenchController(
   );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
+  const activeImage = activePath ? imageTabs[activePath] || null : null;
   const {
     activeEditorPosition,
     activeEditorPositionRef,
@@ -1025,6 +1029,14 @@ export function useWorkbenchController(
         .map((path) => documents[path])
         .filter((document): document is EditorDocument => Boolean(document)),
     [documents, openDocumentPaths],
+  );
+  const openTabs = useMemo(
+    () =>
+      openDocumentPaths.flatMap((path) => {
+        const tab = documents[path] ?? imageTabs[path];
+        return tab ? [tab] : [];
+      }),
+    [documents, imageTabs, openDocumentPaths],
   );
   const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
     (document) =>
@@ -1117,6 +1129,10 @@ export function useWorkbenchController(
   useEffect(() => {
     documentsRef.current = documents;
   }, [documents]);
+
+  useEffect(() => {
+    imageTabsRef.current = imageTabs;
+  }, [imageTabs]);
 
   useEffect(() => {
     openPathsRef.current = openPaths;
@@ -1540,13 +1556,15 @@ export function useWorkbenchController(
           isPersistableEditorDocumentPath(path),
         ),
       );
-      const cacheableOpenPaths = openPaths.filter(isPersistableEditorDocumentPath);
+      const cacheableOpenPaths = openPaths.filter(
+        (path) => isPersistableEditorDocumentPath(path) && Boolean(documents[path]),
+      );
       const cacheablePreviewPath =
-        previewPath && isPersistableEditorDocumentPath(previewPath)
+        previewPath && isPersistableEditorDocumentPath(previewPath) && documents[previewPath]
           ? previewPath
           : null;
       const cacheableActivePath =
-        activePath && isPersistableEditorDocumentPath(activePath)
+        activePath && isPersistableEditorDocumentPath(activePath) && documents[activePath]
           ? activePath
           : null;
 
@@ -1599,8 +1617,8 @@ export function useWorkbenchController(
 
       const session = currentWorkspaceSession(
         rootPath,
-        openPaths,
-        activePath,
+        openPaths.filter((path) => Boolean(documents[path])),
+        activePath && documents[activePath] ? activePath : null,
         sidebarView,
         bottomPanelView,
         previewPath,
@@ -1619,6 +1637,7 @@ export function useWorkbenchController(
     [
       activePath,
       bottomPanelView,
+      documents,
       openPaths,
       persistWorkspaceSettings,
       previewPath,
@@ -2452,6 +2471,8 @@ export function useWorkbenchController(
     setExpandedDirectories(new Set());
     setManuallyCollapsedDirectories(new Set());
     setDocuments({});
+    imageTabsRef.current = {};
+    setImageTabs({});
     setOpenPaths([]);
     setActivePath(null);
     setPreviewPath(null);
@@ -2906,12 +2927,16 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
 
       if (cachedWorkspaceState) {
+        imageTabsRef.current = {};
+        setImageTabs({});
         restoreCachedWorkspaceState(cachedWorkspaceState);
       } else {
         setEntriesByDirectory({});
         setExpandedDirectories(new Set([path]));
         setManuallyCollapsedDirectories(new Set());
         setDocuments({});
+        imageTabsRef.current = {};
+        setImageTabs({});
         setOpenPaths([]);
         setActivePath(null);
         setPreviewPath(null);
@@ -3341,6 +3366,7 @@ export function useWorkbenchController(
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
+    imageTabsRef,
     openPathsRef,
     previewPathRef,
     openFileRequestTokenRef,
@@ -3351,6 +3377,7 @@ export function useWorkbenchController(
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
     setDocuments,
+    setImageTabs,
     setOpenPaths,
     setPreviewPath,
     setActivePath,
@@ -4185,8 +4212,8 @@ export function useWorkbenchController(
   const {
     captureLocalHistorySnapshot,
     saveActiveDocument,
-    closeDocument,
-    closeActiveSurface,
+    closeDocument: closeTextDocument,
+    closeActiveSurface: closeTextSurface,
   } = useDocumentLifecycle({
     workspaceRoot,
     activeDocument,
@@ -4240,6 +4267,45 @@ export function useWorkbenchController(
     clearExternalFileConflict: externalFileConflicts.clearConflict,
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
   });
+
+  const closeDocument = useCallback(
+    (path: string) => {
+      if (!imageTabsRef.current[path]) {
+        closeTextDocument(path);
+        return;
+      }
+      const nextImages = { ...imageTabsRef.current };
+      delete nextImages[path];
+      const nextOpenPaths = openPathsRef.current.filter((item) => item !== path);
+      const nextPreviewPath = previewPathRef.current === path ? null : previewPathRef.current;
+      const nextVisiblePaths = visibleEditorPaths(nextOpenPaths, nextPreviewPath);
+      const nextActivePath =
+        activePath === path
+          ? nextVisiblePaths[nextVisiblePaths.length - 1] ?? null
+          : activePath;
+      imageTabsRef.current = nextImages;
+      openPathsRef.current = nextOpenPaths;
+      previewPathRef.current = nextPreviewPath;
+      activeDocumentRef.current = nextActivePath
+        ? documentsRef.current[nextActivePath] ?? null
+        : null;
+      setImageTabs(nextImages);
+      setOpenPaths(nextOpenPaths);
+      setPreviewPath(nextPreviewPath);
+      if (activePath === path) {
+        setActivePath(nextActivePath);
+      }
+    },
+    [activePath, closeTextDocument],
+  );
+
+  const closeActiveSurface = useCallback(() => {
+    if (activePath && imageTabsRef.current[activePath]) {
+      closeDocument(activePath);
+      return;
+    }
+    closeTextSurface();
+  }, [activePath, closeDocument, closeTextSurface]);
 
   const updateEditorViewState = useCallback(
     (path: string, viewState: WorkspaceSessionViewState) => {
@@ -7979,6 +8045,7 @@ export function useWorkbenchController(
 
   return {
     activeDocument,
+    activeImage,
     activeDocumentGitBaseline: activeDocument
       ? editorGitBaselinesByPath[activeDocument.path] ?? null
       : null,
@@ -8082,6 +8149,7 @@ export function useWorkbenchController(
     installingManagedPhpactor,
     message,
     openDocuments,
+    openTabs,
     openFile,
     openCallHierarchy,
     openCallHierarchyRow,

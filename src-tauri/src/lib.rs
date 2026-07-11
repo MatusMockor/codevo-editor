@@ -149,9 +149,10 @@ use workspace::{
 };
 #[cfg(target_os = "macos")]
 use workspace_file_commands::{
-    DescriptorFileEntry, DescriptorFileSearchResult, DescriptorTextSearchResult, FileCommandResult,
-    FileRevision, MutationResult, WorkspaceEditResult,
-    WorkspaceFileRepository as DescriptorFileRepository, WorkspaceReplaceResult, WorkspaceTextFile,
+    read_image_from_root, DescriptorFileEntry, DescriptorFileSearchResult,
+    DescriptorTextSearchResult, FileCommandResult, FileRevision, MutationResult,
+    WorkspaceEditResult, WorkspaceFileRepository as DescriptorFileRepository, WorkspaceImageFile,
+    WorkspaceImageReadError, WorkspaceReplaceResult, WorkspaceTextFile,
 };
 use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
@@ -395,6 +396,25 @@ fn workspace_read_text_file(
     DescriptorFileRepository::new(&registry)
         .read_text(&workspace_id, Path::new(&relative_path))
         .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn workspace_read_image_file(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    relative_path: String,
+) -> Result<WorkspaceImageFile, WorkspaceImageReadError> {
+    let root = registry
+        .clone_root(&workspace_id)
+        .map_err(WorkspaceImageReadError::from)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        read_image_from_root(&root, Path::new(&relative_path))
+    })
+    .await
+    .map_err(|error| WorkspaceImageReadError::Io {
+        message: format!("Command task failed: {error}"),
+    })?
 }
 
 #[cfg(target_os = "macos")]
@@ -8431,6 +8451,7 @@ pub fn run() {
             unregister_workspace,
             get_workspace_descriptor,
             workspace_read_text_file,
+            workspace_read_image_file,
             workspace_read_directory,
             workspace_search_files,
             workspace_search_text,

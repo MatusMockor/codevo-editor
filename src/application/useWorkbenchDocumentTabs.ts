@@ -21,6 +21,7 @@ import {
   readWorkspaceTextFileSnapshot,
   type EditorDocument,
   type FileEntry,
+  type ImageTab,
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -55,6 +56,7 @@ export interface WorkbenchDocumentTabsDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
+  imageTabsRef: MutableRefObject<Record<string, ImageTab>>;
   openPathsRef: MutableRefObject<string[]>;
   previewPathRef: MutableRefObject<string | null>;
   openFileRequestTokenRef: MutableRefObject<number>;
@@ -68,6 +70,7 @@ export interface WorkbenchDocumentTabsDependencies {
   selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
 
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
+  setImageTabs: Dispatch<SetStateAction<Record<string, ImageTab>>>;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
   setActivePath: Dispatch<SetStateAction<string | null>>;
@@ -143,6 +146,7 @@ export function useWorkbenchDocumentTabs(
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
+    imageTabsRef,
     openPathsRef,
     previewPathRef,
     openFileRequestTokenRef,
@@ -153,6 +157,7 @@ export function useWorkbenchDocumentTabs(
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
     setDocuments,
+    setImageTabs,
     setOpenPaths,
     setPreviewPath,
     setActivePath,
@@ -194,7 +199,10 @@ export function useWorkbenchDocumentTabs(
       setGitDiffPreview(null);
       setActivePath(path);
       recordRecentFile({
-        name: documentsRef.current[path]?.name ?? getFileName(path),
+        name:
+          documentsRef.current[path]?.name ??
+          imageTabsRef.current[path]?.name ??
+          getFileName(path),
         path,
       });
     },
@@ -210,6 +218,7 @@ export function useWorkbenchDocumentTabs(
       setGitDiffPreview,
       setSelectedGitChange,
       documentsRef,
+      imageTabsRef,
     ],
   );
 
@@ -252,6 +261,63 @@ export function useWorkbenchDocumentTabs(
 
       if (belongsToInactiveWorkspaceTab) {
         return false;
+      }
+
+      if (isImagePath(entry.path)) {
+        try {
+          if (!workspaceFiles.readImageFile) {
+            throw new Error("Image viewing is unavailable for this workspace.");
+          }
+          const payload = await workspaceFiles.readImageFile(entry.path);
+          if (
+            openFileRequestTokenRef.current !== requestToken ||
+            (requestedRoot !== null &&
+              !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) ||
+            options.shouldCommit?.() === false
+          ) {
+            return false;
+          }
+          const image: ImageTab = {
+            path: entry.path,
+            name: entry.name,
+            byteLength: payload.byteLength,
+            dataUrl: `data:${imageMimeType(entry.path)};base64,${payload.base64}`,
+          };
+          const pathTransition = documentSessionPathTransitionForOpenedPath({
+            openPaths: openPathsRef.current,
+            path: entry.path,
+            pin: true,
+            replacedPath: null,
+          });
+          imageTabsRef.current = { ...imageTabsRef.current, [entry.path]: image };
+          openPathsRef.current = pathTransition.nextOpenPaths;
+          previewPathRef.current = pathTransition.nextPreviewPath;
+          activeDocumentRef.current = null;
+          setImageTabs((current) => ({ ...current, [entry.path]: image }));
+          setOpenPaths(pathTransition.nextOpenPaths);
+          setPreviewPath(pathTransition.nextPreviewPath);
+          selectedGitChangeRef.current = null;
+          setSelectedGitChange(null);
+          setGitDiffPreview(null);
+          setActivePath(entry.path);
+          setMessage(null);
+          recordRecentFile({ name: entry.name, path: entry.path });
+          return true;
+        } catch (error) {
+          if (
+            openFileRequestTokenRef.current !== requestToken ||
+            (requestedRoot !== null &&
+              !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
+          ) {
+            return false;
+          }
+          if (requestedRoot) {
+            reportErrorForActiveWorkspaceRoot(requestedRoot, "Open Image", error);
+            return false;
+          }
+          reportError("Open Image", error);
+          return false;
+        }
       }
 
       const scheduleEmptyDocumentRefresh = (targetPath: string) => {
@@ -624,6 +690,7 @@ export function useWorkbenchDocumentTabs(
       currentWorkspaceRootRef,
       documents,
       documentsRef,
+      imageTabsRef,
       emptyDocumentRefreshTimeoutsRef,
       filePrefetchCacheRef,
       forgetExternallyRemovedDocumentPath,
@@ -641,6 +708,7 @@ export function useWorkbenchDocumentTabs(
       selectedGitChangeRef,
       setActivePath,
       setDocuments,
+      setImageTabs,
       setGitDiffPreview,
       setIsOpeningFile,
       setMessage,
@@ -845,4 +913,22 @@ export function useWorkbenchDocumentTabs(
     prefetchFile,
     cancelFilePrefetch,
   };
+}
+
+const IMAGE_EXTENSIONS = new Set(["bmp", "gif", "ico", "jpeg", "jpg", "png", "webp"]);
+
+export function isImagePath(path: string): boolean {
+  const extension = path.toLowerCase().split(".").pop() ?? "";
+  return IMAGE_EXTENSIONS.has(extension);
+}
+
+function imageMimeType(path: string): string {
+  const extension = path.toLowerCase().split(".").pop();
+  if (extension === "jpg" || extension === "jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === "ico") {
+    return "image/x-icon";
+  }
+  return `image/${extension}`;
 }

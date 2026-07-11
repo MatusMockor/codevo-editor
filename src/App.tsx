@@ -27,6 +27,7 @@ import { ExternalFileCompareDialog } from "./components/ExternalFileCompareDialo
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
 import { GitBranchPanel } from "./components/GitBranchPanel";
 import { GitStashPanel } from "./components/GitStashPanel";
+import { ImageViewer } from "./components/ImageViewer";
 import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
@@ -916,10 +917,14 @@ function App() {
   }, [clearGitHistoryDiff, closeEditorTab, gitHistoryDiffDocumentPath]);
 
   const closeActiveTab = useCallback(() => {
+    if (workbench.activeImage) {
+      closeEditorTab(workbench.activeImage.path);
+      return;
+    }
     if (workbench.activeDocument) {
       closeEditorTab(workbench.activeDocument.path);
     }
-  }, [closeEditorTab, workbench.activeDocument]);
+  }, [closeEditorTab, workbench.activeDocument, workbench.activeImage]);
 
   const isActiveGitHistoryDiffDocument = Boolean(
     gitHistoryDiffDocumentPath &&
@@ -1228,7 +1233,11 @@ function App() {
         </header>
         <EditorTabs
           activePath={workbench.activePath}
-          documents={workbench.openDocuments}
+          documents={
+            Array.isArray(workbench.openTabs)
+              ? workbench.openTabs
+              : workbench.openDocuments
+          }
           fileStatusesByPath={fileStatusesByPath}
           onActivate={activateEditorTab}
           onClose={closeEditorTab}
@@ -1287,6 +1296,8 @@ function App() {
               }
             />
           </ErrorBoundary>
+        ) : workbench.activeImage ? (
+          <ImageViewer image={workbench.activeImage} />
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}

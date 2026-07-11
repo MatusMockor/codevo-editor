@@ -21,6 +21,7 @@ const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
 const RENAME_EXCL: libc::c_uint = 0x0000_0004;
 const RENAME_SWAP: libc::c_uint = 0x0000_0002;
 const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
+pub const WORKSPACE_IMAGE_FILE_SIZE_LIMIT: usize = 20 * 1024 * 1024;
 
 struct DirectoryEntry {
     name: String,
@@ -449,6 +450,28 @@ pub struct WorkspaceTextFile {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceImageFile {
+    pub base64: String,
+    pub byte_length: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WorkspaceImageReadError {
+    Io { message: String },
+    TooLarge { size: u64, max_bytes: usize },
+}
+
+impl From<io::Error> for WorkspaceImageReadError {
+    fn from(error: io::Error) -> Self {
+        Self::Io {
+            message: error.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DescriptorFileEntry {
     pub name: String,
     pub relative_path: String,
@@ -630,6 +653,16 @@ impl<'a> WorkspaceFileRepository<'a> {
             io::ErrorKind::WouldBlock,
             "file changed repeatedly while it was being read",
         ))
+    }
+
+    #[cfg(test)]
+    fn read_image(
+        &self,
+        id: &WorkspaceId,
+        path: &Path,
+    ) -> Result<WorkspaceImageFile, WorkspaceImageReadError> {
+        let root = self.registry.clone_root(id)?;
+        read_image_from_root(&root, path)
     }
 
     pub fn read_directory(
@@ -1361,6 +1394,82 @@ impl<'a> WorkspaceFileRepository<'a> {
         }
         Ok(())
     }
+}
+
+pub fn read_image_from_root(
+    root: &File,
+    path: &Path,
+) -> Result<WorkspaceImageFile, WorkspaceImageReadError> {
+    for _ in 0..3 {
+        let mut file = open_regular(root.as_raw_fd(), path, libc::O_RDONLY)?;
+        let before = regular_unlinked_stat(file.as_raw_fd())?;
+        ensure_image_size(&before)?;
+        let first = read_image_bytes(&mut file)?;
+        let middle = regular_unlinked_stat(file.as_raw_fd())?;
+        ensure_image_size(&middle)?;
+        file.seek(SeekFrom::Start(0))?;
+        let second = read_image_bytes(&mut file)?;
+        let after = regular_unlinked_stat(file.as_raw_fd())?;
+        ensure_image_size(&after)?;
+        if same_snapshot(&before, &middle) && same_snapshot(&middle, &after) && first == second {
+            return Ok(WorkspaceImageFile {
+                byte_length: first.len(),
+                base64: encode_base64(&first),
+            });
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "file changed repeatedly while it was being read",
+    )
+    .into())
+}
+
+fn ensure_image_size(stat: &libc::stat) -> Result<(), WorkspaceImageReadError> {
+    let size = u64::try_from(stat.st_size).unwrap_or(u64::MAX);
+    if size <= WORKSPACE_IMAGE_FILE_SIZE_LIMIT as u64 {
+        return Ok(());
+    }
+    Err(WorkspaceImageReadError::TooLarge {
+        size,
+        max_bytes: WORKSPACE_IMAGE_FILE_SIZE_LIMIT,
+    })
+}
+
+fn read_image_bytes(file: &mut impl Read) -> Result<Vec<u8>, WorkspaceImageReadError> {
+    let mut bytes = Vec::new();
+    file.take((WORKSPACE_IMAGE_FILE_SIZE_LIMIT + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() <= WORKSPACE_IMAGE_FILE_SIZE_LIMIT {
+        return Ok(bytes);
+    }
+    Err(WorkspaceImageReadError::TooLarge {
+        size: bytes.len() as u64,
+        max_bytes: WORKSPACE_IMAGE_FILE_SIZE_LIMIT,
+    })
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+        encoded.push(TABLE[(first >> 2) as usize] as char);
+        encoded.push(TABLE[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
+        encoded.push(if chunk.len() > 1 {
+            TABLE[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        encoded.push(if chunk.len() > 2 {
+            TABLE[(third & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    encoded
 }
 
 enum CommandFailure {
@@ -2374,6 +2483,65 @@ mod tests {
             "retained"
         );
         assert!(repository.read_text(&id, Path::new("link/value")).is_err());
+    }
+
+    #[test]
+    fn image_read_round_trips_bytes_and_isolates_workspace_identity() {
+        let (registry_a, id_a, root_a) = fixture("image-read-a");
+        let (registry_b, id_b, root_b) = fixture("image-read-b");
+        fs::write(root_a.join("image.png"), [0, 1, 2, 0xff]).unwrap();
+        fs::write(root_b.join("image.png"), [9, 8, 7]).unwrap();
+
+        let image_a = WorkspaceFileRepository::new(&registry_a)
+            .read_image(&id_a, Path::new("image.png"))
+            .unwrap();
+        let image_b = WorkspaceFileRepository::new(&registry_b)
+            .read_image(&id_b, Path::new("image.png"))
+            .unwrap();
+
+        assert_eq!(image_a.base64, "AAEC/w==");
+        assert_eq!(image_a.byte_length, 4);
+        assert_eq!(image_b.base64, "CQgH");
+        assert_eq!(image_b.byte_length, 3);
+    }
+
+    #[test]
+    fn image_read_rejects_symlink_escape_and_reports_size_limit() {
+        let (registry, id, root) = fixture("image-read-guards");
+        let outside = root.with_extension("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("image.png"), [1, 2, 3]).unwrap();
+        symlink(outside.join("image.png"), root.join("linked.png")).unwrap();
+        fs::write(
+            root.join("large.png"),
+            vec![0; WORKSPACE_IMAGE_FILE_SIZE_LIMIT + 1],
+        )
+        .unwrap();
+        let repository = WorkspaceFileRepository::new(&registry);
+
+        assert!(matches!(
+            repository.read_image(&id, Path::new("linked.png")),
+            Err(WorkspaceImageReadError::Io { .. })
+        ));
+        assert!(matches!(
+            repository.read_image(&id, Path::new("large.png")),
+            Err(WorkspaceImageReadError::TooLarge {
+                max_bytes: WORKSPACE_IMAGE_FILE_SIZE_LIMIT,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn image_read_rejects_unknown_workspace() {
+        let (registry, id, root) = fixture("image-read-unknown");
+        fs::write(root.join("image.png"), [1, 2, 3]).unwrap();
+        registry.unregister(&id).unwrap();
+
+        assert!(matches!(
+            WorkspaceFileRepository::new(&registry).read_image(&id, Path::new("image.png")),
+            Err(WorkspaceImageReadError::Io { .. })
+        ));
     }
 
     #[test]

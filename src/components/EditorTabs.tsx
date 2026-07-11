@@ -2,7 +2,7 @@ import { Circle, X } from "lucide-react";
 import { memo } from "react";
 import type { KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
-import type { EditorDocument } from "../domain/workspace";
+import type { EditorDocument, ImageTab } from "../domain/workspace";
 import {
   gitStatusLabel,
   gitStatusTitle,
@@ -12,7 +12,7 @@ import { isDirty } from "../domain/workspace";
 import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorTabsProps {
-  documents: EditorDocument[];
+  documents: Array<EditorDocument | ImageTab>;
   fileStatusesByPath?: Record<string, GitChangeStatus>;
   activePath: string | null;
   previewPath: string | null;
@@ -65,7 +65,7 @@ function EditorTabsComponent({
   return (
     <div aria-label="Open files" className="editor-tabs" role="tablist">
       {documents.map((document, index) => {
-        const dirty = isDirty(document);
+        const dirty = isEditorDocument(document) && isDirty(document);
         const active = document.path === activePath;
         const preview = document.path === previewPath && !dirty;
         const status = fileStatusesByPath?.[document.path];
@@ -118,6 +118,10 @@ function EditorTabsComponent({
       })}
     </div>
   );
+}
+
+function isEditorDocument(tab: EditorDocument | ImageTab): tab is EditorDocument {
+  return "content" in tab;
 }
 
 export const EditorTabs = memo(EditorTabsComponent);
