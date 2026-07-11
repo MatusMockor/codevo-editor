@@ -21,6 +21,7 @@ import type {
   EditorRevealTarget,
 } from "../domain/languageServerFeatures";
 import type { NavigationLocation } from "../domain/navigation";
+import { shouldOpenPhpNavigationTargetReadOnly } from "../domain/phpNavigationTargetReadOnly";
 import type { RecentFileEntry } from "../domain/recentFiles";
 
 interface OpenNavigationOptions {
@@ -216,13 +217,18 @@ export function useWorkbenchNavigation(
       path: string,
       options: OpenNavigationOptions = {},
     ): Promise<boolean> => {
+      const readOnly = navigationTargetReadOnly(
+        currentWorkspaceRootRef.current,
+        path,
+        options.readOnly,
+      );
       const opened = await openFile(
         {
           kind: "file",
           name: getFileName(path),
           path,
         },
-        { readOnly: options.readOnly, recordNavigation: false },
+        { readOnly, recordNavigation: false },
       );
 
       if (!opened) {
@@ -414,4 +420,24 @@ export function useWorkbenchNavigation(
     goToPreviousProblem,
     readNavigationFileContent,
   };
+}
+
+function navigationTargetReadOnly(
+  rootPath: string | null,
+  path: string,
+  readOnly: boolean | undefined,
+): boolean | undefined {
+  if (readOnly === true) {
+    return true;
+  }
+
+  if (!rootPath) {
+    return readOnly;
+  }
+
+  if (shouldOpenPhpNavigationTargetReadOnly(rootPath, path)) {
+    return true;
+  }
+
+  return readOnly;
 }

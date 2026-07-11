@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
   useWorkbenchLanguageNavigation,
@@ -210,5 +211,96 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
     expect(goToIndexedSymbolDefinition).toHaveBeenCalledTimes(1);
 
     root.unmount();
+  });
+});
+
+describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
+  function renderPhpNavigation(targetPath: string) {
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.definition).mockResolvedValue([
+      {
+        range: {
+          end: { character: 8, line: 3 },
+          start: { character: 2, line: 3 },
+        },
+        uri: `file://${targetPath}`,
+      },
+    ]);
+    const source = "<?php $service->run();";
+    const activeDocument: EditorDocument = {
+      content: source,
+      language: "php",
+      name: "Controller.php",
+      path: `${ROOT}/app/Http/Controller.php`,
+      savedContent: source,
+    };
+
+    return renderNavigation({
+      activeDocumentRef: { current: activeDocument },
+      activeEditorPositionRef: { current: { column: 17, lineNumber: 1 } },
+      goToContextualPhpDefinition: vi.fn(async () => false),
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      languageServerRuntimeStatusRoot: ROOT,
+    });
+  }
+
+  it("delegates a vendor PHP definition to the centralized open boundary", async () => {
+    const harness = renderPhpNavigation(
+      `${ROOT}/vendor/acme/package/src/Service.php`,
+    );
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/vendor/acme/package/src/Service.php`,
+    );
+
+    harness.root.unmount();
+  });
+
+  it("delegates an in-app PHP definition without site-specific options", async () => {
+    const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`);
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/app/Services/Service.php`,
+    );
+
+    harness.root.unmount();
+  });
+
+  it("leaves selected PHP implementation policy to the open boundary", async () => {
+    const harness = renderNavigation();
+
+    await act(async () => {
+      await harness.api().openImplementationTarget({
+        detail: "Service.php:4",
+        id: "service",
+        label: "Service::run",
+        path: `${ROOT}/vendor/acme/package/src/Service.php`,
+        position: { column: 3, lineNumber: 4 },
+      });
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/vendor/acme/package/src/Service.php`,
+      { readOnly: false },
+    );
+
+    harness.root.unmount();
   });
 });
