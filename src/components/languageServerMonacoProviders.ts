@@ -3880,8 +3880,13 @@ async function provideCompletionItems(
     }
 
     const insert = lspCompletionInsert(monaco, item, kind);
+    const additionalTextEdits =
+      item.additionalTextEdits && item.additionalTextEdits.length > 0
+        ? item.additionalTextEdits.map((edit) => toMonacoTextEdit(monaco, edit))
+        : undefined;
 
     return [{
+      ...(additionalTextEdits ? { additionalTextEdits } : {}),
       detail: item.detail || undefined,
       documentation: item.documentation || undefined,
       insertText: insert.insertText,

@@ -722,6 +722,113 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("maps PHP completion additional text edits to Monaco edits", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            additionalTextEdits: [
+              {
+                newText: "use App\\Models\\User;\n",
+                range: range(2, 0, 2, 0),
+              },
+            ],
+            detail: "class",
+            documentation: "A user",
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+    const suggestion = result.suggestions.find(
+      (item: { label: string }) => item.label === "User",
+    );
+
+    expect(suggestion.additionalTextEdits).toEqual([
+      {
+        range: {
+          endColumn: 1,
+          endLineNumber: 3,
+          startColumn: 1,
+          startLineNumber: 3,
+        },
+        text: "use App\\Models\\User;\n",
+      },
+    ]);
+  });
+
+  it("maps every additional text edit from a PHP completion", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            additionalTextEdits: [
+              {
+                newText: "use App\\Contracts\\Identifiable;\n",
+                range: range(2, 0, 2, 0),
+              },
+              {
+                newText: "use App\\Models\\User;\n",
+                range: range(3, 4, 3, 4),
+              },
+            ],
+            detail: "class",
+            documentation: null,
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
+    const suggestion = result.suggestions.find(
+      (item: { label: string }) => item.label === "User",
+    );
+
+    expect(suggestion.additionalTextEdits).toEqual([
+      {
+        range: {
+          endColumn: 1,
+          endLineNumber: 3,
+          startColumn: 1,
+          startLineNumber: 3,
+        },
+        text: "use App\\Contracts\\Identifiable;\n",
+      },
+      {
+        range: {
+          endColumn: 5,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        },
+        text: "use App\\Models\\User;\n",
+      },
+    ]);
+  });
+
   it("forwards the PHP completion incomplete flag so Monaco re-queries while typing", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
