@@ -87,6 +87,7 @@ function createFakeGitGateway(
     getFileHunks: vi.fn(async () => [] as GitDiffHunk[]),
     revertFiles: vi.fn(async (rootPath: string) => status(rootPath)),
     commit: vi.fn(async (rootPath: string) => status(rootPath)),
+    amend: vi.fn(async (rootPath: string) => status(rootPath)),
     push: vi.fn(async (rootPath: string) => status(rootPath)),
     fetch: vi.fn(async (rootPath: string) => status(rootPath)),
     pull: vi.fn(async (rootPath: string) => status(rootPath)),
@@ -489,6 +490,119 @@ describe("useGitWorkspace", () => {
     expect(commit).toHaveBeenCalledWith(ROOT, "shipit", [included]);
     expect(push).toHaveBeenCalledWith(ROOT);
     expect(harness.setMessage).toHaveBeenCalledWith("Pushed current branch");
+    harness.unmount();
+  });
+
+  it("resets amend mode after success and the next submission is a plain commit", async () => {
+    const included = changedFile("a.ts", { isStaged: true });
+    const amended = status(ROOT, []);
+    const amend = vi.fn(async () => amended);
+    const commit = vi.fn(async () => status(ROOT, []));
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ amend, commit }),
+      gitStatus: status(ROOT, [included]),
+    });
+
+    act(() => {
+      harness.workspace().setGitAmendEnabled(true);
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+
+    await act(async () => {
+      await harness.workspace().amendGitChanges();
+    });
+
+    expect(amend).toHaveBeenCalledWith(ROOT, "", [included]);
+    expect(harness.applyGitOperationStatus).toHaveBeenCalledWith(amended);
+    expect(harness.workspace().gitAmendEnabled).toBe(false);
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("next commit");
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    await act(async () => {
+      await harness.workspace().commitGitChanges();
+    });
+
+    expect(commit).toHaveBeenCalledWith(ROOT, "next commit", [included]);
+    expect(amend).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("reports amend failures without resetting amend mode", async () => {
+    const included = changedFile("a.ts", { isStaged: true });
+    const error = new Error("cannot amend a pushed commit");
+    const amend = vi.fn(async () => {
+      throw error;
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ amend }),
+      gitStatus: status(ROOT, [included]),
+    });
+
+    act(() => {
+      harness.workspace().setGitAmendEnabled(true);
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    await act(async () => {
+      await harness.workspace().amendGitChanges();
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Git", error);
+    expect(harness.workspace().gitAmendEnabled).toBe(true);
+    harness.unmount();
+  });
+
+  it("prevents a second amend while the first is in flight", async () => {
+    const included = changedFile("a.ts", { isStaged: true });
+    const deferred = createDeferred<GitStatus>();
+    const amend = vi.fn(() => deferred.promise);
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ amend }),
+      gitStatus: status(ROOT, [included]),
+    });
+
+    act(() => {
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    let firstAmend: Promise<void> | null = null;
+    act(() => {
+      firstAmend = harness.workspace().amendGitChanges();
+      void harness.workspace().amendGitChanges();
+    });
+
+    expect(amend).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      deferred.resolve(status(ROOT));
+      await firstAmend;
+    });
+    harness.unmount();
+  });
+
+  it("drops an amend result when the workspace changes mid-flight", async () => {
+    const included = changedFile("a.ts", { isStaged: true });
+    const deferred = createDeferred<GitStatus>();
+    const amend = vi.fn(() => deferred.promise);
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ amend }),
+      gitStatus: status(ROOT, [included]),
+    });
+
+    act(() => {
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    let amendPromise: Promise<void> | null = null;
+    act(() => {
+      amendPromise = harness.workspace().amendGitChanges();
+    });
+    await act(async () => {
+      harness.ref.current = "/other";
+      deferred.resolve(status(ROOT));
+      await amendPromise;
+    });
+
+    expect(harness.applyGitOperationStatus).not.toHaveBeenCalled();
+    expect(harness.reportError).not.toHaveBeenCalled();
     harness.unmount();
   });
 

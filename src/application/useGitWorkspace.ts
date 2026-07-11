@@ -133,6 +133,7 @@ async function commitOneRepository(
   message: string,
   requestedRoot: string,
   isActiveRoot: (requestedRoot: string) => boolean,
+  amend: boolean,
 ): Promise<CommitOneResult | typeof STALE> {
   try {
     if (group.changes.some((change) => !change.isStaged)) {
@@ -143,7 +144,12 @@ async function commitOneRepository(
       }
     }
 
-    const status = await gitGateway.commit(
+    const operation = amend ? gitGateway.amend : gitGateway.commit;
+    if (!operation) {
+      throw new Error("Git amend is unavailable.");
+    }
+    const status = await operation.call(
+      gitGateway,
       group.repositoryRoot,
       message,
       group.changes,
@@ -312,9 +318,11 @@ export interface GitWorkspaceDependencies {
 }
 
 export interface GitWorkspace {
+  gitAmendEnabled: boolean;
   gitCommitMessage: string;
   includedGitChangePaths: Set<string>;
   gitOperationLoading: boolean;
+  setGitAmendEnabled: Dispatch<SetStateAction<boolean>>;
   setGitCommitMessage: Dispatch<SetStateAction<string>>;
   toggleGitChangeIncluded: (
     change: GitChangedFile,
@@ -330,6 +338,7 @@ export interface GitWorkspace {
   unstageGitHunk: (change: GitChangedFile, hunkIndex: number) => Promise<void>;
   revertGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   runGitCommit: (options: { pushAfterCommit: boolean }) => Promise<void>;
+  amendGitChanges: () => Promise<void>;
   commitGitChanges: () => Promise<void>;
   commitAndPushGitChanges: () => Promise<void>;
   fetchGitChanges: () => Promise<void>;
@@ -390,6 +399,7 @@ export function useGitWorkspace(
 
   const [gitOperationLoading, setGitOperationLoading] = useState(false);
   const gitOperationInFlightRef = useRef(false);
+  const [gitAmendEnabled, setGitAmendEnabled] = useState(false);
   const [gitCommitMessage, setGitCommitMessage] = useState("");
   const [includedGitChangePaths, setIncludedGitChangePaths] = useState<
     Set<string>
@@ -682,8 +692,14 @@ export function useGitWorkspace(
   );
 
   const runGitCommit = useCallback(
-    async ({ pushAfterCommit }: { pushAfterCommit: boolean }) => {
-      if (!workspaceRoot) {
+    async ({
+      amend = false,
+      pushAfterCommit,
+    }: {
+      amend?: boolean;
+      pushAfterCommit: boolean;
+    }) => {
+      if (!workspaceRoot || gitOperationInFlightRef.current) {
         return;
       }
 
@@ -696,7 +712,7 @@ export function useGitWorkspace(
         )
         .map((item) => item.change);
 
-      if (!message || includedChanges.length === 0) {
+      if ((!amend && !message) || includedChanges.length === 0) {
         return;
       }
 
@@ -715,6 +731,7 @@ export function useGitWorkspace(
       }
 
       const singleRepo = groups.length === 1;
+      gitOperationInFlightRef.current = true;
       setGitOperationLoading(true);
 
       try {
@@ -731,6 +748,7 @@ export function useGitWorkspace(
             message,
             requestedRoot,
             isActiveRoot,
+            amend,
           );
 
           if (committedStatus === STALE) {
@@ -759,6 +777,7 @@ export function useGitWorkspace(
 
         if (committed.length > 0) {
           publishStatuses(committed);
+          setGitAmendEnabled(false);
           setIncludedGitChangePaths(new Set());
           setGitCommitMessage("");
         }
@@ -813,6 +832,7 @@ export function useGitWorkspace(
         });
       } finally {
         if (isActiveRoot(requestedRoot)) {
+          gitOperationInFlightRef.current = false;
           setGitOperationLoading(false);
         }
       }
@@ -838,6 +858,11 @@ export function useGitWorkspace(
 
   const commitAndPushGitChanges = useCallback(
     async () => runGitCommit({ pushAfterCommit: true }),
+    [runGitCommit],
+  );
+
+  const amendGitChanges = useCallback(
+    async () => runGitCommit({ amend: true, pushAfterCommit: false }),
     [runGitCommit],
   );
 
@@ -1004,14 +1029,17 @@ export function useGitWorkspace(
   useEffect(() => {
     setGitOperationLoading(false);
     gitOperationInFlightRef.current = false;
+    setGitAmendEnabled(false);
     setGitCommitMessage("");
     setIncludedGitChangePaths(new Set());
   }, [workspaceRoot]);
 
   return {
+    gitAmendEnabled,
     gitCommitMessage,
     includedGitChangePaths,
     gitOperationLoading,
+    setGitAmendEnabled,
     setGitCommitMessage,
     toggleGitChangeIncluded,
     stageGitChanges,
@@ -1021,6 +1049,7 @@ export function useGitWorkspace(
     unstageGitHunk,
     revertGitChanges,
     runGitCommit,
+    amendGitChanges,
     commitGitChanges,
     commitAndPushGitChanges,
     fetchGitChanges,

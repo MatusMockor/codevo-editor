@@ -3622,9 +3622,11 @@ export function useWorkbenchController(
   );
 
   const {
+    gitAmendEnabled,
     gitCommitMessage,
     includedGitChangePaths,
     gitOperationLoading,
+    setGitAmendEnabled,
     setGitCommitMessage,
     toggleGitChangeIncluded,
     stageGitChanges,
@@ -3633,6 +3635,7 @@ export function useWorkbenchController(
     stageGitHunk,
     unstageGitHunk,
     revertGitChanges,
+    amendGitChanges,
     commitGitChanges,
     commitAndPushGitChanges,
   } = useGitWorkspace({
@@ -7734,6 +7737,7 @@ export function useWorkbenchController(
     closeDocument,
     closeGitDiffPreview,
     closeWorkspaceTab,
+    amendGitChanges,
     commitAndPushGitChanges,
     commitGitChanges,
     commandContext,
@@ -7772,6 +7776,7 @@ export function useWorkbenchController(
     gitDiffLoading,
     gitDiffPreview,
     gitCommitMessage,
+    gitAmendEnabled,
     includedGitChangePaths,
     gitLoading,
     gitOperationLoading,
@@ -7950,6 +7955,7 @@ export function useWorkbenchController(
     setClassOpenOpen,
     setWorkspaceSymbolsOpen,
     setWorkspaceSymbolsQuery,
+    setGitAmendEnabled,
     setGitCommitMessage,
     setClassOpenQuery,
     setQuickOpenOpen,

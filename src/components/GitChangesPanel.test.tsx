@@ -359,6 +359,75 @@ describe("GitChangesPanel", () => {
     expect(onCommitAndPush).toHaveBeenCalled();
   });
 
+  it("performs a plain commit on the next click after amend resets", async () => {
+    const onAmend = vi.fn();
+    const onCommit = vi.fn();
+    function Parent() {
+      const [amendEnabled, setAmendEnabled] = useState(true);
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          amendEnabled={amendEnabled}
+          commitMessage="next commit"
+          gitOperationLoading={false}
+          includedChangePaths={new Set([gitChangeKey(gitChange("modified", "src/User.php", true))])}
+          isLoading={false}
+          onAmend={() => {
+            onAmend();
+            setAmendEnabled(false);
+          }}
+          onAmendEnabledChange={setAmendEnabled}
+          onCommit={onCommit}
+          onCommitAndPush={vi.fn()}
+          onCommitMessageChange={vi.fn()}
+          onOpenChange={vi.fn()}
+          onPreviewChange={vi.fn()}
+          onRefresh={vi.fn()}
+          onRevertChanges={vi.fn()}
+          onStageChanges={vi.fn()}
+          onToggleChangeIncluded={vi.fn()}
+          onUnstageChanges={vi.fn()}
+          rootPath="/workspace"
+          status={gitStatus([gitChange("modified", "src/User.php", true)])}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    const button = host.querySelector<HTMLButtonElement>(".git-commit-button");
+    expect(button?.textContent).toBe("Amend");
+    expect(button?.disabled).toBe(false);
+    act(() => button?.click());
+    expect(onAmend).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    expect(button?.textContent).toBe("Commit");
+    act(() => button?.click());
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles amend when its visible text is clicked", async () => {
+    const onAmendEnabledChange = vi.fn();
+    await renderPanel({
+      amendEnabled: false,
+      onAmendEnabledChange,
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    const amendText = Array.from(host.querySelectorAll("span")).find(
+      (element) => element.textContent === "Amend",
+    );
+    act(() => {
+      amendText?.click();
+    });
+
+    expect(onAmendEnabledChange).toHaveBeenCalledWith(true);
+  });
+
   it("runs pull and fetch from compact remote actions", async () => {
     const onFetch = vi.fn();
     const onPull = vi.fn();
@@ -812,6 +881,7 @@ describe("GitChangesPanel", () => {
       root.render(
         <GitChangesPanel
           activeChange={props.activeChange ?? null}
+          amendEnabled={props.amendEnabled ?? false}
           commitMessage={props.commitMessage ?? "feat: update"}
           gitOperationLoading={props.gitOperationLoading ?? false}
           includedChangePaths={
@@ -820,6 +890,8 @@ describe("GitChangesPanel", () => {
           }
           isLoading={props.isLoading ?? false}
           onCommit={props.onCommit ?? vi.fn()}
+          onAmend={props.onAmend ?? vi.fn()}
+          onAmendEnabledChange={props.onAmendEnabledChange ?? vi.fn()}
           onCommitAndPush={props.onCommitAndPush ?? vi.fn()}
           onFetch={props.onFetch ?? vi.fn()}
           onCommitMessageChange={props.onCommitMessageChange ?? vi.fn()}

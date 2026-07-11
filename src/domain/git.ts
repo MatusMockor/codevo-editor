@@ -139,6 +139,11 @@ export interface GitBranch {
 }
 
 export interface GitGateway {
+  amend?(
+    rootPath: string,
+    message: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus>;
   blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
     rootPath: string,

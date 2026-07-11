@@ -1530,6 +1530,16 @@ button {
   justify-content: flex-start;
 }
 
+.git-amend-toggle {
+  align-items: center;
+  color: var(--color-text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 5px;
+  height: auto;
+  width: fit-content;
+}
+
 .git-commit-button {
   border: 0;
   border-radius: var(--radius-sm);

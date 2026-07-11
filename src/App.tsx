@@ -1092,11 +1092,14 @@ function App() {
         {workbench.sidebarView === "git" ? (
           <GitChangesPanel
             activeChange={workbench.selectedGitChange}
+            amendEnabled={workbench.gitAmendEnabled}
             commitMessage={workbench.gitCommitMessage}
             gitOperationLoading={workbench.gitOperationLoading}
             includedChangePaths={workbench.includedGitChangePaths}
             isLoading={workbench.gitLoading}
             onCommit={workbench.commitGitChanges}
+            onAmend={workbench.amendGitChanges}
+            onAmendEnabledChange={workbench.setGitAmendEnabled}
             onCommitAndPush={workbench.commitAndPushGitChanges}
             onCommitMessageChange={workbench.setGitCommitMessage}
             onOpenChange={workbench.openGitChange}

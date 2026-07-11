@@ -47,6 +47,22 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitBlameLine[]>;
   }
 
+  async amend(
+    rootPath: string,
+    message: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("amend_git_commit", {
+      changes,
+      message,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
   async detectRepositories(
     rootPath: string,
     maxDepth?: number,

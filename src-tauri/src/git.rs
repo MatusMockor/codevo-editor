@@ -179,6 +179,12 @@ pub struct GitBranch {
 }
 
 pub trait GitRepositoryGateway {
+    fn amend(
+        &self,
+        root: &Path,
+        message: &str,
+        changes: &[GitChangedFile],
+    ) -> io::Result<GitStatus>;
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
     fn file_commit_diff(
         &self,
@@ -280,6 +286,33 @@ impl CommandGitRepositoryGateway {
 }
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
+    fn amend(
+        &self,
+        root: &Path,
+        message: &str,
+        changes: &[GitChangedFile],
+    ) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        if changes.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "At least one file is required for amend.",
+            ));
+        }
+
+        for change in changes {
+            safe_relative_path(&change.relative_path)?;
+            if let Some(old_relative_path) = change.old_relative_path.as_deref() {
+                safe_relative_path(old_relative_path)?;
+            }
+        }
+
+        refuse_amend_of_pushed_head(&root)?;
+        amend_selected_staged_changes(&root, message.trim(), changes)?;
+        self.status(&root)
+    }
+
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>> {
         let root = root.canonicalize()?;
         let relative = safe_relative_path(relative_path)?;
@@ -1871,18 +1904,8 @@ fn commit_selected_staged_changes(
     message: &str,
     changes: &[GitChangedFile],
 ) -> io::Result<()> {
-    let temp_index = TempGitIndex::new(root);
     let has_head = git_output_vec(root, vec!["rev-parse", "--verify", "HEAD"]).is_ok();
-
-    if has_head {
-        run_git_vec_with_env(root, vec!["read-tree", "HEAD"], Some(temp_index.path()))?;
-    }
-
-    for change in changes {
-        apply_staged_change_to_temp_index(root, temp_index.path(), change)?;
-    }
-
-    let tree = git_output_vec_with_env(root, vec!["write-tree"], Some(temp_index.path()))?;
+    let tree = write_selected_staged_tree(root, changes, has_head.then_some("HEAD"))?;
     let tree = tree.trim();
     let commit = if has_head {
         git_output_vec(root, vec!["commit-tree", tree, "-p", "HEAD", "-m", message])?
@@ -1893,6 +1916,67 @@ fn commit_selected_staged_changes(
     run_git_vec(root, vec!["update-ref", "HEAD", commit])?;
 
     Ok(())
+}
+
+fn refuse_amend_of_pushed_head(root: &Path) -> io::Result<()> {
+    if git_output_vec(
+        root,
+        vec!["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
+
+    let ahead = git_output_vec(root, vec!["rev-list", "@{u}..HEAD"])?;
+    if !ahead.trim().is_empty() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "cannot amend a pushed commit",
+    ))
+}
+
+fn amend_selected_staged_changes(
+    root: &Path,
+    message: &str,
+    changes: &[GitChangedFile],
+) -> io::Result<()> {
+    let tree = write_selected_staged_tree(root, changes, Some("HEAD"))?;
+    let parents = git_output_vec(root, vec!["rev-list", "--parents", "-n", "1", "HEAD"])?;
+    let message = if message.is_empty() {
+        git_output_vec(root, vec!["log", "-1", "--format=%B", "HEAD"])?
+    } else {
+        message.to_string()
+    };
+    let mut args = vec!["commit-tree".to_string(), tree.trim().to_string()];
+    for parent in parents.split_whitespace().skip(1) {
+        args.push("-p".to_string());
+        args.push(parent.to_string());
+    }
+    args.push("-m".to_string());
+    args.push(message.trim_end().to_string());
+    let commit = git_output_vec(root, args)?;
+    run_git_vec(root, vec!["update-ref", "HEAD", commit.trim()])
+}
+
+fn write_selected_staged_tree(
+    root: &Path,
+    changes: &[GitChangedFile],
+    base: Option<&str>,
+) -> io::Result<String> {
+    let temp_index = TempGitIndex::new(root);
+    if let Some(base) = base {
+        run_git_vec_with_env(root, vec!["read-tree", base], Some(temp_index.path()))?;
+    }
+
+    for change in changes {
+        apply_staged_change_to_temp_index(root, temp_index.path(), change)?;
+    }
+
+    git_output_vec_with_env(root, vec!["write-tree"], Some(temp_index.path()))
 }
 
 fn apply_staged_change_to_temp_index(
@@ -2793,6 +2877,164 @@ mod tests {
 
         assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
         assert_eq!(repo.read("file.txt"), "three\n");
+    }
+
+    #[test]
+    fn amend_replaces_head_with_selected_tree_message_and_existing_parent() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("base.txt", "base\n");
+        repo.run(["add", "base.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let original_parent = repo.git_output(["rev-parse", "HEAD^"]).trim().to_string();
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+
+        CommandGitRepositoryGateway
+            .amend(
+                repo.path(),
+                "replacement",
+                &[git_changed_file(
+                    "file.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("amend");
+
+        assert_ne!(repo.git_output(["rev-parse", "HEAD"]).trim(), original_head);
+        assert_eq!(
+            repo.git_output(["rev-parse", "HEAD^"]).trim(),
+            original_parent
+        );
+        assert_eq!(
+            repo.git_output(["log", "-1", "--format=%B"]).trim(),
+            "replacement"
+        );
+        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
+    }
+
+    #[test]
+    fn amend_with_empty_message_keeps_head_message() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original message"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+
+        CommandGitRepositoryGateway
+            .amend(
+                repo.path(),
+                "",
+                &[git_changed_file(
+                    "file.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("amend");
+
+        assert_eq!(
+            repo.git_output(["log", "-1", "--format=%B"]).trim(),
+            "original message"
+        );
+    }
+
+    #[test]
+    fn amend_root_commit_keeps_it_parentless() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "root"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+
+        CommandGitRepositoryGateway
+            .amend(
+                repo.path(),
+                "amended root",
+                &[git_changed_file(
+                    "file.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("amend root");
+
+        assert_eq!(
+            repo.git_output(["rev-list", "--parents", "-n", "1", "HEAD"])
+                .split_whitespace()
+                .count(),
+            1
+        );
+        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
+    }
+
+    #[test]
+    fn amend_refuses_head_that_is_present_on_upstream() {
+        let fixture = RemoteGitFixture::new();
+        fs::write(fixture.workspace_a.join("base.txt"), "changed\n").expect("change file");
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "base.txt"]);
+        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
+
+        let error = CommandGitRepositoryGateway
+            .amend(
+                &fixture.workspace_a,
+                "unsafe",
+                &[git_changed_file(
+                    "base.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect_err("pushed amend must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("cannot amend a pushed commit"));
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
+            original_head
+        );
+    }
+
+    #[test]
+    fn amend_allows_head_ahead_of_upstream() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_in(&fixture.workspace_a, "local.txt", "one\n", "local");
+        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
+        fs::write(fixture.workspace_a.join("local.txt"), "two\n").expect("change file");
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "local.txt"]);
+
+        CommandGitRepositoryGateway
+            .amend(
+                &fixture.workspace_a,
+                "amended local",
+                &[git_changed_file(
+                    "local.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("ahead amend");
+
+        assert_ne!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
+            original_head
+        );
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["show", "HEAD:local.txt"]),
+            "two"
+        );
     }
 
     #[test]

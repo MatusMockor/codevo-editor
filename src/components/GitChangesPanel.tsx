@@ -37,6 +37,7 @@ import { requestGitFetch, requestGitPull } from "../application/useGitWorkspace"
 
 interface GitChangesPanelProps {
   activeChange: GitChangedFile | null;
+  amendEnabled?: boolean;
   commitMessage: string;
   gitOperationLoading: boolean;
   includedChangePaths: Set<string>;
@@ -53,6 +54,8 @@ interface GitChangesPanelProps {
   /** Workspace root, used to label the primary repository's section header. */
   workspaceRoot?: string | null;
   onCommit(): void;
+  onAmend?(): void;
+  onAmendEnabledChange?(enabled: boolean): void;
   onCommitAndPush(): void;
   onFetch?(): void;
   onCommitMessageChange(message: string): void;
@@ -137,11 +140,14 @@ function bindRepositoryToggle(
 
 function GitChangesPanelComponent({
   activeChange,
+  amendEnabled = false,
   commitMessage,
   gitOperationLoading,
   includedChangePaths,
   isLoading,
   onCommit,
+  onAmend,
+  onAmendEnabledChange,
   onCommitAndPush,
   onFetch,
   onCommitMessageChange,
@@ -281,14 +287,13 @@ function GitChangesPanelComponent({
           ))}
         </nav>
         <GitCommitFooter
-          canCommit={
-            selectedChanges.length > 0 &&
-            commitMessage.trim().length > 0 &&
-            !gitOperationLoading
-          }
+          amendEnabled={amendEnabled}
+          hasSelectedChanges={selectedChanges.length > 0}
           commitMessage={commitMessage}
           disabled={gitOperationLoading}
           onCommit={onCommit}
+          onAmend={onAmend ?? onCommit}
+          onAmendEnabledChange={onAmendEnabledChange}
           onCommitAndPush={onCommitAndPush}
           onCommitMessageChange={onCommitMessageChange}
         />
@@ -326,11 +331,6 @@ function GitChangesPanelComponent({
     );
   }
 
-  const canCommit =
-    singleSelectedChanges.length > 0 &&
-    commitMessage.trim().length > 0 &&
-    !gitOperationLoading;
-
   return (
     <section aria-label="Commit" className="git-commit-panel">
       <GitCommitHeader
@@ -366,10 +366,13 @@ function GitChangesPanelComponent({
         ))}
       </nav>
       <GitCommitFooter
-        canCommit={canCommit}
+        amendEnabled={amendEnabled}
+        hasSelectedChanges={singleSelectedChanges.length > 0}
         commitMessage={commitMessage}
         disabled={gitOperationLoading}
         onCommit={onCommit}
+        onAmend={onAmend ?? onCommit}
+        onAmendEnabledChange={onAmendEnabledChange}
         onCommitAndPush={onCommitAndPush}
         onCommitMessageChange={onCommitMessageChange}
       />
@@ -380,22 +383,33 @@ function GitChangesPanelComponent({
 export const GitChangesPanel = memo(GitChangesPanelComponent);
 
 interface GitCommitFooterProps {
-  canCommit: boolean;
+  amendEnabled: boolean;
+  hasSelectedChanges: boolean;
   commitMessage: string;
   disabled: boolean;
   onCommit(): void;
+  onAmend(): void;
+  onAmendEnabledChange?(enabled: boolean): void;
   onCommitAndPush(): void;
   onCommitMessageChange(message: string): void;
 }
 
 function GitCommitFooter({
-  canCommit,
+  amendEnabled,
+  hasSelectedChanges,
   commitMessage,
   disabled,
   onCommit,
+  onAmend,
+  onAmendEnabledChange,
   onCommitAndPush,
   onCommitMessageChange,
 }: GitCommitFooterProps) {
+  const canSubmit =
+    hasSelectedChanges &&
+    (amendEnabled || commitMessage.trim().length > 0) &&
+    !disabled;
+
   return (
     <footer className="git-commit-footer">
       <textarea
@@ -406,18 +420,26 @@ function GitCommitFooter({
         placeholder="Commit message"
         value={commitMessage}
       />
+      <ThemedCheckbox
+        checked={amendEnabled}
+        className="git-amend-toggle"
+        disabled={disabled}
+        label="Amend"
+        onChange={() => onAmendEnabledChange?.(!amendEnabled)}
+        text="Amend"
+      />
       <div className="git-commit-actions">
         <button
           className="git-commit-button"
-          disabled={!canCommit}
-          onClick={onCommit}
+          disabled={!canSubmit}
+          onClick={amendEnabled ? onAmend : onCommit}
           type="button"
         >
-          Commit
+          {amendEnabled ? "Amend" : "Commit"}
         </button>
         <button
           className="git-commit-button git-commit-push-button"
-          disabled={!canCommit}
+          disabled={!canSubmit || amendEnabled}
           onClick={onCommitAndPush}
           type="button"
         >
@@ -823,6 +845,7 @@ interface ThemedCheckboxProps {
   className?: string;
   label: string;
   onChange(): void;
+  text?: string;
 }
 
 function ThemedCheckbox({
@@ -831,6 +854,7 @@ function ThemedCheckbox({
   disabled = false,
   label,
   onChange,
+  text,
 }: ThemedCheckboxProps) {
   return (
     <label
@@ -851,6 +875,7 @@ function ThemedCheckbox({
       <span aria-hidden="true" className="git-themed-checkbox-box">
         {checked ? <Check size={10} strokeWidth={3} /> : null}
       </span>
+      {text ? <span>{text}</span> : null}
     </label>
   );
 }

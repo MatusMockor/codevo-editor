@@ -2273,6 +2273,21 @@ async fn commit_git_changes(
 }
 
 #[tauri::command]
+async fn amend_git_commit(
+    root_path: String,
+    message: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .amend(&root, &message, &changes)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
     // `git push` performs network I/O and can block for seconds; it MUST run off
     // the main thread so the WebView stays responsive. Bound to the requested
@@ -5718,8 +5733,8 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_descriptor_workspace_edit, apply_workspace_edit, cached_monospace_font_families,
-        create_git_branch, ensure_local_history_relative_path,
+        amend_git_commit, apply_descriptor_workspace_edit, apply_workspace_edit,
+        cached_monospace_font_families, create_git_branch, ensure_local_history_relative_path,
         ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
@@ -7304,6 +7319,51 @@ mod tests {
     }
 
     #[test]
+    fn amend_git_commit_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-amend-iso-a");
+        let root_b = temp_workspace("git-amend-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("tracked.txt"), "one\n").expect("file a");
+        fs::write(root_b.join("tracked.txt"), "one\n").expect("file b");
+        run_test_git(&root_a, &["add", "tracked.txt"]);
+        run_test_git(&root_b, &["add", "tracked.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "initial a"]);
+        run_test_git(&root_b, &["commit", "-m", "initial b"]);
+        let old_a_head = test_git_output(&root_a, &["rev-parse", "HEAD"]);
+        let old_b_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
+        fs::write(root_a.join("tracked.txt"), "two\n").expect("change a");
+        run_test_git(&root_a, &["add", "tracked.txt"]);
+        let change = crate::git::GitChangedFile {
+            is_staged: true,
+            is_unversioned: false,
+            old_path: None,
+            old_relative_path: None,
+            path: path_string(&root_a.join("tracked.txt")),
+            relative_path: "tracked.txt".to_string(),
+            status: crate::git::GitChangeStatus::Modified,
+        };
+
+        tauri::async_runtime::block_on(amend_git_commit(
+            path_string(&root_a),
+            "amended a".to_string(),
+            vec![change],
+        ))
+        .expect("amend workspace A");
+
+        assert_ne!(test_git_output(&root_a, &["rev-parse", "HEAD"]), old_a_head);
+        assert_eq!(test_git_output(&root_b, &["rev-parse", "HEAD"]), old_b_head);
+        assert_eq!(
+            test_git_output(&root_a, &["show", "HEAD:tracked.txt"]),
+            "two"
+        );
+        assert_eq!(
+            test_git_output(&root_b, &["show", "HEAD:tracked.txt"]),
+            "one"
+        );
+    }
+
+    #[test]
     fn fetch_and_pull_stay_isolated_per_workspace_root_off_thread() {
         let host = temp_workspace("git-remote-commands");
         let remote = host.join("remote.git");
@@ -8344,6 +8404,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            amend_git_commit,
             clear_workspace_index,
             apply_workspace_edit,
             commit_git_changes,
