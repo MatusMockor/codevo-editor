@@ -168,9 +168,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
   });
 
-  it("drops image tabs when switching workspaces", async () => {
-    const readImageFile = vi.fn(async () => ({ base64: "R0lG", byteLength: 3 }));
-    const { getWorkbench } = renderController({
+  it("restores isolated image tabs in order across workspace switches without persisting them", async () => {
+    const readImageFile = vi.fn(async (path: string) => ({
+      base64: path.includes("workspace-a") ? "QUFB" : "QkJC",
+      byteLength: 3,
+    }));
+    const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -186,13 +189,23 @@ describe("useWorkbenchController preview tabs", () => {
       workspaceFiles: { readImageFile },
     });
     await vi.waitFor(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    const firstText = fileEntry("/workspace-a/first.php", "first.php");
+    const imageA = fileEntry("/workspace-a/image.gif", "image.gif");
+    const secondText = fileEntry("/workspace-a/second.php", "second.php");
 
     await act(async () => {
-      await getWorkbench().openPinnedFile(
-        fileEntry("/workspace-a/image.gif", "image.gif"),
-      );
+      await getWorkbench().openPinnedFile(firstText);
+      await getWorkbench().openPinnedFile(imageA);
+      await getWorkbench().openPinnedFile(secondText);
+      getWorkbench().setActivePath(imageA.path);
+      await Promise.resolve();
     });
-    expect(getWorkbench().openTabs).toHaveLength(1);
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+      firstText.path,
+      imageA.path,
+      secondText.path,
+    ]);
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
@@ -202,6 +215,82 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().activeImage).toBeNull();
     expect(getWorkbench().openTabs).toEqual([]);
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({
+        session: expect.objectContaining({
+          activePath: null,
+          openPaths: [firstText.path, secondText.path],
+        }),
+      }),
+    );
+
+    const imageB = fileEntry("/workspace-b/image.gif", "image.gif");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(imageB);
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+      firstText.path,
+      imageA.path,
+      secondText.path,
+    ]);
+    expect(getWorkbench().activePath).toBe(imageA.path);
+    expect(getWorkbench().activeImage).toEqual({
+      path: imageA.path,
+      name: imageA.name,
+      byteLength: 3,
+      dataUrl: "data:image/gif;base64,QUFB",
+    });
+    expect(readImageFile).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([imageB.path]);
+    expect(getWorkbench().activeImage?.path).toBe(imageB.path);
+  });
+
+  it("frees cached image tabs when their workspace is closed", async () => {
+    const readImageFile = vi.fn(async () => ({ base64: "R0lG", byteLength: 3 }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      workspaceFiles: { readImageFile },
+    });
+    await vi.waitFor(() => expect(getWorkbench().workspaceRoot).toBe("/workspace"));
+    const image = fileEntry("/workspace/image.gif", "image.gif");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(image);
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().openTabs).toEqual([]);
+    expect(getWorkbench().activeImage).toBeNull();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(image);
+    });
+
+    expect(readImageFile).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a double-click pin from being overwritten by a stale preview read", async () => {

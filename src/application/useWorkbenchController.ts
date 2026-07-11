@@ -418,6 +418,7 @@ interface CachedWorkspaceWorkbenchState {
   documents: Record<string, EditorDocument>;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
+  imageTabs: Record<string, ImageTab>;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
@@ -1557,14 +1558,20 @@ export function useWorkbenchController(
         ),
       );
       const cacheableOpenPaths = openPaths.filter(
-        (path) => isPersistableEditorDocumentPath(path) && Boolean(documents[path]),
+        (path) =>
+          (isPersistableEditorDocumentPath(path) && Boolean(documents[path])) ||
+          Boolean(imageTabs[path]),
       );
       const cacheablePreviewPath =
-        previewPath && isPersistableEditorDocumentPath(previewPath) && documents[previewPath]
+        previewPath &&
+        ((isPersistableEditorDocumentPath(previewPath) && documents[previewPath]) ||
+          imageTabs[previewPath])
           ? previewPath
           : null;
       const cacheableActivePath =
-        activePath && isPersistableEditorDocumentPath(activePath) && documents[activePath]
+        activePath &&
+        ((isPersistableEditorDocumentPath(activePath) && documents[activePath]) ||
+          imageTabs[activePath])
           ? activePath
           : null;
 
@@ -1576,6 +1583,7 @@ export function useWorkbenchController(
         documents: cacheableDocuments,
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
+        imageTabs,
         indexHealthLogs,
         indexProgress,
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
@@ -1597,6 +1605,7 @@ export function useWorkbenchController(
       entriesByDirectory,
       manuallyCollapsedDirectories,
       expandedDirectories,
+      imageTabs,
       indexHealthLogs,
       indexProgress,
       navigationHistory,
@@ -1652,16 +1661,18 @@ export function useWorkbenchController(
           isPersistableEditorDocumentPath(path),
         ),
       );
+      const restoredImageTabs = cached.imageTabs;
       const restoredOpenPaths = cached.openPaths.filter(
-        isPersistableEditorDocumentPath,
+        (path) => Boolean(restoredDocuments[path] || restoredImageTabs[path]),
       );
       const restoredPreviewPath =
         cached.previewPath &&
-        isPersistableEditorDocumentPath(cached.previewPath)
+        (restoredDocuments[cached.previewPath] || restoredImageTabs[cached.previewPath])
           ? cached.previewPath
           : null;
       const cacheableActivePath =
-        cached.activePath && isPersistableEditorDocumentPath(cached.activePath)
+        cached.activePath &&
+        (restoredDocuments[cached.activePath] || restoredImageTabs[cached.activePath])
           ? cached.activePath
           : null;
       const nextActivePath = restoredActivePath(
@@ -1677,6 +1688,8 @@ export function useWorkbenchController(
         new Set(cached.manuallyCollapsedDirectories),
       );
       setDocuments(restoredDocuments);
+      imageTabsRef.current = restoredImageTabs;
+      setImageTabs(restoredImageTabs);
       setOpenPaths(restoredOpenPaths);
       setActivePath(nextActivePath);
       setPreviewPath(restoredPreviewPath);
@@ -2927,8 +2940,6 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
 
       if (cachedWorkspaceState) {
-        imageTabsRef.current = {};
-        setImageTabs({});
         restoreCachedWorkspaceState(cachedWorkspaceState);
       } else {
         setEntriesByDirectory({});
