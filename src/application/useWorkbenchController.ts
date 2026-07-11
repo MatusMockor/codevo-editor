@@ -5330,6 +5330,8 @@ export function useWorkbenchController(
     closeGitBranchPanel,
     switchGitBranch,
     createGitBranch,
+    deleteGitBranch,
+    renameGitBranch,
     refreshGitBranches,
   } = useGitBranchPanel({
     gitGateway,
@@ -8546,6 +8548,8 @@ export function useWorkbenchController(
     closeGitBranchPanel,
     switchGitBranch,
     createGitBranch,
+    deleteGitBranch,
+    renameGitBranch,
     refreshGitBranches,
     localHistoryPanelOpen,
     localHistoryRelativePath,

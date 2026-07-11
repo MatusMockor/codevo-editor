@@ -1710,10 +1710,20 @@ function App() {
 
       <GitBranchPanel
         branches={workbench.gitBranchEntries}
+        deleteError={
+          workbench.notices.find((notice) => notice.source === "Git Branch") ??
+          null
+        }
         isLoading={workbench.gitBranchLoading}
         isOpen={workbench.gitBranchPanelOpen}
         onClose={workbench.closeGitBranchPanel}
         onCreate={() => void workbench.createGitBranch()}
+        onDelete={(name, options) =>
+          workbench.deleteGitBranch(name, options)
+        }
+        onRename={(oldName, newName) =>
+          workbench.renameGitBranch(oldName, newName)
+        }
         onSwitch={(name) => void workbench.switchGitBranch(name)}
       />
 

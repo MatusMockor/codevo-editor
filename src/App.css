@@ -5022,26 +5022,131 @@ button.problem-row:focus-visible {
   display: grid;
   width: 100%;
   min-height: 34px;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  border: 0;
+  gap: 4px;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text);
-  cursor: pointer;
-  padding: 5px 8px;
-  text-align: left;
+  padding: 2px 4px;
 }
 
-.git-branch-row:hover:not(:disabled) {
+.git-branch-row:hover {
   background: var(--color-hover);
 }
 
 .git-branch-row.active {
   background: var(--color-accent-soft);
   color: var(--color-text-strong);
+}
+
+.git-branch-switch {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 3px 4px;
+  text-align: left;
+}
+
+.git-branch-switch:disabled {
   cursor: default;
+}
+
+.git-branch-row-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.git-branch-row:hover .git-branch-row-actions,
+.git-branch-row:focus-within .git-branch-row-actions {
+  opacity: 1;
+}
+
+.git-branch-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.git-branch-row-action:hover:not(:disabled) {
+  background: var(--color-panel-soft);
+  color: var(--color-text-strong);
+}
+
+.git-branch-row-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.git-branch-delete:hover:not(:disabled) {
+  color: var(--color-error);
+}
+
+.git-branch-rename-form {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.git-branch-rename-form input {
+  min-width: 0;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-control);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.git-branch-force-confirm {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 2px 4px 4px 30px;
+}
+
+.git-branch-force-delete {
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-error);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.git-branch-force-delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+.git-branch-force-delete:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .git-branch-icon {

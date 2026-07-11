@@ -8,6 +8,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command.env("LC_ALL", "C").env("LANG", "C");
+    command
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
@@ -329,7 +335,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = safe_relative_path(relative_path)?;
         let relative = relative.to_string_lossy().to_string();
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("blame")
@@ -388,7 +394,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = safe_relative_path(relative_path)?;
         let relative = relative.to_string_lossy().to_string();
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("log")
@@ -555,7 +561,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             return Ok(empty_git_status(&root));
         }
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("status")
@@ -645,7 +651,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // `git stash push` exits 0 and prints "No local changes to save" rather
         // than failing; surface that as an error so the UI never reports a
         // phantom stash.
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -677,7 +683,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>> {
         let root = root.canonicalize()?;
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -713,7 +719,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let root = root.canonicalize()?;
         let reference = stash_reference(index);
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -746,7 +752,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // tracking refs leak in). `%(HEAD)` is `*` for the checked-out branch and
         // a space otherwise; fields are joined with the ASCII Unit Separator so a
         // branch name can never be confused with the current-flag column.
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&root)
             .arg("for-each-ref")
@@ -933,7 +939,7 @@ fn is_discovery_skipped_directory(name: &str) -> bool {
 }
 
 fn is_git_repository(root: &Path) -> io::Result<bool> {
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(root)
         .arg("rev-parse")
@@ -948,7 +954,7 @@ fn is_git_repository(root: &Path) -> io::Result<bool> {
 }
 
 pub fn git_available() -> bool {
-    Command::new("git")
+    git_command()
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
@@ -1299,7 +1305,7 @@ pub fn load_commit_diff(
 }
 
 fn current_branch(root: &Path) -> io::Result<Option<String>> {
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(root)
         .arg("branch")
@@ -1678,7 +1684,7 @@ fn safe_branch_name(name: &str) -> io::Result<String> {
         ));
     }
 
-    let valid = Command::new("git")
+    let valid = git_command()
         .arg("check-ref-format")
         .arg("--branch")
         .arg(trimmed)
@@ -1738,7 +1744,7 @@ fn safe_commit_sha(sha: &str) -> io::Result<String> {
 /// (the file did not exist yet, e.g. the parent of its first commit) is not an
 /// error: it yields empty content so the diff renders as a pure addition.
 fn commit_blob_content(root: &Path, revision: &str, relative_path: &str) -> io::Result<String> {
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(root)
         .arg("show")
@@ -1847,7 +1853,7 @@ fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
 }
 
 fn run_git_remote<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
-    let output = Command::new("git")
+    let output = git_command()
         .env("GIT_TERMINAL_PROMPT", "0")
         .arg("-C")
         .arg(root)
@@ -1865,11 +1871,7 @@ fn run_git_remote<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()
 }
 
 fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()?;
+    let output = git_command().arg("-C").arg(root).args(args).output()?;
 
     if output.status.success() {
         return Ok(());
@@ -1895,7 +1897,7 @@ fn git_output_vec_with_env<S: AsRef<str>>(
         .map(|value| value.as_ref().to_owned())
         .collect();
 
-    let mut command = Command::new("git");
+    let mut command = git_command();
     command.arg("-C").arg(root).args(&command_args);
 
     if let Some(index_file) = index_file {
@@ -1925,7 +1927,7 @@ fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> io::Result<()
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = Command::new("git")
+    let mut child = git_command()
         .arg("-C")
         .arg(root)
         .args(args)
@@ -2310,7 +2312,7 @@ fn original_content(root: &Path, change: &GitChangedFile) -> io::Result<String> 
         .old_relative_path
         .as_deref()
         .unwrap_or(change.relative_path.as_str());
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(root)
         .arg("show")
@@ -2384,17 +2386,16 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_git_repositories, load_commit_details, load_commit_diff, load_commit_files,
-        load_commit_log, parse_blame_porcelain, parse_branch_list, parse_diff_hunks,
-        parse_file_history, parse_porcelain_status, parse_stash_list, safe_branch_name,
-        safe_commit_sha, safe_relative_path, safe_stash_index, single_hunk_patch,
+        detect_git_repositories, git_command, load_commit_details, load_commit_diff,
+        load_commit_files, load_commit_log, parse_blame_porcelain, parse_branch_list,
+        parse_diff_hunks, parse_file_history, parse_porcelain_status, parse_stash_list,
+        safe_branch_name, safe_commit_sha, safe_relative_path, safe_stash_index, single_hunk_patch,
         CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitCommitFilters,
         GitRepositoryGateway, DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH,
     };
     use std::{
         fs, io,
         path::{Path, PathBuf},
-        process::Command,
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -4192,6 +4193,29 @@ mod tests {
     }
 
     #[test]
+    fn unmerged_branch_delete_has_stable_english_error() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("file.txt", "feature\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "unmerged feature"]);
+        repo.run(["checkout", "main"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        let error = gateway
+            .delete_branch(repo.path(), "feature", false)
+            .expect_err("unmerged branch delete must fail");
+
+        assert!(
+            error.to_string().contains("not fully merged"),
+            "unexpected git error: {error}"
+        );
+    }
+
+    #[test]
     fn switch_branch_moves_head_when_the_working_tree_is_clean() {
         let repo = branch_repo();
         repo.write("file.txt", "one\n");
@@ -4274,7 +4298,7 @@ mod tests {
         repo.run(["add", "conflict.txt"]);
         repo.run(["commit", "-m", "main"]);
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo.path())
             .args(["merge", "feature"])
@@ -4408,7 +4432,7 @@ mod tests {
         }
 
         fn git_output<const N: usize>(&self, root: &Path, args: [&str; N]) -> String {
-            let output = Command::new("git")
+            let output = git_command()
                 .arg("-C")
                 .arg(root)
                 .args(args)
@@ -4423,7 +4447,7 @@ mod tests {
         }
 
         fn run_git<const N: usize>(root: &Path, args: [&str; N]) {
-            let output = Command::new("git")
+            let output = git_command()
                 .arg("-C")
                 .arg(root)
                 .args(args)
@@ -4437,7 +4461,7 @@ mod tests {
         }
 
         fn run_command<const N: usize>(args: [&str; N]) {
-            let output = Command::new("git").args(args).output().expect("run git");
+            let output = git_command().args(args).output().expect("run git");
             assert!(
                 output.status.success(),
                 "git failed: {}",
@@ -4480,7 +4504,7 @@ mod tests {
         }
 
         fn merge_expecting_conflict(&self, branch: &str) {
-            let output = Command::new("git")
+            let output = git_command()
                 .arg("-C")
                 .arg(&self.path)
                 .args(["merge", branch])
@@ -4490,7 +4514,7 @@ mod tests {
         }
 
         fn git_output<const N: usize>(&self, args: [&str; N]) -> String {
-            let output = Command::new("git")
+            let output = git_command()
                 .arg("-C")
                 .arg(&self.path)
                 .args(args)
