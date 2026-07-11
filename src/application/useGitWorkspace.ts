@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -29,6 +30,34 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 const DEFAULT_GIT_REPOSITORY_MAPPINGS: GitRepositoryMapping[] = [
   WORKSPACE_ROOT_MAPPING,
 ];
+
+const FETCH_REQUEST_EVENT = "editor:git-fetch-request";
+const PULL_REQUEST_EVENT = "editor:git-pull-request";
+
+interface RemoteGitGateway extends GitGateway {
+  fetch(rootPath: string): Promise<GitStatus>;
+  pull(rootPath: string): Promise<GitStatus>;
+}
+
+interface GitRemoteRequestDetail {
+  rootPath: string;
+}
+
+export function requestGitFetch(rootPath: string): void {
+  window.dispatchEvent(
+    new CustomEvent<GitRemoteRequestDetail>(FETCH_REQUEST_EVENT, {
+      detail: { rootPath },
+    }),
+  );
+}
+
+export function requestGitPull(rootPath: string): void {
+  window.dispatchEvent(
+    new CustomEvent<GitRemoteRequestDetail>(PULL_REQUEST_EVENT, {
+      detail: { rootPath },
+    }),
+  );
+}
 
 /** A human-readable label for a repository in status-bar messages. */
 function repositoryLabel(mapping: GitRepositoryMapping): string {
@@ -303,6 +332,8 @@ export interface GitWorkspace {
   runGitCommit: (options: { pushAfterCommit: boolean }) => Promise<void>;
   commitGitChanges: () => Promise<void>;
   commitAndPushGitChanges: () => Promise<void>;
+  fetchGitChanges: () => Promise<void>;
+  pullGitChanges: () => Promise<void>;
 }
 
 export function useGitWorkspace(
@@ -358,6 +389,7 @@ export function useGitWorkspace(
   }, [gitRepositoryStatuses, gitStatus.changes]);
 
   const [gitOperationLoading, setGitOperationLoading] = useState(false);
+  const gitOperationInFlightRef = useRef(false);
   const [gitCommitMessage, setGitCommitMessage] = useState("");
   const [includedGitChangePaths, setIncludedGitChangePaths] = useState<
     Set<string>
@@ -809,6 +841,123 @@ export function useGitWorkspace(
     [runGitCommit],
   );
 
+  const runRemoteOperation = useCallback(
+    async (
+      operationName: "Fetch" | "Pull",
+      operation: (gateway: RemoteGitGateway, root: string) => Promise<GitStatus>,
+    ) => {
+      if (!workspaceRoot || gitOperationInFlightRef.current) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const remoteGateway = gitGateway as RemoteGitGateway;
+      const singleRepo = mappings.length === 1;
+      const completed: GitRepositoryStatus[] = [];
+      const failures: RepositoryFailure[] = [];
+      gitOperationInFlightRef.current = true;
+      setGitOperationLoading(true);
+
+      try {
+        for (const mapping of mappings) {
+          const root = mapping.rootRelativePath
+            ? `${workspaceRoot.replace(/[\\/]+$/, "")}/${mapping.rootRelativePath}`
+            : workspaceRoot;
+
+          try {
+            const nextStatus = await operation(remoteGateway, root);
+
+            if (!isActiveRoot(requestedRoot)) {
+              return;
+            }
+
+            completed.push({ mapping, root, status: nextStatus, failed: false });
+          } catch (error) {
+            failures.push({ mapping, error });
+          }
+        }
+
+        if (!isActiveRoot(requestedRoot)) {
+          return;
+        }
+
+        if (completed.length > 0) {
+          publishStatuses(completed);
+        }
+
+        if (singleRepo && failures.length > 0) {
+          reportError("Git", failures[0].error);
+          return;
+        }
+
+        if (singleRepo) {
+          setMessage(operationName === "Fetch" ? "Fetched remote changes" : "Pulled current branch");
+          return;
+        }
+
+        if (failures.length > 0) {
+          setMessage(`${operationName} failed for ${describeFailures(failures)}`);
+          return;
+        }
+
+        const verb = operationName === "Fetch" ? "Fetched" : "Pulled";
+        setMessage(`${verb} ${pluralRepositories(completed.length)}`);
+      } finally {
+        if (isActiveRoot(requestedRoot)) {
+          gitOperationInFlightRef.current = false;
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [
+      gitGateway,
+      isActiveRoot,
+      mappings,
+      publishStatuses,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
+  );
+
+  const fetchGitChanges = useCallback(
+    async () =>
+      runRemoteOperation("Fetch", (gateway, root) => gateway.fetch(root)),
+    [runRemoteOperation],
+  );
+
+  const pullGitChanges = useCallback(
+    async () =>
+      runRemoteOperation("Pull", (gateway, root) => gateway.pull(root)),
+    [runRemoteOperation],
+  );
+
+  useEffect(() => {
+    const handleFetch = (event: Event) => {
+      const request = event as CustomEvent<GitRemoteRequestDetail>;
+      if (!workspaceRootKeysEqual(request.detail.rootPath, workspaceRoot)) {
+        return;
+      }
+
+      void fetchGitChanges();
+    };
+    const handlePull = (event: Event) => {
+      const request = event as CustomEvent<GitRemoteRequestDetail>;
+      if (!workspaceRootKeysEqual(request.detail.rootPath, workspaceRoot)) {
+        return;
+      }
+
+      void pullGitChanges();
+    };
+    window.addEventListener(FETCH_REQUEST_EVENT, handleFetch);
+    window.addEventListener(PULL_REQUEST_EVENT, handlePull);
+
+    return () => {
+      window.removeEventListener(FETCH_REQUEST_EVENT, handleFetch);
+      window.removeEventListener(PULL_REQUEST_EVENT, handlePull);
+    };
+  }, [fetchGitChanges, pullGitChanges, workspaceRoot]);
+
   // Reconcile the included set whenever the status changes: keep every staged
   // change auto-included and drop keys whose change no longer exists. Bails out
   // (returns the same Set) when nothing changed so it never triggers a needless
@@ -854,6 +1003,7 @@ export function useGitWorkspace(
   // inherits another workspace's draft message / selection / in-flight flag.
   useEffect(() => {
     setGitOperationLoading(false);
+    gitOperationInFlightRef.current = false;
     setGitCommitMessage("");
     setIncludedGitChangePaths(new Set());
   }, [workspaceRoot]);
@@ -873,5 +1023,7 @@ export function useGitWorkspace(
     runGitCommit,
     commitGitChanges,
     commitAndPushGitChanges,
+    fetchGitChanges,
+    pullGitChanges,
   };
 }

@@ -3,6 +3,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CloudDownload,
+  Download,
   FileEdit,
   FileMinus,
   FilePlus,
@@ -31,6 +33,7 @@ import {
   type GitRepositoryStatus,
 } from "../domain/gitRepositoryMapping";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
+import { requestGitFetch, requestGitPull } from "../application/useGitWorkspace";
 
 interface GitChangesPanelProps {
   activeChange: GitChangedFile | null;
@@ -51,9 +54,11 @@ interface GitChangesPanelProps {
   workspaceRoot?: string | null;
   onCommit(): void;
   onCommitAndPush(): void;
+  onFetch?(): void;
   onCommitMessageChange(message: string): void;
   onOpenChange(change: GitChangedFile): void;
   onPreviewChange(change: GitChangedFile): void;
+  onPull?(): void;
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
   onStageChanges(changes: GitChangedFile[]): void;
@@ -138,9 +143,11 @@ function GitChangesPanelComponent({
   isLoading,
   onCommit,
   onCommitAndPush,
+  onFetch,
   onCommitMessageChange,
   onOpenChange,
   onPreviewChange,
+  onPull,
   onRefresh,
   onRevertChanges,
   onStageChanges,
@@ -224,6 +231,9 @@ function GitChangesPanelComponent({
     );
   }
 
+  const fetchChanges = onFetch ?? (() => requestGitFetch(rootPath));
+  const pullChanges = onPull ?? (() => requestGitPull(rootPath));
+
   // Multi-repo grouped view (PhpStorm directory mappings): two or more
   // repositories have changes, each under its own header.
   if (sections.length >= 2) {
@@ -247,6 +257,8 @@ function GitChangesPanelComponent({
           disabled={gitOperationLoading}
           hideBranch
           onRefresh={onRefresh}
+          onFetch={fetchChanges}
+          onPull={pullChanges}
           onRevertChanges={onRevertChanges}
           onStageChanges={onStageChanges}
           onUnstageChanges={onUnstageChanges}
@@ -300,6 +312,8 @@ function GitChangesPanelComponent({
           changeCount={0}
           disabled={gitOperationLoading}
           onRefresh={onRefresh}
+          onFetch={fetchChanges}
+          onPull={pullChanges}
           onRevertChanges={() => undefined}
           onStageChanges={() => undefined}
           onUnstageChanges={() => undefined}
@@ -324,6 +338,8 @@ function GitChangesPanelComponent({
         changeCount={singleChanges.length}
         disabled={gitOperationLoading}
         onRefresh={onRefresh}
+        onFetch={fetchChanges}
+        onPull={pullChanges}
         onRevertChanges={onRevertChanges}
         onStageChanges={onStageChanges}
         onUnstageChanges={onUnstageChanges}
@@ -501,6 +517,8 @@ interface GitCommitHeaderProps {
    */
   hideBranch?: boolean;
   selectedChanges: GitChangedFile[];
+  onFetch(): void;
+  onPull(): void;
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
   onStageChanges(changes: GitChangedFile[]): void;
@@ -513,6 +531,8 @@ function GitCommitHeader({
   disabled,
   hideBranch = false,
   onRefresh,
+  onFetch,
+  onPull,
   onRevertChanges,
   onStageChanges,
   onUnstageChanges,
@@ -542,6 +562,24 @@ function GitCommitHeader({
         )}
       </div>
       <div className="git-commit-toolbar" aria-label="Git actions">
+        <button
+          aria-label="Fetch"
+          disabled={disabled}
+          onClick={onFetch}
+          title="Fetch remote changes"
+          type="button"
+        >
+          <CloudDownload aria-hidden="true" size={14} />
+        </button>
+        <button
+          aria-label="Pull"
+          disabled={disabled}
+          onClick={onPull}
+          title="Pull current branch"
+          type="button"
+        >
+          <Download aria-hidden="true" size={14} />
+        </button>
         <button
           disabled={disabled}
           onClick={onRefresh}

@@ -198,6 +198,8 @@ pub trait GitRepositoryGateway {
         changes: &[GitChangedFile],
     ) -> io::Result<GitStatus>;
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff>;
+    fn fetch(&self, root: &Path) -> io::Result<GitStatus>;
+    fn pull(&self, root: &Path) -> io::Result<GitStatus>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
@@ -409,10 +411,24 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         })
     }
 
+    fn fetch(&self, root: &Path) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        run_git_remote(&root, ["fetch", "--prune"])?;
+        self.status(&root)
+    }
+
+    fn pull(&self, root: &Path) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        run_git_remote(&root, ["pull", "--ff-only"])?;
+        self.status(&root)
+    }
+
     fn push(&self, root: &Path) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
 
-        run_git(&root, ["push"])?;
+        run_git_remote(&root, ["push"])?;
         self.status(&root)
     }
 
@@ -1650,6 +1666,24 @@ fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
     run_git_vec(root, args.to_vec())
 }
 
+fn run_git_remote<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
+    let output = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-C")
+        .arg(root)
+        .args(args.to_vec())
+        .output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
+}
+
 fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
     let output = Command::new("git")
         .arg("-C")
@@ -2145,6 +2179,66 @@ mod tests {
         let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
 
         assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn fetch_and_pull_update_only_the_requested_workspace() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_and_push("remote.txt", "remote\n", "remote update");
+        let gateway = CommandGitRepositoryGateway;
+        let old_b_head = fixture.git_output(&fixture.workspace_b, ["rev-parse", "HEAD"]);
+
+        gateway
+            .fetch(&fixture.workspace_a)
+            .expect("fetch workspace A");
+
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "origin/main"]),
+            fixture.git_output(&fixture.seed, ["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_b, ["rev-parse", "HEAD"]),
+            old_b_head
+        );
+        assert!(!fixture.workspace_b.join("remote.txt").exists());
+
+        gateway
+            .pull(&fixture.workspace_a)
+            .expect("pull workspace A");
+
+        assert_eq!(
+            fs::read_to_string(fixture.workspace_a.join("remote.txt")).expect("workspace A file"),
+            "remote\n"
+        );
+        assert!(!fixture.workspace_b.join("remote.txt").exists());
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_b, ["rev-parse", "HEAD"]),
+            old_b_head
+        );
+    }
+
+    #[test]
+    fn pull_rejects_diverged_history_without_changing_the_workspace() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_in(&fixture.workspace_a, "local.txt", "local\n", "local update");
+        fixture.commit_and_push("remote.txt", "remote\n", "remote update");
+        let before_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
+        let gateway = CommandGitRepositoryGateway;
+
+        let error = gateway
+            .pull(&fixture.workspace_a)
+            .expect_err("diverged pull must fail");
+
+        assert!(error.to_string().to_lowercase().contains("fast-forward"));
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
+            before_head
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.workspace_a.join("local.txt")).expect("local file"),
+            "local\n"
+        );
+        assert!(!fixture.workspace_a.join("remote.txt").exists());
     }
 
     #[test]
@@ -3449,6 +3543,114 @@ mod tests {
 
     struct TestGitRepo {
         path: PathBuf,
+    }
+
+    struct RemoteGitFixture {
+        _host: TestGitRepo,
+        seed: PathBuf,
+        workspace_a: PathBuf,
+        workspace_b: PathBuf,
+    }
+
+    impl RemoteGitFixture {
+        fn new() -> Self {
+            let host = TestGitRepo::new();
+            let remote = host.path().join("remote.git");
+            let seed = host.path().join("seed");
+            let workspace_a = host.path().join("workspace-a");
+            let workspace_b = host.path().join("workspace-b");
+            Self::run_command(["init", "--bare", remote.to_str().expect("remote path")]);
+            Self::run_command(["init", seed.to_str().expect("seed path")]);
+            Self::configure(&seed);
+            fs::write(seed.join("base.txt"), "base\n").expect("base file");
+            Self::run_git(&seed, ["add", "base.txt"]);
+            Self::run_git(&seed, ["commit", "-m", "initial"]);
+            Self::run_git(&seed, ["branch", "-M", "main"]);
+            Self::run_git(
+                &seed,
+                [
+                    "remote",
+                    "add",
+                    "origin",
+                    remote.to_str().expect("remote path"),
+                ],
+            );
+            Self::run_git(&seed, ["push", "-u", "origin", "main"]);
+            Self::run_git(&remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+            Self::run_command([
+                "clone",
+                remote.to_str().expect("remote path"),
+                workspace_a.to_str().expect("workspace A path"),
+            ]);
+            Self::run_command([
+                "clone",
+                remote.to_str().expect("remote path"),
+                workspace_b.to_str().expect("workspace B path"),
+            ]);
+            Self::configure(&workspace_a);
+            Self::configure(&workspace_b);
+
+            Self {
+                _host: host,
+                seed,
+                workspace_a,
+                workspace_b,
+            }
+        }
+
+        fn commit_and_push(&self, path: &str, content: &str, message: &str) {
+            self.commit_in(&self.seed, path, content, message);
+            Self::run_git(&self.seed, ["push"]);
+        }
+
+        fn commit_in(&self, root: &Path, path: &str, content: &str, message: &str) {
+            fs::write(root.join(path), content).expect("fixture file");
+            Self::run_git(root, ["add", path]);
+            Self::run_git(root, ["commit", "-m", message]);
+        }
+
+        fn configure(root: &Path) {
+            Self::run_git(root, ["config", "user.email", "test@example.com"]);
+            Self::run_git(root, ["config", "user.name", "Test User"]);
+        }
+
+        fn git_output<const N: usize>(&self, root: &Path, args: [&str; N]) -> String {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+
+        fn run_git<const N: usize>(root: &Path, args: [&str; N]) {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        fn run_command<const N: usize>(args: [&str; N]) {
+            let output = Command::new("git").args(args).output().expect("run git");
+            assert!(
+                output.status.success(),
+                "git failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     impl TestGitRepo {

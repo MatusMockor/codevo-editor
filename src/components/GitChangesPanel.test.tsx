@@ -359,6 +359,27 @@ describe("GitChangesPanel", () => {
     expect(onCommitAndPush).toHaveBeenCalled();
   });
 
+  it("runs pull and fetch from compact remote actions", async () => {
+    const onFetch = vi.fn();
+    const onPull = vi.fn();
+    await renderPanel({ onFetch, onPull });
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Fetch"]')?.click();
+      host.querySelector<HTMLButtonElement>('button[aria-label="Pull"]')?.click();
+    });
+
+    expect(onFetch).toHaveBeenCalledTimes(1);
+    expect(onPull).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables pull and fetch while a Git operation is running", async () => {
+    await renderPanel({ gitOperationLoading: true });
+
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Fetch"]')?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Pull"]')?.disabled).toBe(true);
+  });
+
   it("does not recompute groups or re-render when the parent re-renders with identical props", async () => {
     const groupSpy = vi.spyOn(gitDomain, "groupGitChanges");
     const stableProps: React.ComponentProps<typeof GitChangesPanel> = {
@@ -800,10 +821,12 @@ describe("GitChangesPanel", () => {
           isLoading={props.isLoading ?? false}
           onCommit={props.onCommit ?? vi.fn()}
           onCommitAndPush={props.onCommitAndPush ?? vi.fn()}
+          onFetch={props.onFetch ?? vi.fn()}
           onCommitMessageChange={props.onCommitMessageChange ?? vi.fn()}
           onToggleChangeIncluded={props.onToggleChangeIncluded ?? vi.fn()}
           onOpenChange={props.onOpenChange ?? vi.fn()}
           onPreviewChange={props.onPreviewChange ?? vi.fn()}
+          onPull={props.onPull ?? vi.fn()}
           onRefresh={props.onRefresh ?? vi.fn()}
           onRevertChanges={props.onRevertChanges ?? vi.fn()}
           onStageChanges={props.onStageChanges ?? vi.fn()}

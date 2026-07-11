@@ -65,12 +65,19 @@ function hunk(index: number): GitDiffHunk {
   };
 }
 
+interface TestGitGateway extends GitGateway {
+  fetch(rootPath: string): Promise<GitStatus>;
+  pull(rootPath: string): Promise<GitStatus>;
+}
+
 /**
  * A GitGateway whose staging/commit surface is overridable per test. Only the
  * methods the hook actually calls are stubbed; the rest are cast away since the
  * hook never touches them (real git is never invoked).
  */
-function createFakeGitGateway(overrides: Partial<GitGateway> = {}): GitGateway {
+function createFakeGitGateway(
+  overrides: Partial<TestGitGateway> = {},
+): TestGitGateway {
   const base = {
     getStatus: vi.fn(async (rootPath: string) => status(rootPath)),
     stageFiles: vi.fn(async (rootPath: string) => status(rootPath)),
@@ -81,8 +88,10 @@ function createFakeGitGateway(overrides: Partial<GitGateway> = {}): GitGateway {
     revertFiles: vi.fn(async (rootPath: string) => status(rootPath)),
     commit: vi.fn(async (rootPath: string) => status(rootPath)),
     push: vi.fn(async (rootPath: string) => status(rootPath)),
+    fetch: vi.fn(async (rootPath: string) => status(rootPath)),
+    pull: vi.fn(async (rootPath: string) => status(rootPath)),
   };
-  return { ...base, ...overrides } as unknown as GitGateway;
+  return { ...base, ...overrides } as unknown as TestGitGateway;
 }
 
 interface Harness {
@@ -480,6 +489,72 @@ describe("useGitWorkspace", () => {
     expect(commit).toHaveBeenCalledWith(ROOT, "shipit", [included]);
     expect(push).toHaveBeenCalledWith(ROOT);
     expect(harness.setMessage).toHaveBeenCalledWith("Pushed current branch");
+    harness.unmount();
+  });
+
+  it("fetches every mapped repository and reports the aggregated outcome", async () => {
+    const fetch = vi.fn(async (rootPath: string) => status(rootPath));
+    const applyRepositoryOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ fetch }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      applyRepositoryOperationStatuses,
+    });
+
+    await act(async () => {
+      await harness.workspace().fetchGitChanges();
+    });
+
+    expect(fetch).toHaveBeenCalledWith(ROOT);
+    expect(fetch).toHaveBeenCalledWith("/workspace/workbench/lcsk/x");
+    expect(harness.setMessage).toHaveBeenCalledWith("Fetched 2 repositories");
+    expect(applyRepositoryOperationStatuses).toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("pulls only the active workspace repositories and reports a single failure", async () => {
+    const pull = vi.fn(async () => {
+      throw new Error("Not possible to fast-forward, aborting.");
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ pull }),
+    });
+
+    await act(async () => {
+      await harness.workspace().pullGitChanges();
+    });
+
+    expect(pull).toHaveBeenCalledWith(ROOT);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Git",
+      expect.objectContaining({ message: "Not possible to fast-forward, aborting." }),
+    );
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("prevents a second pull while the first pull is in flight", async () => {
+    const deferred = createDeferred<GitStatus>();
+    const pull = vi.fn(() => deferred.promise);
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ pull }),
+    });
+
+    let firstPull: Promise<void> | null = null;
+    act(() => {
+      firstPull = harness.workspace().pullGitChanges();
+      void harness.workspace().pullGitChanges();
+    });
+
+    expect(pull).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      deferred.resolve(status(ROOT));
+      await firstPull;
+    });
     harness.unmount();
   });
 

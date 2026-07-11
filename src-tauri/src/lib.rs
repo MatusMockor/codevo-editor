@@ -2287,6 +2287,28 @@ async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
+async fn fetch_git_changes(root_path: String) -> Result<GitStatus, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .fetch(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pull_git_changes(root_path: String) -> Result<GitStatus, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .pull(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_git_stash(root_path: String, message: String) -> Result<(), String> {
     // `git stash push` shells out and rewrites the working tree; keep it off the
     // main thread, bound to the requested repository root (no cross-root leak).
@@ -5706,7 +5728,7 @@ mod tests {
         ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
         ensure_lsp_text_document_content_in_workspace, ensure_lsp_text_document_path_in_workspace,
         ensure_lsp_type_hierarchy_item_in_workspace, ensure_lsp_workspace_edit_paths_in_workspace,
-        ensure_path_in_workspace, enumerate_monospace_font_families,
+        ensure_path_in_workspace, enumerate_monospace_font_families, fetch_git_changes,
         filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_actions_to_workspace,
         filter_lsp_code_lenses_to_workspace, filter_lsp_completion_list_to_workspace,
         filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
@@ -5718,10 +5740,10 @@ mod tests {
         javascript_typescript_did_change_configuration_settings, list_git_branches,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
-        parse_php_syntax, path_from_file_uri, read_directory, read_text_file, save_git_stash,
-        search_files, stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git,
-        stash_pop_git, switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
+        save_git_stash, search_files, stage_git_files, stage_git_hunk, stash_apply_git,
+        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -7074,6 +7096,20 @@ mod tests {
         assert!(status.success(), "git {args:?} failed");
     }
 
+    fn test_git_output(root: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
     #[test]
     fn get_git_status_reports_staged_changes_off_thread() {
         let root = temp_workspace("git-status-off-thread");
@@ -7265,6 +7301,86 @@ mod tests {
                 .all(|change| change.relative_path != "only-in-a.txt"),
             "root B must not see root A's file (no cross-root leakage)"
         );
+    }
+
+    #[test]
+    fn fetch_and_pull_stay_isolated_per_workspace_root_off_thread() {
+        let host = temp_workspace("git-remote-commands");
+        let remote = host.join("remote.git");
+        let seed = host.join("seed");
+        let root_a = host.join("workspace-a");
+        let root_b = host.join("workspace-b");
+        fs::create_dir_all(&seed).expect("seed directory");
+        run_test_git(
+            &host,
+            &["init", "--bare", remote.to_str().expect("remote path")],
+        );
+        init_test_git_repo(&seed);
+        fs::write(seed.join("base.txt"), "base\n").expect("base file");
+        run_test_git(&seed, &["add", "base.txt"]);
+        run_test_git(&seed, &["commit", "-m", "initial"]);
+        run_test_git(&seed, &["branch", "-M", "main"]);
+        run_test_git(
+            &seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("remote path"),
+            ],
+        );
+        run_test_git(&seed, &["push", "-u", "origin", "main"]);
+        run_test_git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        run_test_git(
+            &host,
+            &[
+                "clone",
+                remote.to_str().expect("remote path"),
+                root_a.to_str().expect("workspace A path"),
+            ],
+        );
+        run_test_git(
+            &host,
+            &[
+                "clone",
+                remote.to_str().expect("remote path"),
+                root_b.to_str().expect("workspace B path"),
+            ],
+        );
+        fs::write(seed.join("remote.txt"), "remote\n").expect("remote file");
+        run_test_git(&seed, &["add", "remote.txt"]);
+        run_test_git(&seed, &["commit", "-m", "remote update"]);
+        run_test_git(&seed, &["push"]);
+        let old_b_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
+
+        tauri::async_runtime::block_on(fetch_git_changes(path_string(&root_a)))
+            .expect("fetch workspace A");
+        tauri::async_runtime::block_on(pull_git_changes(path_string(&root_a)))
+            .expect("pull workspace A");
+
+        assert_eq!(
+            fs::read_to_string(root_a.join("remote.txt")).expect("workspace A file"),
+            "remote\n"
+        );
+        assert!(!root_b.join("remote.txt").exists());
+        assert_eq!(test_git_output(&root_b, &["rev-parse", "HEAD"]), old_b_head);
+
+        run_test_git(&root_b, &["config", "user.email", "test@example.com"]);
+        run_test_git(&root_b, &["config", "user.name", "Test User"]);
+        fs::write(root_b.join("local.txt"), "local\n").expect("local file");
+        run_test_git(&root_b, &["add", "local.txt"]);
+        run_test_git(&root_b, &["commit", "-m", "local update"]);
+        let diverged_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
+
+        let error = tauri::async_runtime::block_on(pull_git_changes(path_string(&root_b)))
+            .expect_err("diverged pull must fail");
+
+        assert!(error.to_lowercase().contains("fast-forward"));
+        assert_eq!(
+            test_git_output(&root_b, &["rev-parse", "HEAD"]),
+            diverged_head
+        );
+        assert!(!root_b.join("remote.txt").exists());
     }
 
     #[test]
@@ -8264,6 +8380,7 @@ pub fn run() {
             get_git_file_history,
             get_git_file_hunks,
             get_git_status,
+            fetch_git_changes,
             record_local_history_snapshot,
             get_local_history_versions,
             get_local_history_version_content,
@@ -8285,6 +8402,7 @@ pub fn run() {
             plan_javascript_typescript_language_server,
             plan_php_language_server,
             push_git_changes,
+            pull_git_changes,
             save_git_stash,
             get_git_stash_list,
             get_git_stash_diff,

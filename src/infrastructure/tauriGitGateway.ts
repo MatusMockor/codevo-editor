@@ -247,6 +247,26 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitStatus>;
   }
 
+  async fetch(rootPath: string): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("fetch_git_changes", {
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async pull(rootPath: string): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("pull_git_changes", {
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
   async getRepoStatus(rootPath: string): Promise<GitRepoStatus> {
     if (!this.isRuntimeAvailable()) {
       return {
