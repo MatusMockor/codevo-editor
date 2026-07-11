@@ -38,6 +38,7 @@ export interface NeonProjectConfig {
   serviceNameTypes: Map<string, string>;
   serviceNames: string[];
   services: Map<string, NeonDefinitionLocation>;
+  serviceTypeLocations: Map<string, NeonDefinitionLocation[]>;
   serviceTypes: Map<string, NeonDefinitionLocation>;
 }
 
@@ -176,6 +177,7 @@ export function emptyNeonProjectConfig(): NeonProjectConfig {
     serviceNameTypes: new Map(),
     serviceNames: [],
     services: new Map(),
+    serviceTypeLocations: new Map(),
     serviceTypes: new Map(),
   };
 }
@@ -207,6 +209,7 @@ async function scanNeonProjectConfig<
   const serviceAliases = new Map<string, string>();
   const serviceNameTypes = new Map<string, string>();
   const services = new Map<string, NeonDefinitionLocation>();
+  const serviceTypeLocations = new Map<string, NeonDefinitionLocation[]>();
   const serviceTypes = new Map<string, NeonDefinitionLocation>();
   let generatedServiceStartIndex = 1;
 
@@ -269,10 +272,21 @@ async function scanNeonProjectConfig<
       }
 
       if (serviceType && !serviceTypes.has(serviceType)) {
-        serviceTypes.set(serviceType, {
+        const location = {
+          path,
+          position: editorPositionAtOffset(content, service.offset),
+        };
+
+        serviceTypes.set(serviceType, location);
+      }
+
+      if (serviceType) {
+        const locations = serviceTypeLocations.get(serviceType) ?? [];
+        locations.push({
           path,
           position: editorPositionAtOffset(content, service.offset),
         });
+        serviceTypeLocations.set(serviceType, locations);
       }
     }
 
@@ -335,6 +349,7 @@ async function scanNeonProjectConfig<
       left.localeCompare(right),
     ),
     services,
+    serviceTypeLocations,
     serviceTypes,
   };
 
@@ -618,6 +633,33 @@ export function resolveNeonServiceTypeFromMaps(
 
 export function normalizeNeonServiceType(type: string): string {
   return type.replace(/^\\+/, "");
+}
+
+export function neonServiceDefinitionLocations(
+  config: NeonProjectConfig,
+  className: string,
+): NeonDefinitionLocation[] {
+  const normalizedType = normalizeNeonServiceType(className);
+  const locations = [...(config.serviceTypeLocations.get(normalizedType) ?? [])];
+  const exactLocation =
+    config.services.get(className) ?? config.services.get(normalizedType);
+
+  if (exactLocation) {
+    locations.unshift(exactLocation);
+  }
+
+  const seen = new Set<string>();
+
+  return locations.filter((location) => {
+    const key = `${location.path}:${location.position.lineNumber}:${location.position.column}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 export function neonResolvableServiceType(service: {

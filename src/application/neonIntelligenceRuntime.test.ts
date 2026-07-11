@@ -128,6 +128,7 @@ function emptyConfig() {
     serviceNameTypes: new Map(),
     serviceNames: [],
     services: new Map(),
+    serviceTypeLocations: new Map(),
     serviceTypes: new Map(),
   };
 }

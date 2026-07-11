@@ -107,4 +107,49 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
       "DashboardController",
     );
   });
+
+  it("wires the Nette injection adapter only for the Nette provider", async () => {
+    const source = "<?php class P { public function __construct(Catalog $catalog) {} }";
+    const providePhpNetteInjectionDefinition = vi.fn(async () => true);
+    const adapters = createPhpFrameworkIdentifierNavigationAdapters(
+      makeDeps({
+        activeDocument: { ...activeDocument, content: source },
+        frameworkRuntime: { hasProvider: (id) => id === "nette" },
+        netteDependencies: {
+          activeEditorPositionRef: {
+            current: { column: source.indexOf("Catalog") + 2, lineNumber: 1 },
+          },
+          providePhpNetteInjectionDefinition,
+        },
+      }),
+    );
+
+    expect(adapters.adapters).toHaveLength(1);
+    expect(adapters.contextualAdapters).toHaveLength(1);
+    await expect(
+      adapters.contextualAdapters[0].goToDefinition({
+        kind: "classIdentifier",
+        name: "Catalog",
+      }),
+    ).resolves.toBe(true);
+    expect(providePhpNetteInjectionDefinition).toHaveBeenCalledWith(
+      source,
+      source.indexOf("Catalog") + 1,
+    );
+  });
+
+  it("does not wire Nette injection navigation for a non-Nette provider", () => {
+    const adapters = createPhpFrameworkIdentifierNavigationAdapters(
+      makeDeps({
+        frameworkRuntime: { hasProvider: (id) => id === "laravel" },
+        netteDependencies: {
+          activeEditorPositionRef: { current: { column: 1, lineNumber: 1 } },
+          providePhpNetteInjectionDefinition: vi.fn(async () => true),
+        },
+      }),
+    );
+
+    expect(adapters.adapters).toHaveLength(1);
+    expect(adapters.contextualAdapters).toHaveLength(1);
+  });
 });

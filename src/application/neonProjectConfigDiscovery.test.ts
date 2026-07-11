@@ -3,6 +3,7 @@ import {
   evictOtherRootConfigCacheEntries,
   invalidateNeonConfigCacheForPath,
   loadNeonProjectConfig,
+  neonServiceDefinitionLocations,
   resolveNeonServiceTypeFromMaps,
   type NeonConfigCache,
   type NeonConfigInFlight,
@@ -169,6 +170,43 @@ describe("loadNeonProjectConfig", () => {
     expect(config.parameters.get("dsn")?.path).toBe(`${ROOT}/config/a.neon`);
     expect(config.services.get("logger")?.path).toBe(`${ROOT}/config/a.neon`);
     expect(config.serviceNameTypes.get("logger")).toBe("App\\FirstLogger");
+  });
+
+  it("returns every exact and resolved service-class definition", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/a.neon":
+        "services:\n    App\\Services\\Catalog:\n    - App\\Services\\Catalog\n    catalog:\n        class: App\\Services\\Catalog\n",
+      "config/b.neon":
+        "services:\n    secondCatalog: App\\Services\\Catalog\n",
+    });
+    const config = await loadNeonProjectConfig(
+      makeContext({
+        listDirectory: workspace.listDirectory,
+        readFileContent: workspace.readFileContent,
+      }),
+    );
+
+    expect(
+      neonServiceDefinitionLocations(config, "\\App\\Services\\Catalog"),
+    ).toEqual([
+      {
+        path: `${ROOT}/config/a.neon`,
+        position: { column: 5, lineNumber: 2 },
+      },
+      {
+        path: `${ROOT}/config/a.neon`,
+        position: { column: 7, lineNumber: 3 },
+      },
+      {
+        path: `${ROOT}/config/a.neon`,
+        position: { column: 5, lineNumber: 4 },
+      },
+      {
+        path: `${ROOT}/config/b.neon`,
+        position: { column: 5, lineNumber: 2 },
+      },
+    ]);
+    expect(neonServiceDefinitionLocations(config, "App\\Missing")).toEqual([]);
   });
 
   it("shares in-flight scans for the same root", async () => {
@@ -472,6 +510,7 @@ function emptyConfig() {
     serviceNameTypes: new Map(),
     serviceNames: [],
     services: new Map(),
+    serviceTypeLocations: new Map(),
     serviceTypes: new Map(),
   };
 }

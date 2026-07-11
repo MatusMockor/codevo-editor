@@ -61,6 +61,10 @@ export interface NeonIntelligenceDependencies {
 
 export interface NeonIntelligence {
   invalidateNeonConfigForPath(rootPath: string, path: string): void;
+  providePhpNetteInjectionDefinition(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   provideNeonCompletions(
     source: string,
     position: EditorPosition,

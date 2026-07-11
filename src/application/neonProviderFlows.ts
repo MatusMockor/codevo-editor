@@ -17,6 +17,7 @@ import {
   type NeonConfigCache,
   type NeonConfigInFlight,
 } from "./neonProjectConfigDiscovery";
+import { providePhpNetteInjectionDefinition as providePhpNetteInjectionDefinitionFromProvider } from "./phpNetteInjectionDefinitionProvider";
 
 /**
  * Builds the NEON intelligence API from an accessor to the current dependencies
@@ -70,6 +71,27 @@ export function createNeonIntelligence(
     return provideNeonCompletionsFromProvider(context, source, position);
   };
 
+  const providePhpNetteInjectionDefinition = async (
+    source: string,
+    offset: number,
+  ): Promise<boolean> => {
+    const context = createNeonRequestContext(
+      getDependencies(),
+      configCache,
+      configInFlight,
+    );
+
+    if (!context) {
+      return false;
+    }
+
+    return providePhpNetteInjectionDefinitionFromProvider(
+      context,
+      source,
+      offset,
+    );
+  };
+
   const invalidateNeonConfigForPath = (rootPath: string, path: string): void => {
     invalidateNeonConfigCacheForPath(configCache, configInFlight, rootPath, path);
   };
@@ -78,5 +100,6 @@ export function createNeonIntelligence(
     invalidateNeonConfigForPath,
     provideNeonCompletions,
     provideNeonDefinition,
+    providePhpNetteInjectionDefinition,
   };
 }

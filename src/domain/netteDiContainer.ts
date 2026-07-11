@@ -1,3 +1,6 @@
+import { resolvePhpClassName } from "./phpClassNameResolution";
+import { maskPhpSource } from "./phpSourceMask";
+
 /**
  * Pure, filesystem-free NEON **dependency-injection** semantics for the Nette
  * stack (Phase 2/3 of the Nette+Latte support design, §9). This is the DI layer
@@ -162,6 +165,16 @@ export interface NetteInjectedProperty {
   type: string;
   /** Offset of the identifier name (the char after `$`). */
   offset: number;
+}
+
+export interface NetteInjectionTypeReference {
+  className: string;
+  span: NeonSpan;
+  type: string;
+}
+
+interface RangedNetteInjectedProperty extends NetteInjectedProperty {
+  typeSpan: NeonSpan;
 }
 
 const MAX_INLINE_MAP_DEPTH = 32;
@@ -1720,6 +1733,8 @@ export function neonServiceReferenceCompletionContextAt(
 const INJECT_ATTRIBUTE_PROPERTY =
   /#\[[^\]]*\bInject\b[^\]]*\]\s*(?:public|protected|private)\s+(?:readonly\s+)?((?:\?)?[\\A-Za-z_][\\A-Za-z0-9_|&]*)\s+\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
+const PHP_ATTRIBUTE = /#\[[^\]]*\]/g;
+
 const DOCBLOCK = /\/\*\*[\s\S]*?\*\//g;
 
 const DOCBLOCK_PROPERTY =
@@ -1733,6 +1748,66 @@ const CONSTRUCTOR = /\bfunction\s+__construct\s*\(/g;
 
 const PARAM_TYPE_NAME =
   /^\s*(?:(?:public|protected|private)\s+)?(?:readonly\s+)?(?:(?:public|protected|private)\s+)?((?:\?)?[\\A-Za-z_][\\A-Za-z0-9_|&]*)\s+(?:&\s*)?(?:\.\.\.\s*)?\$([A-Za-z_][A-Za-z0-9_]*)/;
+
+function sourceRanges(
+  source: string,
+  pattern: RegExp,
+  accepts: (text: string) => boolean = () => true,
+): NeonSpan[] {
+  const ranges: NeonSpan[] = [];
+
+  for (const match of source.matchAll(pattern)) {
+    if (!accepts(match[0])) {
+      continue;
+    }
+
+    const start = match.index ?? 0;
+    ranges.push({ start, end: start + match[0].length });
+  }
+
+  return ranges;
+}
+
+function maskPhpSourceKeepingRanges(
+  source: string,
+  ranges: readonly NeonSpan[],
+): string {
+  const prepared = source.split("");
+
+  for (const range of ranges) {
+    for (let index = range.start; index < range.end; index += 1) {
+      if (prepared[index] !== "\n" && prepared[index] !== "\r") {
+        prepared[index] = "_";
+      }
+    }
+  }
+
+  const masked = maskPhpSource(prepared.join(""));
+  const restored = masked.split("");
+
+  for (const range of ranges) {
+    let visible = true;
+
+    for (let index = range.start; index < range.end; index += 1) {
+      const character = source[index] ?? "";
+
+      if (character !== "\n" && character !== "\r" && masked[index] !== "_") {
+        visible = false;
+        break;
+      }
+    }
+
+    if (!visible) {
+      continue;
+    }
+
+    for (let index = range.start; index < range.end; index += 1) {
+      restored[index] = source[index] ?? "";
+    }
+  }
+
+  return restored.join("");
+}
 
 /**
  * Accepts a class-like receiver type: strips a nullable `?`, rejects
@@ -1756,16 +1831,46 @@ function nameOffset(fragment: string, fragmentStart: number, name: string): numb
   return fragmentStart + fragment.lastIndexOf(`$${name}`) + 1;
 }
 
-function collectInjectAttributes(source: string, out: NetteInjectedProperty[]): void {
+function typeSpan(
+  fragment: string,
+  fragmentStart: number,
+  rawType: string,
+  type: string,
+  rawStart = fragment.indexOf(rawType),
+): NeonSpan {
+  const acceptedStart = rawType.indexOf(type);
+  const start = fragmentStart + rawStart + acceptedStart;
+
+  return { start, end: start + type.length };
+}
+
+function collectInjectAttributes(
+  source: string,
+  out: RangedNetteInjectedProperty[],
+): void {
   for (const match of source.matchAll(INJECT_ATTRIBUTE_PROPERTY)) {
-    const type = acceptReceiverType(match[1] ?? "");
+    const rawType = match[1] ?? "";
+    const type = acceptReceiverType(rawType);
     const name = match[2] ?? "";
 
     if (!type || !name) {
       continue;
     }
 
-    out.push({ name, type, offset: nameOffset(match[0], match.index ?? 0, name) });
+    const matchStart = match.index ?? 0;
+
+    out.push({
+      name,
+      type,
+      offset: nameOffset(match[0], matchStart, name),
+      typeSpan: typeSpan(
+        match[0],
+        matchStart,
+        rawType,
+        type,
+        match[0].lastIndexOf(rawType, match[0].lastIndexOf(`$${name}`)),
+      ),
+    });
   }
 }
 
@@ -1775,7 +1880,10 @@ function docblockVarType(block: string): string | null {
   return match ? (match[1] ?? null) : null;
 }
 
-function collectDocblockInjects(source: string, out: NetteInjectedProperty[]): void {
+function collectDocblockInjects(
+  source: string,
+  out: RangedNetteInjectedProperty[],
+): void {
   for (const match of source.matchAll(DOCBLOCK)) {
     const block = match[0];
 
@@ -1790,7 +1898,8 @@ function collectDocblockInjects(source: string, out: NetteInjectedProperty[]): v
       continue;
     }
 
-    const rawType = property[1] ?? docblockVarType(block) ?? "";
+    const propertyType = property[1] ?? null;
+    const rawType = propertyType ?? docblockVarType(block) ?? "";
     const type = acceptReceiverType(rawType);
     const name = property[2] ?? "";
 
@@ -1798,11 +1907,50 @@ function collectDocblockInjects(source: string, out: NetteInjectedProperty[]): v
       continue;
     }
 
-    out.push({ name, type, offset: nameOffset(property[0], afterStart, name) });
+    let injectionTypeSpan: NeonSpan;
+
+    if (propertyType) {
+      injectionTypeSpan = typeSpan(
+        property[0],
+        afterStart,
+        propertyType,
+        type,
+        property[0].lastIndexOf(
+          propertyType,
+          property[0].lastIndexOf(`$${name}`),
+        ),
+      );
+    } else {
+      const variableType = DOCBLOCK_VAR.exec(block);
+
+      if (!variableType) {
+        continue;
+      }
+
+      injectionTypeSpan = typeSpan(
+        block,
+        match.index ?? 0,
+        variableType[1] ?? "",
+        type,
+        (variableType.index ?? 0) +
+          variableType[0].indexOf(variableType[1] ?? ""),
+      );
+    }
+
+    out.push({
+      name,
+      type,
+      offset: nameOffset(property[0], afterStart, name),
+      typeSpan: injectionTypeSpan,
+    });
   }
 }
 
-function collectTypedParams(source: string, openParen: number, out: NetteInjectedProperty[]): void {
+function collectTypedParams(
+  source: string,
+  openParen: number,
+  out: RangedNetteInjectedProperty[],
+): void {
   const close = matchingBracketOffset(source, openParen, "(", ")");
 
   if (close === null) {
@@ -1820,21 +1968,33 @@ function collectTypedParams(source: string, openParen: number, out: NetteInjecte
       continue;
     }
 
-    const type = acceptReceiverType(match[1] ?? "");
+    const rawType = match[1] ?? "";
+    const type = acceptReceiverType(rawType);
     const name = match[2] ?? "";
 
     if (!type || !name) {
       continue;
     }
 
-    out.push({ name, type, offset: nameOffset(match[0], range.start, name) });
+    out.push({
+      name,
+      type,
+      offset: nameOffset(match[0], range.start, name),
+      typeSpan: typeSpan(
+        match[0],
+        range.start,
+        rawType,
+        type,
+        match[0].lastIndexOf(rawType, match[0].lastIndexOf(`$${name}`)),
+      ),
+    });
   }
 }
 
 function collectMethodParams(
   source: string,
   pattern: RegExp,
-  out: NetteInjectedProperty[],
+  out: RangedNetteInjectedProperty[],
 ): void {
   for (const match of source.matchAll(pattern)) {
     const openParen = (match.index ?? 0) + match[0].length - 1;
@@ -1849,16 +2009,26 @@ function collectMethodParams(
  * builtins and union/intersection receivers dropped, deduplicated by offset and
  * returned in document order.
  */
-export function netteInjectedPropertyTypes(phpSource: string): NetteInjectedProperty[] {
-  const collected: NetteInjectedProperty[] = [];
+function rangedNetteInjectedPropertyTypes(
+  phpSource: string,
+): RangedNetteInjectedProperty[] {
+  const collected: RangedNetteInjectedProperty[] = [];
+  const structuralSource = maskPhpSourceKeepingRanges(
+    phpSource,
+    sourceRanges(phpSource, PHP_ATTRIBUTE),
+  );
+  const docblockSource = maskPhpSourceKeepingRanges(
+    phpSource,
+    sourceRanges(phpSource, DOCBLOCK, (block) => /@inject\b/.test(block)),
+  );
 
-  collectInjectAttributes(phpSource, collected);
-  collectDocblockInjects(phpSource, collected);
-  collectMethodParams(phpSource, INJECT_METHOD, collected);
-  collectMethodParams(phpSource, CONSTRUCTOR, collected);
+  collectInjectAttributes(structuralSource, collected);
+  collectDocblockInjects(docblockSource, collected);
+  collectMethodParams(structuralSource, INJECT_METHOD, collected);
+  collectMethodParams(structuralSource, CONSTRUCTOR, collected);
 
   const seen = new Set<number>();
-  const unique: NetteInjectedProperty[] = [];
+  const unique: RangedNetteInjectedProperty[] = [];
 
   for (const entry of collected) {
     if (seen.has(entry.offset)) {
@@ -1866,8 +2036,45 @@ export function netteInjectedPropertyTypes(phpSource: string): NetteInjectedProp
     }
 
     seen.add(entry.offset);
-    unique.push(entry);
+    unique.push({
+      ...entry,
+      name: phpSource.slice(entry.offset, entry.offset + entry.name.length),
+      type: phpSource.slice(entry.typeSpan.start, entry.typeSpan.end),
+    });
   }
 
   return unique.sort((a, b) => a.offset - b.offset);
+}
+
+export function netteInjectedPropertyTypes(
+  phpSource: string,
+): NetteInjectedProperty[] {
+  return rangedNetteInjectedPropertyTypes(phpSource).map(
+    ({ name, offset, type }) => ({ name, offset, type }),
+  );
+}
+
+export function netteInjectionTypeReferenceAt(
+  phpSource: string,
+  offset: number,
+): NetteInjectionTypeReference | null {
+  const injection = rangedNetteInjectedPropertyTypes(phpSource).find(
+    (entry) => entry.typeSpan.start <= offset && offset < entry.typeSpan.end,
+  );
+
+  if (!injection) {
+    return null;
+  }
+
+  const className = resolvePhpClassName(phpSource, injection.type);
+
+  if (!className) {
+    return null;
+  }
+
+  return {
+    className,
+    span: injection.typeSpan,
+    type: injection.type,
+  };
 }

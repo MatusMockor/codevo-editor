@@ -290,6 +290,86 @@ describe("createNeonIntelligence definition", () => {
   });
 });
 
+describe("createNeonIntelligence PHP injection definitions", () => {
+  const phpSource = `<?php
+namespace App\\Presenters;
+use App\\Services\\Catalog;
+class ProductPresenter {
+    public function __construct(private Catalog $catalog) {}
+}`;
+
+  it("opens the matching NEON service definition", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/services.neon":
+        "services:\n    catalog: App\\Services\\Catalog\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: workspace.listDirectory,
+      openTarget,
+      readFileContent: workspace.readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/config/services.neon`,
+      { column: 5, lineNumber: 2 },
+      "Catalog",
+    );
+  });
+
+  it("is gated off outside a Nette workspace", async () => {
+    const openTarget = vi.fn(async () => true);
+    const neon = createNeonIntelligence(() =>
+      makeDeps({ frameworkIntelligence: GENERIC_FRAMEWORK, openTarget }),
+    );
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+      ),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("drops workspace A results after switching to workspace B", async () => {
+    const rootRef = { current: ROOT };
+    const workspace = buildNeonWorkspace({
+      "config/services.neon":
+        "services:\n    catalog: App\\Services\\Catalog\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      currentWorkspaceRootRef: rootRef,
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: async (path) => {
+        const entries = await workspace.listDirectory(path);
+        rootRef.current = "/workspace-b";
+        return entries;
+      },
+      openTarget,
+      readFileContent: workspace.readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+      ),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
 describe("createNeonIntelligence completions", () => {
   it("offers class-name completions in a services value position", async () => {
     const searchClassNames = vi.fn(async () => [

@@ -11,6 +11,7 @@ import {
   neonServiceReferenceCompletionContextAt,
   neonServiceSetupMethodCompletionContextAt,
   neonServicesFromSource,
+  netteInjectionTypeReferenceAt,
   netteInjectedPropertyTypes,
 } from "./netteDiContainer";
 
@@ -774,5 +775,193 @@ class CartSummaryControl extends Nette\\Application\\UI\\Control
         offset: offsetOf(source, "$cartFacade") + 1,
       },
     ]);
+  });
+});
+
+describe("netteInjectionTypeReferenceAt", () => {
+  it.each([
+    "private ProductRepository $products",
+    "ProductRepository $products",
+  ])("detects a constructor parameter type in %s", (parameter) => {
+    const source = `<?php
+namespace App\\Presenters;
+use App\\Model\\ProductRepository;
+class ProductPresenter {
+    public function __construct(${parameter}) {}
+}`;
+
+    expect(
+      netteInjectionTypeReferenceAt(
+        source,
+        source.lastIndexOf("ProductRepository") + 3,
+      ),
+    ).toEqual({
+      className: "App\\Model\\ProductRepository",
+      span: {
+        start: source.lastIndexOf("ProductRepository"),
+        end: source.lastIndexOf("ProductRepository") + "ProductRepository".length,
+      },
+      type: "ProductRepository",
+    });
+  });
+
+  it.each([
+    "#[Inject] public Catalog $catalog;",
+    "/** @inject */ public Catalog $catalog;",
+  ])("detects an injected property type in %s", (property) => {
+    const source = `<?php
+namespace App\\Presenters;
+use App\\Services\\Catalog;
+class ProductPresenter { ${property} }`;
+
+    expect(
+      netteInjectionTypeReferenceAt(source, source.lastIndexOf("Catalog") + 2)
+        ?.className,
+    ).toBe("App\\Services\\Catalog");
+  });
+
+  it("detects an untyped @inject property's @var type", () => {
+    const source = `<?php
+namespace App\\Presenters;
+use App\\Services\\Catalog;
+class ProductPresenter {
+    /**
+     * @inject
+     * @var Catalog
+     */
+    public $catalog;
+}`;
+
+    expect(
+      netteInjectionTypeReferenceAt(source, source.lastIndexOf("Catalog") + 2)
+        ?.className,
+    ).toBe("App\\Services\\Catalog");
+  });
+
+  it("returns null on the injected property name", () => {
+    const source = "<?php class P { #[Inject] public Catalog $catalog; }";
+
+    expect(
+      netteInjectionTypeReferenceAt(source, offsetOf(source, "$catalog") + 2),
+    ).toBeNull();
+  });
+
+  it("resolves a use-statement alias", () => {
+    const source = `<?php
+namespace App\\Presenters;
+use App\\Services\\Catalog as ProductCatalog;
+class P { public function injectCatalog(ProductCatalog $catalog) {} }`;
+
+    expect(
+      netteInjectionTypeReferenceAt(
+        source,
+        source.lastIndexOf("ProductCatalog") + 2,
+      )?.className,
+    ).toBe("App\\Services\\Catalog");
+  });
+
+  it.each([
+    {
+      label: "line comment",
+      source:
+        "<?php class P { // public function __construct(Catalog $catalog) {}\n}",
+    },
+    {
+      label: "string literal",
+      source:
+        "<?php class P { public string $value = 'function __construct(Catalog $catalog)'; }",
+    },
+    {
+      label: "heredoc",
+      source: `<?php class P {
+    public string $value = <<<PHP
+function __construct(Catalog $catalog)
+PHP;
+}`,
+    },
+  ])("ignores injection-like types inside a $label", ({ source }) => {
+    expect(
+      netteInjectionTypeReferenceAt(source, source.indexOf("Catalog") + 2),
+    ).toBeNull();
+  });
+
+  it("excludes the nullable marker from the injection type span", () => {
+    const source =
+      "<?php class P { public function __construct(?Catalog $catalog) {} }";
+    const typeStart = source.indexOf("Catalog");
+
+    expect(netteInjectionTypeReferenceAt(source, typeStart + 2)).toEqual({
+      className: "Catalog",
+      span: { start: typeStart, end: typeStart + "Catalog".length },
+      type: "Catalog",
+    });
+    expect(netteInjectionTypeReferenceAt(source, typeStart - 1)).toBeNull();
+  });
+
+  it.each(["Catalog|Other", "Catalog|null"])(
+    "rejects the union injection type %s",
+    (type) => {
+      const source = `<?php class P { public function __construct(${type} $catalog) {} }`;
+
+      expect(
+        netteInjectionTypeReferenceAt(source, source.indexOf("Catalog") + 2),
+      ).toBeNull();
+    },
+  );
+
+  it("resolves a global injection type without its leading slash", () => {
+    const source =
+      "<?php class P { public function __construct(\\App\\Services\\Catalog $catalog) {} }";
+
+    expect(
+      netteInjectionTypeReferenceAt(source, source.indexOf("Catalog") + 2)
+        ?.className,
+    ).toBe("App\\Services\\Catalog");
+  });
+
+  it.each([
+    {
+      expected: "App\\Services\\Catalog",
+      importedType: "Catalog",
+      useStatement: "use App\\Services\\{Catalog, Other};",
+    },
+    {
+      expected: "App\\Services\\Catalog",
+      importedType: "Cat",
+      useStatement: "use App\\Services\\{Catalog as Cat};",
+    },
+  ])(
+    "resolves $importedType from a grouped use statement",
+    ({ expected, importedType, useStatement }) => {
+      const source = `<?php
+${useStatement}
+class P { public function __construct(${importedType} $catalog) {} }`;
+
+      expect(
+        netteInjectionTypeReferenceAt(
+          source,
+          source.lastIndexOf(importedType) + 1,
+        )?.className,
+      ).toBe(expected);
+    },
+  );
+
+  it("stops an @var injection type span before generic arguments", () => {
+    const source = `<?php
+use App\\Services\\Catalog;
+class P {
+    /** @inject @var Catalog<Other> */
+    public $catalog;
+}`;
+    const typeStart = source.lastIndexOf("Catalog");
+
+    expect(netteInjectionTypeReferenceAt(source, typeStart + 2)).toEqual({
+      className: "App\\Services\\Catalog",
+      span: { start: typeStart, end: typeStart + "Catalog".length },
+      type: "Catalog",
+    });
+    expect(
+      netteInjectionTypeReferenceAt(source, source.indexOf("<Other>") + 1),
+    ).toBeNull();
   });
 });
