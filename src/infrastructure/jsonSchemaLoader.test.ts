@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
+  BUNDLED_JSON_SCHEMAS,
   loadJsonSchemaForDocument,
   type JsonSchemaLoaderDependencies,
 } from "./jsonSchemaLoader";
@@ -42,6 +45,132 @@ function deps(
 }
 
 describe("loadJsonSchemaForDocument", () => {
+  it.each([
+    ["/project/composer.json", "composer.json", "editor://schemas/composer.json"],
+    [
+      "/project/apps/site/package.json",
+      "package.json",
+      "editor://schemas/package.json",
+    ],
+  ])("registers the bundled schema matching %s", async (path, fileMatch, uri) => {
+    const jsonDefaults = fakeJsonDefaults();
+    const schema = { type: "object", properties: { name: { type: "string" } } };
+    const matchingLoad = vi.fn(async () => schema);
+    const otherLoad = vi.fn(async () => ({ type: "object" }));
+    const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
+      ...candidate,
+      load: candidate.fileMatch === fileMatch ? matchingLoad : otherLoad,
+    }));
+
+    await loadJsonSchemaForDocument(
+      monacoWith(jsonDefaults),
+      { path, content: "{}", language: "json" },
+      deps({ bundledSchemas }),
+    );
+
+    expect(matchingLoad).toHaveBeenCalledTimes(1);
+    expect(otherLoad).not.toHaveBeenCalled();
+    expect(jsonDefaults.diagnosticsOptions.schemas).toContainEqual({
+      uri,
+      fileMatch: [fileMatch],
+      schema,
+    });
+  });
+
+  it("does not load a bundled schema for an unrelated JSON document", async () => {
+    const jsonDefaults = fakeJsonDefaults();
+    const load = vi.fn(async () => ({ type: "object" }));
+    const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
+      ...candidate,
+      load,
+    }));
+
+    await loadJsonSchemaForDocument(
+      monacoWith(jsonDefaults),
+      { path: "/project/config.json", content: "{}", language: "json" },
+      deps({ bundledSchemas }),
+    );
+
+    expect(load).not.toHaveBeenCalled();
+    expect(jsonDefaults.setDiagnosticsOptions).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit local $schema ahead of the matching bundled schema", async () => {
+    const jsonDefaults = fakeJsonDefaults();
+    const bundledLoad = vi.fn(async () => ({ type: "object" }));
+    const localSchema = JSON.stringify({
+      type: "object",
+      properties: { localOnly: { type: "boolean" } },
+    });
+
+    await loadJsonSchemaForDocument(
+      monacoWith(jsonDefaults),
+      {
+        path: "/project/package.json",
+        content: JSON.stringify({ $schema: "./local.schema.json" }),
+        language: "json",
+      },
+      deps({
+        readTextFile: vi.fn(async () => localSchema),
+        bundledSchemas: BUNDLED_JSON_SCHEMAS.map((candidate) => ({
+          ...candidate,
+          load: bundledLoad,
+        })),
+      }),
+    );
+
+    expect(bundledLoad).not.toHaveBeenCalled();
+    const schemas = jsonDefaults.diagnosticsOptions.schemas as Array<{
+      uri: string;
+    }>;
+    expect(schemas.some((entry) => entry.uri === "./local.schema.json")).toBe(true);
+    expect(
+      schemas.some((entry) => entry.uri === "editor://schemas/package.json"),
+    ).toBe(false);
+  });
+
+  it("registers each bundled schema once across workspace switches without replacing existing schemas", async () => {
+    const jsonDefaults = fakeJsonDefaults();
+    jsonDefaults.diagnosticsOptions.schemas = [
+      { uri: "editor://schemas/existing.json", schema: { type: "object" } },
+    ];
+    const loads = new Map(
+      BUNDLED_JSON_SCHEMAS.map((candidate) => [
+        candidate.fileMatch,
+        vi.fn(async () => ({ title: candidate.fileMatch })),
+      ]),
+    );
+    const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
+      ...candidate,
+      load: loads.get(candidate.fileMatch)!,
+    }));
+    const monaco = monacoWith(jsonDefaults);
+
+    for (const path of [
+      "/workspace-a/package.json",
+      "/workspace-b/composer.json",
+      "/workspace-c/package.json",
+      "/workspace-d/composer.json",
+    ]) {
+      await loadJsonSchemaForDocument(
+        monaco,
+        { path, content: "{}", language: "json" },
+        deps({ bundledSchemas }),
+      );
+    }
+
+    const schemas = jsonDefaults.diagnosticsOptions.schemas as Array<{
+      uri: string;
+    }>;
+    expect(schemas.map((entry) => entry.uri)).toEqual([
+      "editor://schemas/existing.json",
+      "editor://schemas/package.json",
+      "editor://schemas/composer.json",
+    ]);
+    expect(loads.get("package.json")).toHaveBeenCalledTimes(1);
+    expect(loads.get("composer.json")).toHaveBeenCalledTimes(1);
+  });
+
   it("reads the local $schema file and registers it inline so Monaco never hits the request service", async () => {
     const jsonDefaults = fakeJsonDefaults();
     const readTextFile = vi.fn(async () => SCHEMA_CONTENT);
@@ -216,3 +345,44 @@ describe("loadJsonSchemaForDocument", () => {
     expect(jsonDefaults.setDiagnosticsOptions).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("bundled JSON schema assets", () => {
+  it.each(["composer.schema.json", "package.schema.json"])(
+    "%s contains no remote $ref",
+    (fileName) => {
+      const path = fileURLToPath(
+        new URL(`../assets/schemas/${fileName}`, import.meta.url),
+      );
+      const schema = JSON.parse(readFileSync(path, "utf8"));
+      const remoteRefs: string[] = [];
+
+      collectRemoteRefs(schema, remoteRefs);
+
+      expect(remoteRefs).toEqual([]);
+    },
+  );
+});
+
+function collectRemoteRefs(value: unknown, remoteRefs: string[]): void {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectRemoteRefs(item, remoteRefs);
+    }
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      key === "$ref" &&
+      typeof child === "string" &&
+      /^https?:\/\//.test(child)
+    ) {
+      remoteRefs.push(child);
+    }
+    collectRemoteRefs(child, remoteRefs);
+  }
+}

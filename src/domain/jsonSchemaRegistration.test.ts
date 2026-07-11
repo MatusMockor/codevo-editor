@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBundledJsonSchemaRegistration,
   buildJsonSchemaRegistration,
   buildPlaceholderSchemaRegistration,
   extractLocalSchemaReference,
   isSchemaReferenceRegistered,
   mergeJsonSchemaIntoDiagnosticsOptions,
 } from "./jsonSchemaRegistration";
+
+describe("buildBundledJsonSchemaRegistration", () => {
+  it.each([
+    ["composer", "composer.json"],
+    ["package", "package.json"],
+  ])("registers the %s schema against root and nested filenames", (name, fileName) => {
+    const registration = buildBundledJsonSchemaRegistration({
+      uri: `editor://schemas/${name}.json`,
+      fileMatch: [fileName],
+      schema: { type: "object" },
+    });
+
+    expect(registration.schemas).toEqual([
+      {
+        uri: `editor://schemas/${name}.json`,
+        fileMatch: [fileName],
+        schema: { type: "object" },
+      },
+    ]);
+  });
+});
 
 describe("extractLocalSchemaReference", () => {
   it("returns the absolute local path declared in a JSON document's $schema", () => {

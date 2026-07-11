@@ -61,7 +61,27 @@ interface BuildJsonSchemaRegistrationInput {
   schemaContent: string;
 }
 
+interface BuildBundledJsonSchemaRegistrationInput {
+  uri: string;
+  fileMatch: string[];
+  schema: unknown;
+}
+
 const BOM = "﻿";
+
+export function buildBundledJsonSchemaRegistration(
+  input: BuildBundledJsonSchemaRegistrationInput,
+): JsonSchemaRegistration {
+  return {
+    schemas: [
+      {
+        uri: input.uri,
+        fileMatch: input.fileMatch,
+        schema: input.schema,
+      },
+    ],
+  };
+}
 
 /**
  * Reads a JSON document's `$schema` and returns it only when it points at a

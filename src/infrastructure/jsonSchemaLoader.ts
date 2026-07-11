@@ -1,5 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import {
+  buildBundledJsonSchemaRegistration,
   buildJsonSchemaRegistration,
   buildPlaceholderSchemaRegistration,
   extractLocalSchemaReference,
@@ -34,7 +35,29 @@ export interface JsonSchemaLoaderDependencies {
    * mid-read cannot leak one workspace's schema registration onto another.
    */
   isStale(): boolean;
+  bundledSchemas?: BundledJsonSchema[];
 }
+
+export interface BundledJsonSchema {
+  uri: string;
+  fileMatch: string;
+  load(): Promise<unknown>;
+}
+
+export const BUNDLED_JSON_SCHEMAS: BundledJsonSchema[] = [
+  {
+    uri: "editor://schemas/composer.json",
+    fileMatch: "composer.json",
+    load: async () =>
+      (await import("../assets/schemas/composer.schema.json")).default,
+  },
+  {
+    uri: "editor://schemas/package.json",
+    fileMatch: "package.json",
+    load: async () =>
+      (await import("../assets/schemas/package.schema.json")).default,
+  },
+];
 
 /**
  * Loads the inline JSON Schema declared by a freshly opened JSON document and
@@ -64,13 +87,14 @@ export async function loadJsonSchemaForDocument(
 
   const schemaReference = extractLocalSchemaReference(document.content);
 
-  if (!schemaReference) {
-    return;
-  }
-
   const jsonDefaults = monaco.languages.json?.jsonDefaults;
 
   if (!jsonDefaults) {
+    return;
+  }
+
+  if (!schemaReference) {
+    await loadBundledJsonSchemaForDocument(jsonDefaults, document, deps);
     return;
   }
 
@@ -118,6 +142,69 @@ export async function loadJsonSchemaForDocument(
   jsonDefaults.setDiagnosticsOptions(
     next as Monaco.languages.json.DiagnosticsOptions,
   );
+}
+
+async function loadBundledJsonSchemaForDocument(
+  jsonDefaults: typeof Monaco.languages.json.jsonDefaults,
+  document: JsonSchemaDocument,
+  deps: JsonSchemaLoaderDependencies,
+): Promise<void> {
+  const bundledSchema = (deps.bundledSchemas ?? BUNDLED_JSON_SCHEMAS).find(
+    (candidate) => candidate.fileMatch === fileName(document.path),
+  );
+
+  if (!bundledSchema) {
+    return;
+  }
+
+  const current = jsonDefaults.diagnosticsOptions as JsonDiagnosticsOptionsLike;
+
+  if (current.schemas?.some((entry) => entry.uri === bundledSchema.uri)) {
+    return;
+  }
+
+  const schema = await loadBundledSchema(bundledSchema);
+
+  if (!schema || deps.isStale()) {
+    return;
+  }
+
+  const registration = buildBundledJsonSchemaRegistration({
+    uri: bundledSchema.uri,
+    fileMatch: [bundledSchema.fileMatch],
+    schema,
+  });
+  const latest = jsonDefaults.diagnosticsOptions as JsonDiagnosticsOptionsLike;
+  const next = mergeJsonSchemaIntoDiagnosticsOptions(latest, registration);
+
+  if (next === latest) {
+    return;
+  }
+
+  jsonDefaults.setDiagnosticsOptions(
+    next as Monaco.languages.json.DiagnosticsOptions,
+  );
+}
+
+async function loadBundledSchema(
+  bundledSchema: BundledJsonSchema,
+): Promise<unknown | null> {
+  try {
+    return await bundledSchema.load();
+  } catch {
+    return null;
+  }
+}
+
+function fileName(path: string): string {
+  const normalized = path.split("\\").join("/");
+  const separator = normalized.lastIndexOf("/");
+
+  if (separator < 0) {
+    return normalized;
+  }
+
+  return normalized.slice(separator + 1);
 }
 
 async function readSchemaContent(

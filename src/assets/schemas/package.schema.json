@@ -1,0 +1,171 @@
+{
+  "$id": "editor://schemas/package.json",
+  "title": "package.json",
+  "description": "npm package configuration.",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "description": "The name of the package.", "minLength": 1, "maxLength": 214 },
+    "version": { "type": "string", "description": "A version parsable by node-semver." },
+    "description": { "type": "string", "description": "A description used to help people discover the package." },
+    "keywords": { "type": "array", "description": "Keywords used to help people discover the package.", "items": { "type": "string" } },
+    "homepage": { "type": "string", "description": "The URL to the project homepage." },
+    "bugs": {
+      "description": "The issue tracker URL or support email address.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "The issue tracker URL." },
+            "email": { "type": "string", "description": "The support email address." }
+          }
+        }
+      ]
+    },
+    "license": { "type": "string", "description": "An SPDX license expression or license identifier." },
+    "licenses": { "type": "array", "description": "Deprecated package license declarations.", "items": { "type": "object" } },
+    "author": {
+      "description": "A person involved in creating or maintaining the package.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Person name." },
+            "url": { "type": "string", "description": "Person URL." },
+            "email": { "type": "string", "description": "Person email address." }
+          },
+          "required": ["name"]
+        }
+      ]
+    },
+    "contributors": { "type": "array", "description": "People who contributed to the package.", "items": { "oneOf": [{ "type": "string" }, { "type": "object" }] } },
+    "maintainers": { "type": "array", "description": "People who maintain the package.", "items": { "oneOf": [{ "type": "string" }, { "type": "object" }] } },
+    "funding": { "description": "Funding information for the package.", "oneOf": [{ "type": "string" }, { "type": "object" }, { "type": "array", "items": { "oneOf": [{ "type": "string" }, { "type": "object" }] } }] },
+    "files": { "type": "array", "description": "Files included when publishing the package.", "items": { "type": "string" } },
+    "main": { "type": "string", "description": "The primary CommonJS entry point." },
+    "module": { "type": "string", "description": "The primary ECMAScript module entry point." },
+    "browser": { "description": "Browser-specific entry point or module replacements.", "oneOf": [{ "type": "string" }, { "type": "object" }] },
+    "exports": { "description": "Public package exports and conditional entry points." },
+    "imports": { "type": "object", "description": "Private package import mappings." },
+    "bin": { "description": "Executable command mappings.", "oneOf": [{ "type": "string" }, { "type": "object", "additionalProperties": { "type": "string" } }] },
+    "type": { "type": "string", "description": "How Node.js interprets .js files in this package.", "enum": ["commonjs", "module"], "default": "commonjs" },
+    "types": { "type": "string", "description": "The bundled TypeScript declaration entry point." },
+    "typings": { "type": "string", "description": "Alias for the types declaration entry point." },
+    "typesVersions": { "type": "object", "description": "TypeScript declaration mappings selected by TypeScript version." },
+    "man": { "description": "Manual page files.", "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] },
+    "directories": {
+      "type": "object",
+      "description": "Common package directory locations.",
+      "properties": {
+        "bin": { "type": "string", "description": "Directory containing executable files." },
+        "doc": { "type": "string", "description": "Directory containing documentation." },
+        "example": { "type": "string", "description": "Directory containing examples." },
+        "lib": { "type": "string", "description": "Directory containing the package library." },
+        "man": { "type": "string", "description": "Directory containing manual pages." },
+        "test": { "type": "string", "description": "Directory containing tests." }
+      }
+    },
+    "repository": {
+      "description": "The location where the package source code lives.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "description": "Repository type." },
+            "url": { "type": "string", "description": "Repository URL." },
+            "directory": { "type": "string", "description": "Package directory inside a monorepo." }
+          }
+        }
+      ]
+    },
+    "scripts": { "type": "object", "description": "Lifecycle and user-defined script commands.", "additionalProperties": { "type": "string" } },
+    "config": { "type": "object", "description": "Configuration parameters made available to package scripts." },
+    "dependencies": { "type": "object", "description": "Runtime package dependencies.", "additionalProperties": { "type": "string" } },
+    "devDependencies": { "type": "object", "description": "Development and test dependencies.", "additionalProperties": { "type": "string" } },
+    "optionalDependencies": { "type": "object", "description": "Dependencies whose installation may fail without failing installation.", "additionalProperties": { "type": "string" } },
+    "peerDependencies": { "type": "object", "description": "Dependencies expected to be provided by the package consumer.", "additionalProperties": { "type": "string" } },
+    "peerDependenciesMeta": { "type": "object", "description": "Metadata describing peer dependency usage.", "additionalProperties": { "type": "object", "properties": { "optional": { "type": "boolean", "description": "Whether the peer dependency is optional." } } } },
+    "bundleDependencies": { "description": "Package names bundled when publishing.", "oneOf": [{ "type": "boolean" }, { "type": "array", "items": { "type": "string" } }] },
+    "bundledDependencies": { "description": "Deprecated alias for bundleDependencies.", "oneOf": [{ "type": "boolean" }, { "type": "array", "items": { "type": "string" } }] },
+    "resolutions": { "type": "object", "description": "Yarn selective dependency version resolutions." },
+    "overrides": { "type": "object", "description": "npm selective dependency version overrides." },
+    "packageManager": { "type": "string", "description": "The package manager and version expected for the project." },
+    "engines": { "type": "object", "description": "Runtime and tool version requirements.", "additionalProperties": { "type": "string" } },
+    "volta": { "type": "object", "description": "Tool versions expected when Volta is installed." },
+    "engineStrict": { "type": "boolean", "description": "Whether package engine constraints are strict." },
+    "os": { "type": "array", "description": "Operating systems supported by the package.", "items": { "type": "string" } },
+    "cpu": { "type": "array", "description": "CPU architectures supported by the package.", "items": { "type": "string" } },
+    "devEngines": {
+      "type": "object",
+      "description": "Runtime and package manager requirements for package development.",
+      "properties": {
+        "os": { "description": "Supported development operating systems." },
+        "cpu": { "description": "Supported development CPU architectures." },
+        "libc": { "description": "Supported development C libraries." },
+        "runtime": { "description": "Supported JavaScript runtimes." },
+        "packageManager": { "description": "Supported package managers." }
+      }
+    },
+    "preferGlobal": { "type": "boolean", "description": "Deprecated preference for global installation." },
+    "private": { "type": "boolean", "description": "Prevent the package from being published." },
+    "publishConfig": {
+      "type": "object",
+      "description": "Registry settings applied when publishing.",
+      "properties": {
+        "access": { "type": "string", "description": "Registry access level.", "enum": ["public", "restricted"] },
+        "tag": { "type": "string", "description": "Distribution tag used for publishing." },
+        "registry": { "type": "string", "description": "Registry used for publishing." },
+        "provenance": { "type": "boolean", "description": "Publish provenance attestations." }
+      }
+    },
+    "dist": { "type": "object", "description": "Distribution archive metadata.", "properties": { "shasum": { "type": "string", "description": "Archive checksum." }, "tarball": { "type": "string", "description": "Archive URL." } } },
+    "readme": { "type": "string", "description": "Package readme content." },
+    "esnext": { "description": "An entry point containing untranspiled ECMAScript.", "oneOf": [{ "type": "string" }, { "type": "object" }] },
+    "workspaces": { "description": "Local packages linked as a workspace.", "oneOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "object" }] },
+    "jspm": { "type": "object", "description": "JSPM package configuration." },
+    "eslintConfig": { "type": "object", "description": "Inline ESLint configuration." },
+    "prettier": { "type": "object", "description": "Inline Prettier configuration." },
+    "stylelint": { "type": "object", "description": "Inline Stylelint configuration." },
+    "ava": { "type": "object", "description": "Inline AVA test runner configuration." },
+    "release": { "type": "object", "description": "Inline semantic-release configuration." },
+    "jscpd": { "type": "object", "description": "Inline copy-paste detector configuration." },
+    "nodemonConfig": { "type": "object", "description": "Inline Nodemon configuration." },
+    "pnpm": {
+      "type": "object",
+      "description": "pnpm-specific project configuration.",
+      "properties": {
+        "overrides": { "type": "object", "description": "Dependency overrides." },
+        "packageExtensions": { "type": "object", "description": "Additional package metadata." },
+        "peerDependencyRules": { "type": "object", "description": "Peer dependency resolution rules." },
+        "neverBuiltDependencies": { "type": "array", "description": "Dependencies whose build scripts are skipped.", "items": { "type": "string" } },
+        "onlyBuiltDependencies": { "type": "array", "description": "Dependencies allowed to run install scripts.", "items": { "type": "string" } },
+        "onlyBuiltDependenciesFile": { "type": "string", "description": "File listing dependencies allowed to run install scripts." },
+        "ignoredBuiltDependencies": { "type": "array", "description": "Dependencies whose build scripts are ignored.", "items": { "type": "string" } },
+        "allowedDeprecatedVersions": { "type": "object", "description": "Deprecated versions whose warnings are suppressed." },
+        "patchedDependencies": { "type": "object", "description": "Patch files applied to dependencies." },
+        "allowNonAppliedPatches": { "type": "boolean", "description": "Allow declared patches not to apply." },
+        "allowUnusedPatches": { "type": "boolean", "description": "Allow declared patches to remain unused." },
+        "updateConfig": { "type": "object", "description": "pnpm update behavior." },
+        "configDependencies": { "type": "object", "description": "Dependencies installed before other dependency types." },
+        "auditConfig": { "type": "object", "description": "pnpm audit configuration." },
+        "requiredScripts": { "type": "array", "description": "Scripts required in each project.", "items": { "type": "string" } },
+        "supportedArchitectures": { "type": "object", "description": "Architectures for installing optional dependencies." },
+        "ignoredOptionalDependencies": { "type": "array", "description": "Optional dependencies skipped during installation.", "items": { "type": "string" } },
+        "executionEnv": { "type": "object", "description": "Runtime execution environment settings." }
+      }
+    },
+    "stackblitz": {
+      "type": "object",
+      "description": "StackBlitz project configuration.",
+      "properties": {
+        "installDependencies": { "type": "boolean", "description": "Install dependencies when opening the project." },
+        "startCommand": { "description": "Command run when opening the project.", "oneOf": [{ "type": "string" }, { "type": "boolean" }] },
+        "compileTrigger": { "type": "string", "description": "Controls how editor changes reach the WebContainer filesystem." },
+        "env": { "type": "object", "description": "Default environment variables." }
+      }
+    }
+  },
+  "additionalProperties": true
+}

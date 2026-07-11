@@ -1,0 +1,222 @@
+{
+  "$id": "editor://schemas/composer.json",
+  "title": "composer.json",
+  "description": "Composer package configuration.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Package name, including the vendor-name prefix.",
+      "pattern": "^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$"
+    },
+    "description": { "type": "string", "description": "Short package description." },
+    "license": {
+      "description": "License name or an array of license names.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "type": {
+      "type": "string",
+      "description": "Package type, such as library, composer-plugin, metapackage, or project.",
+      "enum": ["library", "project", "metapackage", "composer-plugin", "php-ext"]
+    },
+    "abandoned": {
+      "description": "Whether the package is abandoned, or the recommended alternative package.",
+      "oneOf": [{ "type": "boolean" }, { "type": "string" }]
+    },
+    "version": { "type": "string", "description": "Package version." },
+    "default-branch": {
+      "type": "boolean",
+      "description": "Whether this version is the default branch. Intended for internal use."
+    },
+    "non-feature-branches": {
+      "type": "array",
+      "description": "Patterns for non-numeric branch names that are not feature branches.",
+      "items": { "type": "string" }
+    },
+    "keywords": {
+      "type": "array",
+      "description": "Keywords describing the package.",
+      "items": { "type": "string" }
+    },
+    "readme": { "type": "string", "description": "Relative path to the readme document." },
+    "time": { "type": "string", "description": "Package release date." },
+    "authors": {
+      "type": "array",
+      "description": "Authors who contributed to the package.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Author name." },
+          "email": { "type": "string", "description": "Author email address." },
+          "homepage": { "type": "string", "description": "Author homepage." },
+          "role": { "type": "string", "description": "Author role." }
+        }
+      }
+    },
+    "homepage": { "type": "string", "description": "Homepage URL for the project." },
+    "support": {
+      "type": "object",
+      "description": "Support channels for the package.",
+      "properties": {
+        "email": { "type": "string", "description": "Email address for support." },
+        "issues": { "type": "string", "description": "URL to the issue tracker." },
+        "forum": { "type": "string", "description": "URL to the forum." },
+        "wiki": { "type": "string", "description": "URL to the wiki." },
+        "irc": { "type": "string", "description": "IRC support channel." },
+        "chat": { "type": "string", "description": "URL to the support chat." },
+        "source": { "type": "string", "description": "URL to browse or download sources." },
+        "docs": { "type": "string", "description": "URL to documentation." },
+        "rss": { "type": "string", "description": "URL to the RSS feed." },
+        "security": { "type": "string", "description": "URL to the vulnerability disclosure policy." }
+      }
+    },
+    "funding": {
+      "type": "array",
+      "description": "Options for funding package development.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "description": "Funding platform type." },
+          "url": { "type": "string", "description": "Funding URL." }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Source installation information.",
+      "properties": {
+        "type": { "type": "string", "description": "Source control type." },
+        "url": { "type": "string", "description": "Source repository URL." },
+        "reference": { "type": "string", "description": "Source reference." },
+        "mirrors": { "type": "array", "description": "Source mirrors.", "items": { "type": "object" } }
+      }
+    },
+    "dist": {
+      "type": "object",
+      "description": "Distribution installation information.",
+      "properties": {
+        "type": { "type": "string", "description": "Distribution archive type." },
+        "url": { "type": "string", "description": "Distribution URL." },
+        "reference": { "type": "string", "description": "Distribution reference." },
+        "shasum": { "type": "string", "description": "Distribution checksum." },
+        "mirrors": { "type": "array", "description": "Distribution mirrors.", "items": { "type": "object" } }
+      }
+    },
+    "_comment": {
+      "description": "A key for storing comments.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "require": { "type": "object", "description": "Packages required at runtime.", "additionalProperties": { "type": "string" } },
+    "require-dev": { "type": "object", "description": "Packages required for development.", "additionalProperties": { "type": "string" } },
+    "replace": { "type": "object", "description": "Packages replaced by this package.", "additionalProperties": { "type": "string" } },
+    "conflict": { "type": "object", "description": "Packages that conflict with this package.", "additionalProperties": { "type": "string" } },
+    "provide": { "type": "object", "description": "Virtual packages provided by this package.", "additionalProperties": { "type": "string" } },
+    "suggest": { "type": "object", "description": "Suggested packages and their descriptions.", "additionalProperties": { "type": "string" } },
+    "repositories": {
+      "description": "Additional repositories where packages can be found.",
+      "oneOf": [
+        { "type": "array", "items": { "oneOf": [{ "type": "object" }, { "type": "boolean" }] } },
+        { "type": "object", "additionalProperties": { "oneOf": [{ "type": "object" }, { "type": "boolean" }] } }
+      ]
+    },
+    "minimum-stability": {
+      "type": "string",
+      "description": "Minimum allowed package stability.",
+      "enum": ["dev", "alpha", "beta", "rc", "RC", "stable"]
+    },
+    "prefer-stable": { "type": "boolean", "description": "Prefer stable packages when possible." },
+    "autoload": {
+      "type": "object",
+      "description": "Rules for package autoloading.",
+      "properties": {
+        "psr-0": { "type": "object", "description": "PSR-0 namespace mappings." },
+        "psr-4": { "type": "object", "description": "PSR-4 namespace mappings." },
+        "classmap": { "type": "array", "description": "Paths included in classmap generation.", "items": { "type": "string" } },
+        "files": { "type": "array", "description": "Files required on every request.", "items": { "type": "string" } },
+        "exclude-from-classmap": { "type": "array", "description": "Paths excluded from classmap generation.", "items": { "type": "string" } }
+      }
+    },
+    "autoload-dev": {
+      "type": "object",
+      "description": "Additional development autoloading rules.",
+      "properties": {
+        "psr-0": { "type": "object", "description": "Development PSR-0 namespace mappings." },
+        "psr-4": { "type": "object", "description": "Development PSR-4 namespace mappings." },
+        "classmap": { "type": "array", "description": "Development classmap paths.", "items": { "type": "string" } },
+        "files": { "type": "array", "description": "Development autoload files.", "items": { "type": "string" } }
+      }
+    },
+    "target-dir": { "type": "string", "description": "Deprecated PSR-0 installation subdirectory." },
+    "include-path": { "type": "array", "description": "Deprecated PHP include paths.", "items": { "type": "string" } },
+    "bin": {
+      "description": "Files treated as package binaries.",
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+    },
+    "archive": {
+      "type": "object",
+      "description": "Options for package archives.",
+      "properties": {
+        "name": { "type": "string", "description": "Archive base name." },
+        "exclude": { "type": "array", "description": "Archive exclusion patterns.", "items": { "type": "string" } }
+      }
+    },
+    "php-ext": { "type": "object", "description": "Settings for PHP extension packages." },
+    "config": {
+      "type": "object",
+      "description": "Composer configuration options.",
+      "properties": {
+        "platform": { "type": "object", "description": "Platform packages and versions to emulate." },
+        "allow-plugins": { "type": "object", "description": "Composer plugins permitted to execute." },
+        "process-timeout": { "type": "integer", "description": "Process timeout in seconds." },
+        "use-include-path": { "type": "boolean", "description": "Include the PHP include path when autoloading." },
+        "preferred-install": { "description": "Preferred package installation method.", "oneOf": [{ "type": "string", "enum": ["source", "dist", "auto"] }, { "type": "object" }] },
+        "audit": { "type": "object", "description": "Security audit and version blocking options." },
+        "vendor-dir": { "type": "string", "description": "Dependency installation directory." },
+        "bin-dir": { "type": "string", "description": "Binary proxy directory." },
+        "cache-dir": { "type": "string", "description": "Composer cache directory." },
+        "data-dir": { "type": "string", "description": "Composer data directory." },
+        "cache-files-dir": { "type": "string", "description": "Package archive cache directory." },
+        "cache-repo-dir": { "type": "string", "description": "Repository metadata cache directory." },
+        "cache-vcs-dir": { "type": "string", "description": "VCS clone cache directory." },
+        "cache-files-ttl": { "type": "integer", "description": "Package archive cache lifetime." },
+        "cache-files-maxsize": { "type": "string", "description": "Maximum package archive cache size." },
+        "cache-read-only": { "type": "boolean", "description": "Disable writes to the Composer cache." },
+        "discard-changes": { "description": "How local dependency changes are handled.", "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["stash"] }] },
+        "autoloader-suffix": { "description": "Suffix for the generated Composer autoloader.", "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "optimize-autoloader": { "type": "boolean", "description": "Always optimize the generated autoloader." },
+        "classmap-authoritative": { "type": "boolean", "description": "Use only the authoritative classmap." },
+        "apcu-autoloader": { "type": "boolean", "description": "Use APCu to cache autoloader lookups." },
+        "github-domains": { "type": "array", "description": "GitHub domains used by Composer.", "items": { "type": "string" } },
+        "gitlab-domains": { "type": "array", "description": "GitLab domains used by Composer.", "items": { "type": "string" } },
+        "forgejo-domains": { "type": "array", "description": "Forgejo domains used by Composer.", "items": { "type": "string" } },
+        "use-github-api": { "type": "boolean", "description": "Use the GitHub API for GitHub repositories." },
+        "archive-format": { "type": "string", "description": "Default archive format." },
+        "archive-dir": { "type": "string", "description": "Default archive output path." },
+        "htaccess-protect": { "type": "boolean", "description": "Create protective .htaccess files." },
+        "sort-packages": { "type": "boolean", "description": "Sort packages after dependency changes." },
+        "lock": { "type": "boolean", "description": "Create and use composer.lock." },
+        "platform-check": { "description": "Runtime platform checking mode.", "enum": ["php-only", true, false] },
+        "bump-after-update": { "description": "Run version bumping after updates.", "enum": ["dev", "no-dev", true, false] },
+        "allow-missing-requirements": { "type": "boolean", "description": "Allow installation with missing locked requirements." },
+        "update-with-minimal-changes": { "type": "boolean", "description": "Minimize transitive dependency changes during updates." }
+      }
+    },
+    "extra": { "description": "Arbitrary data consumed by Composer plugins.", "oneOf": [{ "type": "object" }, { "type": "array" }] },
+    "scripts": {
+      "type": "object",
+      "description": "Script listeners run around Composer events.",
+      "additionalProperties": {
+        "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+      }
+    },
+    "scripts-descriptions": { "type": "object", "description": "Descriptions for custom commands.", "additionalProperties": { "type": "string" } },
+    "scripts-aliases": { "type": "object", "description": "Aliases for custom commands.", "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+  },
+  "additionalProperties": true
+}
