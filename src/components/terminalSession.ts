@@ -8,7 +8,14 @@ import {
 import { terminalFileLinks } from "../domain/terminalFileLinks";
 
 export interface TerminalBufferLine {
+  readonly length: number;
+  getCell(index: number): TerminalBufferCell | undefined;
   translateToString(trimRight?: boolean): string;
+}
+
+export interface TerminalBufferCell {
+  getChars(): string;
+  getWidth(): number;
 }
 
 export interface TerminalLink {
@@ -60,6 +67,44 @@ export interface TerminalResizeObserver {
 export interface TerminalSession {
   dispose(): void;
   fit(): void;
+}
+
+export function terminalLinkRange(
+  bufferLine: TerminalBufferLine,
+  startIndex: number,
+  length: number,
+): { end: number; start: number } {
+  const endIndex = startIndex + length;
+  let cellColumn = 0;
+  let stringOffset = 0;
+  let startColumn: number | undefined;
+
+  for (let index = 0; index < bufferLine.length; index += 1) {
+    if (startColumn === undefined && stringOffset >= startIndex) {
+      startColumn = cellColumn;
+    }
+
+    if (stringOffset >= endIndex) {
+      return { end: cellColumn, start: (startColumn ?? cellColumn) + 1 };
+    }
+
+    const cell = bufferLine.getCell(index);
+
+    if (!cell) {
+      continue;
+    }
+
+    const width = cell.getWidth();
+
+    if (width === 0) {
+      continue;
+    }
+
+    stringOffset += cell.getChars().length || 1;
+    cellColumn += width;
+  }
+
+  return { end: cellColumn, start: (startColumn ?? cellColumn) + 1 };
 }
 
 interface TerminalSessionOptions {
@@ -171,14 +216,22 @@ export function createTerminalSession({
         }
 
         const text = bufferLine.translateToString(true);
-        const links = terminalFileLinks(text).map((link) => ({
-          activate: () => onOpenLink?.(link.path, link.line, link.column),
-          range: {
-            end: { x: link.startIndex + link.length, y: lineNumber },
-            start: { x: link.startIndex + 1, y: lineNumber },
-          },
-          text: text.slice(link.startIndex, link.startIndex + link.length),
-        }));
+        const links = terminalFileLinks(text).map((link) => {
+          const range = terminalLinkRange(
+            bufferLine,
+            link.startIndex,
+            link.length,
+          );
+
+          return {
+            activate: () => onOpenLink?.(link.path, link.line, link.column),
+            range: {
+              end: { x: range.end, y: lineNumber },
+              start: { x: range.start, y: lineNumber },
+            },
+            text: text.slice(link.startIndex, link.startIndex + link.length),
+          };
+        });
 
         callback(links.length > 0 ? links : undefined);
       },

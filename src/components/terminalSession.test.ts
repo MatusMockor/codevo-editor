@@ -1,6 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TerminalGateway, TerminalOutputEvent } from "../domain/terminal";
-import { createTerminalSession } from "./terminalSession";
+import {
+  createTerminalSession,
+  terminalLinkRange,
+  type TerminalBufferLine,
+} from "./terminalSession";
+
+describe("terminalLinkRange", () => {
+  it("maps wide and astral characters inside a string range", () => {
+    const bufferLine = line([
+      ...wideCell("目"),
+      ...wideCell("录"),
+      ...wideCell("😀"),
+      ...cells("/x.ts"),
+    ]);
+
+    expect(terminalLinkRange(bufferLine, 0, 9)).toEqual({
+      end: 11,
+      start: 1,
+    });
+  });
+});
 
 describe("createTerminalSession", () => {
   it("starts a terminal with the fitted size and writes matching output", async () => {
@@ -63,7 +83,10 @@ describe("createTerminalSession", () => {
     const harness = terminalHarness({ onOpenLink });
 
     createTerminalSession(harness.options);
-    const links = harness.provideLinks(4, "FAIL ./tests/x.spec.ts:3:5;");
+    const links = harness.provideLinks(
+      4,
+      cells("FAIL ./tests/x.spec.ts:3:5;"),
+    );
 
     expect(harness.terminal.registerLinkProvider).toHaveBeenCalledTimes(1);
     expect(links).toHaveLength(1);
@@ -77,6 +100,72 @@ describe("createTerminalSession", () => {
 
     expect(onOpenLink).toHaveBeenCalledWith("./tests/x.spec.ts", 3, 5);
   });
+
+  it("maps file links after wide CJK characters to buffer cells", () => {
+    const harness = terminalHarness();
+
+    createTerminalSession(harness.options);
+    const links = harness.provideLinks(2, [
+      ...cells("feat "),
+      ...wideCell("用"),
+      ...wideCell("户"),
+      ...cells(": src/x.ts:1"),
+    ]);
+
+    expect(links[0]?.range).toEqual({
+      end: { x: 21, y: 2 },
+      start: { x: 12, y: 2 },
+    });
+  });
+
+  it("maps file links after an emoji surrogate pair to buffer cells", () => {
+    const harness = terminalHarness();
+
+    createTerminalSession(harness.options);
+    const links = harness.provideLinks(3, [
+      ...wideCell("😀"),
+      ...cells(" src/x.ts:1"),
+    ]);
+
+    expect(links[0]?.range).toEqual({
+      end: { x: 13, y: 3 },
+      start: { x: 4, y: 3 },
+    });
+  });
+
+  it("maps file links after blank width-one cells", () => {
+    const harness = terminalHarness();
+
+    createTerminalSession(harness.options);
+    const links = harness.provideLinks(5, [
+      cell(""),
+      cell(""),
+      ...cells("src/x.ts:1"),
+    ]);
+
+    expect(links[0]?.range).toEqual({
+      end: { x: 12, y: 5 },
+      start: { x: 3, y: 5 },
+    });
+  });
+
+  it.each([
+    ["src/x.ts:1", 1, 10],
+    ["FAIL src/x.ts:1", 6, 15],
+  ])(
+    "keeps ASCII file link ranges unchanged for %s",
+    (text, start, end) => {
+      const harness = terminalHarness();
+
+      createTerminalSession(harness.options);
+      const links = harness.provideLinks(1, cells(text));
+
+      expect(links[0]?.range).toEqual({
+        end: { x: end, y: 1 },
+        start: { x: start, y: 1 },
+      });
+    },
+  );
 
   it("shows a workspace prompt without starting outside a workspace", async () => {
     const harness = terminalHarness({ rootPath: null });
@@ -226,10 +315,8 @@ function terminalHarness(
     resizeDisposable,
     resizeObserver,
     terminal,
-    provideLinks: (lineNumber: number, text: string) => {
-      terminal.buffer.active.getLine.mockReturnValue({
-        translateToString: () => text,
-      });
+    provideLinks: (lineNumber: number, bufferCells: BufferCell[]) => {
+      terminal.buffer.active.getLine.mockReturnValue(line(bufferCells));
       let provided: Array<{
         activate(event: MouseEvent, text: string): void;
         range: {
@@ -244,5 +331,44 @@ function terminalHarness(
       return provided;
     },
     unsubscribeOutput,
+  };
+}
+
+interface BufferCell {
+  getChars(): string;
+  getWidth(): number;
+}
+
+function cell(chars: string, width = 1): BufferCell {
+  return {
+    getChars: () => chars,
+    getWidth: () => width,
+  };
+}
+
+function cells(text: string): BufferCell[] {
+  return [...text].map((character) => cell(character));
+}
+
+function wideCell(chars: string): BufferCell[] {
+  return [cell(chars, 2), cell("", 0)];
+}
+
+function line(bufferCells: BufferCell[]): TerminalBufferLine {
+  return {
+    getCell: (index: number) => bufferCells[index],
+    length: bufferCells.length,
+    translateToString: () =>
+      bufferCells
+        .map((bufferCell) => {
+          const chars = bufferCell.getChars();
+
+          if (chars || bufferCell.getWidth() === 0) {
+            return chars;
+          }
+
+          return " ";
+        })
+        .join(""),
   };
 }
