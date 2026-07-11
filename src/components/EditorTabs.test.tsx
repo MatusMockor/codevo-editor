@@ -4,6 +4,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorDocument } from "../domain/workspace";
+import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import { EditorTabs } from "./EditorTabs";
 
 describe("EditorTabs", () => {
@@ -89,6 +90,33 @@ describe("EditorTabs", () => {
 
     expect(host.querySelector(".editor-tab.changed")).not.toBeNull();
     expect(host.querySelector(".dirty-dot")).not.toBeNull();
+  });
+
+  it("renders a Markdown preview as a clean non-text tab", async () => {
+    const preview: MarkdownPreviewTab = {
+      content: "# Preview",
+      html: "<h1>Preview</h1>",
+      name: "README.md Preview",
+      path: "mockor-markdown-preview:/workspace/README.md",
+      sourcePath: "/workspace/README.md",
+    };
+
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath={preview.path}
+          documents={[preview]}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onPin={vi.fn()}
+          previewPath={null}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("README.md Preview");
+    expect(host.querySelector(".editor-tab.changed")).toBeNull();
+    expect(host.querySelector(".dirty-dot")).toBeNull();
   });
 
   it("activates a tab when its main button is clicked", async () => {

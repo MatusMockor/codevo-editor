@@ -3,6 +3,7 @@ import { memo } from "react";
 import type { KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument, ImageTab } from "../domain/workspace";
+import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import {
   gitStatusLabel,
   gitStatusTitle,
@@ -12,7 +13,7 @@ import { isDirty } from "../domain/workspace";
 import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorTabsProps {
-  documents: Array<EditorDocument | ImageTab>;
+  documents: Array<EditorDocument | ImageTab | MarkdownPreviewTab>;
   fileStatusesByPath?: Record<string, GitChangeStatus>;
   activePath: string | null;
   previewPath: string | null;
@@ -120,8 +121,10 @@ function EditorTabsComponent({
   );
 }
 
-function isEditorDocument(tab: EditorDocument | ImageTab): tab is EditorDocument {
-  return "content" in tab;
+function isEditorDocument(
+  tab: EditorDocument | ImageTab | MarkdownPreviewTab,
+): tab is EditorDocument {
+  return "savedContent" in tab;
 }
 
 export const EditorTabs = memo(EditorTabsComponent);

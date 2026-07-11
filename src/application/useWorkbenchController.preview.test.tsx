@@ -22,6 +22,7 @@ import {
   useWorkbenchController,
   withWorkspaceIdentityLease,
   type PhpCodeActionDescriptor,
+  type WorkbenchControllerOptions,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
 import type {
@@ -90,6 +91,7 @@ import {
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 
 interface ControllerDependencies {
+  controllerOptions: WorkbenchControllerOptions;
   documentSyncGateway: LanguageServerDocumentSyncGateway;
   gitGateway: GitGateway;
   localHistoryGateway: LocalHistoryGateway;
@@ -132,6 +134,7 @@ describe("useWorkbenchController preview tabs", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await flushAsyncTurns();
     await act(async () => {
       root.unmount();
@@ -291,6 +294,207 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(readImageFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("focuses one Markdown preview per source instead of opening a duplicate", async () => {
+    const renderMarkdown = vi.fn(async (content: string) => `<h1>${content}</h1>`);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      markdownPreviewRenderer: renderMarkdown,
+      readTextFile: vi.fn(async () => "README"),
+    });
+    const file = fileEntry("/workspace/README.md", "README.md");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "markdown.openPreview",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+    const previewPath = getWorkbench().activePath;
+
+    await act(async () => {
+      getWorkbench().setActivePath(file.path);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().commands.find(
+        (candidate) => candidate.id === "markdown.openPreview",
+      )?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(previewPath);
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+      file.path,
+      previewPath,
+    ]);
+    expect(getWorkbench().openMarkdownPreviews).toHaveLength(1);
+    expect(renderMarkdown).toHaveBeenCalledOnce();
+  });
+
+  it("debounces live Markdown rendering and cancels it when the preview closes", async () => {
+    vi.useFakeTimers();
+    const renderMarkdown = vi.fn(async (content: string) => `<p>${content}</p>`);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      markdownPreviewRenderer: renderMarkdown,
+      readTextFile: vi.fn(async () => "first"),
+    });
+    const file = fileEntry("/workspace/README.md", "README.md");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      await getWorkbench().openMarkdownPreview();
+    });
+    const previewPath = getWorkbench().activePath as string;
+
+    await act(async () => {
+      getWorkbench().setActivePath(file.path);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      getWorkbench().updateActiveDocument("second");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+    });
+    expect(renderMarkdown).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(renderMarkdown).toHaveBeenLastCalledWith("second");
+    expect(getWorkbench().markdownPreviewTabs[previewPath]?.html).toBe(
+      "<p>second</p>",
+    );
+
+    await act(async () => {
+      getWorkbench().updateActiveDocument("third");
+      getWorkbench().closeDocument(previewPath);
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(renderMarkdown).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("keeps Markdown preview tabs out of text and persisted session pipelines", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      markdownPreviewRenderer: vi.fn(async () => "<h1>README</h1>"),
+      readTextFile: vi.fn(async () => "# README"),
+    });
+    const file = fileEntry("/workspace/README.md", "README.md");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      await getWorkbench().openMarkdownPreview();
+    });
+    await flushAsyncTurns(12);
+    const previewPath = getWorkbench().activePath as string;
+    const saveCommand = getWorkbench().commands.find(
+      (command) => command.id === "editor.save",
+    );
+
+    expect(getWorkbench().activeDocument).toBeNull();
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      file.path,
+    ]);
+    expect(getWorkbench().openTabs).toHaveLength(2);
+    expect(dependencies.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
+    expect(saveCommand?.isEnabled(getWorkbench().commandContext)).toBe(false);
+    expect(getWorkbench().languageServerDiagnosticsByPath[previewPath]).toBeUndefined();
+    expect(getWorkbench().navigationHistory.backStack).not.toContainEqual(
+      expect.objectContaining({ path: previewPath }),
+    );
+    expect(getWorkbench().navigationHistory.forwardStack).not.toContainEqual(
+      expect.objectContaining({ path: previewPath }),
+    );
+    expect(dependencies.languageServerDocumentSyncGateway.didOpen).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining("markdown-preview") }),
+    );
+    expect(
+      [
+        ...vi.mocked(dependencies.languageServerDocumentSyncGateway.didChange).mock.calls,
+        ...vi.mocked(dependencies.languageServerDocumentSyncGateway.didSave).mock.calls,
+      ]
+        .flat()
+        .some((value) => JSON.stringify(value).includes(previewPath)),
+    ).toBe(false);
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        session: expect.objectContaining({
+          activePath: null,
+          openPaths: [file.path],
+        }),
+      }),
+    );
+  });
+
+  it("isolates cached Markdown previews by workspace and drops stale render completion", async () => {
+    const staleRender = createDeferred<string>();
+    const renderMarkdown = vi
+      .fn<(content: string) => Promise<string>>()
+      .mockImplementationOnce(() => staleRender.promise)
+      .mockResolvedValue("<h1>other</h1>");
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      markdownPreviewRenderer: renderMarkdown,
+      readTextFile: vi.fn(async (path) => `# ${path}`),
+      workspaceDetectionGateway: {
+        detectWorkspace: vi.fn(async (rootPath) => ({
+          javaScriptTypeScript: null,
+          php: null,
+          rootPath,
+        })),
+      },
+    });
+    await vi.waitFor(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    const file = fileEntry("/workspace-a/README.md", "README.md");
+    let opening = Promise.resolve();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      opening = getWorkbench().openMarkdownPreview();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    expect(getWorkbench().openMarkdownPreviews).toEqual([]);
+
+    await act(async () => {
+      staleRender.resolve("<h1>stale</h1>");
+      await opening;
+    });
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().openMarkdownPreviews).toEqual([]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+
+    expect(getWorkbench().openMarkdownPreviews).toHaveLength(1);
+    expect(getWorkbench().openMarkdownPreviews[0]?.html).toBe("");
   });
 
   it("keeps a double-click pin from being overwritten by a stale preview read", async () => {
@@ -68354,6 +68558,7 @@ class PostRepository
     appSettings = defaultAppSettings(),
     gitGateway,
     localHistoryGateway,
+    markdownPreviewRenderer,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
     indexProgressGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -68389,6 +68594,7 @@ class PostRepository
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
     localHistoryGateway?: LocalHistoryGateway;
+    markdownPreviewRenderer?: WorkbenchControllerOptions["markdownPreviewRenderer"];
     indexProgressGateway?: IndexProgressGateway;
     javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -68472,6 +68678,7 @@ class PostRepository
       workspaceSettings,
       workspaceTrustGateway,
     });
+    dependencies.controllerOptions.markdownPreviewRenderer = markdownPreviewRenderer;
     const getWorkbench = () => {
       if (!workbench) {
         throw new Error("Workbench controller was not rendered.");
@@ -68750,7 +68957,7 @@ function WorkbenchHarness({
     dependencies.terminalGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
-    { diagnosticsFlushScheduler: microtaskDiagnosticsFlushScheduler },
+    dependencies.controllerOptions,
   );
 
   useEffect(() => {
@@ -68934,6 +69141,9 @@ function createControllerDependencies({
     didOpen: vi.fn(async () => undefined),
     didSave: vi.fn(async () => undefined),
   };
+  const controllerOptions: WorkbenchControllerOptions = {
+    diagnosticsFlushScheduler: microtaskDiagnosticsFlushScheduler,
+  };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
     identity: workspaceIdentityGateway ?? {
       getDescriptor: vi.fn(),
@@ -68990,6 +69200,7 @@ function createControllerDependencies({
   };
 
   return {
+    controllerOptions,
     documentSyncGateway,
     gitGateway: gitGateway ?? {
       blame: vi.fn(async () => []),

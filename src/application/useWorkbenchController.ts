@@ -24,6 +24,7 @@ import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
 import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands";
+import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
@@ -249,6 +250,13 @@ import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import {
+  isMarkdownDocument,
+  markdownPreviewPath,
+  renderMarkdownPreview,
+  type MarkdownPreviewTab,
+} from "../domain/markdownPreview";
+import {
+  matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
 } from "../domain/keymap";
@@ -398,6 +406,7 @@ export interface WorkbenchControllerOptions {
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
+  markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
 
 interface OpenWorkspacePathOptions {
@@ -419,6 +428,7 @@ interface CachedWorkspaceWorkbenchState {
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
   imageTabs: Record<string, ImageTab>;
+  markdownPreviewTabs: Record<string, MarkdownPreviewTab>;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
@@ -489,6 +499,8 @@ export function useWorkbenchController(
   prompter: WorkbenchPrompter,
   options: WorkbenchControllerOptions = {},
 ) {
+  const markdownPreviewRenderer =
+    options.markdownPreviewRenderer ?? renderMarkdownPreview;
   const {
     detection: workspaceDetection,
     fileChanges: workspaceFileChangeGateway,
@@ -664,6 +676,9 @@ export function useWorkbenchController(
     {},
   );
   const [imageTabs, setImageTabs] = useState<Record<string, ImageTab>>({});
+  const [markdownPreviewTabs, setMarkdownPreviewTabs] = useState<
+    Record<string, MarkdownPreviewTab>
+  >({});
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
@@ -882,6 +897,7 @@ export function useWorkbenchController(
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const imageTabsRef = useRef<Record<string, ImageTab>>({});
+  const markdownPreviewTabsRef = useRef<Record<string, MarkdownPreviewTab>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
     ReturnType<typeof setTimeout>[]
@@ -977,6 +993,9 @@ export function useWorkbenchController(
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const activeImage = activePath ? imageTabs[activePath] || null : null;
+  const activeMarkdownPreview = activePath
+    ? markdownPreviewTabs[activePath] || null
+    : null;
   const {
     activeEditorPosition,
     activeEditorPositionRef,
@@ -1034,10 +1053,18 @@ export function useWorkbenchController(
   const openTabs = useMemo(
     () =>
       openDocumentPaths.flatMap((path) => {
-        const tab = documents[path] ?? imageTabs[path];
+        const tab =
+          documents[path] ?? imageTabs[path] ?? markdownPreviewTabs[path];
         return tab ? [tab] : [];
       }),
-    [documents, imageTabs, openDocumentPaths],
+    [documents, imageTabs, markdownPreviewTabs, openDocumentPaths],
+  );
+  const openMarkdownPreviews = useMemo(
+    () =>
+      openDocumentPaths
+        .map((path) => markdownPreviewTabs[path])
+        .filter((preview): preview is MarkdownPreviewTab => Boolean(preview)),
+    [markdownPreviewTabs, openDocumentPaths],
   );
   const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
     (document) =>
@@ -1134,6 +1161,10 @@ export function useWorkbenchController(
   useEffect(() => {
     imageTabsRef.current = imageTabs;
   }, [imageTabs]);
+
+  useEffect(() => {
+    markdownPreviewTabsRef.current = markdownPreviewTabs;
+  }, [markdownPreviewTabs]);
 
   useEffect(() => {
     openPathsRef.current = openPaths;
@@ -1560,18 +1591,21 @@ export function useWorkbenchController(
       const cacheableOpenPaths = openPaths.filter(
         (path) =>
           (isPersistableEditorDocumentPath(path) && Boolean(documents[path])) ||
-          Boolean(imageTabs[path]),
+          Boolean(imageTabs[path]) ||
+          Boolean(markdownPreviewTabs[path]),
       );
       const cacheablePreviewPath =
         previewPath &&
         ((isPersistableEditorDocumentPath(previewPath) && documents[previewPath]) ||
-          imageTabs[previewPath])
+          imageTabs[previewPath] ||
+          markdownPreviewTabs[previewPath])
           ? previewPath
           : null;
       const cacheableActivePath =
         activePath &&
         ((isPersistableEditorDocumentPath(activePath) && documents[activePath]) ||
-          imageTabs[activePath])
+          imageTabs[activePath] ||
+          markdownPreviewTabs[activePath])
           ? activePath
           : null;
 
@@ -1584,6 +1618,7 @@ export function useWorkbenchController(
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
         imageTabs,
+        markdownPreviewTabs,
         indexHealthLogs,
         indexProgress,
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
@@ -1606,6 +1641,7 @@ export function useWorkbenchController(
       manuallyCollapsedDirectories,
       expandedDirectories,
       imageTabs,
+      markdownPreviewTabs,
       indexHealthLogs,
       indexProgress,
       navigationHistory,
@@ -1662,17 +1698,27 @@ export function useWorkbenchController(
         ),
       );
       const restoredImageTabs = cached.imageTabs;
+      const restoredMarkdownPreviewTabs = cached.markdownPreviewTabs ?? {};
       const restoredOpenPaths = cached.openPaths.filter(
-        (path) => Boolean(restoredDocuments[path] || restoredImageTabs[path]),
+        (path) =>
+          Boolean(
+            restoredDocuments[path] ||
+              restoredImageTabs[path] ||
+              restoredMarkdownPreviewTabs[path],
+          ),
       );
       const restoredPreviewPath =
         cached.previewPath &&
-        (restoredDocuments[cached.previewPath] || restoredImageTabs[cached.previewPath])
+        (restoredDocuments[cached.previewPath] ||
+          restoredImageTabs[cached.previewPath] ||
+          restoredMarkdownPreviewTabs[cached.previewPath])
           ? cached.previewPath
           : null;
       const cacheableActivePath =
         cached.activePath &&
-        (restoredDocuments[cached.activePath] || restoredImageTabs[cached.activePath])
+        (restoredDocuments[cached.activePath] ||
+          restoredImageTabs[cached.activePath] ||
+          restoredMarkdownPreviewTabs[cached.activePath])
           ? cached.activePath
           : null;
       const nextActivePath = restoredActivePath(
@@ -1690,6 +1736,8 @@ export function useWorkbenchController(
       setDocuments(restoredDocuments);
       imageTabsRef.current = restoredImageTabs;
       setImageTabs(restoredImageTabs);
+      markdownPreviewTabsRef.current = restoredMarkdownPreviewTabs;
+      setMarkdownPreviewTabs(restoredMarkdownPreviewTabs);
       setOpenPaths(restoredOpenPaths);
       setActivePath(nextActivePath);
       setPreviewPath(restoredPreviewPath);
@@ -2486,6 +2534,8 @@ export function useWorkbenchController(
     setDocuments({});
     imageTabsRef.current = {};
     setImageTabs({});
+    markdownPreviewTabsRef.current = {};
+    setMarkdownPreviewTabs({});
     setOpenPaths([]);
     setActivePath(null);
     setPreviewPath(null);
@@ -2948,6 +2998,8 @@ export function useWorkbenchController(
         setDocuments({});
         imageTabsRef.current = {};
         setImageTabs({});
+        markdownPreviewTabsRef.current = {};
+        setMarkdownPreviewTabs({});
         setOpenPaths([]);
         setActivePath(null);
         setPreviewPath(null);
@@ -4281,11 +4333,15 @@ export function useWorkbenchController(
 
   const closeDocument = useCallback(
     (path: string) => {
-      if (!imageTabsRef.current[path]) {
+      const markdownPreview = markdownPreviewTabsRef.current[path];
+
+      if (!imageTabsRef.current[path] && !markdownPreview) {
         closeTextDocument(path);
         return;
       }
+      const nextMarkdownPreviews = { ...markdownPreviewTabsRef.current };
       const nextImages = { ...imageTabsRef.current };
+      delete nextMarkdownPreviews[path];
       delete nextImages[path];
       const nextOpenPaths = openPathsRef.current.filter((item) => item !== path);
       const nextPreviewPath = previewPathRef.current === path ? null : previewPathRef.current;
@@ -4295,12 +4351,14 @@ export function useWorkbenchController(
           ? nextVisiblePaths[nextVisiblePaths.length - 1] ?? null
           : activePath;
       imageTabsRef.current = nextImages;
+      markdownPreviewTabsRef.current = nextMarkdownPreviews;
       openPathsRef.current = nextOpenPaths;
       previewPathRef.current = nextPreviewPath;
       activeDocumentRef.current = nextActivePath
         ? documentsRef.current[nextActivePath] ?? null
         : null;
       setImageTabs(nextImages);
+      setMarkdownPreviewTabs(nextMarkdownPreviews);
       setOpenPaths(nextOpenPaths);
       setPreviewPath(nextPreviewPath);
       if (activePath === path) {
@@ -4311,7 +4369,11 @@ export function useWorkbenchController(
   );
 
   const closeActiveSurface = useCallback(() => {
-    if (activePath && imageTabsRef.current[activePath]) {
+    if (
+      activePath &&
+      (imageTabsRef.current[activePath] ||
+        markdownPreviewTabsRef.current[activePath])
+    ) {
       closeDocument(activePath);
       return;
     }
@@ -4501,6 +4563,182 @@ export function useWorkbenchController(
       updateLocalPhpDiagnostics,
     ],
   );
+
+  const openMarkdownPreview = useCallback(async (): Promise<void> => {
+    const source = activeDocumentRef.current;
+    const requestedRoot = currentWorkspaceRootRef.current;
+
+    if (!requestedRoot || !isMarkdownDocument(source)) {
+      return;
+    }
+
+    if (!isSessionPathInWorkspace(requestedRoot, source.path)) {
+      return;
+    }
+
+    const path = markdownPreviewPath(source.path);
+    const existing = markdownPreviewTabsRef.current[path];
+
+    if (existing) {
+      setActivePath(path);
+      return;
+    }
+
+    const preview: MarkdownPreviewTab = {
+      content: source.content,
+      html: "",
+      name: `${source.name} Preview`,
+      path,
+      sourcePath: source.path,
+    };
+    const nextMarkdownPreviews = {
+      ...markdownPreviewTabsRef.current,
+      [path]: preview,
+    };
+    const nextOpenPaths = [
+      ...new Set([
+        ...visibleEditorPaths(
+          openPathsRef.current,
+          previewPathRef.current,
+        ),
+        source.path,
+        path,
+      ]),
+    ];
+    markdownPreviewTabsRef.current = nextMarkdownPreviews;
+    openPathsRef.current = nextOpenPaths;
+    previewPathRef.current = null;
+    activeDocumentRef.current = null;
+    setMarkdownPreviewTabs(nextMarkdownPreviews);
+    setOpenPaths(nextOpenPaths);
+    setPreviewPath(null);
+    setActivePath(path);
+
+    try {
+      const html = await markdownPreviewRenderer(source.content);
+
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        )
+      ) {
+        return;
+      }
+
+      const current = markdownPreviewTabsRef.current[path];
+
+      if (!current || current.sourcePath !== source.path) {
+        return;
+      }
+
+      const renderedPreview = { ...current, html };
+      const renderedPreviews = {
+        ...markdownPreviewTabsRef.current,
+        [path]: renderedPreview,
+      };
+      markdownPreviewTabsRef.current = renderedPreviews;
+      setMarkdownPreviewTabs(renderedPreviews);
+    } catch (error) {
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        )
+      ) {
+        return;
+      }
+
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "Markdown Preview",
+        error,
+      );
+    }
+  }, [markdownPreviewRenderer, reportErrorForActiveWorkspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const timeoutIds: number[] = [];
+
+    openMarkdownPreviews.forEach((preview) => {
+      const source = documents[preview.sourcePath];
+
+      if (!source || source.content === preview.content) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const content = source.content;
+      const timeoutId = window.setTimeout(() => {
+        void markdownPreviewRenderer(content)
+          .then((html) => {
+            if (
+              !workspaceRootKeysEqual(
+                currentWorkspaceRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              return;
+            }
+
+            const current = markdownPreviewTabsRef.current[preview.path];
+
+            if (!current || current.sourcePath !== preview.sourcePath) {
+              return;
+            }
+
+            if (!openPathsRef.current.includes(preview.path)) {
+              return;
+            }
+
+            if (
+              documentsRef.current[preview.sourcePath]?.content !== content
+            ) {
+              return;
+            }
+
+            const renderedPreview = { ...current, content, html };
+            const renderedPreviews = {
+              ...markdownPreviewTabsRef.current,
+              [preview.path]: renderedPreview,
+            };
+            markdownPreviewTabsRef.current = renderedPreviews;
+            setMarkdownPreviewTabs(renderedPreviews);
+          })
+          .catch((error) => {
+            if (
+              !workspaceRootKeysEqual(
+                currentWorkspaceRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              return;
+            }
+
+            reportErrorForActiveWorkspaceRoot(
+              requestedRoot,
+              "Markdown Preview",
+              error,
+            );
+          });
+      }, 300);
+      timeoutIds.push(timeoutId);
+    });
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [
+    documents,
+    markdownPreviewRenderer,
+    openMarkdownPreviews,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceRoot,
+  ]);
 
   const revertActiveEditorChangeHunk = useCallback(
     (hunk: EditorChangeHunk) => {
@@ -6981,11 +7219,21 @@ export function useWorkbenchController(
     workbenchEditorSurfaceCommands({
       shortcut,
       canCloseActiveSurface: Boolean(
-        activeDocument || selectedGitChange || gitDiffLoading || isTauri(),
+        activeDocument ||
+          activeImage ||
+          activeMarkdownPreview ||
+          selectedGitChange ||
+          gitDiffLoading ||
+          isTauri(),
       ),
       saveActiveDocument,
       closeActiveSurface,
       editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
+    }).forEach((command) => registry.register(command));
+
+    workbenchMarkdownCommands({
+      isActiveDocumentMarkdown: isMarkdownDocument(activeDocument),
+      openMarkdownPreview,
     }).forEach((command) => registry.register(command));
 
     workbenchLanguageNavigationCommands({
@@ -7105,6 +7353,8 @@ export function useWorkbenchController(
     return registry;
   }, [
     activeDocument,
+    activeImage,
+    activeMarkdownPreview,
     activePackageScripts,
     appSettings.keymap,
     closeDocument,
@@ -7162,6 +7412,7 @@ export function useWorkbenchController(
     toggleGitBlame,
     openFileHistory,
     openLocalHistory,
+    openMarkdownPreview,
     openGitStashPanel,
     openGitBranchPanel,
     createGitBranch,
@@ -7306,6 +7557,30 @@ export function useWorkbenchController(
     commandRegistry,
     doubleShiftDetectorRef,
   });
+
+  useEffect(() => {
+    function handleMarkdownPreviewShortcut(event: KeyboardEvent) {
+      if (!matchesShortcut(event, "Cmd+Shift+V")) {
+        return;
+      }
+
+      const command = commandRegistry.get("markdown.openPreview");
+
+      if (!command?.isEnabled(commandContext)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      void Promise.resolve(command.run()).catch((error) =>
+        reportError("Markdown Preview", error),
+      );
+    }
+
+    window.addEventListener("keydown", handleMarkdownPreviewShortcut);
+    return () =>
+      window.removeEventListener("keydown", handleMarkdownPreviewShortcut);
+  }, [commandContext, commandRegistry, reportError]);
 
   useEffect(() => {
     if (!workspaceRoot) {
@@ -8057,6 +8332,7 @@ export function useWorkbenchController(
   return {
     activeDocument,
     activeImage,
+    activeMarkdownPreview,
     activeDocumentGitBaseline: activeDocument
       ? editorGitBaselinesByPath[activeDocument.path] ?? null
       : null,
@@ -8160,7 +8436,10 @@ export function useWorkbenchController(
     installingManagedPhpactor,
     message,
     openDocuments,
+    openMarkdownPreviews,
     openTabs,
+    markdownPreviewTabs,
+    openMarkdownPreview,
     openFile,
     openCallHierarchy,
     openCallHierarchyRow,

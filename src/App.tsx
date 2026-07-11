@@ -29,6 +29,7 @@ import { GitBranchPanel } from "./components/GitBranchPanel";
 import { GitStashPanel } from "./components/GitStashPanel";
 import { ImageViewer } from "./components/ImageViewer";
 import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
+import { MarkdownPreview } from "./components/MarkdownPreview";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitChangesPanel } from "./components/GitChangesPanel";
@@ -917,6 +918,10 @@ function App() {
   }, [clearGitHistoryDiff, closeEditorTab, gitHistoryDiffDocumentPath]);
 
   const closeActiveTab = useCallback(() => {
+    if (workbench.activeMarkdownPreview) {
+      closeEditorTab(workbench.activeMarkdownPreview.path);
+      return;
+    }
     if (workbench.activeImage) {
       closeEditorTab(workbench.activeImage.path);
       return;
@@ -924,7 +929,12 @@ function App() {
     if (workbench.activeDocument) {
       closeEditorTab(workbench.activeDocument.path);
     }
-  }, [closeEditorTab, workbench.activeDocument, workbench.activeImage]);
+  }, [
+    closeEditorTab,
+    workbench.activeDocument,
+    workbench.activeImage,
+    workbench.activeMarkdownPreview,
+  ]);
 
   const isActiveGitHistoryDiffDocument = Boolean(
     gitHistoryDiffDocumentPath &&
@@ -1296,6 +1306,8 @@ function App() {
               }
             />
           </ErrorBoundary>
+        ) : workbench.activeMarkdownPreview ? (
+          <MarkdownPreview preview={workbench.activeMarkdownPreview} />
         ) : workbench.activeImage ? (
           <ImageViewer image={workbench.activeImage} />
         ) : (
