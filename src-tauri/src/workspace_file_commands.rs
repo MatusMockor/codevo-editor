@@ -24,6 +24,16 @@ struct DirectoryEntry {
     is_directory: bool,
 }
 
+struct DirectoryStream(*mut libc::DIR);
+
+impl Drop for DirectoryStream {
+    fn drop(&mut self) {
+        unsafe {
+            libc::closedir(self.0);
+        }
+    }
+}
+
 fn open_directory_path(root: RawFd, path: &Path) -> io::Result<File> {
     if path.as_os_str().is_empty() {
         return open_directory_at(root, c".");
@@ -51,17 +61,15 @@ fn directory_entries(directory: &File) -> io::Result<Vec<DirectoryEntry>> {
     if stream.is_null() {
         return Err(io::Error::last_os_error());
     }
+    let stream = DirectoryStream(stream);
     let mut entries = Vec::new();
     loop {
         unsafe {
             *libc::__error() = 0;
         }
-        let raw = unsafe { libc::readdir(stream) };
+        let raw = unsafe { libc::readdir(stream.0) };
         if raw.is_null() {
             let error = io::Error::last_os_error();
-            unsafe {
-                libc::closedir(stream);
-            }
             if error.raw_os_error() == Some(0) {
                 return Ok(entries);
             }
@@ -71,6 +79,12 @@ fn directory_entries(directory: &File) -> io::Result<Vec<DirectoryEntry>> {
         if name.to_bytes() == b"." || name.to_bytes() == b".." {
             continue;
         }
+        run_test_hook(
+            "directory-entries-before-stat",
+            directory.as_raw_fd(),
+            name,
+            name,
+        );
         let stat = stat_at(directory.as_raw_fd(), name)?;
         let kind = stat.st_mode & libc::S_IFMT;
         if kind != libc::S_IFDIR && kind != libc::S_IFREG {
@@ -1485,16 +1499,14 @@ fn delete_directory_tree(
         }
         return Err(io::Error::last_os_error().into());
     }
+    let stream = DirectoryStream(stream);
     loop {
         unsafe {
             *libc::__error() = 0;
         }
-        let entry = unsafe { libc::readdir(stream) };
+        let entry = unsafe { libc::readdir(stream.0) };
         if entry.is_null() {
             let error = io::Error::last_os_error();
-            unsafe {
-                libc::closedir(stream);
-            }
             if error.raw_os_error().unwrap_or(0) != 0 {
                 return Err(if committed {
                     MutationFailure::Partial(format!(
@@ -1520,9 +1532,6 @@ fn delete_directory_tree(
             }
         })?;
         if let Err(error) = delete_entry(directory.as_raw_fd(), child_name, &child) {
-            unsafe {
-                libc::closedir(stream);
-            }
             return Err(if committed {
                 MutationFailure::Partial("directory was only partially deleted".into())
             } else {
@@ -1854,6 +1863,39 @@ mod tests {
         callback: impl FnOnce(&str, RawFd, &CStr, &CStr) + 'static,
     ) {
         TEST_HOOK.with(|hook| *hook.borrow_mut() = Some((event, Box::new(callback))));
+    }
+
+    fn count_descriptors_for(file: &File) -> usize {
+        let expected = fstat(file.as_raw_fd()).unwrap();
+        (0..unsafe { libc::getdtablesize() })
+            .filter(|fd| {
+                let mut current = unsafe { std::mem::zeroed() };
+                (unsafe { libc::fstat(*fd, &mut current) == 0 })
+                    && same_identity(&expected, &current)
+            })
+            .count()
+    }
+
+    #[test]
+    fn directory_entries_closes_stream_when_child_disappears_before_stat() {
+        let (_, _, root) = fixture("directory-entries-stat-failure");
+        fs::write(root.join("child"), "value").unwrap();
+        let directory = File::open(&root).unwrap();
+        let descriptors_before = count_descriptors_for(&directory);
+        install_hook(
+            "directory-entries-before-stat",
+            |event, parent, child, _| {
+                assert_eq!(event, "directory-entries-before-stat");
+                assert_eq!(unsafe { libc::unlinkat(parent, child.as_ptr(), 0) }, 0);
+            },
+        );
+
+        let error = match directory_entries(&directory) {
+            Ok(_) => panic!("directory enumeration unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(count_descriptors_for(&directory), descriptors_before);
     }
 
     #[test]
