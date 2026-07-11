@@ -247,6 +247,8 @@ pub trait GitRepositoryGateway {
     fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>>;
     fn current_branch(&self, root: &Path) -> io::Result<Option<String>>;
     fn create_branch(&self, root: &Path, name: &str) -> io::Result<()>;
+    fn delete_branch(&self, root: &Path, name: &str, force: bool) -> io::Result<()>;
+    fn rename_branch(&self, root: &Path, old_name: &str, new_name: &str) -> io::Result<()>;
     fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()>;
 }
 
@@ -776,6 +778,28 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // working tree is never touched. `--` terminates option parsing so a name
         // can never be read as a flag (defence in depth atop `safe_branch_name`).
         run_git(&root, ["branch", "--", name.as_str()])
+    }
+
+    fn delete_branch(&self, root: &Path, name: &str, force: bool) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let name = safe_branch_name(name)?;
+
+        if force {
+            return run_git(&root, ["branch", "-D", "--", name.as_str()]);
+        }
+
+        run_git(&root, ["branch", "-d", "--", name.as_str()])
+    }
+
+    fn rename_branch(&self, root: &Path, old_name: &str, new_name: &str) -> io::Result<()> {
+        let root = root.canonicalize()?;
+        let old_name = safe_branch_name(old_name)?;
+        let new_name = safe_branch_name(new_name)?;
+
+        run_git(
+            &root,
+            ["branch", "-m", "--", old_name.as_str(), new_name.as_str()],
+        )
     }
 
     fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()> {

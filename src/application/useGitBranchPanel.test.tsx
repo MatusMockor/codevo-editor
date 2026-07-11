@@ -47,6 +47,8 @@ function createFakeGitGateway(overrides: Partial<GitGateway> = {}): GitGateway {
     getStatus: vi.fn(async (rootPath: string) => status(rootPath)),
     branchList: vi.fn(async () => [] as GitBranch[]),
     createBranch: vi.fn(async () => undefined),
+    deleteBranch: vi.fn(async () => undefined),
+    renameBranch: vi.fn(async () => undefined),
     switchBranch: vi.fn(async () => undefined),
     stashList: vi.fn(async () => []),
   };
@@ -231,6 +233,147 @@ describe("useGitBranchPanel", () => {
 
     expect(prompt).toHaveBeenCalled();
     expect(createBranch).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("deletes a branch and refreshes the branch list", async () => {
+    const branchList = vi.fn(async () => [branch("main", true)]);
+    const deleteBranch = vi.fn(async () => undefined);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ branchList, deleteBranch }),
+    });
+
+    await act(async () => {
+      await harness.panel().deleteGitBranch(" feature/old ", { force: false });
+    });
+
+    expect(deleteBranch).toHaveBeenCalledWith(ROOT, "feature/old", {
+      force: false,
+    });
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Deleted branch feature/old",
+    );
+    expect(harness.panel().gitBranchEntries).toEqual([branch("main", true)]);
+    harness.unmount();
+  });
+
+  it("surfaces the git delete error and does not refresh", async () => {
+    const error = new Error("branch is not fully merged");
+    const branchList = vi.fn(async () => [] as GitBranch[]);
+    const deleteBranch = vi.fn(async () => {
+      throw error;
+    });
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ branchList, deleteBranch }),
+    });
+
+    await act(async () => {
+      await harness.panel().deleteGitBranch("feature/work", { force: false });
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Git Branch", error);
+    expect(branchList).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("renames a branch and refreshes branch state", async () => {
+    const branchList = vi.fn(async () => [branch("feature/auth", true)]);
+    const renameBranch = vi.fn(async () => undefined);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ branchList, renameBranch }),
+    });
+
+    await act(async () => {
+      await harness.panel().renameGitBranch(
+        " feature/login ",
+        " feature/auth ",
+      );
+    });
+
+    expect(renameBranch).toHaveBeenCalledWith(
+      ROOT,
+      "feature/login",
+      "feature/auth",
+    );
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Renamed branch feature/login to feature/auth",
+    );
+    expect(harness.refreshGitStatus).toHaveBeenCalledTimes(1);
+    expect(harness.panel().gitBranchEntries).toEqual([
+      branch("feature/auth", true),
+    ]);
+    harness.unmount();
+  });
+
+  it("ignores a second branch mutation while one is in flight", async () => {
+    const deferred = createDeferred<void>();
+    const deleteBranch = vi.fn(() => deferred.promise);
+    const renameBranch = vi.fn(async () => undefined);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ deleteBranch, renameBranch }),
+    });
+
+    let deletion: Promise<void> | null = null;
+    act(() => {
+      deletion = harness
+        .panel()
+        .deleteGitBranch("feature/old", { force: false });
+    });
+    await act(async () => {
+      await harness.panel().renameGitBranch("feature/a", "feature/b");
+      deferred.resolve();
+      await deletion;
+    });
+
+    expect(deleteBranch).toHaveBeenCalledTimes(1);
+    expect(renameBranch).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops delete success after the workspace root changes", async () => {
+    const deferred = createDeferred<void>();
+    const branchList = vi.fn(async () => [] as GitBranch[]);
+    const deleteBranch = vi.fn(() => deferred.promise);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ branchList, deleteBranch }),
+    });
+
+    let deletion: Promise<void> | null = null;
+    act(() => {
+      deletion = harness
+        .panel()
+        .deleteGitBranch("feature/old", { force: false });
+    });
+    await act(async () => {
+      harness.ref.current = "/other";
+      deferred.resolve();
+      await deletion;
+    });
+
+    expect(harness.setMessage).not.toHaveBeenCalled();
+    expect(branchList).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops rename failure after the workspace root changes", async () => {
+    const deferred = createDeferred<void>();
+    const renameBranch = vi.fn(() => deferred.promise);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ renameBranch }),
+    });
+
+    let rename: Promise<void> | null = null;
+    act(() => {
+      rename = harness.panel().renameGitBranch("feature/a", "feature/b");
+    });
+    await act(async () => {
+      harness.ref.current = "/other";
+      deferred.reject(new Error("already exists"));
+      await rename;
+    });
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.setMessage).not.toHaveBeenCalled();
     harness.unmount();
   });
 

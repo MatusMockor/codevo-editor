@@ -532,6 +532,8 @@ describe("TauriGitGateway", () => {
     const current = await gateway.currentBranch("/workspace");
     await gateway.createBranch("/workspace", "feature/new");
     await gateway.switchBranch("/workspace", "feature/login");
+    await gateway.deleteBranch("/workspace", "feature/old", { force: true });
+    await gateway.renameBranch("/workspace", "feature/login", "feature/auth");
 
     expect(invoke).toHaveBeenCalledWith("list_git_branches", {
       rootPath: "/workspace",
@@ -545,6 +547,16 @@ describe("TauriGitGateway", () => {
     });
     expect(invoke).toHaveBeenCalledWith("switch_git_branch", {
       name: "feature/login",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("delete_git_branch", {
+      force: true,
+      name: "feature/old",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("rename_git_branch", {
+      newName: "feature/auth",
+      oldName: "feature/login",
       rootPath: "/workspace",
     });
     expect(branches).toHaveLength(2);
@@ -563,6 +575,12 @@ describe("TauriGitGateway", () => {
     ).resolves.toBeUndefined();
     await expect(
       gateway.switchBranch("/workspace", "x"),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.deleteBranch("/workspace", "x", { force: false }),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.renameBranch("/workspace", "x", "y"),
     ).resolves.toBeUndefined();
   });
 

@@ -207,6 +207,16 @@ export interface GitGateway {
   branchList(rootPath: string): Promise<GitBranch[]>;
   currentBranch(rootPath: string): Promise<string | null>;
   createBranch(rootPath: string, name: string): Promise<void>;
+  deleteBranch?(
+    rootPath: string,
+    name: string,
+    options: { force: boolean },
+  ): Promise<void>;
+  renameBranch?(
+    rootPath: string,
+    oldName: string,
+    newName: string,
+  ): Promise<void>;
   switchBranch(rootPath: string, name: string): Promise<void>;
 }
 

@@ -491,6 +491,38 @@ export class TauriGitGateway implements GitGateway {
     });
   }
 
+  async deleteBranch(
+    rootPath: string,
+    name: string,
+    options: { force: boolean },
+  ): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("delete_git_branch", {
+      force: options.force,
+      name,
+      rootPath,
+    });
+  }
+
+  async renameBranch(
+    rootPath: string,
+    oldName: string,
+    newName: string,
+  ): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return;
+    }
+
+    await this.invokeCommand("rename_git_branch", {
+      newName,
+      oldName,
+      rootPath,
+    });
+  }
+
   async switchBranch(rootPath: string, name: string): Promise<void> {
     if (!this.isRuntimeAvailable()) {
       return;

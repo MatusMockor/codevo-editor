@@ -2488,6 +2488,32 @@ async fn create_git_branch(root_path: String, name: String) -> Result<(), String
 }
 
 #[tauri::command]
+async fn delete_git_branch(root_path: String, name: String, force: bool) -> Result<(), String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .delete_branch(&root, &name, force)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn rename_git_branch(
+    root_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .rename_branch(&root, &old_name, &new_name)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn switch_git_branch(root_path: String, name: String) -> Result<(), String> {
     // `git switch <name>` (no `-f`/`--discard`) rewrites the working tree but
     // refuses when local changes would be overwritten, so no work is ever lost.
@@ -5772,8 +5798,8 @@ fn hex_value(value: u8) -> Option<u8> {
 mod tests {
     use super::{
         amend_git_commit, apply_descriptor_workspace_edit, apply_workspace_edit,
-        cached_monospace_font_families, create_git_branch, ensure_local_history_relative_path,
-        ensure_lsp_call_hierarchy_item_in_workspace,
+        cached_monospace_font_families, create_git_branch, delete_git_branch,
+        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -5794,8 +5820,8 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        save_git_stash, search_files, stage_git_files, stage_git_hunk, stash_apply_git,
-        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
+        rename_git_branch, save_git_stash, search_files, stage_git_files, stage_git_hunk,
+        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -7852,6 +7878,111 @@ mod tests {
     }
 
     #[test]
+    fn git_branch_delete_and_rename_stay_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-branch-mutate-iso-a");
+        let root_b = temp_workspace("git-branch-mutate-iso-b");
+        for root in [&root_a, &root_b] {
+            init_test_git_repo(root);
+            run_test_git(root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+            fs::write(root.join("file.txt"), "base\n").expect("write file");
+            run_test_git(root, &["add", "file.txt"]);
+            run_test_git(root, &["commit", "-m", "initial"]);
+            run_test_git(root, &["branch", "shared"]);
+            run_test_git(root, &["branch", "old"]);
+        }
+
+        tauri::async_runtime::block_on(delete_git_branch(
+            path_string(&root_a),
+            "shared".to_string(),
+            false,
+        ))
+        .expect("delete in a");
+        tauri::async_runtime::block_on(rename_git_branch(
+            path_string(&root_a),
+            "old".to_string(),
+            "new".to_string(),
+        ))
+        .expect("rename in a");
+
+        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a)))
+            .expect("list a");
+        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b)))
+            .expect("list b");
+        assert!(!list_a.iter().any(|branch| branch.name == "shared"));
+        assert!(list_a.iter().any(|branch| branch.name == "new"));
+        assert!(list_b.iter().any(|branch| branch.name == "shared"));
+        assert!(list_b.iter().any(|branch| branch.name == "old"));
+        assert!(!list_b.iter().any(|branch| branch.name == "new"));
+    }
+
+    #[test]
+    fn git_branch_delete_refuses_current_and_requires_force_for_unmerged_off_thread() {
+        let root = temp_workspace("git-branch-delete-safety");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "base\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+
+        let current_error = tauri::async_runtime::block_on(delete_git_branch(
+            path_string(&root),
+            "main".to_string(),
+            true,
+        ))
+        .expect_err("current branch deletion must fail");
+        assert!(current_error.to_lowercase().contains("cannot delete"));
+
+        run_test_git(&root, &["checkout", "-b", "unmerged"]);
+        fs::write(root.join("work.txt"), "work\n").expect("write work");
+        run_test_git(&root, &["add", "work.txt"]);
+        run_test_git(&root, &["commit", "-m", "unmerged"]);
+        run_test_git(&root, &["checkout", "main"]);
+
+        let unmerged_error = tauri::async_runtime::block_on(delete_git_branch(
+            path_string(&root),
+            "unmerged".to_string(),
+            false,
+        ))
+        .expect_err("unmerged branch deletion must fail");
+        assert!(unmerged_error.to_lowercase().contains("not fully merged"));
+        tauri::async_runtime::block_on(delete_git_branch(
+            path_string(&root),
+            "unmerged".to_string(),
+            true,
+        ))
+        .expect("forced delete");
+    }
+
+    #[test]
+    fn git_branch_rename_refuses_collision_and_allows_current_off_thread() {
+        let root = temp_workspace("git-branch-rename-safety");
+        init_test_git_repo(&root);
+        run_test_git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        fs::write(root.join("file.txt"), "base\n").expect("write file");
+        run_test_git(&root, &["add", "file.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        run_test_git(&root, &["branch", "existing"]);
+
+        let collision = tauri::async_runtime::block_on(rename_git_branch(
+            path_string(&root),
+            "main".to_string(),
+            "existing".to_string(),
+        ))
+        .expect_err("rename collision must fail");
+        assert!(collision.to_lowercase().contains("already exists"));
+
+        tauri::async_runtime::block_on(rename_git_branch(
+            path_string(&root),
+            "main".to_string(),
+            "renamed".to_string(),
+        ))
+        .expect("rename current");
+        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
+            .expect("current branch");
+        assert_eq!(current.as_deref(), Some("renamed"));
+    }
+
+    #[test]
     fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
         assert!(ensure_local_history_relative_path("src/User.php").is_ok());
         assert!(ensure_local_history_relative_path("../secret.txt").is_err());
@@ -8512,6 +8643,8 @@ pub fn run() {
             list_git_branches,
             get_git_current_branch,
             create_git_branch,
+            delete_git_branch,
+            rename_git_branch,
             switch_git_branch,
             quit_application,
             read_directory,
