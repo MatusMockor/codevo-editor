@@ -1530,12 +1530,14 @@ function App() {
       />
 
       <TextSearch
+        dismissedPaths={workbench.dismissedTextSearchPaths}
         isLoading={workbench.textSearchLoading}
         isOpen={workbench.textSearchOpen}
         onChangeOptions={workbench.setTextSearchOptions}
         onChangeQuery={workbench.setTextSearchQuery}
         onChangeReplacement={workbench.setTextReplacement}
         onClose={() => workbench.setTextSearchOpen(false)}
+        onDismissFile={workbench.dismissTextSearchFile}
         onOpen={workbench.openTextSearchResult}
         onReplaceAll={workbench.replaceAllInPath}
         onReplaceInFile={workbench.replaceInFile}

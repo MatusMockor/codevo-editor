@@ -345,6 +345,88 @@ describe("TextSearch", () => {
     expect(onReplaceInFile).toHaveBeenCalledWith("/workspace/a.php");
   });
 
+  it("dismisses a file group with an accessible keyboard-operable button", () => {
+    const onDismissFile = vi.fn();
+    renderTextSearch({
+      onDismissFile,
+      results: [
+        result({ path: "/workspace/a.php", relativePath: "a.php" }),
+        result({ path: "/workspace/b.php", relativePath: "b.php" }),
+      ],
+    });
+
+    const dismiss = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Dismiss a.php from Replace All"]',
+    );
+
+    expect(dismiss?.type).toBe("button");
+    act(() => dismiss?.click());
+    expect(onDismissFile).toHaveBeenCalledWith("/workspace/a.php");
+  });
+
+  it("hides dismissed groups and updates the visible result summary", () => {
+    renderTextSearch({
+      dismissedPaths: new Set(["/workspace/a.php"]),
+      results: [
+        result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 1 }),
+        result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 2 }),
+        result({ path: "/workspace/b.php", relativePath: "b.php" }),
+      ],
+    });
+
+    expect(host.textContent).not.toContain("a.php:");
+    expect(host.textContent).toContain("b.php:");
+    expect(host.querySelector(".text-search-summary")?.textContent).toBe(
+      "1 occurrence in 1 file",
+    );
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Replace all"]')
+        ?.disabled,
+    ).toBe(false);
+  });
+
+  it("qualifies summary counts when search results hit the cap", () => {
+    renderTextSearch({
+      results: Array.from({ length: 100 }, (_, index) =>
+        result({
+          path: index < 50 ? "/workspace/a.php" : "/workspace/b.php",
+          relativePath: index < 50 ? "a.php" : "b.php",
+          lineNumber: index + 1,
+        }),
+      ),
+    });
+
+    expect(host.querySelector(".text-search-summary")?.textContent).toBe(
+      "at least 100 occurrences in at least 2 files",
+    );
+  });
+
+  it("clamps the active result when dismissing the active file", () => {
+    const onOpen = vi.fn();
+    const options = defaultTextSearchOptions();
+    const results = [
+      result({ path: "/workspace/a.php", relativePath: "a.php" }),
+      result({ path: "/workspace/b.php", relativePath: "b.php" }),
+      result({ path: "/workspace/c.php", relativePath: "c.php" }),
+    ];
+    renderTextSearch({ onOpen, options, results });
+    pressKey("ArrowDown");
+    pressKey("ArrowDown");
+
+    renderTextSearch({
+      dismissedPaths: new Set(["/workspace/c.php"]),
+      onOpen,
+      options,
+      results,
+    });
+    pressKey("Enter");
+
+    expect(onOpen).toHaveBeenCalledWith(results[1]);
+    expect(
+      host.querySelector(".text-search-result.active strong")?.textContent,
+    ).toContain("b.php");
+  });
+
   function renderTextSearch(
     overrides: Partial<Parameters<typeof TextSearch>[0]> = {},
   ) {
@@ -357,6 +439,7 @@ describe("TextSearch", () => {
           onChangeQuery={vi.fn()}
           onChangeReplacement={vi.fn()}
           onClose={vi.fn()}
+          onDismissFile={vi.fn()}
           onOpen={vi.fn()}
           onReplaceAll={vi.fn()}
           onReplaceInFile={vi.fn()}
@@ -365,6 +448,7 @@ describe("TextSearch", () => {
           replaceBusy={false}
           replacement=""
           results={[]}
+          dismissedPaths={new Set()}
           {...overrides}
         />,
       );
@@ -387,6 +471,7 @@ describe("TextSearch", () => {
           onChangeQuery={vi.fn()}
           onChangeReplacement={setReplacement}
           onClose={vi.fn()}
+          onDismissFile={vi.fn()}
           onOpen={vi.fn()}
           onReplaceAll={vi.fn()}
           onReplaceInFile={vi.fn()}
@@ -394,6 +479,7 @@ describe("TextSearch", () => {
           query="query"
           replaceBusy={false}
           results={[]}
+          dismissedPaths={new Set()}
           {...overrides}
           replacement={replacement}
         />

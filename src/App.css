@@ -4301,9 +4301,38 @@ button.problem-row:focus-visible {
     opacity var(--motion-fast) var(--ease-standard);
 }
 
+.text-search-file-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.text-search-dismiss-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
 .text-search-result-row:hover .text-search-replace-file,
+.text-search-result-row:hover .text-search-dismiss-file,
+.text-search-dismiss-file:focus-visible,
 .text-search-replace-file:focus-visible {
   opacity: 1;
+}
+
+.text-search-dismiss-file:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text);
 }
 
 .text-search-replace-file:hover:not(:disabled) {
@@ -4314,6 +4343,17 @@ button.problem-row:focus-visible {
 .text-search-replace-file:disabled {
   opacity: 0;
   cursor: default;
+}
+
+.text-search-dismiss-file:disabled {
+  opacity: 0;
+  cursor: default;
+}
+
+.text-search-summary {
+  padding: 4px 10px 6px;
+  color: var(--color-text-subtle);
+  font-size: 12px;
 }
 
 .surround-with-picker {

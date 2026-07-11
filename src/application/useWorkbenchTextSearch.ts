@@ -14,6 +14,8 @@ import {
   readWorkspaceTextFileSnapshot,
   type EditorDocument,
   type FileEntry,
+  type ReplaceInPathFailure,
+  type ReplaceInPathResult,
   type TextSearchGateway,
   type TextSearchOptions,
   type TextSearchResult,
@@ -54,14 +56,93 @@ export interface WorkbenchTextSearch {
   textSearchResults: TextSearchResult[];
   textReplacement: string;
   textReplaceBusy: boolean;
+  dismissedTextSearchPaths: ReadonlySet<string>;
   setTextSearchOpen: Dispatch<SetStateAction<boolean>>;
   setTextSearchQuery: Dispatch<SetStateAction<string>>;
   setTextSearchOptions: Dispatch<SetStateAction<TextSearchOptions>>;
   setTextReplacement: Dispatch<SetStateAction<string>>;
   resetTextSearchState: () => void;
   openTextSearchResult: (result: TextSearchResult) => Promise<void>;
+  dismissTextSearchFile: (path: string) => void;
   replaceAllInPath: () => Promise<void>;
   replaceInFile: (path: string) => Promise<void>;
+}
+
+interface TextSearchExclusions {
+  workspaceRoot: string | null;
+  paths: Set<string>;
+}
+
+interface ReplaceOutcome {
+  result?: ReplaceInPathResult;
+  failure?: ReplaceInPathFailure;
+}
+
+const EMPTY_TEXT_SEARCH_PATHS: ReadonlySet<string> = new Set();
+
+function aggregateReplaceOutcomes(
+  outcomes: ReplaceOutcome[],
+): ReplaceInPathResult {
+  const files = outcomes.flatMap((outcome) => outcome.result?.files ?? []);
+  const totalReplacements = outcomes.reduce(
+    (total, outcome) => total + (outcome.result?.totalReplacements ?? 0),
+    0,
+  );
+  const conflicts = outcomes.flatMap((outcome) => {
+    const result = outcome.result;
+
+    if (!result || !("conflicts" in result)) {
+      return [];
+    }
+
+    return result.conflicts;
+  });
+  const errors = outcomes.flatMap((outcome) => {
+    if (outcome.failure) {
+      return [outcome.failure];
+    }
+
+    const result = outcome.result;
+
+    if (!result || !("errors" in result)) {
+      return [];
+    }
+
+    return result.errors;
+  });
+
+  if (conflicts.length === 0 && errors.length === 0) {
+    return { files, totalReplacements };
+  }
+
+  if (files.length === 0 && errors.length === 0) {
+    return {
+      status: "conflict",
+      files,
+      totalReplacements,
+      conflicts,
+      message: `${conflicts.length} file(s) changed concurrently; no conflicting file was overwritten`,
+    };
+  }
+
+  if (files.length === 0 && conflicts.length === 0) {
+    return {
+      status: "error",
+      files,
+      totalReplacements,
+      errors,
+      message: `replacement failed in ${errors.length} file(s)`,
+    };
+  }
+
+  return {
+    status: "partial",
+    files,
+    totalReplacements,
+    conflicts,
+    errors,
+    message: `replacement completed partially: ${conflicts.length} conflict(s), ${errors.length} error(s)`,
+  };
 }
 
 export function useWorkbenchTextSearch(
@@ -93,9 +174,17 @@ export function useWorkbenchTextSearch(
   );
   const [textReplacement, setTextReplacement] = useState("");
   const [textReplaceBusy, setTextReplaceBusy] = useState(false);
+  const [textSearchExclusions, setTextSearchExclusions] =
+    useState<TextSearchExclusions>({ workspaceRoot, paths: new Set() });
   // Bumped after every successful replace so the Find-in-Path search effect
   // re-runs and the results list reflects what is now on disk.
   const [textSearchRefreshToken, setTextSearchRefreshToken] = useState(0);
+  const dismissedTextSearchPaths = workspaceRootKeysEqual(
+    textSearchExclusions.workspaceRoot,
+    workspaceRoot,
+  )
+    ? textSearchExclusions.paths
+    : EMPTY_TEXT_SEARCH_PATHS;
 
   const resetTextSearchState = useCallback(() => {
     setTextSearchOpen(false);
@@ -105,7 +194,44 @@ export function useWorkbenchTextSearch(
     setTextSearchOptions(defaultTextSearchOptions);
     setTextReplacement("");
     setTextReplaceBusy(false);
+    setTextSearchExclusions({ workspaceRoot: null, paths: new Set() });
   }, []);
+
+  const dismissTextSearchFile = useCallback(
+    (path: string) => {
+      if (
+        !workspaceRoot ||
+        !textSearchResults.some((result) => result.path === path)
+      ) {
+        return;
+      }
+
+      setTextSearchExclusions((current) => {
+        const paths = workspaceRootKeysEqual(
+          current.workspaceRoot,
+          workspaceRoot,
+        )
+          ? new Set(current.paths)
+          : new Set<string>();
+        paths.add(path);
+        return { workspaceRoot, paths };
+      });
+    },
+    [textSearchResults, workspaceRoot],
+  );
+
+  useEffect(() => {
+    setTextSearchExclusions({ workspaceRoot, paths: new Set() });
+  }, [
+    textSearchOptions.caseSensitive,
+    textSearchOptions.fileMask,
+    textSearchOptions.isRegex,
+    textSearchOptions.preserveCase,
+    textSearchOptions.wholeWord,
+    textSearchQuery,
+    textSearchRefreshToken,
+    workspaceRoot,
+  ]);
 
   const openTextSearchResult = useCallback(
     async (result: TextSearchResult) => {
@@ -246,7 +372,10 @@ export function useWorkbenchTextSearch(
       // Preview the blast radius BEFORE the destructive write: count the
       // matching files/occurrences (within scope) so the confirmation is honest.
       const previewResults = textSearchResults.filter(
-        (result) => scopePath === null || result.path === scopePath,
+        (result) =>
+          scopePath === null
+            ? !dismissedTextSearchPaths.has(result.path)
+            : result.path === scopePath,
       );
       const fileCount = new Set(previewResults.map((result) => result.path))
         .size;
@@ -263,15 +392,23 @@ export function useWorkbenchTextSearch(
       const isCapped =
         scopePath === null &&
         textSearchResults.length >= TEXT_SEARCH_RESULT_LIMIT;
-      const atLeast = isCapped ? "at least " : "";
+      const hasExclusions =
+        scopePath === null && dismissedTextSearchPaths.size > 0;
+      const isCappedWithExclusions = isCapped && hasExclusions;
+      const atLeast = isCapped && !hasExclusions ? "at least " : "";
       const scopeLabel =
-        scopePath === null
+        isCappedWithExclusions
+          ? `${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${fileCount} listed file${fileCount === 1 ? "" : "s"}`
+          : scopePath === null
           ? `${atLeast}${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${atLeast}${fileCount} file${fileCount === 1 ? "" : "s"}`
           : `${matchCount} occurrence${matchCount === 1 ? "" : "s"} in ${getFileName(scopePath)}`;
+      const cappedExclusionWarning = isCappedWithExclusions
+        ? " Only the files currently listed will be replaced. Matches beyond the displayed results will not be modified; refine your search to include them."
+        : "";
 
       if (
         !prompter.confirm(
-          `Replace ${scopeLabel}? This rewrites files on disk and is restorable from Local History.`,
+          `Replace ${scopeLabel}?${cappedExclusionWarning} This rewrites files on disk and is restorable from Local History.`,
         )
       ) {
         return;
@@ -288,13 +425,64 @@ export function useWorkbenchTextSearch(
         // extra include glob), so an active user file mask can never widen a
         // "Replace in file" run into other files. `scopePath === null` means
         // Replace All.
-        const result = await textSearch.replaceInPath(
-          requestedRoot,
-          query,
-          textReplacement,
-          textSearchOptions,
-          scopePath ?? undefined,
-        );
+        let result: ReplaceInPathResult | null = null;
+
+        const usesWholeScope =
+          scopePath !== null || dismissedTextSearchPaths.size === 0;
+
+        if (usesWholeScope) {
+          result = await textSearch.replaceInPath(
+            requestedRoot,
+            query,
+            textReplacement,
+            textSearchOptions,
+            scopePath ?? undefined,
+          );
+        }
+
+        if (!usesWholeScope) {
+          const includedFiles = Array.from(
+            new Map(
+              previewResults.map((preview) => [
+                preview.path,
+                { path: preview.path, relativePath: preview.relativePath },
+              ]),
+            ).values(),
+          );
+          const outcomes: ReplaceOutcome[] = [];
+
+          for (const file of includedFiles) {
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
+            try {
+              outcomes.push({
+                result: await textSearch.replaceInPath(
+                  requestedRoot,
+                  query,
+                  textReplacement,
+                  textSearchOptions,
+                  file.path,
+                ),
+              });
+            } catch (error) {
+              outcomes.push({
+                failure: {
+                  path: file.path,
+                  relativePath: file.relativePath,
+                  message: String(error),
+                },
+              });
+            }
+          }
+
+          result = aggregateReplaceOutcomes(outcomes);
+        }
+
+        if (!result) {
+          return;
+        }
 
         if (!isRequestedRootActive()) {
           return;
@@ -344,6 +532,7 @@ export function useWorkbenchTextSearch(
       textSearchOptions,
       textSearchQuery,
       textSearchResults,
+      dismissedTextSearchPaths,
       workspaceRoot,
     ],
   );
@@ -387,6 +576,10 @@ export function useWorkbenchTextSearch(
           }
 
           setTextSearchResults(results);
+          setTextSearchExclusions({
+            workspaceRoot: requestedRoot,
+            paths: new Set(),
+          });
           setMessage(null);
         })
         .catch((error) => {
@@ -429,12 +622,14 @@ export function useWorkbenchTextSearch(
     textSearchResults,
     textReplacement,
     textReplaceBusy,
+    dismissedTextSearchPaths,
     setTextSearchOpen,
     setTextSearchQuery,
     setTextSearchOptions,
     setTextReplacement,
     resetTextSearchState,
     openTextSearchResult,
+    dismissTextSearchFile,
     replaceAllInPath,
     replaceInFile,
   };

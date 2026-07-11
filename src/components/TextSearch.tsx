@@ -7,6 +7,7 @@ import {
   ReplaceAll,
   Search,
   WholeWord,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createReplacePreview } from "../domain/replacePreview";
@@ -21,12 +22,14 @@ interface TextSearchProps {
   query: string;
   options: TextSearchOptions;
   results: TextSearchResult[];
+  dismissedPaths: ReadonlySet<string>;
   replacement: string;
   replaceBusy: boolean;
   onChangeQuery(query: string): void;
   onChangeReplacement(replacement: string): void;
   onChangeOptions(options: TextSearchOptions): void;
   onClose(): void;
+  onDismissFile(path: string): void;
   onOpen(result: TextSearchResult): void;
   onReplaceAll(): void;
   onReplaceInFile(path: string): void;
@@ -106,6 +109,7 @@ export function TextSearch({
   onChangeQuery,
   onChangeReplacement,
   onClose,
+  onDismissFile,
   onOpen,
   onReplaceAll,
   onReplaceInFile,
@@ -114,6 +118,7 @@ export function TextSearch({
   replacement,
   replaceBusy,
   results,
+  dismissedPaths,
 }: TextSearchProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const previewPattern = typeof query === "string" ? query : "";
@@ -134,6 +139,9 @@ export function TextSearch({
       previewPattern,
     ],
   );
+  const visibleResults = Array.isArray(results)
+    ? results.filter((result) => !dismissedPaths.has(result.path))
+    : [];
 
   useEffect(() => {
     if (!isOpen) {
@@ -147,14 +155,21 @@ export function TextSearch({
     setActiveIndex(0);
   }, [query, options]);
 
+  useEffect(() => {
+    setActiveIndex((current) =>
+      Math.min(current, Math.max(visibleResults.length - 1, 0)),
+    );
+  }, [visibleResults.length]);
+
   if (!isOpen) {
     return null;
   }
 
-  const activeResult = results[activeIndex];
-  const matchedFiles = distinctMatchedFiles(results);
+  const activeResult = visibleResults[activeIndex];
+  const matchedFiles = distinctMatchedFiles(visibleResults);
+  const atLeast = results.length >= 100 ? "at least " : "";
   const canReplace =
-    !replaceBusy && Boolean(query.trim()) && results.length > 0;
+    !replaceBusy && Boolean(query.trim()) && visibleResults.length > 0;
 
   const toggleOption = (
     key: "caseSensitive" | "wholeWord" | "isRegex" | "preserveCase",
@@ -184,7 +199,7 @@ export function TextSearch({
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setActiveIndex((current) =>
-                  Math.min(current + 1, Math.max(results.length - 1, 0)),
+                  Math.min(current + 1, Math.max(visibleResults.length - 1, 0)),
                 );
                 return;
               }
@@ -320,13 +335,21 @@ export function TextSearch({
 
         <div className="text-search-results">
           {isLoading ? <div className="quick-open-state">Searching...</div> : null}
-          {!isLoading && query.trim() && results.length === 0 ? (
+          {!isLoading && query.trim() && visibleResults.length === 0 ? (
             <div className="quick-open-state">No matches found</div>
           ) : null}
           {!isLoading && !query.trim() ? (
             <div className="quick-open-state">Enter a search term</div>
           ) : null}
-          {results.map((result, index) => {
+          {!isLoading && query.trim() && visibleResults.length > 0 ? (
+            <div className="text-search-summary" aria-live="polite">
+              {atLeast}
+              {visibleResults.length} occurrence
+              {visibleResults.length === 1 ? "" : "s"} in {atLeast}
+              {matchedFiles.length} file{matchedFiles.length === 1 ? "" : "s"}
+            </div>
+          ) : null}
+          {visibleResults.map((result, index) => {
             const { before, match, after } = splitMatchHighlight(result);
             const replacementPreview =
               replacement && match
@@ -338,7 +361,8 @@ export function TextSearch({
                   )
                 : null;
             const isFirstOfFile =
-              results.findIndex((other) => other.path === result.path) === index;
+              visibleResults.findIndex((other) => other.path === result.path) ===
+              index;
             const fileMatchCount =
               matchedFiles.find((file) => file.path === result.path)
                 ?.matchCount ?? 1;
@@ -383,16 +407,28 @@ export function TextSearch({
                   </span>
                 </button>
                 {isFirstOfFile ? (
-                  <button
-                    aria-label={`Replace ${fileMatchCount} occurrence${fileMatchCount === 1 ? "" : "s"} in ${result.relativePath}`}
-                    className="text-search-replace-file"
-                    disabled={replaceBusy || !query.trim()}
-                    onClick={() => onReplaceInFile(result.path)}
-                    title={`Replace in ${result.relativePath}`}
-                    type="button"
-                  >
-                    <Replace aria-hidden="true" size={14} />
-                  </button>
+                  <div className="text-search-file-actions">
+                    <button
+                      aria-label={`Replace ${fileMatchCount} occurrence${fileMatchCount === 1 ? "" : "s"} in ${result.relativePath}`}
+                      className="text-search-replace-file"
+                      disabled={replaceBusy || !query.trim()}
+                      onClick={() => onReplaceInFile(result.path)}
+                      title={`Replace in ${result.relativePath}`}
+                      type="button"
+                    >
+                      <Replace aria-hidden="true" size={14} />
+                    </button>
+                    <button
+                      aria-label={`Dismiss ${result.relativePath} from Replace All`}
+                      className="text-search-dismiss-file"
+                      disabled={replaceBusy}
+                      onClick={() => onDismissFile(result.path)}
+                      title={`Dismiss ${result.relativePath}`}
+                      type="button"
+                    >
+                      <X aria-hidden="true" size={14} />
+                    </button>
+                  </div>
                 ) : null}
               </div>
             );
