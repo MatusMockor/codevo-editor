@@ -342,6 +342,7 @@ function renderActivePanel({
         isActive
         notices={notices}
         onOpenNotice={onOpenProblem}
+        workspaceRoot={workspaceRoot}
       />
     );
   }
