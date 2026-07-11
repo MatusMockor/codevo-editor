@@ -1312,6 +1312,19 @@ button {
   font-weight: 500;
 }
 
+.git-upstream-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-hover);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .git-commit-toolbar {
   display: flex;
   align-items: center;

@@ -15,6 +15,15 @@ pub struct GitStatus {
     pub changes: Vec<GitChangedFile>,
     pub is_repository: bool,
     pub root_path: String,
+    pub upstream: Option<GitUpstreamTracking>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitUpstreamTracking {
+    pub ahead: usize,
+    pub behind: usize,
+    pub branch: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -528,11 +537,15 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             ));
         }
 
+        let branch = current_branch(&root).ok().flatten();
+        let upstream = branch.as_ref().and_then(|_| upstream_tracking(&root));
+
         Ok(GitStatus {
-            branch: current_branch(&root).ok().flatten(),
+            branch,
             changes: parse_porcelain_status(&root, &output.stdout)?,
             is_repository: true,
             root_path: root.to_string_lossy().to_string(),
+            upstream,
         })
     }
 
@@ -750,6 +763,7 @@ pub fn empty_git_status(root: &Path) -> GitStatus {
         changes: Vec::new(),
         is_repository: false,
         root_path: root.to_string_lossy().to_string(),
+        upstream: None,
     }
 }
 
@@ -1247,6 +1261,36 @@ fn current_branch(root: &Path) -> io::Result<Option<String>> {
     }
 
     Ok(Some(branch))
+}
+
+fn upstream_tracking(root: &Path) -> Option<GitUpstreamTracking> {
+    let branch = git_output_vec(root, vec!["rev-parse", "--abbrev-ref", "@{u}"])
+        .ok()?
+        .trim()
+        .to_string();
+
+    if branch.is_empty() {
+        return None;
+    }
+
+    let counts = git_output_vec(
+        root,
+        vec!["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+    )
+    .ok()?;
+    let mut counts = counts.split_whitespace();
+    let behind = counts.next()?.parse().ok()?;
+    let ahead = counts.next()?.parse().ok()?;
+
+    if counts.next().is_some() {
+        return None;
+    }
+
+    Some(GitUpstreamTracking {
+        ahead,
+        behind,
+        branch,
+    })
 }
 
 fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChangedFile>> {
@@ -2298,6 +2342,103 @@ mod tests {
         assert_eq!(
             fixture.git_output(&fixture.workspace_b, ["rev-parse", "HEAD"]),
             old_b_head
+        );
+    }
+
+    #[test]
+    fn status_reports_behind_upstream_after_fetch() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_and_push("remote-one.txt", "one\n", "remote one");
+        fixture.commit_and_push("remote-two.txt", "two\n", "remote two");
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+
+        let raw_counts = fixture.git_output(
+            &fixture.workspace_a,
+            ["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        );
+        let status = CommandGitRepositoryGateway
+            .status(&fixture.workspace_a)
+            .expect("status");
+
+        assert_eq!(raw_counts, "2\t0");
+        assert_eq!(
+            status.upstream,
+            Some(super::GitUpstreamTracking {
+                branch: "origin/main".to_string(),
+                ahead: 0,
+                behind: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn status_reports_ahead_upstream_after_local_commits() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_in(&fixture.workspace_a, "local-one.txt", "one\n", "local one");
+        fixture.commit_in(&fixture.workspace_a, "local-two.txt", "two\n", "local two");
+
+        let status = CommandGitRepositoryGateway
+            .status(&fixture.workspace_a)
+            .expect("status");
+        let upstream = status.upstream.expect("upstream");
+
+        assert_eq!(upstream.ahead, 2);
+        assert_eq!(upstream.behind, 0);
+    }
+
+    #[test]
+    fn status_reports_diverged_upstream() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_in(&fixture.workspace_a, "local.txt", "local\n", "local");
+        fixture.commit_and_push("remote.txt", "remote\n", "remote");
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+
+        let status = CommandGitRepositoryGateway
+            .status(&fixture.workspace_a)
+            .expect("status");
+        let upstream = status.upstream.expect("upstream");
+
+        assert_eq!(upstream.ahead, 1);
+        assert_eq!(upstream.behind, 1);
+    }
+
+    #[test]
+    fn status_omits_tracking_without_upstream_or_on_detached_head() {
+        let fixture = RemoteGitFixture::new();
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["branch", "--unset-upstream"]);
+
+        let status = CommandGitRepositoryGateway
+            .status(&fixture.workspace_a)
+            .expect("status");
+
+        assert_eq!(status.upstream, None);
+
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["checkout", "--detach"]);
+        let detached = CommandGitRepositoryGateway
+            .status(&fixture.workspace_a)
+            .expect("detached status");
+
+        assert_eq!(detached.branch, None);
+        assert_eq!(detached.upstream, None);
+    }
+
+    #[test]
+    fn status_tracking_updates_after_pull() {
+        let fixture = RemoteGitFixture::new();
+        fixture.commit_and_push("remote.txt", "remote\n", "remote");
+        let gateway = CommandGitRepositoryGateway;
+
+        let fetched = gateway.fetch(&fixture.workspace_a).expect("fetch");
+        let pulled = gateway.pull(&fixture.workspace_a).expect("pull");
+
+        assert_eq!(fetched.upstream.expect("fetched upstream").behind, 1);
+        assert_eq!(
+            pulled.upstream,
+            Some(super::GitUpstreamTracking {
+                branch: "origin/main".to_string(),
+                ahead: 0,
+                behind: 0,
+            })
         );
     }
 

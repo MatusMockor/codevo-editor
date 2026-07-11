@@ -89,6 +89,39 @@ describe("GitChangesPanel", () => {
     expect(summary?.textContent).toContain("3");
   });
 
+  it("renders behind and ahead tracking next to the branch", async () => {
+    await renderPanel({
+      status: gitStatus([], {
+        branch: "origin/main",
+        ahead: 1,
+        behind: 2,
+      }),
+    });
+
+    const badge = host.querySelector(".git-upstream-badge");
+    expect(badge?.textContent).toBe("2↓ 1↑");
+    expect(badge?.getAttribute("title")).toBe("Upstream: origin/main");
+  });
+
+  it("hides zero tracking components", async () => {
+    await renderPanel({
+      status: gitStatus([], {
+        branch: "origin/main",
+        ahead: 3,
+        behind: 0,
+      }),
+    });
+
+    expect(host.querySelector(".git-upstream-badge")?.textContent).toBe("3↑");
+    expect(host.textContent).not.toContain("0↓");
+  });
+
+  it("hides tracking without an upstream", async () => {
+    await renderPanel({ status: gitStatus([]) });
+
+    expect(host.querySelector(".git-upstream-badge")).toBeNull();
+  });
+
   it("enables commit for included unstaged files when a message is present", async () => {
     const change = gitChange("modified", "src/User.php", false);
     await renderPanel({
@@ -760,6 +793,39 @@ describe("GitChangesPanel", () => {
     expect(host.textContent).toContain("Attendance.php");
   });
 
+  it("renders each repository section's own upstream tracking", async () => {
+    const primary = gitChange("modified", "app/Kernel.php", true);
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "src/Attendance.php",
+      true,
+    );
+
+    await renderPanel({
+      repositoryStatuses: [
+        repositoryStatus("", "main", [primary], {
+          branch: "origin/main",
+          ahead: 0,
+          behind: 2,
+        }),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested], {
+          branch: "origin/develop",
+          ahead: 1,
+          behind: 0,
+        }),
+      ],
+      status: gitStatus([primary]),
+    });
+
+    const badges = host.querySelectorAll(".git-upstream-badge");
+    expect(badges).toHaveLength(2);
+    expect(badges[0]?.textContent).toBe("2↓");
+    expect(badges[0]?.getAttribute("title")).toBe("Upstream: origin/main");
+    expect(badges[1]?.textContent).toBe("1↑");
+    expect(badges[1]?.getAttribute("title")).toBe("Upstream: origin/develop");
+  });
+
   it("shows no repository headers for a single repository (unchanged single-repo look)", async () => {
     const primary = gitChange("modified", "app/Kernel.php", true);
 
@@ -914,12 +980,16 @@ describe("GitChangesPanel", () => {
   }
 });
 
-function gitStatus(changes: GitChangedFile[]): GitStatus {
+function gitStatus(
+  changes: GitChangedFile[],
+  upstream: GitStatus["upstream"] = null,
+): GitStatus {
   return {
     branch: "main",
     changes,
     isRepository: true,
     rootPath: "/workspace",
+    upstream,
   };
 }
 
@@ -962,6 +1032,7 @@ function repositoryStatus(
   rootRelativePath: string,
   branch: string,
   changes: GitChangedFile[],
+  upstream: GitStatus["upstream"] = null,
 ): GitRepositoryStatus {
   const root =
     rootRelativePath === ""
@@ -971,7 +1042,7 @@ function repositoryStatus(
   return {
     mapping: { rootRelativePath },
     root,
-    status: { branch, changes, isRepository: true, rootPath: root },
+    status: { branch, changes, isRepository: true, rootPath: root, upstream },
     failed: false,
   };
 }

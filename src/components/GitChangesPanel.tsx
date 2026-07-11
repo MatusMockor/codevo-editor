@@ -27,6 +27,7 @@ import {
   type GitChangeGroup,
   type GitChangeStatus,
   type GitStatus,
+  type GitUpstreamTracking,
 } from "../domain/git";
 import {
   gitRepositoryDisplayName,
@@ -78,6 +79,7 @@ interface RepositorySection {
   label: string;
   branch: string | null;
   changes: GitChangedFile[];
+  upstream: GitUpstreamTracking | null;
 }
 
 /**
@@ -102,6 +104,7 @@ function buildRepositorySections(
       ),
       branch: entry.status.branch,
       changes: entry.status.changes,
+      upstream: entry.status.upstream ?? null,
     }));
 }
 
@@ -183,6 +186,9 @@ function GitChangesPanelComponent({
   // stays "" for the primary so every key is byte-identical to `gitChangeKey`.
   const singleSection = sections.length === 1 ? sections[0] : null;
   const singleBranch = singleSection ? singleSection.branch : status.branch;
+  const singleUpstream = singleSection
+    ? singleSection.upstream
+    : (status.upstream ?? null);
   const singleChanges = singleSection ? singleSection.changes : status.changes;
   const singleRepoRootRelative = singleSection
     ? singleSection.rootRelativePath
@@ -323,6 +329,7 @@ function GitChangesPanelComponent({
           onStageChanges={() => undefined}
           onUnstageChanges={() => undefined}
           selectedChanges={[]}
+          upstream={singleUpstream}
         />
         <div className="empty-tree">
           <p>No changes</p>
@@ -344,6 +351,7 @@ function GitChangesPanelComponent({
         onStageChanges={onStageChanges}
         onUnstageChanges={onUnstageChanges}
         selectedChanges={singleSelectedChanges}
+        upstream={singleUpstream}
       />
       <nav aria-label="Git changes" className="git-changes">
         {singleGroups.map((group) => (
@@ -495,6 +503,7 @@ function GitRepositorySectionViewComponent({
         <small className="git-repository-branch">
           <GitBranch aria-hidden="true" size={12} />
           {section.branch || "detached"}
+          <GitUpstreamBadge upstream={section.upstream} />
         </small>
         <span
           aria-label={changeCountLabel(section.changes.length)}
@@ -539,6 +548,7 @@ interface GitCommitHeaderProps {
    */
   hideBranch?: boolean;
   selectedChanges: GitChangedFile[];
+  upstream?: GitUpstreamTracking | null;
   onFetch(): void;
   onPull(): void;
   onRefresh(): void;
@@ -559,6 +569,7 @@ function GitCommitHeader({
   onStageChanges,
   onUnstageChanges,
   selectedChanges,
+  upstream = null,
 }: GitCommitHeaderProps) {
   const hasSelection = selectedChanges.length > 0;
 
@@ -580,6 +591,7 @@ function GitCommitHeader({
           <small>
             <GitBranch aria-hidden="true" size={13} />
             {branch || "detached"}
+            <GitUpstreamBadge upstream={upstream} />
           </small>
         )}
       </div>
@@ -636,6 +648,28 @@ function GitCommitHeader({
         </button>
       </div>
     </header>
+  );
+}
+
+function GitUpstreamBadge({
+  upstream,
+}: {
+  upstream: GitUpstreamTracking | null;
+}) {
+  if (!upstream || (upstream.ahead === 0 && upstream.behind === 0)) {
+    return null;
+  }
+
+  return (
+    <span
+      aria-label={`Upstream ${upstream.branch}: ${upstream.behind} behind, ${upstream.ahead} ahead`}
+      className="git-upstream-badge"
+      title={`Upstream: ${upstream.branch}`}
+    >
+      {upstream.behind > 0 ? `${upstream.behind}↓` : null}
+      {upstream.behind > 0 && upstream.ahead > 0 ? " " : null}
+      {upstream.ahead > 0 ? `${upstream.ahead}↑` : null}
+    </span>
   );
 }
 

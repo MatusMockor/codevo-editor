@@ -27,6 +27,13 @@ export interface GitStatus {
   changes: GitChangedFile[];
   isRepository: boolean;
   rootPath: string;
+  upstream?: GitUpstreamTracking | null;
+}
+
+export interface GitUpstreamTracking {
+  ahead: number;
+  behind: number;
+  branch: string;
 }
 
 export interface GitRepoStatus {
