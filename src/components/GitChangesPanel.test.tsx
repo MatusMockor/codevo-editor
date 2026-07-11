@@ -403,6 +403,184 @@ describe("GitChangesPanel", () => {
     expect(onCommitAndPush).toHaveBeenCalled();
   });
 
+  it("renders accessible conventional commit hints for a matching prefix", async () => {
+    await renderPanel({
+      commitMessage: "f",
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    const strip = host.querySelector(".git-conventional-commit-hints");
+    expect(strip).not.toBeNull();
+    expect(
+      strip?.querySelector('button[aria-label="Complete conventional commit type feat"]'),
+    ).not.toBeNull();
+    expect(
+      strip?.querySelector('button[aria-label="Complete conventional commit type fix"]'),
+    ).not.toBeNull();
+  });
+
+  it("offers no conventional commit hints for fexxx when the caret is inside the token", async () => {
+    await renderPanel({
+      commitMessage: "fexxx",
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      ".git-commit-message",
+    )!;
+
+    act(() => {
+      textarea.focus();
+      textarea.setSelectionRange(2, 2);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+
+    expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
+  });
+
+  it("offers no conventional commit hints for fix(scope) when the caret is inside the token", async () => {
+    await renderPanel({
+      commitMessage: "fix(scope)",
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      ".git-commit-message",
+    )!;
+
+    act(() => {
+      textarea.focus();
+      textarea.setSelectionRange(3, 3);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+
+    expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
+  });
+
+  it("offers and non-lossily completes plain fe when the caret is inside the token", async () => {
+    const onCommitMessageChange = vi.fn();
+    await renderPanel({
+      commitMessage: "fe",
+      onCommitMessageChange,
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      ".git-commit-message",
+    )!;
+
+    act(() => {
+      textarea.focus();
+      textarea.setSelectionRange(1, 1);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+
+    const featHint = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Complete conventional commit type feat"]',
+    );
+    expect(featHint).not.toBeNull();
+
+    act(() => featHint?.click());
+
+    expect(onCommitMessageChange).toHaveBeenCalledWith("feat: ");
+  });
+
+  it("disables conventional commit hint buttons while a Git operation is running", async () => {
+    await renderPanel({
+      commitMessage: "fe",
+      gitOperationLoading: true,
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    const hintButtons = host.querySelectorAll<HTMLButtonElement>(
+      ".git-conventional-commit-hints button",
+    );
+    expect(hintButtons.length).toBeGreaterThan(0);
+    expect(Array.from(hintButtons).every((button) => button.disabled)).toBe(true);
+  });
+
+  it.each(["", "feat: subject", "feat subject"])(
+    "hides conventional commit hints for %j",
+    async (commitMessage) => {
+      await renderPanel({
+        commitMessage,
+        status: gitStatus([gitChange("modified", "src/User.php", true)]),
+      });
+
+      expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
+    },
+  );
+
+  it("hides conventional commit hints when the caret leaves the first word", async () => {
+    await renderPanel({
+      commitMessage: "fe\nbody",
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      ".git-commit-message",
+    )!;
+    expect(host.querySelector(".git-conventional-commit-hints")).not.toBeNull();
+
+    act(() => {
+      textarea.focus();
+      textarea.setSelectionRange(4, 4);
+      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+    });
+
+    expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
+  });
+
+  it("completes a conventional type and restores the textarea caret", async () => {
+    const onCommitMessageChange = vi.fn();
+
+    function Parent() {
+      const [commitMessage, setCommitMessage] = useState("fe\nbody");
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          commitMessage={commitMessage}
+          gitOperationLoading={false}
+          includedChangePaths={new Set()}
+          isLoading={false}
+          onCommit={vi.fn()}
+          onCommitAndPush={vi.fn()}
+          onCommitMessageChange={(message) => {
+            onCommitMessageChange(message);
+            setCommitMessage(message);
+          }}
+          onOpenChange={vi.fn()}
+          onPreviewChange={vi.fn()}
+          onRefresh={vi.fn()}
+          onRevertChanges={vi.fn()}
+          onStageChanges={vi.fn()}
+          onToggleChangeIncluded={vi.fn()}
+          onUnstageChanges={vi.fn()}
+          rootPath="/workspace"
+          status={gitStatus([gitChange("modified", "src/User.php", true)])}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Complete conventional commit type feat"]',
+        )
+        ?.click();
+      await Promise.resolve();
+    });
+
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      ".git-commit-message",
+    )!;
+    expect(onCommitMessageChange).toHaveBeenCalledWith("feat: \nbody");
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe("feat: ".length);
+    expect(textarea.selectionEnd).toBe("feat: ".length);
+  });
+
   it("hides commit message history when it is empty", async () => {
     await renderPanel({
       commitMessageHistory: [],

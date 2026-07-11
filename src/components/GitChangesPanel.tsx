@@ -34,6 +34,11 @@ import {
   gitRepositoryDisplayName,
   type GitRepositoryStatus,
 } from "../domain/gitRepositoryMapping";
+import {
+  completeConventionalType,
+  matchConventionalCommitTypes,
+  type ConventionalCommitType,
+} from "../domain/conventionalCommits";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 import { requestGitFetch, requestGitPull } from "../application/useGitWorkspace";
 
@@ -422,7 +427,12 @@ function GitCommitFooter({
 }: GitCommitFooterProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [activeHistoryIndex, setActiveHistoryIndex] = useState(0);
+  const [commitCaretPosition, setCommitCaretPosition] = useState(
+    commitMessage.split(/\r?\n/, 1)[0].length,
+  );
   const activeHistoryIndexRef = useRef(0);
+  const commitMessageRef = useRef<HTMLTextAreaElement>(null);
+  const pendingCommitCaretRef = useRef<number | null>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const historyContainerRef = useRef<HTMLDivElement>(null);
   const historyListRef = useRef<HTMLDivElement>(null);
@@ -430,6 +440,17 @@ function GitCommitFooter({
     hasSelectedChanges &&
     (amendEnabled || commitMessage.trim().length > 0) &&
     !disabled;
+  const firstLine = commitMessage.split(/\r?\n/, 1)[0];
+  const firstWordLength = firstLine.search(/[:\s]/);
+  const leadingWordLength =
+    firstWordLength === -1 ? firstLine.length : firstWordLength;
+  const caretWithinLeadingWord =
+    firstWordLength === -1 &&
+    commitCaretPosition > 0 &&
+    commitCaretPosition <= leadingWordLength;
+  const conventionalTypeMatches = caretWithinLeadingWord
+    ? matchConventionalCommitTypes(firstLine.slice(0, leadingWordLength))
+    : [];
 
   const closeHistory = (restoreFocus: boolean) => {
     setHistoryOpen(false);
@@ -452,6 +473,18 @@ function GitCommitFooter({
     setActiveHistoryIndex(0);
     setHistoryOpen(false);
   }, [commitMessageHistory]);
+
+  useEffect(() => {
+    const caretPosition = pendingCommitCaretRef.current;
+    if (caretPosition === null) {
+      return;
+    }
+
+    pendingCommitCaretRef.current = null;
+    commitMessageRef.current?.focus();
+    commitMessageRef.current?.setSelectionRange(caretPosition, caretPosition);
+    setCommitCaretPosition(caretPosition);
+  }, [commitMessage]);
 
   useEffect(() => {
     if (!historyOpen) {
@@ -477,6 +510,18 @@ function GitCommitFooter({
   const selectHistoryMessage = (message: string) => {
     onCommitMessageChange(message);
     closeHistory(true);
+  };
+
+  const selectConventionalType = (type: ConventionalCommitType) => {
+    const nextMessage = completeConventionalType(commitMessage, type);
+    const nextCaretPosition = `${type}: `.length;
+    pendingCommitCaretRef.current = nextCaretPosition;
+    commitMessageRef.current?.focus();
+    onCommitMessageChange(nextMessage);
+  };
+
+  const updateCommitCaretPosition = (textarea: HTMLTextAreaElement) => {
+    setCommitCaretPosition(textarea.selectionStart);
   };
 
   const handleHistoryKeyDown = (
@@ -517,8 +562,13 @@ function GitCommitFooter({
           aria-label="Commit message"
           className="git-commit-message"
           disabled={disabled}
-          onInput={(event) => onCommitMessageChange(event.currentTarget.value)}
+          onInput={(event) => {
+            updateCommitCaretPosition(event.currentTarget);
+            onCommitMessageChange(event.currentTarget.value);
+          }}
+          onSelect={(event) => updateCommitCaretPosition(event.currentTarget)}
           placeholder="Commit message"
+          ref={commitMessageRef}
           value={commitMessage}
         />
         {commitMessageHistory.length > 0 ? (
@@ -568,6 +618,24 @@ function GitCommitFooter({
                 ))}
               </div>
             ) : null}
+          </div>
+        ) : null}
+        {commitMessage.length > 0 && conventionalTypeMatches.length > 0 ? (
+          <div
+            aria-label="Conventional commit type suggestions"
+            className="git-conventional-commit-hints"
+          >
+            {conventionalTypeMatches.map((type) => (
+              <button
+                aria-label={`Complete conventional commit type ${type}`}
+                disabled={disabled}
+                key={type}
+                onClick={() => selectConventionalType(type)}
+                type="button"
+              >
+                {type}
+              </button>
+            ))}
           </div>
         ) : null}
       </div>
