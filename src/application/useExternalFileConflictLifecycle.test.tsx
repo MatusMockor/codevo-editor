@@ -19,7 +19,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function createHarness(readTextFile = vi.fn(async () => "disk")) {
+async function createHarness(
+  readTextFile = vi.fn(async () => "disk"),
+  workspaceFileOverrides: Partial<WorkspaceFileGateway> = {},
+) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const initial = editorDocument();
@@ -38,7 +41,10 @@ async function createHarness(readTextFile = vi.fn(async () => "disk")) {
       setActivePath: vi.fn(),
       setDocuments: vi.fn(),
       setOpenPaths: vi.fn(),
-      workspaceFiles: { readTextFile } as unknown as WorkspaceFileGateway,
+      workspaceFiles: {
+        readTextFile,
+        ...workspaceFileOverrides,
+      } as unknown as WorkspaceFileGateway,
       workspaceRoot: ROOT,
     });
     return null;
@@ -156,6 +162,126 @@ describe("useExternalFileConflictLifecycle", () => {
       await test.lifecycle().action("reload");
     });
     expect(test.refs.documentsRef.current[PATH].content).toBe("captured disk");
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    act(() => test.root.unmount());
+  });
+
+  it("overwrites a modified file only against the captured disk revision", async () => {
+    const diskRevision = revision(2);
+    const savedRevision = revision(3);
+    const writeTextFile = vi.fn(async () => ({
+      status: "success" as const,
+      revision: savedRevision,
+    }));
+    const test = await createHarness(undefined, { writeTextFile });
+    const live = { ...test.refs.documentsRef.current[PATH], revision: revision(1) };
+    test.refs.documentsRef.current[PATH] = live;
+    test.refs.activeDocumentRef.current = live;
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, live, {
+        content: "disk",
+        revision: diskRevision,
+      });
+    });
+
+    await act(async () => test.lifecycle().action("overwrite"));
+
+    expect(writeTextFile).toHaveBeenCalledWith(PATH, "local", diskRevision);
+    expect(test.refs.documentsRef.current[PATH]).toMatchObject({
+      content: "local",
+      savedContent: "local",
+      revision: savedRevision,
+    });
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    act(() => test.root.unmount());
+  });
+
+  it("keeps overwrite conflict scoped when the disk changes again", async () => {
+    const writeTextFile = vi.fn(async () => ({
+      status: "conflict" as const,
+      message: "changed again",
+    }));
+    const test = await createHarness(undefined, { writeTextFile });
+    const live = test.refs.documentsRef.current[PATH];
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, live, {
+        content: "disk",
+        revision: revision(2),
+      });
+    });
+
+    await act(async () => test.lifecycle().action("overwrite"));
+
+    expect(test.refs.documentsRef.current[PATH].savedContent).toBe("base");
+    expect(test.lifecycle().activeState.conflict?.kind).toBe("modified");
+    expect(test.lifecycle().activeState.error).toContain("changed again");
+    expect(test.lifecycle().hasConflict("/other-workspace", PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("preserves edits typed while an overwrite is in flight", async () => {
+    const pending = deferred<{
+      status: "success";
+      revision: ReturnType<typeof revision>;
+    }>();
+    const writeTextFile = vi.fn(() => pending.promise);
+    const test = await createHarness(undefined, { writeTextFile });
+    const live = test.refs.documentsRef.current[PATH];
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, live, {
+        content: "disk",
+        revision: revision(2),
+      });
+    });
+
+    let overwrite!: Promise<void>;
+    await act(async () => {
+      overwrite = test.lifecycle().action("overwrite");
+      await Promise.resolve();
+    });
+    test.refs.documentsRef.current[PATH] = {
+      ...test.refs.documentsRef.current[PATH],
+      content: "newer local edit",
+    };
+    await act(async () => {
+      pending.resolve({ status: "success", revision: revision(3) });
+      await overwrite;
+    });
+
+    expect(test.refs.documentsRef.current[PATH]).toMatchObject({
+      content: "newer local edit",
+      savedContent: "local",
+      revision: revision(3),
+    });
+    act(() => test.root.unmount());
+  });
+
+  it("recreates a deleted file with create-if-absent and a revision-aware save", async () => {
+    const createdRevision = revision(4);
+    const savedRevision = revision(5);
+    const createTextFile = vi.fn(async () => undefined);
+    const writeTextFile = vi.fn(async () => ({
+      status: "success" as const,
+      revision: savedRevision,
+    }));
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: "",
+      revision: createdRevision,
+    }));
+    const test = await createHarness(undefined, {
+      createTextFile,
+      readTextFileSnapshot,
+      writeTextFile,
+    });
+    await act(async () => {
+      await test.lifecycle().handleFileChange({ ...modified(), kind: "deleted" });
+      await test.lifecycle().action("recreate");
+    });
+
+    expect(createTextFile).toHaveBeenCalledWith(PATH);
+    expect(writeTextFile).toHaveBeenCalledWith(PATH, "local", createdRevision);
+    expect(test.refs.documentsRef.current[PATH].savedContent).toBe("local");
+    expect(test.refs.documentsRef.current[PATH].revision).toEqual(savedRevision);
     expect(test.lifecycle().activeState.conflict).toBeNull();
     act(() => test.root.unmount());
   });

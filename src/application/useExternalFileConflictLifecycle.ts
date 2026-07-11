@@ -289,16 +289,113 @@ export function useExternalFileConflictLifecycle({
         return;
       }
 
-      if (requested === "overwrite" || requested === "recreate") {
-        return;
-      }
-
       const resolving = transitionExternalFileConflict(state, {
         type: "actionStarted",
         target,
         action: requested,
       });
       publish(workspaceRoot, activePath, resolving);
+
+      const failAction = (message: string) => {
+        publish(
+          workspaceRoot,
+          activePath,
+          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+            type: "actionFailed",
+            target,
+            message,
+          }),
+        );
+      };
+
+      const finishWrite = (
+        writtenContent: string,
+        revision: import("../domain/workspace").WorkspaceFileRevision | null,
+      ) => {
+        const current = documentsRef.current[activePath];
+        if (!current) {
+          return;
+        }
+        const saved = {
+          ...current,
+          savedContent: writtenContent,
+          revision,
+        };
+        documentsRef.current = { ...documentsRef.current, [activePath]: saved };
+        if (activeDocumentRef.current?.path === activePath) {
+          activeDocumentRef.current = saved;
+        }
+        setDocuments(documentsRef.current);
+        publish(
+          workspaceRoot,
+          activePath,
+          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+            type: "resolved",
+            target,
+          }),
+        );
+      };
+
+      if (requested === "overwrite") {
+        const live = documentsRef.current[activePath];
+        const expectedRevision = conflict.disk?.revision;
+        if (conflict.kind !== "modified" || !live || !expectedRevision) {
+          failAction("Overwrite is available only for a modified file with a trusted disk revision.");
+          return;
+        }
+        try {
+          const result = await workspaceFiles.writeTextFile(
+            activePath,
+            live.content,
+            expectedRevision,
+          );
+          if (!result || result.status === "error" || result.status === "conflict") {
+            failAction(result?.message ?? "The overwrite did not return a trusted result.");
+            return;
+          }
+          if (result.status === "partial") {
+            failAction(result.message);
+            return;
+          }
+          finishWrite(live.content, result.revision);
+        } catch (error) {
+          failAction(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
+
+      if (requested === "recreate") {
+        const live = documentsRef.current[activePath];
+        if (conflict.kind !== "deleted" || !live) {
+          failAction("Recreate is available only for a deleted file.");
+          return;
+        }
+        try {
+          await workspaceFiles.createTextFile(activePath);
+          const created = await readWorkspaceTextFileSnapshot(workspaceFiles, activePath);
+          if (!created.revision) {
+            failAction("The recreated file has no trusted revision.");
+            return;
+          }
+          const result = await workspaceFiles.writeTextFile(
+            activePath,
+            live.content,
+            created.revision,
+          );
+          if (!result || result.status === "error" || result.status === "conflict") {
+            failAction(result?.message ?? "The recreated file could not be saved safely.");
+            return;
+          }
+          if (result.status === "partial") {
+            failAction(result.message);
+            return;
+          }
+          finishWrite(live.content, result.revision);
+        } catch (error) {
+          failAction(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
 
       if (requested === "retryRead") {
         const retryEvent = retryEventRef.current[`${workspaceRoot}\0${activePath}`];
@@ -422,6 +519,7 @@ export function useExternalFileConflictLifecycle({
       setDocuments,
       setOpenPaths,
       stateFor,
+      workspaceFiles,
       workspaceRoot,
     ],
   );

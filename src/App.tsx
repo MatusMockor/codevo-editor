@@ -1239,7 +1239,11 @@ function App() {
                 : null
             }
             conflict={workbench.externalFileConflictState.conflict}
-            disabledActions={["overwrite", "recreate"]}
+            disabledActions={
+              workbench.externalFileConflictState.conflict.kind === "renamed"
+                ? ["overwrite"]
+                : []
+            }
             error={workbench.externalFileConflictState.error}
             onAction={workbench.handleExternalFileConflictAction}
           />
