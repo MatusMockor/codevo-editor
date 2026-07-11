@@ -399,7 +399,10 @@ fn file_search_query_tokens(query: &str) -> Vec<&str> {
         .collect()
 }
 
-fn apply_text_edits_to_content(content: &str, edits: &[WorkspaceTextEdit]) -> io::Result<String> {
+pub(crate) fn apply_text_edits_to_content(
+    content: &str,
+    edits: &[WorkspaceTextEdit],
+) -> io::Result<String> {
     let mut indexed_edits = edits
         .iter()
         .map(|edit| {

@@ -21,13 +21,18 @@ import type {
   WorkspaceTextFileSnapshot,
 } from "../domain/workspace";
 import type {
+  WorkspaceIdentityDescriptor,
   WorkspaceIdentityDescriptorResolver,
 } from "./tauriWorkspaceIdentityGateway";
 import { workspaceRelativePathForDescriptor } from "./tauriWorkspaceIdentityGateway";
 
 const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT =
   "php://managed-phpactor-install-completed";
-import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
+import {
+  pathFromLanguageServerUri,
+  type LanguageServerWorkspaceEdit,
+  type LanguageServerWorkspaceFileOperation,
+} from "../domain/languageServerFeatures";
 
 export class TauriWorkspaceGateway
   implements
@@ -46,6 +51,22 @@ export class TauriWorkspaceGateway
     edit: LanguageServerWorkspaceEdit,
     skippedPaths: string[],
   ): Promise<number> {
+    const target = this.optionalTrustedTarget(rootPath);
+    if (target) {
+      const descriptor = this.workspaceIdentities?.descriptorForPath(rootPath);
+      if (!descriptor) {
+        return Promise.reject(new Error("The trusted workspace descriptor is no longer available."));
+      }
+      return invoke<WorkspaceEditResult>("workspace_apply_workspace_edit", {
+        workspaceId: target.workspaceId,
+        edit: relativeWorkspaceEdit(descriptor, edit),
+        skippedPaths: skippedPaths.flatMap((path) => {
+          const relativePath = workspaceRelativePathForDescriptor(descriptor, path);
+          return relativePath === null ? [] : [relativePath];
+        }),
+      }).then(workspaceEditCount);
+    }
+
     return invoke<number>("apply_workspace_edit", {
       edit,
       rootPath,
@@ -260,6 +281,61 @@ type DescriptorReplaceResult =
   | { status: "conflict"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; message: string }
   | { status: "partial"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; errors: DescriptorReplaceFailure[]; message: string }
   | { status: "error"; files: DescriptorReplaceFile[]; totalReplacements: number; errors: DescriptorReplaceFailure[]; message: string };
+type WorkspaceEditResult = {
+  status: "success" | "conflict" | "partial" | "error" | "notFound";
+  appliedCount: number;
+  appliedFileOperations: number;
+  appliedTextFiles: number;
+  failedPath?: string;
+  message?: string;
+};
+
+function workspaceEditCount(result: WorkspaceEditResult): number {
+  if (result.status === "success") return result.appliedCount;
+  throw new Error(`${result.failedPath ?? "workspace edit"}: ${result.message ?? result.status}`);
+}
+
+function relativeWorkspaceEdit(
+  descriptor: WorkspaceIdentityDescriptor,
+  edit: LanguageServerWorkspaceEdit,
+): LanguageServerWorkspaceEdit {
+  const changes = Object.fromEntries(Object.entries(edit.changes).flatMap(([uri, edits]) => {
+    const relativePath = relativePathFromUri(descriptor, uri);
+    return relativePath === null ? [] : [[relativePath, edits]];
+  }));
+  const fileOperations = edit.fileOperations?.flatMap((operation) => {
+    const relativeOperation = relativeFileOperation(descriptor, operation);
+    return relativeOperation ? [relativeOperation] : [];
+  });
+  const documentVersions = edit.documentVersions
+    ? Object.fromEntries(Object.entries(edit.documentVersions).flatMap(([uri, version]) => {
+        const relativePath = relativePathFromUri(descriptor, uri);
+        return relativePath === null ? [] : [[relativePath, version]];
+      }))
+    : undefined;
+  return { ...edit, changes, documentVersions, fileOperations };
+}
+
+function relativeFileOperation(
+  descriptor: WorkspaceIdentityDescriptor,
+  operation: LanguageServerWorkspaceFileOperation,
+): LanguageServerWorkspaceFileOperation | null {
+  if (operation.kind !== "rename") {
+    const uri = relativePathFromUri(descriptor, operation.uri);
+    return uri === null ? null : { ...operation, uri };
+  }
+  const oldUri = relativePathFromUri(descriptor, operation.oldUri);
+  const newUri = relativePathFromUri(descriptor, operation.newUri);
+  if (oldUri === null || newUri === null) return null;
+  return { ...operation, oldUri, newUri };
+}
+
+function relativePathFromUri(descriptor: WorkspaceIdentityDescriptor, uri: string): string | null {
+  const path = pathFromLanguageServerUri(uri);
+  if (path === null) return null;
+  const relativePath = workspaceRelativePathForDescriptor(descriptor, path);
+  return relativePath;
+}
 
 function mapReplaceResult(root: string, result: DescriptorReplaceResult): ReplaceInPathResult {
   const files = result.files.map((file) => ({ ...file, path: joinWorkspacePath(root, file.relativePath) }));

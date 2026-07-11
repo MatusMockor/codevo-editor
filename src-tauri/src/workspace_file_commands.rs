@@ -390,6 +390,44 @@ pub enum MutationResult {
     Error { message: String },
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorkspaceEditResult {
+    Success {
+        applied_file_operations: usize,
+        applied_text_files: usize,
+        applied_count: usize,
+    },
+    Conflict {
+        applied_file_operations: usize,
+        applied_text_files: usize,
+        applied_count: usize,
+        failed_path: String,
+        message: String,
+    },
+    Partial {
+        applied_file_operations: usize,
+        applied_text_files: usize,
+        applied_count: usize,
+        failed_path: String,
+        message: String,
+    },
+    Error {
+        applied_file_operations: usize,
+        applied_text_files: usize,
+        applied_count: usize,
+        failed_path: String,
+        message: String,
+    },
+    NotFound {
+        applied_file_operations: usize,
+        applied_text_files: usize,
+        applied_count: usize,
+        failed_path: String,
+        message: String,
+    },
+}
+
 pub struct WorkspaceFileRepository<'a> {
     registry: &'a WorkspaceRegistry,
 }

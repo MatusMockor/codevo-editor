@@ -142,14 +142,15 @@ use tools::{
 };
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
-    apply_text_edits_to_files, FileEntry, FileSearchResult, LocalWorkspaceFileRepository,
-    WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
+    apply_text_edits_to_content, apply_text_edits_to_files, FileEntry, FileSearchResult,
+    LocalWorkspaceFileRepository, WorkspaceFileRepository, WorkspaceTextEdit,
+    WorkspaceTextPosition, WorkspaceTextRange,
 };
 #[cfg(target_os = "macos")]
 use workspace_file_commands::{
     DescriptorFileEntry, DescriptorFileSearchResult, DescriptorTextSearchResult, FileCommandResult,
-    FileRevision, MutationResult, WorkspaceFileRepository as DescriptorFileRepository,
-    WorkspaceReplaceResult, WorkspaceTextFile,
+    FileRevision, MutationResult, WorkspaceEditResult,
+    WorkspaceFileRepository as DescriptorFileRepository, WorkspaceReplaceResult, WorkspaceTextFile,
 };
 use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
@@ -5170,6 +5171,311 @@ async fn apply_workspace_edit(
     .await
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn workspace_apply_workspace_edit(
+    app: AppHandle,
+    workspace_id: WorkspaceId,
+    edit: LanguageServerWorkspaceEdit,
+    skipped_paths: Vec<String>,
+) -> Result<WorkspaceEditResult, String> {
+    run_blocking_command(move || {
+        let registry = app.state::<WorkspaceRegistry>();
+        Ok(apply_descriptor_workspace_edit(
+            &registry,
+            &workspace_id,
+            edit,
+            &skipped_paths,
+            |_, _| {},
+        ))
+    })
+    .await
+}
+
+#[cfg(target_os = "macos")]
+fn apply_descriptor_workspace_edit(
+    registry: &WorkspaceRegistry,
+    workspace_id: &WorkspaceId,
+    edit: LanguageServerWorkspaceEdit,
+    skipped_paths: &[String],
+    mut after_read: impl FnMut(&Path, usize),
+) -> WorkspaceEditResult {
+    let repository = DescriptorFileRepository::new(registry);
+    if let Err(error) = registry.descriptor(workspace_id) {
+        return WorkspaceEditResult::NotFound {
+            applied_file_operations: 0,
+            applied_text_files: 0,
+            applied_count: 0,
+            failed_path: "<workspace>".into(),
+            message: error.to_string(),
+        };
+    }
+    let mut applied_file_operations = 0;
+    for operation in &edit.file_operations {
+        match apply_descriptor_file_operation(&repository, workspace_id, operation) {
+            Ok(changed) => applied_file_operations += changed,
+            Err((path, message, partial)) => {
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    0,
+                    &path,
+                    message,
+                    partial || applied_file_operations > 0,
+                );
+            }
+        }
+    }
+
+    let skipped = skipped_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let mut edits_by_path = BTreeMap::<String, Vec<WorkspaceTextEdit>>::new();
+    for (path, edits) in edit.changes {
+        if skipped.contains(&path) {
+            continue;
+        }
+        for text_edit in edits {
+            edits_by_path
+                .entry(path.clone())
+                .or_default()
+                .push(WorkspaceTextEdit {
+                    path: path.clone(),
+                    range: WorkspaceTextRange {
+                        start: WorkspaceTextPosition {
+                            line: text_edit.range.start.line,
+                            character: text_edit.range.start.character,
+                        },
+                        end: WorkspaceTextPosition {
+                            line: text_edit.range.end.line,
+                            character: text_edit.range.end.character,
+                        },
+                    },
+                    new_text: text_edit.new_text,
+                });
+        }
+    }
+
+    let mut applied_text_files = 0;
+    for (path, edits) in edits_by_path {
+        let snapshot = match repository.read_text(workspace_id, Path::new(&path)) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    applied_text_files,
+                    &path,
+                    error.to_string(),
+                    applied_file_operations + applied_text_files > 0,
+                );
+            }
+        };
+        let content = match apply_text_edits_to_content(&snapshot.content, &edits) {
+            Ok(content) => content,
+            Err(error) => {
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    applied_text_files,
+                    &path,
+                    error.to_string(),
+                    applied_file_operations + applied_text_files > 0,
+                );
+            }
+        };
+        after_read(Path::new(&path), applied_text_files);
+        if content == snapshot.content {
+            continue;
+        }
+        match repository.save_text(workspace_id, Path::new(&path), &content, &snapshot.revision) {
+            FileCommandResult::Success { .. } => applied_text_files += 1,
+            FileCommandResult::Conflict { message } => {
+                if applied_file_operations + applied_text_files == 0 {
+                    return WorkspaceEditResult::Conflict {
+                        applied_file_operations,
+                        applied_text_files,
+                        applied_count: 0,
+                        failed_path: path,
+                        message,
+                    };
+                }
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    applied_text_files,
+                    &path,
+                    message,
+                    true,
+                );
+            }
+            FileCommandResult::Partial { message, .. } => {
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    applied_text_files,
+                    &path,
+                    message,
+                    true,
+                );
+            }
+            FileCommandResult::Error { message } => {
+                return workspace_edit_failure(
+                    applied_file_operations,
+                    applied_text_files,
+                    &path,
+                    message,
+                    applied_file_operations + applied_text_files > 0,
+                );
+            }
+        }
+    }
+
+    WorkspaceEditResult::Success {
+        applied_file_operations,
+        applied_text_files,
+        applied_count: applied_file_operations + applied_text_files,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn workspace_edit_failure(
+    applied_file_operations: usize,
+    applied_text_files: usize,
+    failed_path: &str,
+    message: String,
+    partial: bool,
+) -> WorkspaceEditResult {
+    let applied_count = applied_file_operations + applied_text_files;
+    let failed_path = failed_path.to_string();
+    if partial {
+        return WorkspaceEditResult::Partial {
+            applied_file_operations,
+            applied_text_files,
+            applied_count,
+            failed_path,
+            message,
+        };
+    }
+    WorkspaceEditResult::Error {
+        applied_file_operations,
+        applied_text_files,
+        applied_count,
+        failed_path,
+        message,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_descriptor_file_operation(
+    repository: &DescriptorFileRepository<'_>,
+    workspace_id: &WorkspaceId,
+    operation: &LanguageServerWorkspaceFileOperation,
+) -> Result<usize, (String, String, bool)> {
+    match operation {
+        LanguageServerWorkspaceFileOperation::Create { uri, options } => {
+            let path = Path::new(uri);
+            if descriptor_path_exists(repository, workspace_id, path) {
+                if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
+                    return Ok(0);
+                }
+                if workspace_file_option(options.as_ref(), |value| value.overwrite) {
+                    let snapshot = repository
+                        .read_text(workspace_id, path)
+                        .map_err(|error| (uri.clone(), error.to_string(), false))?;
+                    return mutation_from_save(
+                        uri,
+                        repository.save_text(workspace_id, path, "", &snapshot.revision),
+                    );
+                }
+                return Err((
+                    uri.clone(),
+                    "Cannot create file because target already exists.".into(),
+                    false,
+                ));
+            }
+            mutation_from_result(uri, repository.create_file(workspace_id, path))
+        }
+        LanguageServerWorkspaceFileOperation::Rename {
+            old_uri,
+            new_uri,
+            options,
+        } => {
+            if old_uri == new_uri {
+                return Ok(0);
+            }
+            if !descriptor_path_exists(repository, workspace_id, Path::new(old_uri))
+                && workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists)
+            {
+                return Ok(0);
+            }
+            if descriptor_path_exists(repository, workspace_id, Path::new(new_uri))
+                && workspace_file_option(options.as_ref(), |value| value.ignore_if_exists)
+            {
+                return Ok(0);
+            }
+            let overwrite = workspace_file_option(options.as_ref(), |value| value.overwrite);
+            mutation_from_result(
+                old_uri,
+                repository.rename(
+                    workspace_id,
+                    Path::new(old_uri),
+                    Path::new(new_uri),
+                    overwrite,
+                ),
+            )
+        }
+        LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
+            if !descriptor_path_exists(repository, workspace_id, Path::new(uri))
+                && workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists)
+            {
+                return Ok(0);
+            }
+            if !workspace_file_option(options.as_ref(), |value| value.recursive)
+                && repository
+                    .read_directory(workspace_id, Path::new(uri))
+                    .is_ok()
+            {
+                return Err((
+                    uri.clone(),
+                    "Cannot delete directory without the recursive option.".into(),
+                    false,
+                ));
+            }
+            mutation_from_result(uri, repository.delete(workspace_id, Path::new(uri)))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn descriptor_path_exists(
+    repository: &DescriptorFileRepository<'_>,
+    workspace_id: &WorkspaceId,
+    path: &Path,
+) -> bool {
+    repository.read_text(workspace_id, path).is_ok()
+        || repository.read_directory(workspace_id, path).is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn mutation_from_result(
+    path: &str,
+    result: MutationResult,
+) -> Result<usize, (String, String, bool)> {
+    match result {
+        MutationResult::Success => Ok(1),
+        MutationResult::Partial { message } => Err((path.into(), message, true)),
+        MutationResult::Error { message } => Err((path.into(), message, false)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mutation_from_save(
+    path: &str,
+    result: FileCommandResult,
+) -> Result<usize, (String, String, bool)> {
+    match result {
+        FileCommandResult::Success { .. } => Ok(1),
+        FileCommandResult::Partial { message, .. } => Err((path.into(), message, true)),
+        FileCommandResult::Conflict { message } | FileCommandResult::Error { message } => {
+            Err((path.into(), message, false))
+        }
+    }
+}
+
 fn apply_workspace_file_operations(
     repository: &dyn WorkspaceFileRepository,
     operations: &[LanguageServerWorkspaceFileOperation],
@@ -5390,8 +5696,9 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_workspace_edit, cached_monospace_font_families, create_git_branch,
-        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
+        apply_descriptor_workspace_edit, apply_workspace_edit, cached_monospace_font_families,
+        create_git_branch, ensure_local_history_relative_path,
+        ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -5431,6 +5738,8 @@ mod tests {
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::php_file_outline::PhpFileOutlineNodeKind;
     use crate::workspace::FileEntryKind;
+    use crate::workspace_file_commands::WorkspaceEditResult;
+    use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -6485,6 +6794,263 @@ mod tests {
         assert!(!old_path.exists());
         assert!(renamed_path.exists());
         assert!(!deleted_path.exists());
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_applies_file_operations_before_text_edits_with_counts() {
+        let root = temp_workspace("descriptor-workspace-edit-full");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/Old.ts"), "old").unwrap();
+        fs::write(root.join("src/Deleted.ts"), "deleted").unwrap();
+        fs::write(root.join("src/Other.ts"), "other").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit(
+            "src/Created.ts",
+            "created",
+            vec![
+                LanguageServerWorkspaceFileOperation::Create {
+                    uri: "src/Created.ts".into(),
+                    options: None,
+                },
+                LanguageServerWorkspaceFileOperation::Rename {
+                    old_uri: "src/Old.ts".into(),
+                    new_uri: "src/Renamed.ts".into(),
+                    options: None,
+                },
+                LanguageServerWorkspaceFileOperation::Delete {
+                    uri: "src/Deleted.ts".into(),
+                    options: None,
+                },
+            ],
+        );
+        edit.changes
+            .extend(relative_workspace_edit("src/Other.ts", "changed-", vec![]).changes);
+        let result = apply_descriptor_workspace_edit(&registry, &id, edit, &[], |_, _| {});
+        assert!(matches!(
+            result,
+            WorkspaceEditResult::Success {
+                applied_file_operations: 3,
+                applied_text_files: 2,
+                applied_count: 5
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("src/Created.ts")).unwrap(),
+            "created"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/Other.ts")).unwrap(),
+            "changed-other"
+        );
+        assert!(root.join("src/Renamed.ts").exists());
+        assert!(!root.join("src/Old.ts").exists());
+        assert!(!root.join("src/Deleted.ts").exists());
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_rejects_symlink_escape_without_mutation() {
+        use std::os::unix::fs::symlink;
+        let root = temp_workspace("descriptor-workspace-edit-symlink");
+        let outside = temp_workspace("descriptor-workspace-edit-outside");
+        fs::write(outside.join("value.ts"), "outside").unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("link/value.ts", "changed", vec![]),
+            &[],
+            |_, _| {},
+        );
+        assert!(matches!(result, WorkspaceEditResult::Error { .. }));
+        assert_eq!(
+            fs::read_to_string(outside.join("value.ts")).unwrap(),
+            "outside"
+        );
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_reports_partial_conflict_after_an_earlier_write() {
+        let root = temp_workspace("descriptor-workspace-edit-conflict");
+        fs::write(root.join("a.ts"), "a").unwrap();
+        fs::write(root.join("b.ts"), "b").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("a.ts", "A", vec![]);
+        edit.changes
+            .extend(relative_workspace_edit("b.ts", "B", vec![]).changes);
+        let result = apply_descriptor_workspace_edit(&registry, &id, edit, &[], |path, applied| {
+            if applied == 1 && path == Path::new("b.ts") {
+                fs::write(root.join("b.ts"), "external").unwrap();
+            }
+        });
+        assert!(
+            matches!(result, WorkspaceEditResult::Partial { applied_text_files: 1, applied_count: 1, ref failed_path, .. } if failed_path == "b.ts")
+        );
+        assert_eq!(fs::read_to_string(root.join("a.ts")).unwrap(), "Aa");
+        assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external");
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_reports_conflict_on_the_first_file() {
+        let root = temp_workspace("descriptor-workspace-edit-first-conflict");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "changed-", vec![]),
+            &[],
+            |_, _| fs::write(root.join("value.ts"), "external").unwrap(),
+        );
+        assert!(matches!(
+            result,
+            WorkspaceEditResult::Conflict {
+                applied_count: 0,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "external"
+        );
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_does_not_save_or_count_no_op_edits() {
+        let root = temp_workspace("descriptor-workspace-edit-no-op");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "", vec![]),
+            &[],
+            |_, _| fs::write(root.join("value.ts"), "external").unwrap(),
+        );
+        assert!(matches!(
+            result,
+            WorkspaceEditResult::Success {
+                applied_count: 0,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "external"
+        );
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_renames_with_overwrite() {
+        let root = temp_workspace("descriptor-workspace-edit-rename-overwrite");
+        fs::write(root.join("source.ts"), "source").unwrap();
+        fs::write(root.join("target.ts"), "target").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            LanguageServerWorkspaceEdit {
+                changes: BTreeMap::new(),
+                document_versions: BTreeMap::new(),
+                file_operations: vec![LanguageServerWorkspaceFileOperation::Rename {
+                    old_uri: "source.ts".into(),
+                    new_uri: "target.ts".into(),
+                    options: Some(LanguageServerWorkspaceFileOperationOptions {
+                        overwrite: Some(true),
+                        ..Default::default()
+                    }),
+                }],
+            },
+            &[],
+            |_, _| {},
+        );
+        assert!(matches!(
+            result,
+            WorkspaceEditResult::Success {
+                applied_count: 1,
+                ..
+            }
+        ));
+        assert!(!root.join("source.ts").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("target.ts")).unwrap(),
+            "source"
+        );
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_unknown_workspace_is_not_found() {
+        let registry = WorkspaceRegistry::new();
+        let id: WorkspaceId = serde_json::from_str("\"missing\"").unwrap();
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "value", vec![]),
+            &[],
+            |_, _| {},
+        );
+        assert!(matches!(result, WorkspaceEditResult::NotFound { .. }));
+    }
+
+    #[test]
+    fn descriptor_workspace_edit_honors_skipped_relative_paths() {
+        let root = temp_workspace("descriptor-workspace-edit-skipped");
+        fs::write(root.join("value.ts"), "original").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let result = apply_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "changed", vec![]),
+            &["value.ts".into()],
+            |_, _| {},
+        );
+        assert!(matches!(
+            result,
+            WorkspaceEditResult::Success {
+                applied_count: 0,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "original"
+        );
+    }
+
+    fn relative_workspace_edit(
+        path: &str,
+        new_text: &str,
+        file_operations: Vec<LanguageServerWorkspaceFileOperation>,
+    ) -> LanguageServerWorkspaceEdit {
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            path.into(),
+            vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+                new_text: new_text.into(),
+            }],
+        );
+        LanguageServerWorkspaceEdit {
+            changes,
+            document_versions: BTreeMap::new(),
+            file_operations,
+        }
     }
 
     // The git, write-file, and apply-edit commands moved off the Tauri main
@@ -7674,6 +8240,7 @@ pub fn run() {
             workspace_search_files,
             workspace_search_text,
             workspace_replace_in_path,
+            workspace_apply_workspace_edit,
             workspace_save_text_file,
             workspace_create_text_file,
             workspace_create_directory,

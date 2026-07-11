@@ -19,6 +19,78 @@ const descriptor: WorkspaceIdentityDescriptor = {
 describe("TauriWorkspaceGateway trusted file operations", () => {
   beforeEach(() => invoke.mockReset());
 
+  it("routes trusted workspace edits through the descriptor command with relative paths", async () => {
+    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 1, appliedTextFiles: 1, appliedCount: 2 });
+    const edit = {
+      changes: {
+        "file:///selected/project/src/App.ts": [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: "next" }],
+      },
+      fileOperations: [{ kind: "rename" as const, oldUri: "file:///selected/project/src/Old.ts", newUri: "file:///selected/project/src/New.ts" }],
+    };
+
+    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", edit, ["/selected/project/src/Open.ts"])).resolves.toBe(2);
+    expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", {
+      workspaceId: "ws-1",
+      edit: {
+        changes: { "src/App.ts": edit.changes["file:///selected/project/src/App.ts"] },
+        fileOperations: [{ kind: "rename", oldUri: "src/Old.ts", newUri: "src/New.ts" }],
+      },
+      skippedPaths: ["src/Open.ts"],
+    });
+  });
+
+  it("keeps descriptorless workspace edits on the legacy command", async () => {
+    invoke.mockResolvedValue(3);
+    const gateway = new TauriWorkspaceGateway({ descriptorForPath: () => null });
+    const edit = { changes: {} };
+
+    await expect(gateway.applyWorkspaceEdit("/legacy", edit, [])).resolves.toBe(3);
+    expect(invoke).toHaveBeenCalledWith("apply_workspace_edit", { rootPath: "/legacy", edit, skippedPaths: [] });
+  });
+
+  it("drops skipped open documents outside the trusted workspace", async () => {
+    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 0, appliedTextFiles: 1, appliedCount: 1 });
+
+    await expect(trustedGateway().applyWorkspaceEdit(
+      "/selected/project",
+      { changes: { "file:///selected/project/src/App.ts": [] } },
+      ["/selected/project/src/Open.ts", "/external/Definition.ts"],
+    )).resolves.toBe(1);
+    expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", expect.objectContaining({ skippedPaths: ["src/Open.ts"] }));
+  });
+
+  it.each(["untitled:Scratch", "file:///selected/project/src/bad%value.ts"])("skips an unresolvable %s URI while applying valid entries", async (invalidUri) => {
+    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 0, appliedTextFiles: 1, appliedCount: 1 });
+    const validEdits = [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: "valid" }];
+
+    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", {
+      changes: {
+        [invalidUri]: [],
+        "file:///selected/project/src/App.ts": validEdits,
+      },
+      documentVersions: { [invalidUri]: 1, "file:///selected/project/src/App.ts": 2 },
+      fileOperations: [
+        { kind: "delete", uri: invalidUri },
+        { kind: "create", uri: "file:///selected/project/src/New.ts" },
+      ],
+    }, [])).resolves.toBe(1);
+    expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", {
+      workspaceId: "ws-1",
+      edit: {
+        changes: { "src/App.ts": validEdits },
+        documentVersions: { "src/App.ts": 2 },
+        fileOperations: [{ kind: "create", uri: "src/New.ts" }],
+      },
+      skippedPaths: [],
+    });
+  });
+
+  it.each(["partial", "conflict", "error"])("rejects a typed %s workspace edit outcome", async (status) => {
+    invoke.mockResolvedValue({ status, appliedFileOperations: 1, appliedTextFiles: 0, appliedCount: 1, failedPath: "src/App.ts", message: "file changed" });
+
+    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", { changes: {} }, [])).rejects.toThrow("src/App.ts: file changed");
+  });
+
   it("routes selected and canonical aliases through workspace-relative reads", async () => {
     invoke.mockResolvedValue({ content: "", revision: revision() });
     const gateway = trustedGateway();
