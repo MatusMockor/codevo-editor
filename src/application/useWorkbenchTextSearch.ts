@@ -64,6 +64,7 @@ export interface WorkbenchTextSearch {
   resetTextSearchState: () => void;
   openTextSearchResult: (result: TextSearchResult) => Promise<void>;
   dismissTextSearchFile: (path: string) => void;
+  restoreDismissedTextSearchFiles: () => void;
   replaceAllInPath: () => Promise<void>;
   replaceInFile: (path: string) => Promise<void>;
 }
@@ -219,6 +220,24 @@ export function useWorkbenchTextSearch(
     },
     [textSearchResults, workspaceRoot],
   );
+
+  const restoreDismissedTextSearchFiles = useCallback(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    setTextSearchExclusions((current) => {
+      if (!workspaceRootKeysEqual(current.workspaceRoot, workspaceRoot)) {
+        return current;
+      }
+
+      if (current.paths.size === 0) {
+        return current;
+      }
+
+      return { workspaceRoot, paths: new Set() };
+    });
+  }, [workspaceRoot]);
 
   useEffect(() => {
     setTextSearchExclusions({ workspaceRoot, paths: new Set() });
@@ -630,6 +649,7 @@ export function useWorkbenchTextSearch(
     resetTextSearchState,
     openTextSearchResult,
     dismissTextSearchFile,
+    restoreDismissedTextSearchFiles,
     replaceAllInPath,
     replaceInFile,
   };

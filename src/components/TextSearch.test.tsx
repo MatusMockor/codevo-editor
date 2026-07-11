@@ -385,6 +385,47 @@ describe("TextSearch", () => {
     ).toBe(false);
   });
 
+  it("hides the restore affordance when no files are dismissed", () => {
+    renderTextSearch({
+      results: [result({ path: "/workspace/a.php", relativePath: "a.php" })],
+    });
+
+    expect(
+      host.querySelector('[aria-label="Restore dismissed search files"]'),
+    ).toBeNull();
+  });
+
+  it("restores all dismissed files and updates the result summary", () => {
+    const results = [
+      result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 1 }),
+      result({ path: "/workspace/a.php", relativePath: "a.php", lineNumber: 2 }),
+      result({ path: "/workspace/b.php", relativePath: "b.php" }),
+      result({ path: "/workspace/c.php", relativePath: "c.php" }),
+    ];
+    renderRestorableTextSearch(results);
+
+    const restore = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Restore dismissed search files"]',
+    );
+
+    expect(restore?.type).toBe("button");
+    expect(restore?.textContent).toBe("2 dismissed - Restore");
+    expect(host.querySelector(".text-search-summary")?.textContent).toBe(
+      "1 occurrence in 1 file",
+    );
+
+    act(() => restore?.click());
+
+    expect(
+      host.querySelector('[aria-label="Restore dismissed search files"]'),
+    ).toBeNull();
+    expect(host.textContent).toContain("a.php:");
+    expect(host.textContent).toContain("b.php:");
+    expect(host.querySelector(".text-search-summary")?.textContent).toBe(
+      "4 occurrences in 3 files",
+    );
+  });
+
   it("qualifies summary counts when search results hit the cap", () => {
     renderTextSearch({
       results: Array.from({ length: 100 }, (_, index) =>
@@ -443,6 +484,7 @@ describe("TextSearch", () => {
           onOpen={vi.fn()}
           onReplaceAll={vi.fn()}
           onReplaceInFile={vi.fn()}
+          onRestoreDismissedFiles={vi.fn()}
           options={defaultTextSearchOptions()}
           query="query"
           replaceBusy={false}
@@ -475,6 +517,7 @@ describe("TextSearch", () => {
           onOpen={vi.fn()}
           onReplaceAll={vi.fn()}
           onReplaceInFile={vi.fn()}
+          onRestoreDismissedFiles={vi.fn()}
           options={defaultTextSearchOptions()}
           query="query"
           replaceBusy={false}
@@ -487,6 +530,38 @@ describe("TextSearch", () => {
     }
 
     act(() => root.render(<StatefulTextSearch />));
+  }
+
+  function renderRestorableTextSearch(results: TextSearchResult[]) {
+    function RestorableTextSearch() {
+      const [dismissedPaths, setDismissedPaths] = useState<ReadonlySet<string>>(
+        new Set(["/workspace/a.php", "/workspace/b.php"]),
+      );
+
+      return (
+        <TextSearch
+          dismissedPaths={dismissedPaths}
+          isLoading={false}
+          isOpen
+          onChangeOptions={vi.fn()}
+          onChangeQuery={vi.fn()}
+          onChangeReplacement={vi.fn()}
+          onClose={vi.fn()}
+          onDismissFile={vi.fn()}
+          onOpen={vi.fn()}
+          onReplaceAll={vi.fn()}
+          onReplaceInFile={vi.fn()}
+          onRestoreDismissedFiles={() => setDismissedPaths(new Set())}
+          options={defaultTextSearchOptions()}
+          query="query"
+          replaceBusy={false}
+          replacement=""
+          results={results}
+        />
+      );
+    }
+
+    act(() => root.render(<RestorableTextSearch />));
   }
 
   // React installs its own value setter on the input element, so assigning

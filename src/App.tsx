@@ -1542,6 +1542,7 @@ function App() {
         onOpen={workbench.openTextSearchResult}
         onReplaceAll={workbench.replaceAllInPath}
         onReplaceInFile={workbench.replaceInFile}
+        onRestoreDismissedFiles={workbench.restoreDismissedTextSearchFiles}
         options={workbench.textSearchOptions}
         query={workbench.textSearchQuery}
         replaceBusy={workbench.textReplaceBusy}

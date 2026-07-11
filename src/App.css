@@ -4426,6 +4426,28 @@ button.problem-row:focus-visible {
   font-size: 12px;
 }
 
+.text-search-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.text-search-restore-dismissed {
+  margin-right: 10px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.text-search-restore-dismissed:hover {
+  background: var(--color-hover);
+}
+
 .surround-with-picker {
   width: min(320px, calc(100vw - 36px));
 }

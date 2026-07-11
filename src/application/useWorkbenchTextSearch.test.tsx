@@ -102,6 +102,41 @@ describe("useWorkbenchTextSearch exclusions", () => {
     expect(current.dismissedTextSearchPaths.size).toBe(0);
   });
 
+  it("restores only the active root's dismissed files and recovers visible counts", async () => {
+    await renderAndSearch();
+    act(() => current.dismissTextSearchFile("/workspace-a/a.php"));
+    const restoreWorkspaceA = current.restoreDismissedTextSearchFiles;
+
+    expect(
+      current.textSearchResults.filter(
+        (result) => !current.dismissedTextSearchPaths.has(result.path),
+      ),
+    ).toHaveLength(2);
+
+    dependencies.currentWorkspaceRootRef.current = "/workspace-b";
+    dependencies = { ...dependencies, workspaceRoot: "/workspace-b" };
+    render();
+    await runSearchTimer();
+    act(() => current.dismissTextSearchFile("/workspace-b/a.php"));
+
+    act(() => restoreWorkspaceA());
+    expect([...current.dismissedTextSearchPaths]).toEqual(["/workspace-b/a.php"]);
+
+    act(() => current.restoreDismissedTextSearchFiles());
+    expect(current.dismissedTextSearchPaths.size).toBe(0);
+    expect(
+      current.textSearchResults.filter(
+        (result) => !current.dismissedTextSearchPaths.has(result.path),
+      ),
+    ).toHaveLength(4);
+
+    confirm.mockReturnValueOnce(false);
+    await act(async () => current.replaceAllInPath());
+    expect(confirm).toHaveBeenCalledWith(
+      "Replace 4 occurrences in 3 files? This rewrites files on disk and is restorable from Local History.",
+    );
+  });
+
   it("keeps the whole-scope gateway call unchanged when nothing is excluded", async () => {
     await renderAndSearch();
     act(() => current.setTextReplacement("thread"));

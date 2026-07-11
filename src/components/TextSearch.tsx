@@ -33,6 +33,7 @@ interface TextSearchProps {
   onOpen(result: TextSearchResult): void;
   onReplaceAll(): void;
   onReplaceInFile(path: string): void;
+  onRestoreDismissedFiles(): void;
 }
 
 /**
@@ -113,6 +114,7 @@ export function TextSearch({
   onOpen,
   onReplaceAll,
   onReplaceInFile,
+  onRestoreDismissedFiles,
   options,
   query,
   replacement,
@@ -341,12 +343,28 @@ export function TextSearch({
           {!isLoading && !query.trim() ? (
             <div className="quick-open-state">Enter a search term</div>
           ) : null}
-          {!isLoading && query.trim() && visibleResults.length > 0 ? (
-            <div className="text-search-summary" aria-live="polite">
-              {atLeast}
-              {visibleResults.length} occurrence
-              {visibleResults.length === 1 ? "" : "s"} in {atLeast}
-              {matchedFiles.length} file{matchedFiles.length === 1 ? "" : "s"}
+          {!isLoading && query.trim() &&
+          (visibleResults.length > 0 || dismissedPaths.size > 0) ? (
+            <div className="text-search-summary-row" aria-live="polite">
+              {visibleResults.length > 0 ? (
+                <div className="text-search-summary">
+                  {atLeast}
+                  {visibleResults.length} occurrence
+                  {visibleResults.length === 1 ? "" : "s"} in {atLeast}
+                  {matchedFiles.length} file
+                  {matchedFiles.length === 1 ? "" : "s"}
+                </div>
+              ) : null}
+              {dismissedPaths.size > 0 ? (
+                <button
+                  aria-label="Restore dismissed search files"
+                  className="text-search-restore-dismissed"
+                  onClick={onRestoreDismissedFiles}
+                  type="button"
+                >
+                  {dismissedPaths.size} dismissed - Restore
+                </button>
+              ) : null}
             </div>
           ) : null}
           {visibleResults.map((result, index) => {
