@@ -53,8 +53,29 @@ describe("createTerminalSession", () => {
     expect(harness.unsubscribeOutput).toHaveBeenCalled();
     expect(harness.dataDisposable.dispose).toHaveBeenCalled();
     expect(harness.resizeDisposable.dispose).toHaveBeenCalled();
+    expect(harness.linkDisposable.dispose).toHaveBeenCalled();
     expect(harness.terminal.dispose).toHaveBeenCalled();
     expect(harness.gateway.stop).toHaveBeenCalledWith(1);
+  });
+
+  it("registers file links and activates them with parsed positions", () => {
+    const onOpenLink = vi.fn();
+    const harness = terminalHarness({ onOpenLink });
+
+    createTerminalSession(harness.options);
+    const links = harness.provideLinks(4, "FAIL ./tests/x.spec.ts:3:5;");
+
+    expect(harness.terminal.registerLinkProvider).toHaveBeenCalledTimes(1);
+    expect(links).toHaveLength(1);
+    expect(links[0]?.range).toEqual({
+      end: { x: 26, y: 4 },
+      start: { x: 6, y: 4 },
+    });
+    expect(links[0]?.text).toBe("./tests/x.spec.ts:3:5");
+
+    links[0]?.activate({} as MouseEvent, links[0].text);
+
+    expect(onOpenLink).toHaveBeenCalledWith("./tests/x.spec.ts", 3, 5);
   });
 
   it("shows a workspace prompt without starting outside a workspace", async () => {
@@ -71,7 +92,12 @@ describe("createTerminalSession", () => {
   });
 });
 
-function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
+function terminalHarness(
+  overrides: Partial<{
+    onOpenLink: (path: string, line?: number, column?: number) => void;
+    rootPath: string | null;
+  }> = {},
+) {
   let resizeCallback: ResizeObserverCallback | null = null;
   let outputListener: ((event: TerminalOutputEvent) => void) | null = null;
   let dataListener: ((data: string) => void) | null = null;
@@ -85,6 +111,22 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
   const cancelFrame = vi.fn();
   const dataDisposable = { dispose: vi.fn() };
   const resizeDisposable = { dispose: vi.fn() };
+  const linkDisposable = { dispose: vi.fn() };
+  let linkProvider:
+    | {
+        provideLinks(
+          lineNumber: number,
+          callback: (links: Array<{
+            activate(event: MouseEvent, text: string): void;
+            range: {
+              end: { x: number; y: number };
+              start: { x: number; y: number };
+            };
+            text: string;
+          }> | undefined) => void,
+        ): void;
+      }
+    | undefined;
   const resizeObserver = {
     disconnect: vi.fn(),
     observe: vi.fn(),
@@ -103,6 +145,15 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
       return resizeDisposable;
     }),
     open: vi.fn(),
+    buffer: {
+      active: {
+        getLine: vi.fn(),
+      },
+    },
+    registerLinkProvider: vi.fn((provider) => {
+      linkProvider = provider;
+      return linkDisposable;
+    }),
     rows: 24,
     write: vi.fn(),
   };
@@ -148,6 +199,7 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
     },
     gateway,
     host,
+    linkDisposable,
     options: {
       cancelFrame,
       createResizeObserver: (callback: ResizeObserverCallback) => {
@@ -157,6 +209,7 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
       fitAddon,
       gateway,
       host,
+      onOpenLink: overrides.onOpenLink,
       profileId: "default",
       rootPath: "rootPath" in overrides
         ? overrides.rootPath ?? null
@@ -173,6 +226,23 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
     resizeDisposable,
     resizeObserver,
     terminal,
+    provideLinks: (lineNumber: number, text: string) => {
+      terminal.buffer.active.getLine.mockReturnValue({
+        translateToString: () => text,
+      });
+      let provided: Array<{
+        activate(event: MouseEvent, text: string): void;
+        range: {
+          end: { x: number; y: number };
+          start: { x: number; y: number };
+        };
+        text: string;
+      }> = [];
+      linkProvider?.provideLinks(lineNumber, (links) => {
+        provided = links ?? [];
+      });
+      return provided;
+    },
     unsubscribeOutput,
   };
 }

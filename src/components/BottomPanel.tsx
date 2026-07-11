@@ -1,5 +1,5 @@
 import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import {
@@ -19,6 +19,7 @@ import { RuntimeObservabilityPanel } from "./RuntimeObservabilityPanel";
 import type { FileChange, GitHistoryGateway } from "../domain/git";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 interface BottomPanelProps {
   activeView: BottomPanelView;
@@ -28,7 +29,7 @@ interface BottomPanelProps {
   onClearProblems(): void;
   onClose(): void;
   onHardReindex(): void;
-  onOpenProblem(notice: WorkbenchNotice): void;
+  onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: BottomPanelView): void;
@@ -98,6 +99,8 @@ export function BottomPanel({
   const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<
     string | null
   >(null);
+  const workspaceRootRef = useRef(workspaceRoot);
+  workspaceRootRef.current = workspaceRoot;
 
   useEffect(() => {
     if (activeView !== "terminal") {
@@ -252,6 +255,37 @@ export function BottomPanel({
           >
             <LazyTerminalPanel
               isActive={activeView === "terminal"}
+              onOpenLink={(path, line, column) => {
+                const requestedRoot = workspaceRoot;
+
+                if (!requestedRoot) {
+                  return;
+                }
+
+                if (
+                  !workspaceRootKeysEqual(
+                    workspaceRootRef.current,
+                    requestedRoot,
+                  )
+                ) {
+                  return;
+                }
+
+                const position = {
+                  column: column ?? 1,
+                  lineNumber: line ?? 1,
+                };
+                return onOpenProblem({
+                  id: `terminal:${path}:${position.lineNumber}:${position.column}`,
+                  message: path,
+                  navigationTarget: {
+                    path,
+                    range: { end: position, start: position },
+                  },
+                  severity: "info",
+                  source: "Terminal",
+                });
+              }}
               onSessionReady={onTerminalSessionReady}
               profileId={selectedTerminalProfileId}
               rootPath={workspaceRoot}
@@ -271,7 +305,7 @@ interface RenderActivePanelOptions {
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onHardReindex(): void;
-  onOpenProblem(notice: WorkbenchNotice): void;
+  onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onSoftReindex(): void;
   onOpenCommitFileDiff(

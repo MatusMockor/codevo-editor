@@ -11,6 +11,7 @@ import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
   isActive: boolean;
+  onOpenLink?: (path: string, line?: number, column?: number) => void;
   // Reports the backend session id of this terminal once it starts, and `null`
   // when it is torn down (workspace switch / unmount). Lets the workbench
   // address the active project terminal to run commands such as a gutter test
@@ -25,6 +26,7 @@ interface TerminalPanelProps {
 
 export function TerminalPanel({
   isActive,
+  onOpenLink,
   onSessionReady,
   profileId,
   rootPath,
@@ -39,6 +41,10 @@ export function TerminalPanel({
   // without listing it as a dependency and remounting the terminal.
   const onSessionReadyRef = useRef(onSessionReady);
   onSessionReadyRef.current = onSessionReady;
+  const onOpenLinkRef = useRef(onOpenLink);
+  onOpenLinkRef.current = onOpenLink;
+  const rootPathRef = useRef(rootPath);
+  rootPathRef.current = rootPath;
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -58,12 +64,30 @@ export function TerminalPanel({
     });
     terminalRef.current = terminal;
     const fitAddon = new FitAddon();
+    const sessionRootPath = rootPath;
     const session = createTerminalSession({
       cancelFrame: (frameId) => cancelAnimationFrame(frameId),
       createResizeObserver: (callback) => new ResizeObserver(callback),
       fitAddon,
       gateway: terminalGateway,
       host,
+      onOpenLink: (path, line, column) => {
+        if (!sessionRootPath) {
+          return;
+        }
+
+        if (rootPathRef.current !== sessionRootPath) {
+          return;
+        }
+
+        const resolvedPath = resolveTerminalLinkPath(sessionRootPath, path);
+
+        if (!resolvedPath) {
+          return;
+        }
+
+        onOpenLinkRef.current?.(resolvedPath, line, column);
+      },
       onSessionReady: (sessionId) => onSessionReadyRef.current?.(sessionId),
       profileId,
       rootPath,
@@ -80,6 +104,11 @@ export function TerminalPanel({
         onData: (listener) => terminal.onData(listener),
         onResize: (listener) => terminal.onResize(listener),
         open: (container) => terminal.open(container),
+        get buffer() {
+          return terminal.buffer;
+        },
+        registerLinkProvider: (provider) =>
+          terminal.registerLinkProvider(provider),
         write: (data) => terminal.write(data),
       },
     });
@@ -126,4 +155,46 @@ export function TerminalPanel({
       <div className="terminal-viewport" ref={terminalHostRef} />
     </div>
   );
+}
+
+export function resolveTerminalLinkPath(
+  rootPath: string,
+  path: string,
+): string | null {
+  const normalizedRoot = normalizeTerminalPath(rootPath);
+
+  if (!normalizedRoot.startsWith("/")) {
+    return null;
+  }
+
+  const normalizedPath = path.startsWith("/")
+    ? normalizeTerminalPath(path)
+    : normalizeTerminalPath(`${normalizedRoot}/${path}`);
+  const rootPrefix = normalizedRoot === "/" ? "/" : `${normalizedRoot}/`;
+
+  if (!normalizedPath.startsWith(rootPrefix)) {
+    return null;
+  }
+
+  return normalizedPath;
+}
+
+function normalizeTerminalPath(path: string): string {
+  const absolute = path.startsWith("/");
+  const segments: string[] = [];
+
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+
+    segments.push(segment);
+  }
+
+  return `${absolute ? "/" : ""}${segments.join("/")}`;
 }

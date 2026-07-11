@@ -11,12 +11,18 @@ import type { TerminalGateway } from "../domain/terminal";
 import { TerminalPanel } from "./TerminalPanel";
 
 interface FakeTerminal {
+  buffer: {
+    active: {
+      getLine: ReturnType<typeof vi.fn>;
+    };
+  };
   cols: number;
   dispose: ReturnType<typeof vi.fn>;
   loadAddon: ReturnType<typeof vi.fn>;
   onData: ReturnType<typeof vi.fn>;
   onResize: ReturnType<typeof vi.fn>;
   open: ReturnType<typeof vi.fn>;
+  registerLinkProvider: ReturnType<typeof vi.fn>;
   options: {
     theme?: TerminalTheme;
   };
@@ -29,12 +35,16 @@ interface FakeSession {
   fit: ReturnType<typeof vi.fn>;
 }
 
+interface FakeSessionOptions {
+  onOpenLink(path: string, line?: number, column?: number): void;
+}
+
 const terminalPanelMocks = vi.hoisted(() => {
   const sessions: FakeSession[] = [];
   const terminals: FakeTerminal[] = [];
 
   return {
-    createTerminalSession: vi.fn(() => {
+    createTerminalSession: vi.fn((_options: unknown) => {
       const session = {
         dispose: vi.fn(),
         fit: vi.fn(),
@@ -60,11 +70,17 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: vi.fn(function TerminalMock(options: { theme?: TerminalTheme }) {
     const terminal = {
       cols: 80,
+      buffer: {
+        active: {
+          getLine: vi.fn(),
+        },
+      },
       dispose: vi.fn(),
       loadAddon: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       open: vi.fn(),
+      registerLinkProvider: vi.fn(() => ({ dispose: vi.fn() })),
       options: { ...options },
       rows: 24,
       write: vi.fn(),
@@ -136,6 +152,77 @@ describe("TerminalPanel", () => {
     expect(terminalPanelMocks.createTerminalSession).toHaveBeenCalledTimes(1);
     expect(terminal.options.theme).toBe(lightTheme);
     expect(terminalPanelMocks.sessions[0].dispose).not.toHaveBeenCalled();
+  });
+
+  it("resolves links inside the mounted workspace and drops unsafe paths", () => {
+    const onOpenLink = vi.fn();
+
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          onOpenLink={onOpenLink}
+          profileId="default"
+          rootPath="/workspace/project"
+          terminalGateway={terminalGateway()}
+          terminalTheme={terminalThemeForAppTheme("dark")}
+        />,
+      );
+    });
+
+    const sessionOptions = terminalPanelMocks.createTerminalSession.mock
+      .calls[0]?.[0] as FakeSessionOptions;
+
+    sessionOptions.onOpenLink("./tests/../src/Foo.php", 12, 4);
+    sessionOptions.onOpenLink("/workspace/project/tests/FooTest.php", 8);
+    sessionOptions.onOpenLink("/workspace/project-other/Secret.php", 1);
+    sessionOptions.onOpenLink("/outside/Secret.php", 1);
+
+    expect(onOpenLink.mock.calls).toEqual([
+      ["/workspace/project/src/Foo.php", 12, 4],
+      ["/workspace/project/tests/FooTest.php", 8, undefined],
+    ]);
+  });
+
+  it("drops activations from a session mounted for a stale workspace", () => {
+    const onOpenLink = vi.fn(async () => undefined);
+    const gateway = terminalGateway();
+    const theme = terminalThemeForAppTheme("dark");
+
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          onOpenLink={onOpenLink}
+          profileId="default"
+          rootPath="/workspace/old"
+          terminalGateway={gateway}
+          terminalTheme={theme}
+        />,
+      );
+    });
+
+    const staleOpenLink = (
+      terminalPanelMocks.createTerminalSession.mock.calls[0]?.[0] as
+        FakeSessionOptions
+    ).onOpenLink;
+
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          onOpenLink={onOpenLink}
+          profileId="default"
+          rootPath="/workspace/new"
+          terminalGateway={gateway}
+          terminalTheme={theme}
+        />,
+      );
+    });
+
+    staleOpenLink("src/Foo.php", 2, 3);
+
+    expect(onOpenLink).not.toHaveBeenCalled();
   });
 });
 

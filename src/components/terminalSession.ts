@@ -5,8 +5,34 @@ import {
   type TerminalSize,
   type TerminalUnsubscribeFn,
 } from "../domain/terminal";
+import { terminalFileLinks } from "../domain/terminalFileLinks";
+
+export interface TerminalBufferLine {
+  translateToString(trimRight?: boolean): string;
+}
+
+export interface TerminalLink {
+  activate(event: MouseEvent, text: string): void;
+  range: {
+    end: { x: number; y: number };
+    start: { x: number; y: number };
+  };
+  text: string;
+}
+
+export interface TerminalLinkProvider {
+  provideLinks(
+    lineNumber: number,
+    callback: (links: TerminalLink[] | undefined) => void,
+  ): void;
+}
 
 export interface XtermTerminal {
+  readonly buffer: {
+    readonly active: {
+      getLine(lineIndex: number): TerminalBufferLine | undefined;
+    };
+  };
   readonly cols: number;
   readonly rows: number;
   dispose(): void;
@@ -14,6 +40,7 @@ export interface XtermTerminal {
   onData(listener: (data: string) => void): TerminalDisposable;
   onResize(listener: (size: TerminalSize) => void): TerminalDisposable;
   open(host: HTMLElement): void;
+  registerLinkProvider(provider: TerminalLinkProvider): TerminalDisposable;
   write(data: string): void;
 }
 
@@ -47,6 +74,7 @@ interface TerminalSessionOptions {
   // xterm internals. Always scoped to a single mounted terminal, so it can
   // never leak another tab's session id.
   onSessionReady?(sessionId: number | null): void;
+  onOpenLink?(path: string, line?: number, column?: number): void;
   profileId: string | null;
   rootPath: string | null;
   scheduleFrame(callback: FrameRequestCallback): number;
@@ -60,6 +88,7 @@ export function createTerminalSession({
   gateway,
   host,
   onSessionReady,
+  onOpenLink,
   profileId,
   rootPath,
   scheduleFrame,
@@ -131,6 +160,30 @@ export function createTerminalSession({
 
   terminal.loadAddon(fitAddon);
   terminal.open(host);
+  disposables.push(
+    terminal.registerLinkProvider({
+      provideLinks: (lineNumber, callback) => {
+        const bufferLine = terminal.buffer.active.getLine(lineNumber - 1);
+
+        if (!bufferLine) {
+          callback(undefined);
+          return;
+        }
+
+        const text = bufferLine.translateToString(true);
+        const links = terminalFileLinks(text).map((link) => ({
+          activate: () => onOpenLink?.(link.path, link.line, link.column),
+          range: {
+            end: { x: link.startIndex + link.length, y: lineNumber },
+            start: { x: link.startIndex + 1, y: lineNumber },
+          },
+          text: text.slice(link.startIndex, link.startIndex + link.length),
+        }));
+
+        callback(links.length > 0 ? links : undefined);
+      },
+    }),
+  );
   disposables.push(
     terminal.onData((data) => {
       if (!sessionId) {
