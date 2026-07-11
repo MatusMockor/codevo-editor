@@ -271,7 +271,7 @@ export function useWorkbenchTextSearch(
 
       if (
         !prompter.confirm(
-          `Replace ${scopeLabel}? This rewrites files on disk and cannot be undone.`,
+          `Replace ${scopeLabel}? This rewrites files on disk and is restorable from Local History.`,
         )
       ) {
         return;

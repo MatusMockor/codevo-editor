@@ -1,4 +1,5 @@
 use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
+use crate::local_history::LocalHistoryStore;
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use crate::{search::TextSearchOptions, workspace::FileEntryKind};
 use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
@@ -490,6 +491,26 @@ pub struct WorkspaceFileRepository<'a> {
     registry: &'a WorkspaceRegistry,
 }
 
+pub trait LocalHistorySnapshotSink {
+    fn record_snapshot(
+        &self,
+        workspace_root: &str,
+        relative_path: &str,
+        content: &str,
+    ) -> Result<(), String>;
+}
+
+impl LocalHistorySnapshotSink for LocalHistoryStore {
+    fn record_snapshot(
+        &self,
+        workspace_root: &str,
+        relative_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        LocalHistoryStore::record_snapshot(self, workspace_root, relative_path, content).map(|_| ())
+    }
+}
+
 impl<'a> WorkspaceFileRepository<'a> {
     pub fn new(registry: &'a WorkspaceRegistry) -> Self {
         Self { registry }
@@ -669,7 +690,27 @@ impl<'a> WorkspaceFileRepository<'a> {
         replacement: &str,
         options: &TextSearchOptions,
     ) -> WorkspaceReplaceResult {
-        match self.replace_candidates(id, scope, query, replacement, options) {
+        match self.replace_candidates(id, scope, query, replacement, options, None) {
+            Ok(result) => result,
+            Err(error) => WorkspaceReplaceResult::Error {
+                files: Vec::new(),
+                total_replacements: 0,
+                errors: Vec::new(),
+                message: error.to_string(),
+            },
+        }
+    }
+
+    pub fn replace_in_path_with_snapshot_sink(
+        &self,
+        id: &WorkspaceId,
+        scope: &Path,
+        query: &str,
+        replacement: &str,
+        options: &TextSearchOptions,
+        snapshot_sink: &dyn LocalHistorySnapshotSink,
+    ) -> WorkspaceReplaceResult {
+        match self.replace_candidates(id, scope, query, replacement, options, Some(snapshot_sink)) {
             Ok(result) => result,
             Err(error) => WorkspaceReplaceResult::Error {
                 files: Vec::new(),
@@ -687,6 +728,7 @@ impl<'a> WorkspaceFileRepository<'a> {
         query: &str,
         replacement: &str,
         options: &TextSearchOptions,
+        snapshot_sink: Option<&dyn LocalHistorySnapshotSink>,
     ) -> io::Result<WorkspaceReplaceResult> {
         let query = query.trim();
         if query.is_empty() {
@@ -700,7 +742,9 @@ impl<'a> WorkspaceFileRepository<'a> {
         }
         let matcher = text_matcher(query, options)?;
         let root = self.registry.clone_root(id)?;
-        let display_root = self.registry.descriptor(id)?.canonical_root_path;
+        let descriptor = self.registry.descriptor(id)?;
+        let display_root = descriptor.canonical_root_path;
+        let local_history_root = descriptor.selected_root_path;
         let exact_file = open_regular(root.as_raw_fd(), scope, libc::O_RDONLY).is_ok();
         let candidates = if exact_file {
             vec![scope.to_path_buf()]
@@ -765,6 +809,17 @@ impl<'a> WorkspaceFileRepository<'a> {
             }
             match self.save_text(id, &relative, &updated, &snapshot.revision) {
                 FileCommandResult::Success { .. } => {
+                    if let Some(snapshot_sink) = snapshot_sink {
+                        let workspace_root = local_history_root.to_string_lossy();
+                        let relative_path = relative.to_string_lossy();
+                        if let Err(error) = snapshot_sink.record_snapshot(
+                            &workspace_root,
+                            &relative_path,
+                            &snapshot.content,
+                        ) {
+                            eprintln!("Local History snapshot failed: {error}");
+                        }
+                    }
                     total_replacements += replacement_count;
                     files.push(ReplaceFileResult {
                         relative_path: relative.to_string_lossy().into_owned(),
@@ -1928,6 +1983,7 @@ impl Drop for TempCleanup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_history::LocalHistoryStore;
     use std::{
         fs,
         os::unix::fs::symlink,
@@ -1952,6 +2008,29 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn history_store(label: &str) -> LocalHistoryStore {
+        let base = std::env::temp_dir().join(format!(
+            "mockor-replace-history-{label}-{}-{}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        LocalHistoryStore::new(base)
+    }
+
+    struct FailingSnapshotSink;
+
+    impl LocalHistorySnapshotSink for FailingSnapshotSink {
+        fn record_snapshot(
+            &self,
+            _workspace_root: &str,
+            _relative_path: &str,
+            _content: &str,
+        ) -> Result<(), String> {
+            Err("snapshot store unavailable".into())
+        }
     }
 
     #[test]
@@ -2905,6 +2984,106 @@ mod tests {
                 .content,
             "Needle needle\n"
         );
+    }
+
+    #[test]
+    fn replace_records_pre_replace_history_for_changed_files_only() {
+        let (registry_a, id_a, root_a) = fixture("replace-history-a");
+        let (_registry_b, _id_b, root_b) = fixture("replace-history-b");
+        fs::create_dir(root_a.join("src")).unwrap();
+        fs::write(root_a.join("a.txt"), "needle one\n").unwrap();
+        fs::write(root_a.join("src/b.txt"), "needle two\n").unwrap();
+        fs::write(root_a.join("unchanged.txt"), "no match\n").unwrap();
+        let store = history_store("changed-only");
+        let canonical_root_a = root_a.canonicalize().unwrap();
+        assert_ne!(root_a, canonical_root_a);
+        let workspace_a = root_a.to_string_lossy();
+        let canonical_workspace_a = canonical_root_a.to_string_lossy();
+        let workspace_b = root_b.to_string_lossy();
+
+        let result = WorkspaceFileRepository::new(&registry_a).replace_in_path_with_snapshot_sink(
+            &id_a,
+            Path::new(""),
+            "needle",
+            "thread",
+            &TextSearchOptions::default(),
+            &store,
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 2,
+                ..
+            }
+        ));
+        for (path, expected) in [("a.txt", "needle one\n"), ("src/b.txt", "needle two\n")] {
+            let versions = store.list_versions(&workspace_a, path).unwrap();
+            assert_eq!(versions.len(), 1);
+            assert_eq!(
+                store
+                    .read_version(&workspace_a, path, &versions[0].id)
+                    .unwrap(),
+                expected
+            );
+            assert!(store.list_versions(&workspace_b, path).unwrap().is_empty());
+            assert!(store
+                .list_versions(&canonical_workspace_a, path)
+                .unwrap()
+                .is_empty());
+        }
+        assert!(store
+            .list_versions(&workspace_a, "unchanged.txt")
+            .unwrap()
+            .is_empty());
+
+        let no_op = WorkspaceFileRepository::new(&registry_a).replace_in_path_with_snapshot_sink(
+            &id_a,
+            Path::new(""),
+            "thread",
+            "thread",
+            &TextSearchOptions::default(),
+            &store,
+        );
+        assert!(matches!(
+            no_op,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 0,
+                ..
+            }
+        ));
+        assert_eq!(store.list_versions(&workspace_a, "a.txt").unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list_versions(&workspace_a, "src/b.txt")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn snapshot_failure_does_not_fail_replace() {
+        let (registry, id, root) = fixture("replace-history-failure");
+        fs::write(root.join("a.txt"), "needle\n").unwrap();
+
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path_with_snapshot_sink(
+            &id,
+            Path::new("a.txt"),
+            "needle",
+            "thread",
+            &TextSearchOptions::default(),
+            &FailingSnapshotSink,
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "thread\n");
     }
 
     #[test]

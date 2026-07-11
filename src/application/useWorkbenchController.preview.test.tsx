@@ -67050,7 +67050,7 @@ class PostRepository
       await flushAsyncTurns();
 
       expect(confirm).toHaveBeenCalledWith(
-        "Replace 1 occurrence in a.php? This rewrites files on disk and cannot be undone.",
+        "Replace 1 occurrence in a.php? This rewrites files on disk and is restorable from Local History.",
       );
       // The single-file scope is passed as an exact path (5th arg), never as a
       // widened file mask, so an active mask cannot escape the chosen file.

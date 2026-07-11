@@ -447,6 +447,7 @@ fn workspace_search_text(
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_replace_in_path(
+    app: AppHandle,
     registry: State<'_, WorkspaceRegistry>,
     workspace_id: WorkspaceId,
     relative_path: String,
@@ -454,12 +455,28 @@ fn workspace_replace_in_path(
     replacement: String,
     options: Option<TextSearchOptions>,
 ) -> WorkspaceReplaceResult {
-    DescriptorFileRepository::new(&registry).replace_in_path(
+    let repository = DescriptorFileRepository::new(&registry);
+    let options = options.unwrap_or_default();
+    let store = match local_history_store(&app) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("Local History snapshot failed: {error}");
+            return repository.replace_in_path(
+                &workspace_id,
+                Path::new(&relative_path),
+                &query,
+                &replacement,
+                &options,
+            );
+        }
+    };
+    repository.replace_in_path_with_snapshot_sink(
         &workspace_id,
         Path::new(&relative_path),
         &query,
         &replacement,
-        &options.unwrap_or_default(),
+        &options,
+        &store,
     )
 }
 
