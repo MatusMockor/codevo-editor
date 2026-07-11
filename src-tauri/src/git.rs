@@ -3329,6 +3329,107 @@ mod tests {
     }
 
     #[test]
+    fn stage_refuses_crlf_conflicted_file_with_markers_without_resolving_index() {
+        let repo = branch_repo();
+        repo.run(["config", "core.autocrlf", "false"]);
+        repo.write("conflict.txt", "base\r\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("conflict.txt", "feature\r\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        repo.run(["checkout", "main"]);
+        repo.write("conflict.txt", "main\r\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "main"]);
+        repo.merge_expecting_conflict("feature");
+        assert!(repo.read("conflict.txt").contains("<<<<<<< HEAD\r\n"));
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+
+        let error = gateway
+            .stage(repo.path(), &[change])
+            .expect_err("CRLF conflict markers must block staging");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("conflict.txt"));
+        assert!(!repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_refuses_diff3_conflict_then_stages_after_resolution() {
+        let repo = branch_repo();
+        repo.run(["config", "merge.conflictStyle", "diff3"]);
+        repo.write("conflict.txt", "base\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("conflict.txt", "feature\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        repo.run(["checkout", "main"]);
+        repo.write("conflict.txt", "main\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "main"]);
+        repo.merge_expecting_conflict("feature");
+        assert!(repo.read("conflict.txt").contains("|||||||"));
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+
+        let error = gateway
+            .stage(repo.path(), &[change.clone()])
+            .expect_err("diff3 conflict markers must block staging");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("conflict.txt"));
+        assert!(!repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+
+        repo.write("conflict.txt", "resolved\n");
+        gateway
+            .stage(repo.path(), &[change])
+            .expect("mark diff3 conflict resolved");
+
+        assert!(repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+    }
+
+    #[test]
+    fn stage_resolves_delete_modify_conflict_as_deletion() {
+        let repo = branch_repo();
+        repo.write("conflict.txt", "base\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("conflict.txt", "feature\n");
+        repo.run(["add", "conflict.txt"]);
+        repo.run(["commit", "-m", "modify"]);
+        repo.run(["checkout", "main"]);
+        repo.run(["rm", "conflict.txt"]);
+        repo.run(["commit", "-m", "delete"]);
+        repo.merge_expecting_conflict("feature");
+        let gateway = CommandGitRepositoryGateway;
+        let change = conflicted_change(&gateway, &repo, "conflict.txt");
+        fs::remove_file(repo.path().join("conflict.txt")).expect("choose deletion");
+
+        gateway
+            .stage(repo.path(), &[change])
+            .expect("stage conflict deletion");
+
+        assert!(repo
+            .git_output(["ls-files", "--", "conflict.txt"])
+            .is_empty());
+        assert!(repo
+            .git_output(["ls-files", "-u", "--", "conflict.txt"])
+            .is_empty());
+    }
+
+    #[test]
     fn stage_refuses_unmerged_file_even_when_payload_status_is_stale() {
         let repo = conflicted_repo();
         let gateway = CommandGitRepositoryGateway;
@@ -4352,6 +4453,16 @@ mod tests {
 
         fn write(&self, relative_path: &str, content: &str) {
             fs::write(self.path.join(relative_path), content).expect("write file");
+        }
+
+        fn merge_expecting_conflict(&self, branch: &str) {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&self.path)
+                .args(["merge", branch])
+                .output()
+                .expect("run conflicting merge");
+            assert!(!output.status.success(), "merge must conflict");
         }
 
         fn git_output<const N: usize>(&self, args: [&str; N]) -> String {
